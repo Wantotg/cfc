@@ -54,6 +54,21 @@ time, unlike the litter prune, which only deleted).
 
 ---
 
+## `pick_session` has an unreachable duplicate loop
+
+**Found:** 2026-07-15, while extracting `hub.py`.
+
+The `while True:` input loop in `pick_session` appears twice, identically. The
+first one only ever exits by `return`, so the second is dead code. Presumably a
+bad paste that never caused a symptom.
+
+Left in place deliberately: it was found during a pure move, and deleting it
+there would have meant a move that changed the code. It does nothing, so it can
+go whenever `hub.py` is next touched. Verified all four paths ('q', 'n', a
+number, junk) behave correctly with it present.
+
+---
+
 ## `is_litter` marker regex is coupled to two other files
 
 **Found:** 2026-07-15.
