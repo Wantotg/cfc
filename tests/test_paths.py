@@ -8,7 +8,6 @@ Every other safety property depends on it, so it gets tested properly.
 Plain script, no pytest: the project has no test dependencies and this needs
 none. Exits non-zero on any failure.
 """
-import os
 import sys
 import tempfile
 from pathlib import Path
