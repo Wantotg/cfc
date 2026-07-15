@@ -36,9 +36,16 @@ RAG memory layer in progress: Anthropic exports imported → chunked (500 tokens
 
 REPL commands are wired and working: `:recall` (cited synthesis, no session effect), `:remember` (raw chunk injection, ephemeral, marker row persisted), `:forget` (drops the last injected block). The old `:search` is now `:grep`.
 
-Next: **retrieval quality**, not features. 286 embedded chunks are under 20 tokens — including single-token vectors for `yes`, `green`, `7`. Short content-free chunks sit near the centre of embedding space and match every query mediocrely, so they crowd the top-k of *anything*. Observed live: `:remember "what did we decide about chunking"` returned 7 junk hits of 8, all distances within 3% of each other (1.034–1.061) — a flat spread means the ranking isn't ranking. Likely fix: a `token_est` floor in `backfill.py`'s `is_litter`, then re-run the backfill (~1 cent, ~6% of vectors). Not yet diagnosed properly — one query is an anecdote.
+Retrieval quality: **done**, and the original diagnosis was wrong. Recorded because the wrong version is intuitive and will otherwise get re-derived:
 
-This is adjacent to the resolution-staleness problem in the memory design doc, but distinct: staleness is about matching topics over outcomes, this is about content-free chunks matching everything.
+- The junk in top-k wasn't crowding by content-free chunks. `:remember "what did we decide about chunking"` scored 1.034 — statistically identical to a control query about the mating habits of the Patagonian toothfish. The corpus is the *Anthropic export*; cfc's own chunking decisions were made in Claude Code and were never in it. Retrieval was working. There was simply nothing to find, and KNN returns k rows regardless.
+- Real fix: `MAX_DISTANCE = 0.93` in `search.py`. Measured over 36 probes — answerable 0.531–0.892, unanswerable 0.973–1.094, total separation. bge-m3 specific.
+- Flat spread is a *symptom* of an unanswerable query, not a cause, and is a poor discriminator: a good query scored 1.4% spread. Don't build on it.
+- The litter floor shipped too (`is_litter` also had a real bug — it matched a single marker against the whole chunk, so concatenated markers were embedded). Worth having, but it moved junk-in-top-8 only 28.9% → 24.4%. Floor is 5 tokens, not 20: the 7–20 band is real material.
+
+Retrieval is good when the answer exists: 24/24 probes returned the right session in top-8, 18/24 at rank 1.
+
+Still open, and distinct from the above: **resolution staleness** (semantic search matches struggle messages over the resolution) per the memory design doc. Also `chunk.py`'s overlap cuts mid-word — chunk 1034 begins `'ne that decides...'`.
 
 Also pending: the `chat.py` split into `db.py` / `api.py` / `export.py` / `commands.py` / `hub.py` / `main.py`. Clean baseline to reset to is `e4ada29`.
 
