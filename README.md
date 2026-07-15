@@ -99,6 +99,9 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 | `:untag <name>` | Remove a tag |
 | `:tags` / `:taglist` | Show tags / all tags with counts |
 | `:grep <keyword>` | Substring search across all messages |
+| `:recall <question>` | Ask your history a question; cited answer, no session effect |
+| `:remember <query>` | Pull matching excerpts into the live context (ephemeral) |
+| `:forget` | Drop the most recently injected excerpts |
 | `:tokens` | Detailed context-usage breakdown |
 | `:export` | Manually export the session to Obsidian |
 | `:config` | Show current configuration (key masked) |
