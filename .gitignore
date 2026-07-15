@@ -10,9 +10,14 @@ __pycache__/
 *.db
 chat.db
 
+# Personal data — the Anthropic export is your whole history, keep it local
+claude_export/
+
 # Editor / OS cruft
 .vscode/
 .DS_Store
+# Windows "downloaded from the internet" alternate-data-stream files
+*:Zone.Identifier
 
 # Claude Code local files
 .claude/
