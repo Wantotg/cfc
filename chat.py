@@ -45,6 +45,10 @@ console = Console(markup=False)
 DB_PATH = Path.home() / ".cfc" / "chat.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+# How many chunks :recall and :remember pull. Also a diagnostic: if eight hits
+# come back and seven are the same dead end, that's the corpus talking.
+MEMORY_K = 8
+
 def get_prompts_dir():
     if PROMPTS_DIR:
         return Path(PROMPTS_DIR).expanduser()
@@ -948,6 +952,52 @@ def search_messages(conn, query):
             console.print(f"  [{label}] {snippet}")
         console.print()
 
+# --- Memory (RAG) commands ---
+#
+# The memory layer (search.py / recall.py) pulls in sqlite-vec and the
+# embedding API. It's imported lazily inside each command so that a missing or
+# broken memory layer degrades :recall / :remember only, rather than stopping
+# cfc from starting at all.
+
+def memory_unavailable(err):
+    console.print(f"\n[memory layer unavailable] {err}")
+    console.print("Needs sqlite-vec in the venv and a populated "
+                  "chunks/vec_chunks table.\n")
+
+def do_recall(query, k=MEMORY_K):
+    """Grounded, cited answer synthesised from past conversations.
+    Prints only — deliberately has no effect on the live session."""
+    try:
+        from recall import recall
+    except Exception as e:
+        memory_unavailable(e)
+        return
+
+    try:
+        with Live(
+            Spinner("dots", text="Recalling...",
+                    style="magenta"),
+            console=console,
+            refresh_per_second=8,
+        ):
+            answer, hits = recall(str(DB_PATH), query, k=k)
+    except Exception as e:
+        console.print(f"\n[recall failed] {e}\n")
+        return
+
+    console.print()
+    console.print(Panel(
+        Markdown(answer),
+        title="recall",
+        title_align="left",
+        border_style="magenta",
+    ))
+    if hits:
+        n_conv = len({h["session_id"] for h in hits})
+        console.print(f"(drew on {len(hits)} excerpts from "
+                      f"{n_conv} conversations)")
+    console.print()
+
 def export_session(conn, session_id, quiet=False):
     session = conn.execute(
         "SELECT id, title, model, provider, "
@@ -1119,6 +1169,8 @@ def repl(session_id=None):
                   "(with confirm)")
     console.print("  :grep word    search all messages for "
                   "'word'")
+    console.print("  :recall q     ask your history a "
+                  "question (cited answer)")
     console.print("  :tag python   add tag 'python' to this "
                   "session")
     console.print("  :tag 3 python add tag to session #3")
@@ -1261,6 +1313,18 @@ def repl(session_id=None):
                 console.print("Example: :grep indexing")
                 continue
             search_messages(conn, parts[1])
+            continue
+
+        # --- Memory commands ---
+
+        if user.startswith(":recall"):
+            parts = user.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                console.print("Usage: :recall <question>")
+                console.print("Example: :recall what did we "
+                              "decide about the vector db?")
+                continue
+            do_recall(parts[1].strip())
             continue
 
         # --- Model commands ---
