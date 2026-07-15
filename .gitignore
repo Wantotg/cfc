@@ -21,3 +21,6 @@ claude_export/
 
 # Claude Code local files
 .claude/
+
+# golden harness scratch
+tests/_fixture.db

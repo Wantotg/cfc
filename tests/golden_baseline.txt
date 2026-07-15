@@ -1,0 +1,156 @@
+
+Session #1 | model=glm-5.2 | Golden session one
+Commands:
+  :q            quit
+  :list         show all sessions
+  :new          start a new session
+  :export       export this session to Obsidian
+  :export 5     export session #5 to Obsidian
+  :tokens       show token usage for this session
+  :title        show this session's title
+  :title 5 Name rename session #5 to 'Name'
+  :delete       delete this session (with confirm)
+  :delete 5     delete session #5 (with confirm)
+  :grep word    search all messages for 'word'
+  :recall q     ask your history a question (cited answer)
+  :remember q   pull matching excerpts into this conversation
+  :forget       drop the last injected excerpts
+  :tag python   add tag 'python' to this session
+  :tag 3 python add tag to session #3
+  :tags         show tags on this session
+  :tags 3       show tags on session #3
+  :untag python remove tag from this session
+  :taglist      show all tags with session counts
+  :prompts      list available system prompt files
+  :prompt       show current system prompt
+  :prompt name  set system prompt from 'name.md'
+  :prompt off   remove system prompt
+  :personas     list available persona files
+  :persona      show current persona
+  :persona name set persona from 'name.md'
+  :persona off  remove persona
+  :model        show current model
+  :model name   switch to model 'name'
+  :models       list configured models
+  :config       show all settings
+  """           start multi-line input
+
+--- Previous messages in this session ---
+you> what did we decide about the vector db?
+
+ai> We chose sqlite-vec for the vector store.
+
+you> and the chunk size?
+
+ai> 500 tokens with 75 overlap.
+
+--- End of history ---
+
+you>                                            Sessions
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃   ID ┃ Updated           ┃ Msgs ┃ Title              ┃ Tags   ┃ Prompt ┃ Persona ┃ Model   ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│    1 │ <TS>  │    4 │ Golden session one │ memory │        │         │ glm-5.2 │
+│    2 │ <TS>  │    2 │ Golden session two │        │        │         │ glm-5.2 │
+│    3 │ <TS>  │    0 │ (untitled)         │        │        │         │ glm-5.2 │
+└──────┴───────────────────┴──────┴────────────────────┴────────┴────────┴─────────┴─────────┘
+
+you>
+Current configuration:
+  API base:      https://api.nano-gpt.com/v1
+  API key:       ...a6fc
+  Default model: zai-org/glm-5.2:thinking
+  Session model: glm-5.2
+  Auto-export:   on
+  Stream usage:  on
+  Vault path:    /mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/AI_Chats
+  Prompts dir:   /mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Prompts
+  Quick models:  zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
+moonshotai/kimi-k2.6:thinking, longcat-2.0
+
+you>
+Token usage for session #1 "Golden session one"
+Model: glm-5.2
+Messages in session: 4
+
+Context limit:      unknown
+  (add glm-5.2 to MODEL_LIMITS in config.py)
+
+Current context:             8 tokens
+  Last input:                0 tokens
+  Last output:               8 tokens
+
+Total tokens used in this session:
+  All input:                15 tokens
+  All output:               28 tokens
+  Combined:                 43 tokens
+
+you> Current title: Golden session one
+you> Title: Golden session two
+you> Session #1 tags: memory
+you> Session #2 has no tags.
+you>       All tags
+┏━━━━━━━━┳━━━━━━━━━━┓
+┃ Tag    ┃ Sessions ┃
+┡━━━━━━━━╇━━━━━━━━━━┩
+│ memory │        1 │
+└────────┴──────────┘
+
+you> Tagged session #1 with 'wsl'.
+you> Session #1 tags: memory, wsl
+you> Removed tag 'wsl' from session #1.
+you> Tagged session #2 with 'python'.
+you>       All tags
+┏━━━━━━━━┳━━━━━━━━━━┓
+┃ Tag    ┃ Sessions ┃
+┡━━━━━━━━╇━━━━━━━━━━┩
+│ memory │        1 │
+│ python │        1 │
+│ wsl    │        0 │
+└────────┴──────────┘
+
+you> Current model: glm-5.2
+you>                Available models
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Model                             ┃ Status ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ zai-org/glm-5.2:thinking          │        │
+│ deepseek/deepseek-v4-pro:thinking │        │
+│ moonshotai/kimi-k2.6:thinking     │        │
+│ longcat-2.0                       │        │
+└───────────────────────────────────┴────────┘
+
+you>
+Available prompts (/mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Prompts):
+
+  main_prompt               System Instructions
+
+you> No system prompt set. Use ':prompts' to see available prompt files.
+you> System prompt removed.
+you>
+Available personas (/mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Personas):
+
+  coding_assistant          Coding Assistant
+  muse                      Persona
+  personal_assistant        Personal Assistant
+
+you> No persona set. Use ':personas' to see available persona files.
+you> Persona removed.
+you>
+Found 2 match(es) in 1 session(s):
+
+Session #1  "Golden session one"
+  [you] what did we decide about the vector db?
+  [ai] We chose sqlite-vec for the vector store.
+
+you>
+No matches found for 'zzz-no-such-word'.
+
+you> Usage: :grep <keyword>
+Example: :grep indexing
+you>
+Nothing injected in this session to forget.
+
+you> Session #1 titled: Renamed By Golden
+you> Current title: Renamed By Golden
+you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]
