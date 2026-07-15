@@ -45,7 +45,9 @@ Retrieval quality: **done**, and the original diagnosis was wrong. Recorded beca
 
 Retrieval is good when the answer exists: 24/24 probes returned the right session in top-8, 18/24 at rank 1.
 
-Still open, and distinct from the above: **resolution staleness** (semantic search matches struggle messages over the resolution) per the memory design doc. Also `chunk.py`'s overlap cuts mid-word — chunk 1034 begins `'ne that decides...'`.
+Still open, and distinct from the above: **resolution staleness** (semantic search matches struggle messages over the resolution) per the memory design doc.
+
+Smaller findings park in `BACKLOG.md` — read it before touching the memory layer.
 
 Also pending: the `chat.py` split into `db.py` / `api.py` / `export.py` / `commands.py` / `hub.py` / `main.py`. Clean baseline to reset to is `e4ada29`.
 
