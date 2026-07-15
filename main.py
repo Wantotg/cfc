@@ -36,6 +36,7 @@ from db import (
     delete_session,
 )
 from api import stream_response, generate_title
+from backup import safe_backup
 from export import export_session, safe_export
 from hub import list_sessions, pick_session
 from commands import (
@@ -509,5 +510,9 @@ def repl(session_id=None):
     conn.close()
 
 if __name__ == "__main__":
+    # Snapshot before the session touches anything. Deliberately here and not
+    # in repl(): repl() is called directly by tests/golden.py, which must not
+    # write snapshots of its fixture into the real backup directory.
+    safe_backup()
     sid = int(sys.argv[1]) if len(sys.argv) > 1 else None
     repl(sid)
