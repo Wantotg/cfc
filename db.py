@@ -10,6 +10,8 @@
 # the printing from the SQL is a later job, and a behavioural one, so it isn't
 # mixed into a move that is supposed to change nothing.
 import datetime
+import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -19,6 +21,28 @@ from ui import console
 
 DB_PATH = Path.home() / ".cfc" / "chat.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# What a messages row is. 'chat' is the default and covers everything written
+# before this column existed.
+#
+#   chat          a normal user/assistant message
+#   attachment    a file injected by :attach
+#   recall_marker the note left behind by :remember (see commands.py)
+#   tool_call     an assistant message carrying tool_calls
+#   tool_result   a role='tool' response
+#
+# meta is JSON whose shape depends on kind, or NULL for 'chat'.
+KINDS = ("chat", "attachment", "recall_marker", "tool_call", "tool_result")
+
+# The marker :remember leaves behind, e.g.
+#   [:remember "what did we decide" → 8 excerpts injected (ephemeral)]
+# Kept in step with commands.py by tests/test_schema.py, which asserts a marker
+# built by the real code parses here.
+_MARKER_RE = re.compile(
+    r'^\[:remember "(?P<query>.*)" → (?P<n>\d+) excerpts '
+    r'injected \(ephemeral\)\]$',
+    re.DOTALL,
+)
 
 
 def db():
@@ -64,7 +88,46 @@ def db():
             )
         except sqlite3.OperationalError:
             pass
+    _migrate_messages(conn)
     return conn
+
+
+def _migrate_messages(conn):
+    """Add kind/meta to messages, and classify the rows already there.
+
+    SQLite backfills a new column with its DEFAULT for existing rows, so every
+    pre-existing message becomes kind='chat' for free. Only the :remember
+    markers need reclassifying, and that runs once: the WHERE clause finds
+    nothing on later starts.
+    """
+    added = False
+    for ddl in ("ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'chat'",
+                "ALTER TABLE messages ADD COLUMN meta TEXT"):
+        try:
+            conn.execute(ddl)
+            added = True
+        except sqlite3.OperationalError:
+            pass          # column already there
+
+    # Older rows may predate the DEFAULT and hold NULL.
+    conn.execute("UPDATE messages SET kind='chat' WHERE kind IS NULL")
+
+    rows = conn.execute(
+        "SELECT id, content FROM messages "
+        "WHERE kind='chat' AND content LIKE '[:remember %'"
+    ).fetchall()
+    for mid, content in rows:
+        m = _MARKER_RE.match(content or "")
+        if not m:
+            continue      # a real message that merely starts that way
+        meta = json.dumps({"query": m.group("query"),
+                           "excerpts": int(m.group("n"))})
+        conn.execute(
+            "UPDATE messages SET kind='recall_marker', meta=? WHERE id=?",
+            (meta, mid),
+        )
+    if added or rows:
+        conn.commit()
 
 
 def new_session(conn, title="(untitled)", model=None):
