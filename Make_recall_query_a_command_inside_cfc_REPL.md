@@ -1,5 +1,22 @@
 # Handover — wiring semantic memory into the cfc REPL
 
+> **Status: DONE (2026-07-15, commits 5620b5f…549883d).** All four changes shipped:
+> `:search` → `:grep`, `:recall`, `:remember`, `:forget`. This is kept as a record of
+> *why* the decisions were made, not as a task to do. Read it before changing any of
+> them; ignore its imperative voice.
+>
+> Notes from the build:
+> - The "markup=False matters in three places" concern was a non-issue — `console` is
+>   constructed with `markup=False` globally (`chat.py:43`), so brackets already print
+>   literally everywhere.
+> - `:forget` tracks injected blocks by **object identity**, not index — `history`
+>   keeps growing and indices shift underneath it.
+> - The marker skip lives in `backfill.py`'s `_MARKER_ONLY` regex, so marker rows get
+>   a chunk row but no vector. Format is written in `chat.py` and matched in
+>   `backfill.py` — coupled by convention, same as the `[tool_use: ...]` markers.
+> - The predicted resolution-staleness problem showed up on the first real query, and
+>   turned out to be entangled with a tiny-chunk noise problem — see CLAUDE.md.
+
 ## Context
 
 cfc is a terminal AI chat client (`chat.py`, single file, Python + httpx + rich).
