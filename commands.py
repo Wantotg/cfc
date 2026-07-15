@@ -60,6 +60,27 @@ try:
 except ImportError:
     ATTACH_BUDGET_FRACTION = 0.4
 
+try:
+    from config import TOOLS_ENABLED
+except ImportError:
+    TOOLS_ENABLED = False
+try:
+    from config import TOOLS_MODELS
+except ImportError:
+    TOOLS_MODELS = []
+try:
+    from config import TOOLS_ROOT
+except ImportError:
+    TOOLS_ROOT = ATTACH_ROOT
+try:
+    from config import TOOLS_AUTO_APPROVE
+except ImportError:
+    TOOLS_AUTO_APPROVE = set()
+try:
+    from config import TOOLS_MAX_CALLS_PER_TURN
+except ImportError:
+    TOOLS_MAX_CALLS_PER_TURN = 8
+
 from ui import console, make_bar, make_snippet
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
@@ -783,3 +804,31 @@ def gate_and_dispatch(call, approval, root=None):
     if verdict == "skip":
         return json.dumps({"error": "user skipped"})
     return tools.dispatch(name, args, root)
+
+
+def show_tools_state(current_model, session_on):
+    """:tools — why tools are or aren't available right now.
+
+    Three switches have to line up (master, model, session), so the answer to
+    "why isn't this working" should be one command, not three guesses.
+    """
+    supported = current_model in TOOLS_MODELS
+    active = TOOLS_ENABLED and supported and session_on
+
+    console.print()
+    console.print(f"Tools: {'ACTIVE' if active else 'inactive'} "
+                  f"this turn")
+    console.print(f"  master switch (TOOLS_ENABLED): "
+                  f"{'on' if TOOLS_ENABLED else 'off'}")
+    console.print(f"  session toggle (:tools on|off): "
+                  f"{'on' if session_on else 'off'}")
+    console.print(f"  model {current_model}: "
+                  f"{'supports tools' if supported else 'NOT in TOOLS_MODELS'}")
+    if not supported and TOOLS_MODELS:
+        console.print(f"    tools work with: {', '.join(TOOLS_MODELS)}")
+    console.print(f"  root: {TOOLS_ROOT}")
+    console.print(f"  auto-approve: "
+                  f"{', '.join(sorted(TOOLS_AUTO_APPROVE)) or '(none — every call is gated)'}")
+    console.print(f"  max calls per turn: {TOOLS_MAX_CALLS_PER_TURN}")
+    console.print(f"  available: list_dir, read_file, grep (read-only)")
+    console.print()

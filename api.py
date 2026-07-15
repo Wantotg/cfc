@@ -25,18 +25,26 @@ except ImportError:
 from ui import console
 
 
-def call_api(messages, model=None):
-    """Non-streaming API call. Used for title generation."""
+def call_api(messages, model=None, tools=None):
+    """Non-streaming API call. Used for title generation and the agent loop.
+
+    Streaming is off whenever tools are in play: tool-call deltas arrive
+    fragmented across chunks and the `arguments` string has to be reassembled
+    by index. Not worth it — these responses are fast.
+    """
     model = model or MODEL
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+    }
+    if tools:
+        payload["tools"] = tools
     with httpx.Client(timeout=120) as client:
         r = client.post(
             f"{API_BASE}/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
-            json={
-                "model": model,
-                "messages": messages,
-                "stream": False,
-            },
+            json=payload,
         )
         r.raise_for_status()
         return r.json()

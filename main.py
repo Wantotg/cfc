@@ -21,6 +21,14 @@ try:
     from config import MODEL_LIMITS
 except ImportError:
     MODEL_LIMITS = {}
+try:
+    from config import TOOLS_ENABLED
+except ImportError:
+    TOOLS_ENABLED = False
+try:
+    from config import TOOLS_MODELS
+except ImportError:
+    TOOLS_MODELS = []
 
 from ui import console, make_bar, read_multiline
 # `db` is both the module and its connect function; main.py wants the
@@ -35,6 +43,7 @@ from db import (
     get_persona, get_persona_name, set_persona, clear_persona,
     delete_session,
 )
+from agent import agent_turn, render_answer
 from api import stream_response, generate_title
 from backup import safe_backup
 from complete import install as install_completion
@@ -47,9 +56,17 @@ from commands import (
     search_messages,
     do_recall, do_remember, do_forget,
     do_attach, show_attachments, do_detach,
+    show_tools_state,
 )
 
 # --- Main REPL ---
+
+
+def _one_line(text, width=60):
+    """Squash a tool result to a single short line for the replay."""
+    flat = " ".join((text or "").split())
+    return flat[:width] + ("..." if len(flat) > width else "")
+
 
 def repl(session_id=None):
     conn = db()
@@ -65,6 +82,7 @@ def repl(session_id=None):
 
     history = load_history(conn, session_id)
     injected = []          # blocks added by :remember, newest last
+    tools_on = True        # session toggle; the master switch still gates it
     current_title = get_session_title(conn, session_id)
     current_model = get_session_model(conn, session_id)
     system_prompt = get_system_prompt(conn, session_id)
@@ -85,6 +103,12 @@ def repl(session_id=None):
     ctx_str = context_bar(conn, session_id, current_model)
     if ctx_str:
         console.print(f"Context: {ctx_str}")
+
+    # Once, here — not on every turn. The handoff is explicit about that, and
+    # a warning printed each turn is a warning nobody reads.
+    if TOOLS_ENABLED and current_model not in TOOLS_MODELS:
+        console.print(f"Tools are enabled but {current_model} is not in "
+                      f"TOOLS_MODELS — proceeding without tools.")
 
     console.print("Commands:")
     console.print("  :q            quit")
@@ -141,6 +165,9 @@ def repl(session_id=None):
     console.print("  :model        show current model")
     console.print("  :model name   switch to model 'name'")
     console.print("  :models       list configured models")
+    console.print("  :tools        show tool state for this "
+                  "session")
+    console.print("  :tools on     enable tools this session")
     console.print("  :config       show all settings")
     console.print("  \"\"\"           start multi-line input")
     console.print()
@@ -149,6 +176,19 @@ def repl(session_id=None):
         console.print("--- Previous messages in this session "
                       "---")
         for m in history:
+            # Tool rows replay too, but raw: a tool result is a JSON blob and
+            # a tool call has empty content, so printing them as "ai> ..."
+            # dumps machine chatter at someone catching up on a conversation.
+            if m.get("role") == "tool":
+                console.print(f"     [tool result: "
+                              f"{_one_line(m.get('content'))}]\n")
+                continue
+            if m.get("tool_calls"):
+                for c in m["tool_calls"]:
+                    console.print(f"     [called "
+                                  f"{c.get('function', {}).get('name')}]")
+                if not (m.get("content") or "").strip():
+                    continue
             label = "you" if m["role"] == "user" else "ai"
             console.print(f"{label}> {m['content']}\n")
         console.print("--- End of history ---\n")
@@ -466,23 +506,73 @@ def repl(session_id=None):
                                   "available files.")
             continue
 
+        # --- Tools ---
+
+        if user.startswith(":tools"):
+            arg = user.split(maxsplit=1)
+            arg = arg[1].strip() if len(arg) > 1 else ""
+            if arg == "on":
+                tools_on = True
+                console.print("Tools on for this session.")
+                if current_model not in TOOLS_MODELS:
+                    console.print(f"Note: {current_model} is not in "
+                                  f"TOOLS_MODELS, so tools stay inactive.")
+                elif not TOOLS_ENABLED:
+                    console.print("Note: TOOLS_ENABLED is False in "
+                                  "config.py, so tools stay inactive.")
+            elif arg == "off":
+                tools_on = False
+                console.print("Tools off for this session.")
+            elif not arg:
+                show_tools_state(current_model, tools_on)
+            else:
+                console.print("Usage: :tools | :tools on | :tools off")
+            continue
+
         # --- Chat ---
 
         save_message(conn, session_id, "user", user,
                      model=current_model)
         history.append({"role": "user", "content": user})
 
-        api_messages = []
+        prefix = []
         if persona:
-            api_messages.append({
+            prefix.append({
                 "role": "system",
                 "content": persona,
             })
         if system_prompt:
-            api_messages.append({
+            prefix.append({
                 "role": "system",
                 "content": system_prompt,
             })
+
+        # Tools need all three switches on. Otherwise the original single
+        # streamed call, unchanged.
+        use_tools = (TOOLS_ENABLED and tools_on
+                     and current_model in TOOLS_MODELS)
+
+        if use_tools:
+            try:
+                final = agent_turn(prefix, history, current_model,
+                                   conn, session_id)
+            except KeyboardInterrupt:
+                console.print("\n[tool turn cancelled]\n")
+                continue
+            except httpx.HTTPError as e:
+                console.print(f"\n[error] {e}\n")
+                continue
+            render_answer(final.get("content"))
+            console.print()
+            if current_title == "(untitled)":
+                new_title = generate_title(user)
+                if new_title != "(untitled)":
+                    set_session_title(conn, session_id, new_title)
+                    current_title = new_title
+                    console.print(f"[title: {new_title}]\n")
+            continue
+
+        api_messages = list(prefix)
         api_messages.extend(history)
 
         console.print()  # blank line before AI panel

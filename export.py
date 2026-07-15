@@ -36,6 +36,42 @@ def _attachment_line(content, meta):
     return ref + (f", `sha256:{digest}`" if digest else "")
 
 
+def _tool_line(kind, content, meta):
+    """Compact reference for a tool call or its result.
+
+    Raw JSON dumps of arguments and 30k-char file reads would drown the
+    transcript. The database has the detail; the export is a readable record
+    of what happened.
+    """
+    try:
+        info = json.loads(meta) if meta else {}
+    except json.JSONDecodeError:
+        info = {}
+
+    if kind == "tool_call":
+        names = []
+        for c in info.get("tool_calls") or []:
+            fn = (c.get("function") or {})
+            arg = ""
+            try:
+                a = json.loads(fn.get("arguments") or "{}")
+                arg = a.get("path") or a.get("pattern") or ""
+            except json.JSONDecodeError:
+                pass
+            names.append(f"`{fn.get('name')}`" + (f" — `{arg}`" if arg else ""))
+        return "> **Tool call:** " + ", ".join(names or ["(none)"])
+
+    name = info.get("tool") or "tool"
+    try:
+        d = json.loads(content or "")
+        if isinstance(d, dict) and "error" in d:
+            return f"> **Tool:** `{name}` — {d['error']}"
+    except (json.JSONDecodeError, TypeError):
+        pass
+    n = len((content or "").splitlines())
+    return f"> **Tool:** `{name}` — approved, {n:,} lines returned"
+
+
 def export_session(conn, session_id, quiet=False):
     session = conn.execute(
         "SELECT id, title, model, provider, "
@@ -131,6 +167,11 @@ def export_session(conn, session_id, quiet=False):
             lines.append(_attachment_line(content, meta))
             lines.append("")
             lines.append("---")
+            lines.append("")
+            continue
+
+        if kind in ("tool_call", "tool_result"):
+            lines.append(_tool_line(kind, content, meta))
             lines.append("")
             continue
 

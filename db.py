@@ -166,12 +166,69 @@ def save_message(conn, session_id, role, content,
 
 
 def load_history(conn, session_id):
+    """Rebuild the message list for the API.
+
+    Tool rows need more than role+content: an assistant message that made
+    calls carries `tool_calls`, and each result carries the `tool_call_id` it
+    answers. ORDER BY id preserves the order they were written in, which is
+    what keeps results immediately after the call that asked for them.
+
+    Orphaned calls are dropped — see _drop_orphan_tool_calls.
+    """
     rows = conn.execute(
-        "SELECT role, content FROM messages "
+        "SELECT role, content, kind, meta FROM messages "
         "WHERE session_id=? ORDER BY id",
         (session_id,),
     ).fetchall()
-    return [{"role": r, "content": c} for r, c in rows]
+    out = []
+    for role, content, kind, meta in rows:
+        m = {"role": role, "content": content}
+        info = {}
+        if meta:
+            try:
+                info = json.loads(meta)
+            except json.JSONDecodeError:
+                info = {}
+        if kind == "tool_call" and info.get("tool_calls"):
+            m["tool_calls"] = info["tool_calls"]
+        elif kind == "tool_result":
+            m["tool_call_id"] = info.get("tool_call_id")
+        out.append(m)
+    return _drop_orphan_tool_calls(out)
+
+
+def _drop_orphan_tool_calls(messages):
+    """Remove assistant tool_calls that have no matching tool result.
+
+    The API rejects a conversation where an assistant message requests a call
+    that is never answered. That happens for real: Ctrl-C during a tool turn,
+    or a crash between saving the call and saving its result. Without this,
+    one interrupted turn would make a session permanently unopenable — every
+    later message would 400 on history the user can't see or edit.
+
+    Dropping is safe: a call with no result contributed nothing anyway.
+    """
+    answered = {m.get("tool_call_id") for m in messages
+                if m.get("role") == "tool"}
+    out = []
+    for m in messages:
+        calls = m.get("tool_calls")
+        if not calls:
+            out.append(m)
+            continue
+        kept = [c for c in calls if c.get("id") in answered]
+        if len(kept) == len(calls):
+            out.append(m)
+            continue
+        if kept:
+            m = dict(m, tool_calls=kept)
+            out.append(m)
+        elif (m.get("content") or "").strip():
+            # keep any prose it said alongside the dropped calls
+            m = {k: v for k, v in m.items() if k != "tool_calls"}
+            out.append(m)
+        # else: nothing but unanswered calls — drop the message entirely
+    return out
 
 
 def list_attachments(conn, session_id):
