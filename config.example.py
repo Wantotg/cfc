@@ -31,3 +31,17 @@ MODEL_LIMITS = {
     "moonshotai/kimi-k2.6:thinking": 256000,
     "longcat-2.0": 1000000,
 }
+
+# --- :attach ---------------------------------------------------------------
+# Files can only be attached from inside ATTACH_ROOT. Paths are resolved before
+# the check, so ../ and symlinks can't escape it. Some files are refused even
+# inside the root regardless of this setting (config.py, .env, keys, .ssh/ ...)
+# — see paths.py. ATTACH_DENY_EXTRA adds to that list; nothing removes from it.
+from pathlib import Path
+
+ATTACH_ROOT = Path("~/projects").expanduser()
+ATTACH_EXTENSIONS = {".md", ".txt", ".py", ".json", ".yaml", ".yml",
+                     ".toml", ".csv", ".sql", ".sh"}
+ATTACH_MAX_CHARS = 100_000
+ATTACH_BUDGET_FRACTION = 0.4   # max share of the model's context one file may take
+ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")

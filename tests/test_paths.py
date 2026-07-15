@@ -107,26 +107,26 @@ def main():
     print("\n--- deny list (inside the jail, still refused) ---")
     for name in ["config.py", ".env", ".netrc", "id_rsa", "credentials.json"]:
         (jail / name).write_text("SECRET")
-        refuses(f"{name} refused inside root", jail / name, jail, expect="refused")
+        refuses(f"{name} refused inside root", jail / name, jail, expect="deny list")
 
     for name in ["server.pem", "private.key", "backup.kdbx", ".env.production",
                  "deploy_ed25519"]:
         (jail / name).write_text("SECRET")
-        refuses(f"{name} refused by pattern", jail / name, jail, expect="refused")
+        refuses(f"{name} refused by pattern", jail / name, jail, expect="denied pattern")
 
     ssh = jail / ".ssh"
     ssh.mkdir()
     (ssh / "known_hosts").write_text("x")
-    refuses(".ssh/ component refused", ssh / "known_hosts", jail, expect="refused")
+    refuses(".ssh/ component refused", ssh / "known_hosts", jail, expect="never readable")
 
     print("\n--- deny list is case-insensitive ---")
     (jail / "Config.PY").write_text("SECRET")
-    refuses("Config.PY refused", jail / "Config.PY", jail, expect="refused")
+    refuses("Config.PY refused", jail / "Config.PY", jail, expect="deny list")
 
     print("\n--- deny list survives a rename (checks the resolved target) ---")
     sneaky = jail / "totally_fine_notes.md"
     sneaky.symlink_to(jail / "config.py")
-    refuses("symlink named .md -> config.py", sneaky, jail, expect="refused")
+    refuses("symlink named .md -> config.py", sneaky, jail, expect="deny list")
 
     print("\n--- lookalikes that must still be allowed ---")
     for name in ["config.example.py", "configuration.py", "environment.md",
@@ -139,7 +139,7 @@ def main():
     real_cfg = ROOT / "config.py"
     if real_cfg.exists():
         refuses("the actual config.py holding API_KEY",
-                real_cfg, real_root, expect="refused")
+                real_cfg, real_root, expect="deny list")
     allows("but main.py is attachable", ROOT / "main.py", real_root)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

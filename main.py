@@ -37,6 +37,7 @@ from db import (
 )
 from api import stream_response, generate_title
 from backup import safe_backup
+from complete import install as install_completion
 from export import export_session, safe_export
 from hub import list_sessions, pick_session
 from commands import (
@@ -45,12 +46,14 @@ from commands import (
     list_models, show_config, show_token_stats, context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
+    do_attach, show_attachments, do_detach,
 )
 
 # --- Main REPL ---
 
 def repl(session_id=None):
     conn = db()
+    install_completion()
 
     if session_id is None:
         result = pick_session(conn)
@@ -108,6 +111,11 @@ def repl(session_id=None):
                   "into this conversation")
     console.print("  :forget       drop the last injected "
                   "excerpts")
+    console.print("  :attach path  attach a local text file "
+                  "(persistent)")
+    console.print("  :attached     list attachments in this "
+                  "session")
+    console.print("  :detach 1     remove attachment #1")
     console.print("  :tag python   add tag 'python' to this "
                   "session")
     console.print("  :tag 3 python add tag to session #3")
@@ -278,6 +286,29 @@ def repl(session_id=None):
 
         if user == ":forget":
             do_forget(history, injected)
+            continue
+
+        # --- Attachments ---
+        #
+        # :attached and :detach are matched before :attach, because
+        # ":attached".startswith(":attach") is true and would otherwise be
+        # read as an attach of a file called "ed".
+
+        if user == ":attached":
+            show_attachments(conn, session_id)
+            continue
+
+        if user.startswith(":detach"):
+            parts = user.split(maxsplit=1)
+            do_detach(conn, session_id, history,
+                      parts[1] if len(parts) > 1 else "")
+            continue
+
+        if user.startswith(":attach"):
+            parts = user.split(maxsplit=1)
+            do_attach(conn, session_id, history,
+                      parts[1].strip() if len(parts) > 1 else "",
+                      model=current_model)
             continue
 
         # --- Model commands ---

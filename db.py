@@ -143,15 +143,20 @@ def new_session(conn, title="(untitled)", model=None):
 
 
 def save_message(conn, session_id, role, content,
-                 tok_in=None, tok_out=None, model=None):
+                 tok_in=None, tok_out=None, model=None,
+                 kind="chat", meta=None):
+    """Insert a message. kind/meta default to a plain chat row, so callers
+    that predate the column need no changes. meta may be a dict or JSON str."""
     model = model or MODEL
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if meta is not None and not isinstance(meta, str):
+        meta = json.dumps(meta)
     conn.execute(
         "INSERT INTO messages(session_id, role, content, "
-        "model, tokens_in, tokens_out, created_at) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "model, tokens_in, tokens_out, created_at, kind, meta) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
         (session_id, role, content, model,
-         tok_in, tok_out, now),
+         tok_in, tok_out, now, kind, meta),
     )
     conn.execute(
         "UPDATE sessions SET updated_at=? WHERE id=?",
@@ -167,6 +172,31 @@ def load_history(conn, session_id):
         (session_id,),
     ).fetchall()
     return [{"role": r, "content": c} for r, c in rows]
+
+
+def list_attachments(conn, session_id):
+    """Attachments in this session, oldest first. Returns dicts with the meta
+    already decoded. The index a user types at :detach is this list's 1-based
+    position, so ordering must stay stable — hence ORDER BY id."""
+    rows = conn.execute(
+        "SELECT id, meta FROM messages "
+        "WHERE session_id=? AND kind='attachment' ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    out = []
+    for mid, meta in rows:
+        try:
+            info = json.loads(meta) if meta else {}
+        except json.JSONDecodeError:
+            info = {}
+        info["message_id"] = mid
+        out.append(info)
+    return out
+
+
+def delete_message(conn, message_id):
+    conn.execute("DELETE FROM messages WHERE id=?", (message_id,))
+    conn.commit()
 
 
 def get_session_title(conn, session_id):

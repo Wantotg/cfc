@@ -6,12 +6,34 @@
 #
 # safe_export() is the auto-export-on-exit path: it must never take the REPL
 # down on the way out, so it swallows everything and reports.
+import json
 from pathlib import Path
 
 from config import VAULT_PATH
 
 from ui import console
 from db import get_session_tags
+
+
+def _attachment_line(content, meta):
+    """One-line reference for an attached file.
+
+    Falls back to counting the wrapper itself if meta is missing or unreadable
+    — an export should degrade to something truthful rather than raise.
+    """
+    try:
+        info = json.loads(meta) if meta else {}
+    except json.JSONDecodeError:
+        info = {}
+    name = info.get("name") or "attachment"
+    chars = info.get("chars")
+    if chars is None:
+        chars = len(content or "")
+    digest = (info.get("sha256") or "")[:8]
+    lines = (content or "").count("\n") + 1
+    kb = chars / 1024
+    ref = f"> **Attached:** `{name}` — {lines:,} lines, {kb:,.0f} KB"
+    return ref + (f", `sha256:{digest}`" if digest else "")
 
 
 def export_session(conn, session_id, quiet=False):
@@ -32,7 +54,7 @@ def export_session(conn, session_id, quiet=False):
 
     messages = conn.execute(
         "SELECT role, content, tokens_in, tokens_out, "
-        "created_at FROM messages "
+        "created_at, kind, meta FROM messages "
         "WHERE session_id=? ORDER BY id",
         (session_id,),
     ).fetchall()
@@ -101,7 +123,17 @@ def export_session(conn, session_id, quiet=False):
         lines.append("---")
         lines.append("")
 
-    for role, content, tok_in, tok_out, created in messages:
+    for role, content, tok_in, tok_out, created, kind, meta in messages:
+        # An attachment's content is the whole file. Writing that into the
+        # vault would double the export for nothing: the database already
+        # holds it, and the export is a reference, not a second copy.
+        if kind == "attachment":
+            lines.append(_attachment_line(content, meta))
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+            continue
+
         if role == "user":
             label = "You"
         elif role == "assistant":

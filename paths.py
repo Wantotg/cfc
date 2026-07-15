@@ -98,6 +98,6 @@ def path_guard(path, root):
 
     why = _denied(p)
     if why:
-        raise PathError(f"refused: {why}")
+        raise PathError(why)
 
     return p

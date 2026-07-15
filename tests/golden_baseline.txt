@@ -15,6 +15,9 @@ Commands:
   :recall q     ask your history a question (cited answer)
   :remember q   pull matching excerpts into this conversation
   :forget       drop the last injected excerpts
+  :attach path  attach a local text file (persistent)
+  :attached     list attachments in this session
+  :detach 1     remove attachment #1
   :tag python   add tag 'python' to this session
   :tag 3 python add tag to session #3
   :tags         show tags on this session
