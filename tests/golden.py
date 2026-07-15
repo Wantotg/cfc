@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-golden.py — characterisation harness for the chat.py split.
+golden.py — characterisation harness for the REPL.
 
 Not a unit test suite. It pins down what the REPL *currently prints*, so a
 refactor that is supposed to change nothing can be shown to change nothing.
@@ -66,8 +66,27 @@ SCRIPT = [
     ":q",
 ]
 
+REAL_DB = Path.home() / ".cfc" / "chat.db"
+
+
+def assert_not_real(path, what):
+    """Refuse to touch the user's actual database. Called before anything
+    destructive, never after.
+
+    This exists because the original guard ran *after* build_fixture(), which
+    opens with unlink(). Pointing FIXTURE at the real path to prove the guard
+    worked deleted the real database and then correctly reported that it was
+    protecting it. An assertion downstream of the damage is decoration.
+    """
+    p = Path(path).expanduser().resolve()
+    if p == REAL_DB.expanduser().resolve():
+        raise AssertionError(f"{what}: refusing to touch the real database "
+                             f"at {p}")
+
+
 def build_fixture(path):
     """A small deterministic database. Fixed timestamps: no clock in output."""
+    assert_not_real(path, "build_fixture")
     if path.exists():
         path.unlink()
     conn = sqlite3.connect(path)
@@ -127,16 +146,17 @@ def normalise(text):
     return "\n".join(l.rstrip() for l in text.splitlines())
 
 def capture():
+    assert_not_real(FIXTURE, "capture")
     build_fixture(FIXTURE)
     # Rich reads width at construction, so pin it before importing anything
     # that builds a Console at import time.
     os.environ["COLUMNS"] = "100"
     os.environ["TERM"] = "dumb"
 
-    import chat
+    import main as chat
 
     # Point every module that holds a DB_PATH at the fixture. During the split
-    # DB_PATH moves from chat.py to db.py, and patching only chat.DB_PATH would
+    # DB_PATH lives in db.py, and patching only main.DB_PATH would
     # leave the connection opening the real ~/.cfc/chat.db — this script runs
     # :title, :tag and :untag, so that is a live-data hazard, not a test bug.
     patched = []
@@ -148,10 +168,8 @@ def capture():
     if not patched:
         raise SystemExit("refusing to run: found no DB_PATH to redirect")
 
-    real = Path.home() / ".cfc" / "chat.db"
     for name in patched:
-        assert Path(getattr(sys.modules[name], "DB_PATH")) != real, \
-            f"{name}.DB_PATH still points at the real database"
+        assert_not_real(getattr(sys.modules[name], "DB_PATH"), f"{name}.DB_PATH")
 
     # Redirect the shared Console by mutating it, never by rebinding a module
     # attribute: once modules do `from ui import console`, setting chat.console

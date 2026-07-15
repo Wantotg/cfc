@@ -19,12 +19,12 @@ from embed import embed_texts, EMBED_DIM
 
 # A chunk that is ONLY a marker is litter — skip embedding it.
 #   [tool_use: ...] / [tool_result]  — written by import_anthropic.py
-#   [:remember ... (ephemeral)]      — written by chat.py's :remember
+#   [:remember ... (ephemeral)]      — written by commands.py's :remember
 # The :remember marker is persisted deliberately: it's the only record that
 # recalled excerpts were injected at that point, so an export can distinguish a
 # grounded claim from an invented one. Embedding it would put a row that
 # describes a search into the results of future searches. Keep the row, skip
-# the vector. If the marker format in chat.py changes, change this too.
+# the vector. If the marker format in commands.py changes, change this too.
 _MARKER_LINE = re.compile(
     r"^\s*(\[tool_use:[^\]]*\]"
     r"|\[tool_result\]"

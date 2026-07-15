@@ -61,13 +61,13 @@ Then edit `config.py` and set:
 **4. Run**
 
 ```bash
-python chat.py
+python main.py
 ```
 
 Optional shell alias for convenience:
 
 ```bash
-alias cfc='cd ~/projects/cfc && source .venv/bin/activate && python chat.py'
+alias cfc='cd ~/projects/cfc && source .venv/bin/activate && python main.py'
 ```
 
 ## Usage
@@ -83,7 +83,7 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 | number | Open that session |
 | `q` | Quit |
 
-`python chat.py 5` opens session 5 directly, skipping the hub.
+`python main.py 5` opens session 5 directly, skipping the hub.
 
 ### In-session commands
 
@@ -111,10 +111,10 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 
 ## How it works
 
-Everything lives in a single `chat.py`. The flow:
+The flow:
 
 ```
-main() → show_hub() → repl() → show_hub() → ... → quit
+main.py → pick_session() → repl() → ... → quit
 ```
 
 - **SQLite** (`~/.cfc/chat.db`) holds sessions, messages, tags, and a session↔tag junction table. Schema and migrations run automatically on start — safe to re-run on an existing database.
@@ -137,7 +137,20 @@ main() → show_hub() → repl() → show_hub() → ... → quit
 
 ## Project structure
 
-For a future Docker move, `chat.py` is intended to split into `db.py`, `api.py`, `export.py`, `commands.py`, `hub.py`, and `main.py`, with `config.py` already separate.
+| File | Holds |
+|---|---|
+| `main.py` | the REPL: dispatch, and the live session state |
+| `commands.py` | what each `:` command does |
+| `hub.py` | the session browser and picker |
+| `db.py` | connection, schema, every query |
+| `api.py` | streaming and non-streaming calls to the endpoint |
+| `export.py` | writing a session out to the vault |
+| `ui.py` | the shared console and presentation helpers |
+| `config.py` | settings — gitignored |
+
+The memory layer is separate again: `import_anthropic.py`, `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.
+
+`tests/golden.py` pins the REPL's output for every command that makes no API call. Run `python tests/golden.py check` after touching any of the above; `record` re-baselines it once a change to the output is intended.
 
 ## License
 

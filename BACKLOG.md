@@ -74,12 +74,16 @@ number, junk) behave correctly with it present.
 **Found:** 2026-07-15.
 
 `backfill.py`'s `_MARKER_LINE` hard-codes the marker formats written by
-`import_anthropic.py` (`[tool_use: ...]`, `[tool_result]`) and `chat.py`
+`import_anthropic.py` (`[tool_use: ...]`, `[tool_result]`) and `commands.py`
 (`[:remember ... (ephemeral)]`). Change a marker format in either file and
 litter silently starts getting embedded again — which is exactly the bug that
 was just fixed (the old regex matched one marker against the whole chunk, so
 concatenated markers leaked through).
 
-The comment says "if the marker format in chat.py changes, change this too",
-which is a comment doing a test's job. When the `chat.py` split happens and
-markers move to `commands.py`, this will break quietly.
+The comment says "if the marker format in commands.py changes, change this too",
+which is a comment doing a test's job. The split has since moved the markers
+from `chat.py` to `commands.py` and the comment had to be chased by hand —
+exactly the failure it warns about, just caught this time.
+
+A test asserting `is_litter("[:remember x (ephemeral)]") is True` against the
+string `commands.py` actually writes would make this self-enforcing.
