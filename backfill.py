@@ -82,7 +82,8 @@ def main():
     prune = "--prune" in argv
     args = [a for a in argv if not a.startswith("--")]
     if len(args) != 1:
-        print("usage: python3 backfill.py /path/to/chat.db [--limit N]"); sys.exit(1)
+        print("usage: python3 backfill.py /path/to/chat.db [--limit N] "
+              "[--prune]"); sys.exit(1)
 
     db = connect(args[0])
     ensure_vec_table(db)

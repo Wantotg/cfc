@@ -54,6 +54,28 @@ time, unlike the litter prune, which only deleted).
 
 ---
 
+## `:q` quits instead of returning to the hub
+
+**Found:** 2026-07-15, while rewriting the README.
+
+The README claimed, in Features and in the command table, that `:q` returns to
+the hub instead of quitting, and that the hub takes `s` (search), `l` (list)
+and `t` (tags). None of that is true, and none of it ever was — checked against
+the pre-split baseline `e4ada29`: `repl()` has always ended by returning to
+`__main__`, which then exits, and `pick_session` has only ever accepted a
+number, `n` or `q`.
+
+The README now describes what the program does. But the described version is
+arguably the better one — a hub you return to is the reason a hub exists, and
+`:new` already covers "start another session" from inside a session.
+
+Left undone because it's a design decision, not a bug fix: making `:q` return
+to the hub means wrapping `repl()` in a loop in `__main__`, and deciding what
+then quits for real (`:quit`? `q` at the hub?). Cheap to build, but it should
+be chosen rather than inferred from a stale README.
+
+---
+
 ## `longcat-2.0` is in MODELS but can't chat
 
 **Found:** 2026-07-15, while verifying which models do tool calling.
