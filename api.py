@@ -46,8 +46,30 @@ def call_api(messages, model=None, tools=None):
             headers={"Authorization": f"Bearer {API_KEY}"},
             json=payload,
         )
-        r.raise_for_status()
+        if r.is_error:
+            raise httpx.HTTPError(_error_detail(r))
         return r.json()
+
+
+def _error_detail(r):
+    """The provider's own words, not httpx's.
+
+    raise_for_status() reports the status code and links MDN — it discards the
+    response body, which is the only part that says *why*. A 400 on a tool call
+    is unreadable without it.
+    """
+    body = (r.text or "").strip()
+    try:
+        d = r.json()
+        if isinstance(d, dict):
+            err = d.get("error", d)
+            if isinstance(err, dict):
+                body = err.get("message") or json.dumps(err)
+            elif isinstance(err, str):
+                body = err
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return f"HTTP {r.status_code} from {r.request.url}: {body[:800] or '(empty body)'}"
 
 
 def stream_response(messages, model=None):
@@ -84,7 +106,9 @@ def stream_response(messages, model=None):
                 },
                 json=payload,
             ) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    response.read()
+                    raise httpx.HTTPError(_error_detail(response))
                 for line in response.iter_lines():
                     if not line or not line.startswith(
                         "data: "
