@@ -54,6 +54,24 @@ time, unlike the litter prune, which only deleted).
 
 ---
 
+## `longcat-2.0` is in MODELS but can't chat
+
+**Found:** 2026-07-15, while verifying which models do tool calling.
+
+`longcat-2.0` is listed in `config.py`'s `MODELS` and `MODEL_LIMITS`, so
+`:model longcat-2.0` switches to it happily — and then every message fails:
+
+```
+HTTP 400: Model longcat-2.0 is not supported on /v1/chat/completions.
+```
+
+Pre-existing; nothing to do with tools. It presumably lives on a different
+nano-gpt endpoint, or the name has changed. Either drop it from `MODELS` or
+find the right endpoint. Nothing validates that a model in `MODELS` can
+actually be chatted with, which is why this sat there unnoticed.
+
+---
+
 ## `pick_session` has an unreachable duplicate loop
 
 **Found:** 2026-07-15, while extracting `hub.py`.

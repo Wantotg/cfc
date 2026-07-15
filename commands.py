@@ -10,6 +10,7 @@
 # broken memory layer degrades :recall / :remember only, rather than stopping
 # cfc from starting at all.
 import hashlib
+import json
 from pathlib import Path
 
 from rich.live import Live
@@ -63,6 +64,7 @@ from ui import console, make_bar, make_snippet
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
 from paths import path_guard, PathError
+import tools
 
 # How many chunks :recall and :remember pull. Also a diagnostic: if eight hits
 # come back and seven are the same dead end, that's the corpus talking.
@@ -708,3 +710,76 @@ def do_detach(conn, session_id, history, arg):
             if m.get("role") == "user" and digest in (m.get("content") or ""):
                 history.remove(m)
     console.print(f"Detached {name}.")
+
+
+# --- tool approval gate ----------------------------------------------------
+#
+# Every tool call passes through here before dispatch, unless its name is in
+# TOOLS_AUTO_APPROVE. The panel shows the resolved path and the real file size,
+# so the cost of approving is visible before the decision rather than after.
+#
+# This gate decides *whether* a call runs. It does not decide whether it is
+# allowed: path_guard runs inside tools.dispatch() regardless. Approving a call
+# that then fails validation is correct behaviour, not a contradiction.
+
+
+class TurnApproval:
+    """Per-turn approval state. 'A' (allow all) lives here, and dies with the
+    turn — a fresh instance per turn is what makes 'resets at end of turn'
+    true by construction rather than by remembering to reset it."""
+
+    def __init__(self, auto_approve=()):
+        self.auto = set(auto_approve or ())
+        self.allow_all = False
+
+
+def gate(call, approval, root=None):
+    """Ask about one tool call. Returns 'allow' | 'deny' | 'skip'.
+
+    Reading a denial as data is the whole point: 'deny' and 'skip' both come
+    back to the model as an error it can adapt to, so refusing is a normal
+    move in the conversation rather than an abort.
+    """
+    fn = call.get("function", {})
+    name = fn.get("name", "?")
+    args = fn.get("arguments", "{}")
+
+    if name in approval.auto or approval.allow_all:
+        return "allow"
+
+    body = "\n".join([name] + [f"  {l}" for l in tools.describe(name, args, root)])
+    console.print()
+    console.print(Panel(body, title="Tool call", title_align="left",
+                        border_style="yellow"))
+    console.print("[a]llow  [d]eny  [A]llow all this turn  [s]kip")
+
+    while True:
+        try:
+            choice = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[denied]")
+            return "deny"
+        if choice == "a":
+            return "allow"
+        if choice == "A":
+            approval.allow_all = True
+            return "allow"
+        if choice == "d":
+            return "deny"
+        if choice == "s":
+            return "skip"
+        console.print("Type a, d, A or s.")
+
+
+def gate_and_dispatch(call, approval, root=None):
+    """Gate one call, then dispatch it if allowed. Always returns a string."""
+    fn = call.get("function", {})
+    name = fn.get("name", "?")
+    args = fn.get("arguments", "{}")
+
+    verdict = gate(call, approval, root)
+    if verdict == "deny":
+        return json.dumps({"error": "user denied"})
+    if verdict == "skip":
+        return json.dumps({"error": "user skipped"})
+    return tools.dispatch(name, args, root)

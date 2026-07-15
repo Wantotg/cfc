@@ -309,3 +309,63 @@ def dispatch(name, arguments, root=None):
     except Exception as e:
         # A tool bug must not take the agent loop down with it.
         return _err(f"{name} failed: {type(e).__name__}: {e}")
+
+
+def describe(name, arguments, root=None):
+    """A human-readable summary of a call, for the approval gate.
+
+    Shows the resolved path and, for read_file, the real size — so the cost of
+    approving is visible before the decision, not after. Deliberately does not
+    validate: this is what the model *asked for*, and a call that will be
+    refused should still be shown honestly rather than pre-filtered.
+    """
+    root = root if root is not None else TOOLS_ROOT
+    if isinstance(arguments, str):
+        try:
+            args = json.loads(arguments) if arguments.strip() else {}
+        except json.JSONDecodeError:
+            return [f"arguments: {arguments[:60]}", "(unparseable)"]
+    else:
+        args = arguments or {}
+    if not isinstance(args, dict):
+        return [f"arguments: {str(args)[:60]}", "(unparseable)"]
+
+    lines = []
+    raw = args.get("path")
+    if raw is not None:
+        try:
+            p = Path(str(raw)).expanduser().resolve()
+            lines.append(f"path: {_tilde(p)}")
+        except (OSError, ValueError):
+            lines.append(f"path: {raw}")
+            p = None
+    else:
+        p = None
+
+    if name == "grep":
+        lines.insert(0, f"pattern: {args.get('pattern')!r}")
+        if raw is None:
+            lines.append(f"path: {_tilde(Path(root))} (whole tree)")
+
+    if name == "read_file":
+        lo, hi = args.get("start_line"), args.get("end_line")
+        if lo or hi:
+            lines.append(f"lines: {lo or 1}-{hi or 'end'}")
+        if p is not None and p.is_file():
+            try:
+                size = p.stat().st_size
+                n = sum(1 for _ in p.open("rb"))
+                lines.append(f"({n:,} lines, {size / 1024:,.0f} KB)")
+            except OSError:
+                pass
+        elif p is not None and not p.exists():
+            lines.append("(does not exist)")
+
+    return lines
+
+
+def _tilde(p):
+    try:
+        return "~/" + str(p.relative_to(Path.home()))
+    except ValueError:
+        return str(p)
