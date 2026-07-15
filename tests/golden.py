@@ -16,6 +16,7 @@ If `check` fails after a pure move, the move was not pure.
 """
 import io, os, re, sys, sqlite3, difflib, contextlib, shutil
 from pathlib import Path
+from rich.console import Console
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -127,25 +128,37 @@ def normalise(text):
 
 def capture():
     build_fixture(FIXTURE)
-    os.environ["COLUMNS"] = "100"     # pin rich's width
+    # Rich reads width at construction, so pin it before importing anything
+    # that builds a Console at import time.
+    os.environ["COLUMNS"] = "100"
     os.environ["TERM"] = "dumb"
 
     import chat
     chat.DB_PATH = FIXTURE
-    # rich caches width at construction; rebuild the console against the pin
-    from rich.console import Console
-    chat.console = Console(markup=False, width=100, force_terminal=False)
+
+    # Redirect the shared Console by mutating it, never by rebinding a module
+    # attribute: once modules do `from ui import console`, setting chat.console
+    # would leave every other module writing to the real stdout and this
+    # harness would quietly grade the wrong output.
+    consoles = []
+    for mod in list(sys.modules.values()):
+        c = getattr(mod, "console", None)
+        if isinstance(c, Console) and c not in consoles:
+            consoles.append(c)
 
     stdin = io.StringIO("\n".join(SCRIPT) + "\n")
     out = io.StringIO()
-    real_stdin = sys.stdin
+    real_stdin, saved = sys.stdin, [c.file for c in consoles]
     sys.stdin = stdin
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            chat.console.file = out
+            for c in consoles:
+                c.file = out
             chat.repl(session_id=1)
     finally:
         sys.stdin = real_stdin
+        for c, f in zip(consoles, saved):
+            c.file = f
         FIXTURE.unlink(missing_ok=True)
     return normalise(out.getvalue())
 
