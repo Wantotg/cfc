@@ -45,3 +45,21 @@ ATTACH_EXTENSIONS = {".md", ".txt", ".py", ".json", ".yaml", ".yml",
 ATTACH_MAX_CHARS = 100_000
 ATTACH_BUDGET_FRACTION = 0.4   # max share of the model's context one file may take
 ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")
+
+# --- local file tools ------------------------------------------------------
+# Read-only tools the model can request: list_dir, read_file, grep. Off by
+# default — opt in per session with ":tools on".
+#
+# TOOLS_MODELS was verified against the nano-gpt subscription, not assumed:
+# these three emit OpenAI-style tool_calls; longcat-2.0 rejects
+# /v1/chat/completions outright. GLM 5.2 is the intended primary driver.
+TOOLS_ENABLED = False
+TOOLS_MODELS = [
+    "zai-org/glm-5.2:thinking",
+    "deepseek/deepseek-v4-pro:thinking",
+    "moonshotai/kimi-k2.6:thinking",
+]
+TOOLS_ROOT = ATTACH_ROOT          # same jail, same deny list
+TOOLS_AUTO_APPROVE = set()        # e.g. {"list_dir"} once trusted; empty gates everything
+TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker
+TOOLS_MAX_RESULT_CHARS = 30_000   # truncate tool output
