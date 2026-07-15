@@ -134,7 +134,24 @@ def capture():
     os.environ["TERM"] = "dumb"
 
     import chat
-    chat.DB_PATH = FIXTURE
+
+    # Point every module that holds a DB_PATH at the fixture. During the split
+    # DB_PATH moves from chat.py to db.py, and patching only chat.DB_PATH would
+    # leave the connection opening the real ~/.cfc/chat.db — this script runs
+    # :title, :tag and :untag, so that is a live-data hazard, not a test bug.
+    patched = []
+    for name, mod in list(sys.modules.items()):
+        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
+            if hasattr(mod, "DB_PATH"):
+                setattr(mod, "DB_PATH", FIXTURE)
+                patched.append(name)
+    if not patched:
+        raise SystemExit("refusing to run: found no DB_PATH to redirect")
+
+    real = Path.home() / ".cfc" / "chat.db"
+    for name in patched:
+        assert Path(getattr(sys.modules[name], "DB_PATH")) != real, \
+            f"{name}.DB_PATH still points at the real database"
 
     # Redirect the shared Console by mutating it, never by rebinding a module
     # attribute: once modules do `from ui import console`, setting chat.console
