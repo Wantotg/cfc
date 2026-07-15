@@ -49,7 +49,11 @@ Still open, and distinct from the above: **resolution staleness** (semantic sear
 
 Smaller findings park in `BACKLOG.md` — read it before touching the memory layer.
 
-Also pending: the `chat.py` split into `db.py` / `api.py` / `export.py` / `commands.py` / `hub.py` / `main.py`. Clean baseline to reset to is `e4ada29`.
+The `chat.py` split is **done**. `main.py` (REPL + dispatch + session state), `commands.py`, `hub.py`, `db.py`, `api.py`, `export.py`, `ui.py` (shared console), `config.py`. Entry point is now `python main.py [session_id]`.
+
+`tests/golden.py` pins the REPL's exact output for every command that makes no API call — it's what made the split safe. Run `check` after touching any of those modules; `record` re-baselines when a change to the output is intended. It doesn't cover the chat turn, `:recall`/`:remember`, `:export` or the picker; those were verified by hand.
+
+Next: the attach/tools handoff (`cfc-attach-tools-handoff.md`). Note its Step 7 README rewrite is partly done already — structure and entry point are current, the roadmap and Security section aren't.
 
 ## Things to remember
 
