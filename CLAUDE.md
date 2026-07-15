@@ -53,6 +53,8 @@ The `chat.py` split is **done**. `main.py` (REPL + dispatch + session state), `c
 
 `tests/golden.py` pins the REPL's exact output for every command that makes no API call — it's what made the split safe. Run `check` after touching any of those modules; `record` re-baselines when a change to the output is intended. It doesn't cover the chat turn, `:recall`/`:remember`, `:export` or the picker; those were verified by hand.
 
+`backup.py` snapshots `~/.cfc/chat.db` to `~/.cfc/backups/` on startup (throttled to 6h, skipped when unchanged, rolling 10). `--list`, `--force`, `--restore latest|<name>`. This exists because a test guard that ran *after* its destructive step deleted the whole database — restored from a temp-dir copy that got lucky. **Anything that writes to a database must check the path before the write, not after.**
+
 Next: the attach/tools handoff (`cfc-attach-tools-handoff.md`). Note its Step 7 README rewrite is partly done already — structure and entry point are current, the roadmap and Security section aren't.
 
 ## Things to remember

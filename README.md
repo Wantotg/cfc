@@ -146,11 +146,25 @@ main.py → pick_session() → repl() → ... → quit
 | `api.py` | streaming and non-streaming calls to the endpoint |
 | `export.py` | writing a session out to the vault |
 | `ui.py` | the shared console and presentation helpers |
+| `backup.py` | rolling snapshots of the database |
 | `config.py` | settings — gitignored |
 
 The memory layer is separate again: `import_anthropic.py`, `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.
 
 `tests/golden.py` pins the REPL's output for every command that makes no API call. Run `python tests/golden.py check` after touching any of the above; `record` re-baselines it once a change to the output is intended.
+
+## Backups
+
+cfc snapshots the database to `~/.cfc/backups/` on startup — at most once every 6 hours, skipped entirely when nothing has changed, keeping the newest 10.
+
+```
+python backup.py                  # snapshot now (skips if unchanged)
+python backup.py --force          # snapshot regardless
+python backup.py --list           # show what's kept
+python backup.py --restore latest # roll back to the newest snapshot
+```
+
+Snapshots use SQLite's online backup API rather than a file copy, so they're safe to take while the database is in use, and each is integrity-checked before it's kept. A restore backs up the current database first — restoring the wrong one is recoverable.
 
 ## License
 
