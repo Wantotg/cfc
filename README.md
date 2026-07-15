@@ -98,7 +98,7 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 | `:tag <name>` | Add a tag (auto-lowercased) |
 | `:untag <name>` | Remove a tag |
 | `:tags` / `:taglist` | Show tags / all tags with counts |
-| `:search <keyword>` | Search across all messages |
+| `:grep <keyword>` | Substring search across all messages |
 | `:tokens` | Detailed context-usage breakdown |
 | `:export` | Manually export the session to Obsidian |
 | `:config` | Show current configuration (key masked) |

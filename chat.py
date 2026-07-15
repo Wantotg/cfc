@@ -1117,7 +1117,7 @@ def repl(session_id=None):
                   "(with confirm)")
     console.print("  :delete 5     delete session #5 "
                   "(with confirm)")
-    console.print("  :search word  search all messages for "
+    console.print("  :grep word    search all messages for "
                   "'word'")
     console.print("  :tag python   add tag 'python' to this "
                   "session")
@@ -1254,11 +1254,11 @@ def repl(session_id=None):
                 console.print("Cancelled.")
             continue
 
-        if user.startswith(":search"):
+        if user.startswith(":grep"):
             parts = user.split(maxsplit=1)
             if len(parts) < 2:
-                console.print("Usage: :search <keyword>")
-                console.print("Example: :search indexing")
+                console.print("Usage: :grep <keyword>")
+                console.print("Example: :grep indexing")
                 continue
             search_messages(conn, parts[1])
             continue
