@@ -78,8 +78,8 @@ def main():
     jail = tmp / "projects"
     jail.mkdir(parents=True)
     (jail / "notes.md").write_text("alpha\nbeta\ngamma\n")
-    tools.TOOLS_ROOT = jail
-    agent.TOOLS_ROOT = jail
+    tools.TOOLS_ROOTS = (jail,)
+    agent.TOOLS_ROOTS = (jail,)
     agent.TOOLS_AUTO_APPROVE = set()
 
     dbmod.DB_PATH = tmp / "chat.db"

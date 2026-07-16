@@ -33,13 +33,18 @@ MODEL_LIMITS = {
 }
 
 # --- :attach ---------------------------------------------------------------
-# Files can only be attached from inside ATTACH_ROOT. Paths are resolved before
-# the check, so ../ and symlinks can't escape it. Some files are refused even
-# inside the root regardless of this setting (config.py, .env, keys, .ssh/ ...)
-# — see paths.py. ATTACH_DENY_EXTRA adds to that list; nothing removes from it.
+# Files can only be attached from inside one of ATTACH_ROOTS. A path passes if
+# it's inside any of them. Paths are resolved before the check, so ../ and
+# symlinks can't escape. Some files are refused even inside a root regardless of
+# this setting (config.py, .env, keys, .ssh/ ...) — see paths.py.
+# ATTACH_DENY_EXTRA adds to that list; nothing removes from it.
 from pathlib import Path
 
-ATTACH_ROOT = Path("~/projects").expanduser()
+ATTACH_ROOTS = (
+    Path("~/projects").expanduser(),
+    # Add more as needed, e.g. a Windows-side notes folder under WSL:
+    # Path("/mnt/c/Users/you/Notes"),
+)
 ATTACH_EXTENSIONS = {".md", ".txt", ".py", ".json", ".yaml", ".yml",
                      ".toml", ".csv", ".sql", ".sh"}
 ATTACH_MAX_CHARS = 100_000
@@ -59,7 +64,7 @@ TOOLS_MODELS = [
     "deepseek/deepseek-v4-pro:thinking",
     "moonshotai/kimi-k2.6:thinking",
 ]
-TOOLS_ROOT = ATTACH_ROOT          # same jail, same deny list
+TOOLS_ROOTS = ATTACH_ROOTS        # same jail, same deny list
 TOOLS_AUTO_APPROVE = set()        # e.g. {"list_dir"} once trusted; empty gates everything
 TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker
 TOOLS_MAX_RESULT_CHARS = 30_000   # truncate tool output

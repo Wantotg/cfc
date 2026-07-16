@@ -59,7 +59,7 @@ def main():
     (jail / ".env").write_text("TOKEN=sk-ALSO-LEAKED\n")
     (jail / "blob.bin").write_bytes(b"\x00\xff\xfe binary needle")
 
-    tools.TOOLS_ROOT = jail
+    tools.TOOLS_ROOTS = (jail,)
     R = jail
 
     print("--- list_dir ---")

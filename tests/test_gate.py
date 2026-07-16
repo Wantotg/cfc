@@ -68,7 +68,7 @@ def main():
     (jail / "notes.md").write_text("alpha\nbeta\n")
     (outside / "secret.txt").write_text("PRIVATE")
     (jail / "config.py").write_text("API_KEY='sk-LEAK'")
-    tools.TOOLS_ROOT = jail
+    tools.TOOLS_ROOTS = (jail,)
 
     A = commands.TurnApproval
 

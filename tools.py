@@ -19,15 +19,15 @@ import json
 import os
 from pathlib import Path
 
-from paths import path_guard, PathError
+from paths import path_guard, PathError, _as_roots
 
 try:
-    from config import TOOLS_ROOT
+    from config import TOOLS_ROOTS
 except ImportError:
     try:
-        from config import ATTACH_ROOT as TOOLS_ROOT
+        from config import ATTACH_ROOTS as TOOLS_ROOTS
     except ImportError:
-        TOOLS_ROOT = Path("~/projects").expanduser()
+        TOOLS_ROOTS = (Path("~/projects").expanduser(),)
 try:
     from config import TOOLS_MAX_RESULT_CHARS
 except ImportError:
@@ -140,16 +140,16 @@ def _truncate(text):
             + f"\n\n[truncated, {omitted:,} chars omitted]")
 
 
-def _guard(path, root):
+def _guard(path, roots):
     """path_guard, but returning the error string instead of raising."""
     try:
-        return path_guard(path, root), None
+        return path_guard(path, roots), None
     except PathError as e:
         return None, _err(str(e))
 
 
-def list_dir(path, root):
-    p, err = _guard(path, root)
+def list_dir(path, roots):
+    p, err = _guard(path, roots)
     if err:
         return err
     if not p.exists():
@@ -170,8 +170,8 @@ def list_dir(path, root):
     return _truncate(f"{p}\n" + "\n".join(rows))
 
 
-def read_file(path, root, start_line=None, end_line=None):
-    p, err = _guard(path, root)
+def read_file(path, roots, start_line=None, end_line=None):
+    p, err = _guard(path, roots)
     if err:
         return err
     if not p.exists():
@@ -213,30 +213,37 @@ def read_file(path, root, start_line=None, end_line=None):
     return _truncate(f"{header}\n{body}")
 
 
-def _searchable(p, root):
+def _searchable(p, roots):
     if p.suffix.lower() not in _TEXT_SUFFIXES:
         return False
     try:
-        path_guard(p, root)
+        path_guard(p, roots)
     except PathError:
         return False       # denied files are not grep-able either
     return True
 
 
-def grep(pattern, root, path=None):
+def grep(pattern, roots, path=None):
     if not pattern:
         return _err("pattern is required")
 
-    target, err = _guard(path if path else root, root)
-    if err:
-        return err
-    if not target.exists():
-        return _err(f"no such path: {target}")
-
-    if target.is_file():
-        files = [target]
+    # No path means "search everything": walk every root. A given path is
+    # guarded against the roots as usual.
+    if path:
+        target, err = _guard(path, roots)
+        if err:
+            return err
+        if not target.exists():
+            return _err(f"no such path: {target}")
+        targets = [target]
     else:
-        files = []
+        targets = _as_roots(roots)
+
+    files = []
+    for target in targets:
+        if target.is_file():
+            files.append(target)
+            continue
         for dirpath, dirnames, filenames in os.walk(target):
             dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
             for fn in sorted(filenames):
@@ -247,7 +254,7 @@ def grep(pattern, root, path=None):
         # grep reads whole files looking for matches, so the deny list has to
         # apply per file, not just to the directory it was pointed at.
         # Otherwise grep("API_KEY", "~/projects") prints config.py's key.
-        if not _searchable(f, root):
+        if not _searchable(f, roots):
             continue
         try:
             with open(f, "r", encoding="utf-8", errors="strict") as fh:
@@ -264,20 +271,22 @@ def grep(pattern, root, path=None):
             break
 
     if not out:
-        return f"no matches for {pattern!r} in {target}"
+        where = str(targets[0]) if len(targets) == 1 else \
+            f"{len(targets)} roots"
+        return f"no matches for {pattern!r} in {where}"
     body = "\n".join(out)
     if hit_cap:
         body += f"\n\n[stopped at {GREP_MAX_MATCHES} matches]"
     return _truncate(body)
 
 
-def dispatch(name, arguments, root=None):
+def dispatch(name, arguments, roots=None):
     """(tool name, arguments) -> result string. Never raises.
 
     `arguments` is whatever the model sent: a JSON string in practice, a dict
     if a caller already parsed it.
     """
-    root = root if root is not None else TOOLS_ROOT
+    roots = roots if roots is not None else TOOLS_ROOTS
 
     if isinstance(arguments, str):
         try:
@@ -295,23 +304,23 @@ def dispatch(name, arguments, root=None):
         if name == "list_dir":
             if "path" not in args:
                 return _err("list_dir requires 'path'")
-            return list_dir(args["path"], root)
+            return list_dir(args["path"], roots)
         if name == "read_file":
             if "path" not in args:
                 return _err("read_file requires 'path'")
-            return read_file(args["path"], root,
+            return read_file(args["path"], roots,
                              args.get("start_line"), args.get("end_line"))
         if name == "grep":
             if "pattern" not in args:
                 return _err("grep requires 'pattern'")
-            return grep(args["pattern"], root, args.get("path"))
+            return grep(args["pattern"], roots, args.get("path"))
         return _err(f"unknown tool: {name}")
     except Exception as e:
         # A tool bug must not take the agent loop down with it.
         return _err(f"{name} failed: {type(e).__name__}: {e}")
 
 
-def describe(name, arguments, root=None):
+def describe(name, arguments, roots=None):
     """A human-readable summary of a call, for the approval gate.
 
     Shows the resolved path and, for read_file, the real size — so the cost of
@@ -319,7 +328,7 @@ def describe(name, arguments, root=None):
     validate: this is what the model *asked for*, and a call that will be
     refused should still be shown honestly rather than pre-filtered.
     """
-    root = root if root is not None else TOOLS_ROOT
+    roots = roots if roots is not None else TOOLS_ROOTS
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments) if arguments.strip() else {}
@@ -345,7 +354,10 @@ def describe(name, arguments, root=None):
     if name == "grep":
         lines.insert(0, f"pattern: {args.get('pattern')!r}")
         if raw is None:
-            lines.append(f"path: {_tilde(Path(root))} (whole tree)")
+            roots = _as_roots(roots)
+            where = _tilde(roots[0]) if len(roots) == 1 else \
+                f"{len(roots)} roots"
+            lines.append(f"path: {where} (whole tree)")
 
     if name == "read_file":
         lo, hi = args.get("start_line"), args.get("end_line")

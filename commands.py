@@ -43,9 +43,9 @@ except ImportError:
     STREAM_USAGE = True
 
 try:
-    from config import ATTACH_ROOT
+    from config import ATTACH_ROOTS
 except ImportError:
-    ATTACH_ROOT = Path("~/projects").expanduser()
+    ATTACH_ROOTS = (Path("~/projects").expanduser(),)
 try:
     from config import ATTACH_EXTENSIONS
 except ImportError:
@@ -69,9 +69,9 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 try:
-    from config import TOOLS_ROOT
+    from config import TOOLS_ROOTS
 except ImportError:
-    TOOLS_ROOT = ATTACH_ROOT
+    TOOLS_ROOTS = ATTACH_ROOTS
 try:
     from config import TOOLS_AUTO_APPROVE
 except ImportError:
@@ -607,11 +607,12 @@ def do_attach(conn, session_id, history, raw_path, model):
     """
     if not raw_path:
         console.print("Usage: :attach <path>")
-        console.print(f"Files must live under {ATTACH_ROOT}")
+        roots = ", ".join(str(r) for r in ATTACH_ROOTS)
+        console.print(f"Files must live under one of: {roots}")
         return
 
     try:
-        p = path_guard(raw_path, ATTACH_ROOT)
+        p = path_guard(raw_path, ATTACH_ROOTS)
     except PathError as e:
         console.print(f"\n[refused] {e}\n")
         return
@@ -826,7 +827,7 @@ def show_tools_state(current_model, session_on):
                   f"{'supports tools' if supported else 'NOT in TOOLS_MODELS'}")
     if not supported and TOOLS_MODELS:
         console.print(f"    tools work with: {', '.join(TOOLS_MODELS)}")
-    console.print(f"  root: {TOOLS_ROOT}")
+    console.print(f"  roots: {', '.join(str(r) for r in TOOLS_ROOTS)}")
     console.print(f"  auto-approve: "
                   f"{', '.join(sorted(TOOLS_AUTO_APPROVE)) or '(none — every call is gated)'}")
     console.print(f"  max calls per turn: {TOOLS_MAX_CALLS_PER_TURN}")

@@ -80,21 +80,34 @@ def _denied(resolved):
     return None
 
 
-def path_guard(path, root):
-    """Resolve path and assert it is inside root and not denied.
+def _as_roots(roots):
+    """Normalise a single root or an iterable of them to a list of Paths."""
+    if isinstance(roots, (str, Path)):
+        roots = [roots]
+    return [Path(r).expanduser().resolve() for r in roots]
+
+
+def path_guard(path, roots):
+    """Resolve path and assert it is inside a root and not denied.
+
+    `roots` may be a single path or an iterable of them; the path passes if it
+    is inside *any* of them. The deny list is root-agnostic — it runs on the
+    resolved path regardless of which root allowed it, so adding a root widens
+    containment without ever un-denying config.py or a private key.
 
     Resolves before checking, which defeats ../ traversal and symlink escape.
     Returns the resolved Path. Raises PathError otherwise.
 
-    Existence is NOT checked here: a non-existent path inside the root passes,
+    Existence is NOT checked here: a non-existent path inside a root passes,
     and callers report "no such file" themselves, so that "outside the jail"
     and "not there" stay distinguishable in the error the user sees.
     """
-    root = Path(root).expanduser().resolve()
+    roots = _as_roots(roots)
     p = Path(path).expanduser().resolve()
 
-    if p != root and root not in p.parents:
-        raise PathError(f"{p} is outside {root}")
+    if not any(p == r or r in p.parents for r in roots):
+        joined = ", ".join(str(r) for r in roots)
+        raise PathError(f"{p} is outside the allowed roots ({joined})")
 
     why = _denied(p)
     if why:

@@ -117,7 +117,9 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 
 **Multi-line input:** type `"""` to open, `"""` again to send, `:cancel` to abort. `Ctrl+C` during streaming cancels the request.
 
-`:attach` completes paths on Tab, scoped to `ATTACH_ROOT`.
+`:attach` completes paths on Tab, scoped to `ATTACH_ROOTS`. Completion stays
+quiet until you've typed a few characters of a name rather than dumping a whole
+directory.
 
 ## How it works
 
@@ -152,8 +154,8 @@ Retrieval has a relevance floor: if nothing is within `MAX_DISTANCE` of the ques
 
 Read this before enabling write tools.
 
-- **Everything is jailed.** `ATTACH_ROOT` and `TOOLS_ROOT` bound every file operation. Paths are **resolved before** they're checked, which is what defeats `../` traversal and symlink escape — a symlink named `notes.md` pointing at `~/.ssh/id_rsa` is judged as what it resolves to, not what it's called.
-- **Some files are refused inside the jail.** `TOOLS_ROOT` is `~/projects`, which contains cfc, which contains `config.py`, which holds your API key — and `.py` is an attachable type. Containment alone is not enough. `paths.py` refuses `config.py`, `.env*`, `*.pem`, `*.key`, `id_rsa`, `.ssh/`, and friends. `config.py` may **add** to that list via `ATTACH_DENY_EXTRA`; nothing removes from it.
+- **Everything is jailed.** `ATTACH_ROOTS` and `TOOLS_ROOTS` bound every file operation — a path passes if it resolves inside *any* configured root. Paths are **resolved before** they're checked, which is what defeats `../` traversal and symlink escape — a symlink named `notes.md` pointing at `~/.ssh/id_rsa` is judged as what it resolves to, not what it's called.
+- **Some files are refused inside the jail.** A root like `~/projects` contains cfc, which contains `config.py`, which holds your API key — and `.py` is an attachable type. Containment alone is not enough. The deny list is root-agnostic: it runs on the resolved path no matter which root allowed it, so adding a root never un-denies anything. `paths.py` refuses `config.py`, `.env*`, `*.pem`, `*.key`, `id_rsa`, `.ssh/`, and friends. `config.py` may **add** to that list via `ATTACH_DENY_EXTRA`; nothing removes from it.
 - **The approval gate.** Every tool call is shown — resolved path, real file size — and confirmed before dispatch. `TOOLS_AUTO_APPROVE` is empty by default, so nothing runs unasked.
 - **Approval does not bypass validation.** `path_guard` runs inside the dispatcher regardless of what was approved. You can approve a call that then fails the guard; that's correct. The gate is where *you* decide. The guard is what holds when you've stopped reading the gate carefully — which is what a gate that fires on every call eventually becomes.
 - **`TOOLS_ENABLED = False` by default.** Opt-in, not opt-out.

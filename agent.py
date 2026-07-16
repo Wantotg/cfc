@@ -37,9 +37,9 @@ try:
 except ImportError:
     TOOLS_AUTO_APPROVE = set()
 try:
-    from config import TOOLS_ROOT
+    from config import TOOLS_ROOTS
 except ImportError:
-    TOOLS_ROOT = None
+    TOOLS_ROOTS = None
 
 LIMIT_MESSAGE = "[tool call limit reached — TOOLS_MAX_CALLS_PER_TURN]"
 
@@ -112,7 +112,7 @@ def agent_turn(prefix, history, model, conn, session_id):
 
         for call in calls:
             _render_call(call)
-            result = gate_and_dispatch(call, approval, TOOLS_ROOT)
+            result = gate_and_dispatch(call, approval, TOOLS_ROOTS)
             _render_result(result)
 
             fn = call.get("function", {})
