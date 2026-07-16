@@ -109,6 +109,23 @@ number, junk) behave correctly with it present.
 
 ---
 
+## The "Thinking..." spinner no longer shows
+
+**Found:** 2026-07-16, reported by Cas.
+
+The chat turn used to show a cyan `Thinking...` spinner while waiting for the
+first token. It no longer appears. The code is still there and looks intact —
+`api.py:92` opens a `Live(Spinner("dots", text="Thinking...", ...))` before the
+stream and replaces it with the answer panel on the first content delta — so
+this is a runtime regression, not deleted code. Cause not investigated.
+
+Everything works without it; parked deliberately to batch with the other
+cosmetic items rather than chase now. The `:recall` and `:grep` spinners
+(`commands.py:442`, `commands.py:510`) are separate `Live` blocks and weren't
+checked — worth confirming whether they still show when this is picked up.
+
+---
+
 ## `is_litter` marker regex is coupled to two other files
 
 **Found:** 2026-07-15.
