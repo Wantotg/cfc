@@ -67,17 +67,36 @@ def _one_line(text, width=60):
 
 
 def repl(session_id=None):
+    """Outer driver: the hub, and the session you return to it from.
+
+    A session never exits the program. `:q` (and EOF / Ctrl-C) drop back to the
+    hub — the exact screen you started on. The program quits only from the hub,
+    with `q`. A `session_id` from `main.py 5` still returns to the hub on `:q`,
+    so the hub is the one way out.
+    """
     conn = db()
     install_completion()
 
-    if session_id is None:
-        result = pick_session(conn)
-        if result == "quit":
-            conn.close()
-            return
-        session_id = result if result is not None \
-            else new_session(conn)
+    while True:
+        if session_id is None:
+            try:
+                result = pick_session(conn)
+            except (EOFError, KeyboardInterrupt):
+                console.print()
+                break
+            if result == "quit":
+                break
+            session_id = result if result is not None \
+                else new_session(conn)
+        run_session(conn, session_id)
+        session_id = None   # back to the hub for the next round
 
+    conn.close()
+
+
+def run_session(conn, session_id):
+    """One session's REPL loop. Returns when the user leaves the session
+    (`:q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'."""
     history = load_history(conn, session_id)
     injected = []          # blocks added by :remember, newest last
     tools_on = True        # session toggle; the master switch still gates it
@@ -109,7 +128,7 @@ def repl(session_id=None):
                       f"TOOLS_MODELS — proceeding without tools.")
 
     console.print("Commands:")
-    console.print("  :q            quit")
+    console.print("  :q            back to the session list")
     console.print("  :list         show all sessions")
     console.print("  :new          start a new session")
     console.print("  :export       export this session to "
@@ -620,8 +639,6 @@ def repl(session_id=None):
                                   new_title)
                 current_title = new_title
                 console.print(f"[title: {new_title}]\n")
-
-    conn.close()
 
 if __name__ == "__main__":
     # Snapshot before the session touches anything. Deliberately here and not

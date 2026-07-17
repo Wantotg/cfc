@@ -189,7 +189,12 @@ def capture():
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             for c in consoles:
                 c.file = out
-            chat.repl(session_id=1)
+            # run_session, not repl: repl() is now the outer hub loop, and a
+            # :q returns to the hub rather than ending. This harness drives one
+            # session's command output, which is exactly run_session.
+            conn = chat.db()
+            chat.run_session(conn, session_id=1)
+            conn.close()
     finally:
         sys.stdin = real_stdin
         for c, f in zip(consoles, saved):

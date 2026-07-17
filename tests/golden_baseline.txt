@@ -1,7 +1,8 @@
 
 Session #1 | model=glm-5.2 | Golden session one
+Tools are enabled but glm-5.2 is not in TOOLS_MODELS — proceeding without tools.
 Commands:
-  :q            quit
+  :q            back to the session list
   :list         show all sessions
   :new          start a new session
   :export       export this session to Obsidian
@@ -128,7 +129,7 @@ you>                Available models
 you>
 Available prompts (/mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Prompts):
 
-  main_prompt               System Instructions
+  main_prompt               <core_directive>
 
 you> No system prompt set. Use ':prompts' to see available prompt files.
 you> System prompt removed.
@@ -136,7 +137,7 @@ you>
 Available personas (/mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Personas):
 
   coding_assistant          Coding Assistant
-  muse                      Persona
+  muse                      <persona>
   personal_assistant        Personal Assistant
 
 you> No persona set. Use ':personas' to see available persona files.

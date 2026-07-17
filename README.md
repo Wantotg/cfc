@@ -84,13 +84,17 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 | `n` | New session |
 | `q` | Quit |
 
-`python main.py 5` opens session 5 directly, skipping the hub.
+The hub is home base: `:q` inside a session brings you back here rather than
+quitting, so the program only exits from the hub (`q`, or Ctrl-D/Ctrl-C).
+
+`python main.py 5` opens session 5 directly, skipping the hub — but its `:q`
+still returns to the hub.
 
 ### In-session commands
 
 | Command | Action |
 |---------|--------|
-| `:q` | Quit (auto-exports if enabled) |
+| `:q` | Back to the hub (auto-exports if enabled) |
 | `:new` | Start a new session in place |
 | `:model <name>` | Switch the current session's model |
 | `:models` | List configured models |
@@ -126,7 +130,9 @@ directory.
 The flow:
 
 ```
-main.py → pick_session() → repl() → ... → quit
+main.py → repl() ┬→ pick_session() → run_session() ─┐
+                 └───────────← :q ←─────────────────┘
+                   q at the hub → quit
 ```
 
 - **SQLite** (`~/.cfc/chat.db`) holds sessions, messages, tags, and a session↔tag junction table. Schema and migrations run automatically on start — safe to re-run on an existing database.
