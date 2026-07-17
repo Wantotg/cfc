@@ -56,10 +56,15 @@ def search(db_path, query, k=8, kind=None, provider=None,
     for row in knn:
         if max_distance is not None and row["distance"] > max_distance:
             break              # KNN is sorted, so everything after is worse too
+        # LEFT JOIN, not JOIN: a chunk whose session_id points at a row that
+        # no longer exists (deleted session, half-committed import) is real
+        # embedded data. An inner join dropped it silently — the vector matched,
+        # then the row vanished, and a k=8 search quietly returned 7. Surface it
+        # with a placeholder instead of hiding it.
         c = db.execute("""
             SELECT c.id AS chunk_id, c.text, c.kind, c.session_id,
                    s.title AS session_title, s.created_at, s.provider
-            FROM chunks c JOIN sessions s ON s.id = c.session_id
+            FROM chunks c LEFT JOIN sessions s ON s.id = c.session_id
             WHERE c.id = ?
         """, (row["chunk_id"],)).fetchone()
         if c is None:
@@ -68,9 +73,10 @@ def search(db_path, query, k=8, kind=None, provider=None,
             continue
         if provider and c["provider"] != provider:
             continue
+        title = c["session_title"] or f"(missing session {c['session_id']})"
         results.append({
             "chunk_id": c["chunk_id"], "text": c["text"], "kind": c["kind"],
-            "session_id": c["session_id"], "session_title": c["session_title"],
+            "session_id": c["session_id"], "session_title": title,
             "created_at": c["created_at"], "distance": row["distance"],
         })
         if len(results) >= k:

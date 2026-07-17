@@ -8,30 +8,26 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
-## Three chunks are invisible to recall (dangling `session_id`)
+## A chunk with a dangling `session_id` — where does it come from?
 
 **Found:** 2026-07-15, while verifying the distance threshold.
+**Retrieval side fixed:** 2026-07-17.
 
 Chunks 4578, 4579 and 4580 have `session_id=364`, and no session 364 exists
-(`sessions` holds 187 rows with ids 1–366, so there are gaps). `search.py`
-joins chunks to sessions to get the title and date, so these three are dropped
-by the JOIN and can never be returned — the `if c is None: continue` in the
-result loop swallows them silently.
+(`sessions` holds 187 rows with ids 1–366, so there are gaps).
 
-They are embedded and do match queries, so KNN finds them and then throws them
-away. That is why a `k=8` search sometimes returns 7 hits.
+The retrieval-side symptom is fixed: `search.py` now `LEFT JOIN`s chunks to
+sessions and surfaces an orphan with a `(missing session N)` placeholder title
+and a null date, instead of the inner join silently dropping it (which is why a
+`k=8` search sometimes returned 7 hits). Verified: 4579 and 4580 now come back
+on a raw-KNN probe of their own content. They still fall outside
+`MAX_DISTANCE = 0.93`, so a normal query won't reach them — but they're no
+longer *invisible*, and a future import can't lose data this way unnoticed.
 
-Why it's mildly annoying: these are the three newest chunks in the corpus and
-they're the *only* cfc-architecture material in it ("SQLite stays the source of
-truth and handles metadata/exact filters"). They'd still fall outside
-`MAX_DISTANCE = 0.93` (they score 0.97–1.06), so fixing this rescues nothing
-today, but it's real data loss and it'll silently eat future imports.
-
-Suspect `import_anthropic.py` writes chunks with a session id that isn't
-committed, or the session row was deleted without cascading. Not investigated.
-
-Worth deciding: should `search.py` drop these silently at all? A `LEFT JOIN`
-with a placeholder title would surface the content instead of hiding it.
+Still open, and the actual root cause: **why does a chunk point at a session
+that was never written?** Suspect `import_anthropic.py` writes chunks with a
+session id that isn't committed, or a session row was deleted without cascading.
+Not investigated — belongs with the DB-layer rework.
 
 ---
 
