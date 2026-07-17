@@ -89,7 +89,13 @@ def agent_turn(prefix, history, model, conn, session_id):
 
     for _ in range(TOOLS_MAX_CALLS_PER_TURN):
         messages = list(prefix) + history
-        resp = call_api(messages, model=model, tools=TOOL_SCHEMAS)
+        # call_api blocks with nothing on screen — the streaming path shows a
+        # spinner here, so the tool path does too. Not streaming: the spinner
+        # is the whole feedback, from request to response.
+        with console.status("Thinking...", spinner="dots",
+                            spinner_style="cyan"):
+            resp = call_api(messages, model=model, tools=TOOL_SCHEMAS)
+        usage = resp.get("usage") or {}
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls")
 
@@ -98,8 +104,12 @@ def agent_turn(prefix, history, model, conn, session_id):
         msg = {"role": "assistant", "content": msg.get("content") or "",
                **({"tool_calls": calls} if calls else {})}
         history.append(msg)
+        # Persist this call's usage so the post-turn bar and :tokens work on the
+        # tool path — the whole reason both went blank when tools took over.
         save_message(conn, session_id, "assistant", msg["content"],
                      model=model,
+                     tok_in=usage.get("prompt_tokens") or None,
+                     tok_out=usage.get("completion_tokens") or None,
                      kind="tool_call" if calls else "chat",
                      meta={"tool_calls": calls} if calls else None)
 

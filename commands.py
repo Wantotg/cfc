@@ -381,6 +381,22 @@ def context_bar(conn, session_id, model):
     return ""
 
 
+def print_context_bar(model, tok_in, tok_out):
+    """Post-turn context-usage bar. Shared by the streaming and tool paths,
+    so both end a turn the same way — a change to one can't drift from the
+    other. Silent when the model has no known limit or no tokens came back."""
+    limit = MODEL_LIMITS.get(model)
+    ctx = (tok_in or 0) + (tok_out or 0)
+    if not (limit and ctx > 0):
+        return
+    pct = ctx / limit * 100
+    console.print()
+    console.print(make_bar(pct, ctx=ctx, limit=limit))
+    if pct > 80:
+        console.print("Context nearly full -- consider :new",
+                      style="yellow")
+
+
 def search_messages(conn, query):
     """Search all messages for a keyword, grouped by session."""
     pattern = f"%{query}%"

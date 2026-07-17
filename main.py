@@ -18,10 +18,6 @@ except ImportError:
 from config import MODEL, AUTO_EXPORT
 
 try:
-    from config import MODEL_LIMITS
-except ImportError:
-    MODEL_LIMITS = {}
-try:
     from config import TOOLS_ENABLED
 except ImportError:
     TOOLS_ENABLED = False
@@ -30,11 +26,12 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 
-from ui import console, make_bar, read_multiline
+from ui import console, read_multiline
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
     db, new_session, save_message, load_history,
+    get_context_info,
     get_session_title, set_session_title,
     get_session_model, set_session_model,
     add_tag, remove_tag,
@@ -53,6 +50,7 @@ from commands import (
     show_tags, list_all_tags,
     list_prompts, load_prompt_file, list_personas, load_persona_file,
     list_models, show_config, show_token_stats, context_bar,
+    print_context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
     do_attach, show_attachments, do_detach,
@@ -563,6 +561,11 @@ def repl(session_id=None):
                 console.print(f"\n[error] {e}\n")
                 continue
             render_answer(final.get("content"))
+            # Same context bar as the streaming path — agent_turn persisted the
+            # final turn's usage, so read it back from the row it just wrote.
+            t_in, t_out, _ = get_context_info(
+                conn, session_id, current_model)
+            print_context_bar(current_model, t_in, t_out)
             console.print()
             if current_title == "(untitled)":
                 new_title = generate_title(user)
@@ -603,17 +606,7 @@ def repl(session_id=None):
         )
 
         # Show context usage after response
-        limit = MODEL_LIMITS.get(current_model)
-        ctx = tok_in + tok_out
-        if limit and ctx > 0:
-            pct = ctx / limit * 100
-            console.print()
-            console.print(make_bar(pct, ctx=ctx,
-                                   limit=limit))
-            if pct > 80:
-                console.print("Context nearly full -- "
-                              "consider :new",
-                              style="yellow")
+        print_context_bar(current_model, tok_in, tok_out)
         console.print()  # Blank line before next prompt
 
         history.append(
