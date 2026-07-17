@@ -24,12 +24,14 @@ A chat turn takes one of **two mutually exclusive paths**, chosen per turn:
 use_tools = TOOLS_ENABLED and tools_on and (current_model in TOOLS_MODELS)
 ```
 
-- **`api.stream_response`** (no tools) — streams SSE, renders Markdown live into a `rich.Live` panel, returns `(full_text, usage)`. Shows the `Thinking…` spinner until the first content delta.
+- **`api.stream_response`** (no tools) — streams SSE, renders Markdown live into a `rich.Live` panel, returns `(full_text, usage, reasoning)`. Shows the `Thinking…` spinner until the first delta, then a dim `thinking` panel while `delta.reasoning` streams (tail-limited to `_REASONING_TAIL_LINES`) with the answer panel below it once `content` starts.
 - **`agent.agent_turn`** (tools) — **non-streaming** loop. Streaming is off deliberately: tool-call deltas arrive fragmented and `arguments` must be reassembled by index across chunks, not worth it for fast responses. Loops up to `TOOLS_MAX_CALLS_PER_TURN`: call → maybe tool_calls → gate+dispatch each → feed results back → repeat until the model answers with prose or the limit fires (which returns a real assistant message, not silent truncation).
 
 **Invariant — the two paths must end a turn identically.** Both persist usage and render the post-turn context bar via the single `commands.print_context_bar`. This exists because they *did* drift: when tools became the default path, the spinner and token bar (both streaming-only) silently vanished and usage was discarded, blanking `:tokens` too. Any new per-turn UI belongs in a shared helper, not one branch.
 
-**Provider quirk (nano-gpt thinking models):** reasoning streams as `delta.reasoning` (distinct from `delta.content`) and is currently **dropped** on the stream path — only `content` is rendered. `usage` arrives in a final chunk when `stream_options.include_usage` is set (`STREAM_USAGE`, default true); it includes cache-read/creation token breakdowns. Non-thinking-vs-thinking is purely a config/model-id concern; the code doesn't branch on it.
+**Provider quirk (nano-gpt thinking models):** reasoning streams as `delta.reasoning` (distinct from `delta.content`), *ahead of* any answer. It's now rendered live in the dim `thinking` panel and also returned (the third tuple element) so callers can tell a reasoning-only turn from a truly empty one. `usage` arrives in a final chunk when `stream_options.include_usage` is set (`STREAM_USAGE`, default true); it includes cache-read/creation and `reasoning_tokens` breakdowns. Non-thinking-vs-thinking is purely a config/model-id concern; the code doesn't branch on it.
+
+**Empty completions are a thing.** GLM-5.2:thinking occasionally returns a near-empty completion (a handful of tokens, `finish_reason=stop`, no `content`) — a provider-side hiccup, *not* a size limit; the same context answers on a re-roll. `main.py`'s stream path loops on this: it distinguishes reasoning-only (`[the model thought but returned no answer…]`) from genuinely empty (`[empty response]`), prompts `retry? (y/n)`, and re-sends the identical request on `y`. Empty completions are never persisted (the guard predates this, but it's why two dead empty-assistant rows once accumulated in a long thinking-model session and had to be swept).
 
 ---
 
@@ -133,7 +135,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker 
 | `agent.py` | the tool-calling turn (`agent_turn`, `render_answer`) |
 | `tools.py` | read-only tools + dispatcher + `describe` (for the gate) |
 | `paths.py` | the jail: `path_guard`, containment + deny list |
-| `api.py` | `stream_response` (streaming chat), `call_api` (non-streaming: titles, agent), provider error extraction |
+| `api.py` | `stream_response` (streaming chat + live reasoning panel, returns `(text, usage, reasoning)`), `call_api` (non-streaming: titles, agent), provider error extraction |
 | `db.py` | connection, schema/migrations, every query, `load_history` + orphan drop |
 | `hub.py` | session browser (`list_sessions`) + picker (`pick_session`) |
 | `complete.py` | Tab completion for `:attach`, scoped to roots |
@@ -147,7 +149,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker 
 
 ## Current state & open threads
 
-- **Just landed:** spinner+token-bar restored on the tool path; orphan-chunk surfacing; `:q`→hub; dead-code + test-debt cleanup.
+- **Just landed:** thinking-model reasoning rendered live (was dropped) + empty-completion retry on the stream path; spinner+token-bar restored on the tool path; orphan-chunk surfacing; `:q`→hub; dead-code + test-debt cleanup.
 - **Backlog (parked, DB-flavored):** (a) *root cause* of the dangling `session_id` — a chunk points at a session row that was never written; suspect `import_anthropic.py` committing chunks against an uncommitted session id, or a delete without cascade. Retrieval side is handled; the write side isn't. (b) `chunk.py` overlap slices mid-word (fixed-char window, no boundary seek) — cosmetic, but a fix means re-chunk + re-embed (costs an embedding run).
 - **DB-layer rework is anticipated** — treat the chunk/vector schema as in flux. `TARGET_TOKENS`/`OVERLAP`/`CHARS_PER_TOK` are naive (char-based); the design note "SQLite stays the source of truth, sqlite-vec is an index over it" is the intended shape.
 - **Constraints that are choices, not bugs:** streaming off under tools; tool calling needs a model in `TOOLS_MODELS` (verified against nano-gpt, not assumed); `:grep` and history search are substring (`LIKE`), FTS5 a possible upgrade; sessions are linear (no branching).

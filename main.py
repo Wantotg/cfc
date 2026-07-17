@@ -599,19 +599,46 @@ def run_session(conn, session_id):
 
         console.print()  # blank line before AI panel
 
-        try:
-            assistant, usage = stream_response(
-                api_messages, model=current_model
-            )
-        except KeyboardInterrupt:
-            console.print("\n[streaming cancelled]\n")
-            continue
-        except httpx.HTTPError as e:
-            console.print(f"\n[error] {e}\n")
-            continue
+        assistant = ""
+        usage = None
+        while True:
+            try:
+                assistant, usage, reasoning = stream_response(
+                    api_messages, model=current_model
+                )
+            except KeyboardInterrupt:
+                console.print("\n[streaming cancelled]\n")
+                assistant = ""
+                break
+            except httpx.HTTPError as e:
+                console.print(f"\n[error] {e}\n")
+                assistant = ""
+                break
+
+            if assistant.strip():
+                break
+
+            # Empty completion. Thinking models (e.g. GLM-5.2:thinking) do this
+            # now and then — a provider-side hiccup, not a size limit. Say which
+            # kind it was; the same context usually answers on a re-roll.
+            if reasoning.strip():
+                console.print(
+                    "\n[the model thought but returned no answer — "
+                    "provider hiccup, common on thinking models]")
+            else:
+                console.print("\n[empty response]")
+            try:
+                again = input("retry? (y/n) ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                console.print()
+                again = "n"
+            if again == "y":
+                console.print()
+                continue
+            break
 
         if not assistant.strip():
-            console.print("[empty response]\n")
+            console.print()
             continue
 
         tok_in = (usage or {}).get("prompt_tokens") or 0

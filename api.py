@@ -10,10 +10,12 @@
 import json
 
 import httpx
+from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.text import Text
 
 from config import API_BASE, API_KEY, MODEL
 
@@ -72,12 +74,37 @@ def _error_detail(r):
     return f"HTTP {r.status_code} from {r.request.url}: {body[:800] or '(empty body)'}"
 
 
+# How much of the reasoning stream to keep on screen. Thinking models emit
+# thousands of reasoning tokens; rendering all of it live would blow past the
+# terminal height and make Rich crop unpredictably. We show the tail so the
+# panel stays put and you can still see it's alive and what it's chewing on.
+_REASONING_TAIL_LINES = 12
+
+
+def _thinking_panel(reasoning):
+    """The dim 'thinking' panel: last few lines of the reasoning stream."""
+    lines = reasoning.splitlines() or [reasoning]
+    tail = lines[-_REASONING_TAIL_LINES:]
+    body = Text("\n".join(tail), style="dim italic")
+    return Panel(
+        body,
+        title="thinking",
+        title_align="left",
+        border_style="dim",
+    )
+
+
 def stream_response(messages, model=None):
     """Stream API response, rendered live as Markdown.
-    Returns (full_text, usage_dict). usage may be None
-    if the provider doesn't support include_usage."""
+
+    Returns (full_text, usage_dict, reasoning). usage may be None if the
+    provider doesn't support include_usage. reasoning is the concatenated
+    `delta.reasoning` stream (thinking models); "" when the provider sends
+    none. It's returned, not just shown, so the caller can tell a genuinely
+    empty completion from a reasoning-only one (see main.py's retry path)."""
     model = model or MODEL
     full_text = ""
+    reasoning = ""
     usage = None
 
     payload = {
@@ -135,21 +162,35 @@ def stream_response(messages, model=None):
                             delta = choices[0].get(
                                 "delta", {}
                             )
+                            # Thinking models stream reasoning separately, and
+                            # ahead of any answer. Render it dimmed so a long
+                            # silent think looks alive instead of hung — and so
+                            # a reasoning-only turn (provider hiccup) is visibly
+                            # distinct from a truly empty one.
+                            think = delta.get("reasoning")
                             content = delta.get("content")
+                            if think:
+                                reasoning += think
                             if content:
                                 full_text += content
-                                live.update(
-                                    Panel(
+                            if think or content:
+                                panels = []
+                                if reasoning:
+                                    panels.append(
+                                        _thinking_panel(reasoning)
+                                    )
+                                if full_text:
+                                    panels.append(Panel(
                                         Markdown(full_text),
                                         title="ai",
                                         title_align="left",
                                         border_style="cyan",
-                                    )
-                                )
+                                    ))
+                                live.update(Group(*panels))
                     except json.JSONDecodeError:
                         continue
 
-    return full_text, usage
+    return full_text, usage, reasoning
 
 
 def generate_title(first_user_message):

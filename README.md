@@ -9,7 +9,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 ## Features
 
 - **Rich terminal UI** — live Markdown rendering, panels, spinners, styled tables, colour-coded progress bars
-- **Streaming responses** rendered as Markdown in real time
+- **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll prompt when a model returns an empty completion
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
 - **Per-session models** — switch models mid-project; each message records what generated it
