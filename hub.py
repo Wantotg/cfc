@@ -136,19 +136,3 @@ def pick_session(conn):
         except ValueError:
             console.print("Type a number, 'n' for new, or "
                           "'q' to quit.")
-
-    while True:
-        choice = input("\n> ").strip().lower()
-        if choice == "q":
-            return "quit"
-        if choice in ("n", "new"):
-            return None
-        try:
-            idx = int(choice)
-            if 1 <= idx <= len(rows):
-                return rows[idx - 1][0]
-            console.print(f"Enter a number between 1 and "
-                          f"{len(rows)}.")
-        except ValueError:
-            console.print("Type a number, 'n' for new, or "
-                          "'q' to quit.")
