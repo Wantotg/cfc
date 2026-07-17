@@ -4,6 +4,8 @@ A terminal-based AI chat client written in Python. It connects to any OpenAI-com
 
 The name comes from a book cover. It means nothing, intentionally.
 
+For the internals — architecture, data model, invariants, and the reasoning behind the non-obvious choices — see [`HANDOVER.md`](HANDOVER.md).
+
 ## Features
 
 - **Rich terminal UI** — live Markdown rendering, panels, spinners, styled tables, colour-coded progress bars

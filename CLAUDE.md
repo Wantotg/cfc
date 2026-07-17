@@ -61,3 +61,6 @@ Next: the attach/tools handoff (`cfc-attach-tools-handoff.md`). Note its Step 7 
 
 - Don't reformat working code you weren't asked to touch.
 - If a fix is a guess, say it's a guess.
+- `README.md` (human-facing) and `HANDOVER.md` (LLM-facing technical doc) are
+  coupled. A rewrite of one requires a rewrite of the other — if I ask you to
+  redo the README, redo the handover too.
