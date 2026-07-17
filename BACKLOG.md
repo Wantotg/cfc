@@ -66,38 +66,3 @@ nano-gpt endpoint, or the name has changed. Either drop it from `MODELS` or
 find the right endpoint. Nothing validates that a model in `MODELS` can
 actually be chatted with, which is why this sat there unnoticed.
 
----
-
-## `pick_session` has an unreachable duplicate loop
-
-**Found:** 2026-07-15, while extracting `hub.py`.
-
-The `while True:` input loop in `pick_session` appears twice, identically. The
-first one only ever exits by `return`, so the second is dead code. Presumably a
-bad paste that never caused a symptom.
-
-Left in place deliberately: it was found during a pure move, and deleting it
-there would have meant a move that changed the code. It does nothing, so it can
-go whenever `hub.py` is next touched. Verified all four paths ('q', 'n', a
-number, junk) behave correctly with it present.
-
----
-
-## `is_litter` marker regex is coupled to two other files
-
-**Found:** 2026-07-15.
-
-`backfill.py`'s `_MARKER_LINE` hard-codes the marker formats written by
-`import_anthropic.py` (`[tool_use: ...]`, `[tool_result]`) and `commands.py`
-(`[:remember ... (ephemeral)]`). Change a marker format in either file and
-litter silently starts getting embedded again — which is exactly the bug that
-was just fixed (the old regex matched one marker against the whole chunk, so
-concatenated markers leaked through).
-
-The comment says "if the marker format in commands.py changes, change this too",
-which is a comment doing a test's job. The split has since moved the markers
-from `chat.py` to `commands.py` and the comment had to be chased by hand —
-exactly the failure it warns about, just caught this time.
-
-A test asserting `is_litter("[:remember x (ephemeral)]") is True` against the
-string `commands.py` actually writes would make this self-enforcing.

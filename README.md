@@ -217,6 +217,7 @@ python tests/test_gate.py        # the approval gate
 python tests/test_agent.py       # the agent loop and tool replay
 python tests/test_attach.py      # :attach / :attached / :detach
 python tests/test_schema.py      # the kind/meta migration
+python tests/test_litter.py      # the litter filter's marker coupling
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.
