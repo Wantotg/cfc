@@ -13,7 +13,6 @@ import httpx
 from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 
@@ -24,7 +23,7 @@ try:
 except ImportError:
     STREAM_USAGE = True
 
-from ui import console
+from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
 
 
 def call_api(messages, model=None, tools=None):
@@ -86,12 +85,7 @@ def _thinking_panel(reasoning):
     lines = reasoning.splitlines() or [reasoning]
     tail = lines[-_REASONING_TAIL_LINES:]
     body = Text("\n".join(tail), style="dim italic")
-    return Panel(
-        body,
-        title="thinking",
-        title_align="left",
-        border_style="dim",
-    )
+    return ai_reasoning_panel(body)
 
 
 def stream_response(messages, model=None):
@@ -120,7 +114,7 @@ def stream_response(messages, model=None):
             Spinner(
                 "dots",
                 text="Thinking...",
-                style="cyan",
+                style=SPINNER_COLOR,
             ),
             console=console,
             refresh_per_second=8,
@@ -180,12 +174,9 @@ def stream_response(messages, model=None):
                                         _thinking_panel(reasoning)
                                     )
                                 if full_text:
-                                    panels.append(Panel(
-                                        Markdown(full_text),
-                                        title="ai",
-                                        title_align="left",
-                                        border_style="cyan",
-                                    ))
+                                    panels.append(
+                                        ai_answer_panel(Markdown(full_text))
+                                    )
                                 live.update(Group(*panels))
                     except json.JSONDecodeError:
                         continue

@@ -11,12 +11,52 @@
 import datetime
 import sys
 
+from rich import box
 from rich.console import Console
+from rich.panel import Panel
 from rich.text import Text
 
 # markup=False so existing [...] strings print literally.
 # highlight=True (default) gives subtle coloring of numbers/paths.
 console = Console(markup=False)
+
+
+# ── palette ──────────────────────────────────────────────────────────
+# The turn's colours live here, next to the console everything shares. Not in
+# config.py: these are the app's look, not a deployment knob. Tuned for a black
+# terminal background.
+AI_REASON_BORDER = "#3a3f5c"  # dark slate-grey — reasoning is demoted
+AI_ANSWER_BORDER = "#a01a6d"  # deep magenta — the answer is the loud frame
+HUMAN_BORDER = "#1a2456"      # deep navy
+AI_NAME = "#ff4fd8"           # hot pink — speaker label, brighter than its frame
+HUMAN_NAME = "#5fb3e8"        # softer blue
+SPINNER_COLOR = "#22e0ff"     # electric cyan
+
+
+def _speaker_panel(body, name, name_color, border):
+    """A titled box whose label is coloured independently of its border — the
+    'dark frame, bright name' pattern. `body` is any renderable (Markdown while
+    streaming, Text on the reasoning tail or a human line)."""
+    return Panel(
+        body,
+        title=Text(name, style=f"bold {name_color}"),
+        title_align="left",
+        border_style=border,
+        box=box.SQUARE,
+        padding=(0, 1),
+    )
+
+
+def ai_answer_panel(body):
+    return _speaker_panel(body, "AI", AI_NAME, AI_ANSWER_BORDER)
+
+
+def ai_reasoning_panel(body):
+    return _speaker_panel(body, "AI · reasoning", AI_NAME, AI_REASON_BORDER)
+
+
+def human_panel(text):
+    return _speaker_panel(Text(text), "You", HUMAN_NAME, HUMAN_BORDER)
 
 
 def format_ts(iso_str):

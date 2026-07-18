@@ -26,7 +26,7 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 
-from ui import console, read_input
+from ui import console, human_panel, read_input
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
@@ -543,6 +543,10 @@ def run_session(conn, session_id):
             continue
 
         # --- Chat ---
+
+        # Frame what was just sent, so the human turn reads as a peer to the AI
+        # panels below it rather than a bare `you>` line.
+        console.print(human_panel(user))
 
         save_message(conn, session_id, "user", user,
                      model=current_model)

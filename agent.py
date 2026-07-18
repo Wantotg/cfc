@@ -20,13 +20,12 @@
 import json
 
 from rich.markdown import Markdown
-from rich.panel import Panel
 
 from api import call_api
 from commands import TurnApproval, gate_and_dispatch
 from db import save_message
 from tools import TOOL_SCHEMAS
-from ui import console
+from ui import SPINNER_COLOR, ai_answer_panel, console
 
 try:
     from config import TOOLS_MAX_CALLS_PER_TURN
@@ -93,7 +92,7 @@ def agent_turn(prefix, history, model, conn, session_id):
         # spinner here, so the tool path does too. Not streaming: the spinner
         # is the whole feedback, from request to response.
         with console.status("Thinking...", spinner="dots",
-                            spinner_style="cyan"):
+                            spinner_style=SPINNER_COLOR):
             resp = call_api(messages, model=model, tools=TOOL_SCHEMAS)
         usage = resp.get("usage") or {}
         msg = resp["choices"][0]["message"]
@@ -144,5 +143,4 @@ def agent_turn(prefix, history, model, conn, session_id):
 
 def render_answer(text):
     console.print()
-    console.print(Panel(Markdown(text or ""), title="ai", title_align="left",
-                        border_style="cyan"))
+    console.print(ai_answer_panel(Markdown(text or "")))
