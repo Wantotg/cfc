@@ -62,3 +62,6 @@ findings.
 - Anything that writes to a database must check the path *before* the write.
 - `README.md` (human-facing) and `HANDOVER.md` (LLM-facing) are coupled — a
   rewrite of one is a rewrite of the other.
+- Log every shipped change in `CHANGELOG.md`, in the same commit as the change
+  (hash `pending` for WIP), most recent at the top. Format is at the head of
+  that file. `HANDOVER.md` stays invariants, not a log.
