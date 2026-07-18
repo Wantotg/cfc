@@ -135,7 +135,10 @@ def _make_prompt_session():
         # document.
         event.current_buffer.insert_text("\n")
 
-    return PromptSession(multiline=True, key_bindings=kb)
+    # erase_when_done wipes the "you> <text>" line once Enter is hit; the caller
+    # re-echoes it in the bordered human_panel, so without this the message shows
+    # twice — once raw, once framed.
+    return PromptSession(multiline=True, key_bindings=kb, erase_when_done=True)
 
 
 def read_input(prompt="you> "):
