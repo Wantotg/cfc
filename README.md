@@ -8,8 +8,8 @@ For the internals — architecture, data model, invariants, and the reasoning be
 
 ## Features
 
-- **Rich terminal UI** — live Markdown rendering, panels, spinners, styled tables, colour-coded progress bars
-- **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll prompt when a model returns an empty completion
+- **Rich terminal UI** — live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
+- **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll prompt when a model returns an empty completion. Reasoning shows on the tool path too (rendered per step, not streamed)
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
 - **Per-session models** — switch models mid-project; each message records what generated it
@@ -183,7 +183,7 @@ The tests that back this up are worth keeping green: `tests/test_paths.py` cover
 ## Known limitations
 
 - **Recall staleness** — semantic search matches on topic, so a question about a decision tends to surface the messages where you were *struggling* with it rather than the one where you settled it. The struggle is longer and uses the topic's vocabulary more.
-- **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams.
+- **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams. (Reasoning still shows on the tool path — it just arrives all at once per step rather than streaming in.)
 - **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `:tools` tells you whether the active model qualifies.
 - Streaming token counts depend on the provider supporting `stream_options: {"include_usage": true}`. Without it, the post-response bar is skipped, but `:tokens` still works from stored data.
 - Search is substring (`LIKE`), not full-text. Fine at current scale; FTS5 is a possible upgrade.

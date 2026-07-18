@@ -66,3 +66,21 @@ nano-gpt endpoint, or the name has changed. Either drop it from `MODELS` or
 find the right endpoint. Nothing validates that a model in `MODELS` can
 actually be chatted with, which is why this sat there unnoticed.
 
+---
+
+## Reasoning on the tool path is printed in full — may drown the answer
+
+**Found:** 2026-07-18, wiring reasoning into the tool path.
+
+The streaming path tail-limits live reasoning to the last 12 lines
+(`_REASONING_TAIL_LINES`) so the live region doesn't jump. The tool path
+(`agent._render_reasoning`) prints each step's reasoning **in full**, because
+it's a one-shot print into scrollback with no live region to keep still — and a
+tool turn can print several such panels (one per loop iteration). On a verbose
+thinking model that can bury the actual answer under walls of reasoning.
+
+Left in full deliberately, to see how it reads in real use. If it's too much,
+tail it there too (reuse `_REASONING_TAIL_LINES`, or a larger cap), or add a
+config toggle to collapse/hide reasoning. Purely cosmetic — reasoning is never
+persisted or replayed either way.
+
