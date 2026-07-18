@@ -6,8 +6,10 @@ What changed and when. Most recent at the top. This is the running log so
 One entry per change. Keep it to what a future reader needs: the date, a title,
 a one-line what/why, the files touched, and status. The **commit** hash is the
 ID — it links straight to GitHub, so there's no separate numbering to maintain.
-Fill it in after committing (`git rev-parse --short HEAD`); leave it `pending`
-for uncommitted work.
+
+Write the entry `pending` in the same commit as the change, then backfill the
+hash on the *next* commit. Don't amend to insert it: a commit can't hold its own
+final hash, and amending just orphans the one you wrote.
 
 Template:
 
@@ -20,6 +22,13 @@ One line: what changed and why it mattered.
 ```
 
 ---
+
+## 2026-07-18 — Backfill changelog hashes on the next commit, not by amending
+The "same commit" rule was impossible for a self-referencing entry; switched the
+convention to `pending`-then-backfill so it stops costing extra commits.
+- Files: CHANGELOG.md, CLAUDE.example.md (and gitignored CLAUDE.md)
+- Status: shipped
+- Commit: pending
 
 ## 2026-07-18 — Require a changelog entry per shipped change
 Added this file and made "log every change here" a standing instruction, so
