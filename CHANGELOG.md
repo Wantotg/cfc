@@ -26,7 +26,7 @@ Added this file and made "log every change here" a standing instruction, so
 `HANDOVER.md` stops accreting history it was never meant to hold.
 - Files: CHANGELOG.md, CLAUDE.example.md (and gitignored CLAUDE.md)
 - Status: shipped
-- Commit: 568c8b4
+- Commit: 3f0da6a
 
 ## 2026-07-18 — Erase the input line so the human turn isn't shown twice
 The bordered human panel duplicated the raw `you>` line prompt_toolkit leaves on
