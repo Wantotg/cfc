@@ -121,7 +121,10 @@ still returns to the hub.
 | `:config` | Show current configuration (key masked) |
 | `:title <n> <name>` | Rename a session |
 
-**Multi-line input:** type `"""` to open, `"""` again to send, `:cancel` to abort. `Ctrl+C` during streaming cancels the request.
+**Multi-line input:** just type or paste. Enter sends; **Alt+Enter** inserts a
+newline. A pasted block keeps its line breaks and doesn't submit early. Ctrl+C
+at the prompt clears the current line (it no longer leaves the session — use
+`:q` or Ctrl-D for that); Ctrl+C during streaming cancels the request.
 
 `:attach` completes paths on Tab, scoped to `ATTACH_ROOTS`. Completion stays
 quiet until you've typed a few characters of a name rather than dumping a whole

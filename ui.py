@@ -9,6 +9,7 @@
 # the dependency graph so db/api/export/commands can all rely on it without a
 # cycle.
 import datetime
+import sys
 
 from rich.console import Console
 from rich.text import Text
@@ -69,22 +70,66 @@ def make_snippet(content, query, context=40):
     return prefix + content_flat[start:end] + suffix
 
 
-def read_multiline():
-    """Read multi-line input until closing triple-quote.
-    Returns the joined text, or None if cancelled."""
-    lines = []
-    console.print("Multi-line mode. Type \"\"\" to send, "
-                  ":cancel to abort.")
+# Created lazily on first read and reused for the life of the process.
+# Building a PromptSession re-probes the terminal (size, cursor position), so
+# one shared session avoids paying that on every prompt.
+_prompt_session = None
+
+
+def _make_prompt_session():
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.key_binding import KeyBindings
+
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _submit(event):
+        # Enter sends. With multiline=True the default is the opposite (Enter
+        # inserts a newline, Meta+Enter accepts), so we override it.
+        event.current_buffer.validate_and_handle()
+
+    @kb.add("escape", "enter")
+    def _newline(event):
+        # Alt+Enter inserts a newline. This is *the* newline key: Shift+Enter
+        # can't be bound (see read_input docstring), so Alt+Enter is what we
+        # document.
+        event.current_buffer.insert_text("\n")
+
+    return PromptSession(multiline=True, key_bindings=kb)
+
+
+def read_input(prompt="you> "):
+    """Read one submission with full line editing, arrow navigation, and
+    multi-line paste. Returns the entered text (unstripped — the caller
+    strips).
+
+    Enter sends. Alt+Enter inserts a newline. A bracketed paste lands in the
+    buffer intact, embedded newlines and all — it does not submit early, which
+    is the whole reason the old ``\"\"\"`` heredoc mode is gone.
+
+    Ctrl-C abandons the current line and reprompts, staying in the session.
+    Ctrl-D on an empty line raises EOFError, which the caller reads as "leave
+    session." (The old reader left on both; Ctrl-C no longer leaves.)
+
+    Shift+Enter is deliberately unbound: prompt_toolkit maps the terminal
+    sequence for Shift+Enter back to plain Enter, so it can't insert a newline
+    without also breaking Enter. Windows Terminal users who want the Shift+Enter
+    reflex can remap it to send Alt+Enter (ESC + CR) in settings.
+    """
+    if not sys.stdin.isatty():
+        # Non-interactive stdin — piped input, or the golden harness feeding a
+        # StringIO. prompt_toolkit needs a real terminal (it wants a tty fd),
+        # so fall back to plain input(). This also keeps the characterisation
+        # tests reading exactly as they did before. EOFError still propagates
+        # as "leave session."
+        return input(prompt)
+
+    global _prompt_session
+    if _prompt_session is None:
+        _prompt_session = _make_prompt_session()
     while True:
         try:
-            line = input("...> ")
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[cancelled]")
-            return None
-        if line == ":cancel":
-            console.print("[cancelled]")
-            return None
-        if line == '"""':
-            break
-        lines.append(line)
-    return "\n".join(lines)
+            return _prompt_session.prompt(prompt)
+        except KeyboardInterrupt:
+            # Ctrl-C: drop the current line, draw a fresh prompt. Never leaves.
+            continue

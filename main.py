@@ -26,7 +26,7 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 
-from ui import console, read_multiline
+from ui import console, read_input
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
@@ -186,7 +186,8 @@ def run_session(conn, session_id):
                   "session")
     console.print("  :tools on     enable tools this session")
     console.print("  :config       show all settings")
-    console.print("  \"\"\"           start multi-line input")
+    console.print("  Alt+Enter     insert a newline "
+                  "(Enter sends)")
     console.print()
 
     if history:
@@ -212,21 +213,16 @@ def run_session(conn, session_id):
 
     while True:
         try:
-            user = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
+            user = read_input("you> ").strip()
+        except EOFError:
+            # Ctrl-D on an empty line leaves the session. Ctrl-C is handled
+            # inside read_input (cancel line, stay) and never reaches here.
             console.print()
             if AUTO_EXPORT and history:
                 safe_export(conn, session_id)
             break
         if not user:
             continue
-
-        # Multi-line input mode
-        if user == '"""':
-            content = read_multiline()
-            if content is None or not content.strip():
-                continue
-            user = content
 
         if user == ":q":
             if AUTO_EXPORT and history:

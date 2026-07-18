@@ -39,7 +39,7 @@ Commands:
   :tools        show tool state for this session
   :tools on     enable tools this session
   :config       show all settings
-  """           start multi-line input
+  Alt+Enter     insert a newline (Enter sends)
 
 --- Previous messages in this session ---
 you> what did we decide about the vector db?

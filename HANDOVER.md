@@ -31,6 +31,8 @@ use_tools = TOOLS_ENABLED and tools_on and (current_model in TOOLS_MODELS)
 
 **Provider quirk (nano-gpt thinking models):** reasoning streams as `delta.reasoning` (distinct from `delta.content`), *ahead of* any answer. It's now rendered live in the dim `thinking` panel and also returned (the third tuple element) so callers can tell a reasoning-only turn from a truly empty one. `usage` arrives in a final chunk when `stream_options.include_usage` is set (`STREAM_USAGE`, default true); it includes cache-read/creation and `reasoning_tokens` breakdowns. Non-thinking-vs-thinking is purely a config/model-id concern; the code doesn't branch on it.
 
+**Input is a `prompt_toolkit` editor** (`ui.read_input`), not `input()`. One lazily-built `PromptSession`, reused. **Enter submits; Alt+Enter (ESC+CR) inserts a newline; bracketed paste lands intact** (multi-line paste no longer submits early — this is why the old `"""` heredoc mode was deleted). Shift+Enter is deliberately unbound: prompt_toolkit maps its terminal sequence back to plain Enter (`ansi_escape_sequences.py`), so it can't be a newline without breaking Enter. **Ctrl-C cancels the current line and stays in the session** (it used to leave — that shortcut is gone); **Ctrl-D on an empty line / `:q` leave.** When stdin isn't a TTY (piped input, `tests/golden.py`) `read_input` falls back to plain `input()` — prompt_toolkit needs a real terminal, and the fallback keeps the golden output byte-for-byte.
+
 **Empty completions are a thing.** GLM-5.2:thinking occasionally returns a near-empty completion (a handful of tokens, `finish_reason=stop`, no `content`) — a provider-side hiccup, *not* a size limit; the same context answers on a re-roll. `main.py`'s stream path loops on this: it distinguishes reasoning-only (`[the model thought but returned no answer…]`) from genuinely empty (`[empty response]`), prompts `retry? (y/n)`, and re-sends the identical request on `y`. Empty completions are never persisted (the guard predates this, but it's why two dead empty-assistant rows once accumulated in a long thinking-model session and had to be swept).
 
 ---
@@ -111,7 +113,7 @@ Guard invariants:
 1. **Any DB write checks its path *before* the write, not after.** A test guard that ran its assertion *after* a destructive `unlink()` once deleted the real database. `backup.py` and `tests/golden.py` both assert-not-real before touching anything.
 2. **Orphan tool_call drop on replay** — see above; interrupted turns must stay reopenable.
 3. **`path_guard` resolves before checking; the deny list is add-only.**
-4. **Single shared `rich.Console`** (`ui.py`). Rich tracks terminal/live state per Console; two writing to one terminal interleave badly during streaming. `markup=False` so literal `[...]` in content isn't parsed. `ui.py` imports no other cfc module (bottom of the dependency graph).
+4. **Single shared `rich.Console`** (`ui.py`). Rich tracks terminal/live state per Console; two writing to one terminal interleave badly during streaming. `markup=False` so literal `[...]` in content isn't parsed. `ui.py` imports no other cfc module (bottom of the dependency graph). It also owns `read_input` (the prompt_toolkit editor) — see below. **prompt_toolkit and rich must never drive the terminal at the same time.** They don't: input is read at the top of the loop and returns before any `rich.Live` starts. Keep it that way.
 5. **Marker formats are pinned by tests** (`test_litter.py`, `test_schema.py`) — changing a marker string in `commands.py`/`import_anthropic.py` fails a test instead of silently re-embedding markers or breaking recall_marker parsing.
 6. **The two turn paths end identically** (`print_context_bar`).
 7. **`search.py` LEFT JOINs chunks→sessions** — a chunk with a dangling `session_id` surfaces with a `(missing session N)` placeholder rather than being silently dropped by an inner join (which is why k=8 could return 7).
@@ -141,7 +143,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker 
 | `complete.py` | Tab completion for `:attach`, scoped to roots |
 | `export.py` | one Markdown file per session → Obsidian vault (overwrite on re-export) |
 | `backup.py` | rolling snapshots via SQLite online-backup API, integrity-checked, 6h-throttled, keep 10 |
-| `ui.py` | shared Console + `make_bar`, `make_snippet`, `read_multiline` |
+| `ui.py` | shared Console + `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor) |
 | memory | `import_anthropic.py`, `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py` |
 | `config.py` | key, base, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
 
@@ -149,7 +151,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker 
 
 ## Current state & open threads
 
-- **Just landed:** thinking-model reasoning rendered live (was dropped) + empty-completion retry on the stream path; spinner+token-bar restored on the tool path; orphan-chunk surfacing; `:q`→hub; dead-code + test-debt cleanup.
+- **Just landed:** `prompt_toolkit` input editor replacing `input()` + the `"""` heredoc (Enter sends, Alt+Enter newlines, paste intact, Ctrl-C no longer leaves); thinking-model reasoning rendered live (was dropped) + empty-completion retry on the stream path; spinner+token-bar restored on the tool path; orphan-chunk surfacing; `:q`→hub; dead-code + test-debt cleanup.
 - **Backlog (parked, DB-flavored):** (a) *root cause* of the dangling `session_id` — a chunk points at a session row that was never written; suspect `import_anthropic.py` committing chunks against an uncommitted session id, or a delete without cascade. Retrieval side is handled; the write side isn't. (b) `chunk.py` overlap slices mid-word (fixed-char window, no boundary seek) — cosmetic, but a fix means re-chunk + re-embed (costs an embedding run).
 - **DB-layer rework is anticipated** — treat the chunk/vector schema as in flux. `TARGET_TOKENS`/`OVERLAP`/`CHARS_PER_TOK` are naive (char-based); the design note "SQLite stays the source of truth, sqlite-vec is an index over it" is the intended shape.
 - **Constraints that are choices, not bugs:** streaming off under tools; tool calling needs a model in `TOOLS_MODELS` (verified against nano-gpt, not assumed); `:grep` and history search are substring (`LIKE`), FTS5 a possible upgrade; sessions are linear (no branching).
