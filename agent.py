@@ -20,12 +20,13 @@
 import json
 
 from rich.markdown import Markdown
+from rich.text import Text
 
 from api import call_api
 from commands import TurnApproval, gate_and_dispatch
 from db import save_message
 from tools import TOOL_SCHEMAS
-from ui import SPINNER_COLOR, ai_answer_panel, console
+from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
 
 try:
     from config import TOOLS_MAX_CALLS_PER_TURN
@@ -52,6 +53,17 @@ def _render_call(call):
     except json.JSONDecodeError:
         pretty = args
     console.print(f"  → {fn.get('name')}({pretty})", style="dim")
+
+
+def _render_reasoning(reasoning):
+    """The model's thinking for this step, in the same dim panel the streaming
+    path uses. Shown full, not tail-limited: unlike the live panel there's no
+    region to keep from jumping — this prints once, complete, into scrollback,
+    like the tool call/result lines below it."""
+    if not (reasoning or "").strip():
+        return
+    console.print()
+    console.print(ai_reasoning_panel(Text(reasoning, style="dim italic")))
 
 
 def _render_result(result):
@@ -97,6 +109,12 @@ def agent_turn(prefix, history, model, conn, session_id):
         usage = resp.get("usage") or {}
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls")
+
+        # Thinking models return their reasoning here too (non-streaming), where
+        # it was previously discarded. Render it before this step's tool calls or
+        # final answer, so the tool path shows reasoning like the stream path.
+        # It's presentation only — never persisted or replayed into the API.
+        _render_reasoning(msg.get("reasoning"))
 
         # Normalise: the API may omit content entirely on a tool call, but our
         # own history and renderers expect the key to exist.
