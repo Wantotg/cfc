@@ -21,6 +21,9 @@ claude_export/
 
 # Claude Code local files
 .claude/
+# Personal working notes — has names, filepaths, private context.
+# CLAUDE.example.md is the sanitised version that ships.
+CLAUDE.md
 
 # golden harness scratch
 tests/_fixture.db
