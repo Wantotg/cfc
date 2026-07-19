@@ -55,7 +55,9 @@ The `chat.py` split is **done**. `main.py` (REPL + dispatch + session state), `c
 
 `backup.py` snapshots `~/.cfc/chat.db` to `~/.cfc/backups/` on startup (throttled to 6h, skipped when unchanged, rolling 10). `--list`, `--force`, `--restore latest|<name>`. This exists because a test guard that ran *after* its destructive step deleted the whole database — restored from a temp-dir copy that got lucky. **Anything that writes to a database must check the path before the write, not after.**
 
-Next: the attach/tools handoff (`cfc-attach-tools-handoff.md`). Note its Step 7 README rewrite is partly done already — structure and entry point are current, the roadmap and Security section aren't.
+The attach/tools handoff is done; its scratch doc has been removed. One leftover from it: the README rewrite is only partly done — structure and entry point are current, the roadmap and Security section still aren't.
+
+Next: the wiki-DB migration (see `WIKI_MIGRATION.md`, being archived). Step 1 (embeddings on self-hosted bge-m3 via LM Studio) is shipped; Steps 2–3 are `import_wiki.py` + a `source` column on `chunks`.
 
 ## Things to remember
 
@@ -64,3 +66,8 @@ Next: the attach/tools handoff (`cfc-attach-tools-handoff.md`). Note its Step 7 
 - `README.md` (human-facing) and `HANDOVER.md` (LLM-facing technical doc) are
   coupled. A rewrite of one requires a rewrite of the other — if I ask you to
   redo the README, redo the handover too.
+- Log every shipped change in `CHANGELOG.md` — add the entry in the same commit
+  as the change, most recent at the top. Write the hash as `pending` and
+  backfill it on the next commit; don't amend to self-reference (a commit can't
+  hold its own final hash). Format is at the head of that file. This is the
+  running history; `HANDOVER.md` stays invariants and design reasoning, not a log.
