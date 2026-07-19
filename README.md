@@ -16,7 +16,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **System prompts & personas** — Markdown files injected as system messages, editable in Obsidian
 - **Tagging** — many-to-many tags, exported to Obsidian frontmatter
 - **Search** — case-insensitive substring search across all messages
-- **Semantic memory** — ask past conversations a question and get a cited answer, or pull the raw excerpts into the live context
+- **Semantic memory** — a knowledge wiki (Obsidian Markdown) embedded locally; ask it a question and get an answer cited by page, or pull the raw excerpts into the live context. New chats are indexed as they happen
 - **File attachments** — inject a local text file into a session; it persists and comes back on reopen
 - **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, read-only, behind an approval gate
 - **Token tracking** — live context-usage bar with warnings as the window fills
@@ -25,9 +25,9 @@ For the internals — architecture, data model, invariants, and the reasoning be
 ## Requirements
 
 - Python 3.10+
-- [`httpx`](https://www.python-httpx.org/) and [`rich`](https://rich.readthedocs.io/)
-- [`sqlite-vec`](https://github.com/asg017/sqlite-vec) for the memory layer
-- An API key for an OpenAI-compatible provider
+- `httpx`, `rich`, `prompt_toolkit`, [`sqlite-vec`](https://github.com/asg017/sqlite-vec), and `PyYAML` — see `requirements.txt`
+- An API key for an OpenAI-compatible chat provider
+- An embedding endpoint for the memory layer — either the provider's hosted `bge-m3`, or a self-hosted one (this setup runs it locally on LM Studio)
 
 ## Setup
 
@@ -43,7 +43,7 @@ cd cfc
 ```bash
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install httpx rich sqlite-vec
+pip install -r requirements.txt
 ```
 
 **3. Create your config**
@@ -61,6 +61,8 @@ Then edit `config.py` and set:
 - `VAULT_PATH` — folder in your Obsidian vault for exported chats
 - `PROMPTS_DIR` / `PERSONAS_DIR` — folders for your system-prompt and persona Markdown files
 - `MODELS` / `MODEL_LIMITS` — the models your plan supports and their context sizes
+- `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` — the embedding endpoint; defaults to the hosted `bge-m3`, or point it at a local server to self-host
+- `AUTO_EMBED` — index new chat messages into memory after each turn (default on)
 
 `config.py` is gitignored and will never be committed — it holds your key and stays local. It's also on the deny list in `paths.py`, so `:attach` and the file tools refuse to read it even though it sits inside the project.
 
@@ -108,9 +110,10 @@ still returns to the hub.
 | `:untag <name>` | Remove a tag |
 | `:tags` / `:taglist` | Show tags / all tags with counts |
 | `:grep <keyword>` | Substring search across all messages |
-| `:recall <question>` | Ask your history a question; cited answer, no session effect |
+| `:recall <question>` | Ask the wiki a question; answer cited by page, no session effect |
 | `:remember <query>` | Pull matching excerpts into the live context (ephemeral) |
 | `:forget` | Drop the most recently injected excerpts |
+| `:updatedb` | Index any not-yet-embedded messages into memory now |
 | `:attach <path>` | Attach a local text file to the session (persistent) |
 | `:attached` | List attachments in this session |
 | `:detach <n>` | Remove an attachment by its `:attached` index |
@@ -148,18 +151,21 @@ main.py → repl() ┬→ pick_session() → run_session() ─┐
 
 ## Memory
 
-Past conversations — including an imported Anthropic export — are chunked (500 tokens, 75 overlap, never crossing a message boundary), embedded with `BAAI/bge-m3`, and stored in `sqlite-vec`.
+Recall runs over a **knowledge wiki** — Obsidian Markdown pages, each with a stable id in YAML frontmatter — distilled from past work. Pages are imported, chunked (500 tokens, 75 overlap, never crossing a message boundary), embedded with `bge-m3`, and stored in `sqlite-vec`.
 
 ```
-python import_anthropic.py <export.json> ~/.cfc/chat.db   # import
-python chunk.py ~/.cfc/chat.db                            # chunk
-python backfill.py ~/.cfc/chat.db                         # embed
-python backfill.py ~/.cfc/chat.db --prune                 # drop litter vectors
+python import_wiki.py <wiki_dir> ~/.cfc/chat.db   # import wiki pages (idempotent by id)
+python chunk.py ~/.cfc/chat.db                     # chunk
+python backfill.py ~/.cfc/chat.db                  # embed
 ```
 
-`:recall` synthesises a cited answer and leaves the session untouched. `:remember` injects the raw excerpts into the live context and is ephemeral — only a marker row persists, so an export can still tell a grounded claim from an invented one. `:forget` drops the last injection.
+Editing a page and re-importing re-chunks and re-embeds it under the same id, so a page's identity survives edits. New in-app chats are indexed automatically after each turn (`AUTO_EMBED`), or on demand with `:updatedb`; they're tagged `source='chat'` and accumulate for a future wiki+chat hybrid, while recall stays wiki-only for now.
 
-Retrieval has a relevance floor: if nothing is within `MAX_DISTANCE` of the question, memory says it has no answer rather than returning eight mediocre excerpts. The threshold was measured against this corpus (answerable questions land at 0.53–0.89, questions it has never discussed at 0.97–1.09) and is specific to `bge-m3` — re-measure if the embedding model changes.
+`:recall` synthesises an answer cited by page title and id, and leaves the session untouched. `:remember` injects the raw excerpts into the live context and is ephemeral — only a marker row persists, so an export can still tell a grounded claim from an invented one. `:forget` drops the last injection.
+
+The embedder is self-hosted here (`bge-m3` on LM Studio) but any OpenAI-compatible `/embeddings` endpoint works — set `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY`, or leave them to fall back to the chat provider's hosted copy.
+
+Retrieval has a relevance floor: if nothing is within `MAX_DISTANCE` of the question, memory says it has no answer rather than returning eight mediocre excerpts. The threshold (`1.024`) was measured against the wiki corpus (answerable questions land at 0.65–0.97, questions it has never discussed at 1.08–1.17) and is specific to `bge-m3` **and** this corpus — re-measure if either changes (e.g. when the chat log is folded in).
 
 ## Security
 
@@ -182,7 +188,7 @@ The tests that back this up are worth keeping green: `tests/test_paths.py` cover
 
 ## Known limitations
 
-- **Recall staleness** — semantic search matches on topic, so a question about a decision tends to surface the messages where you were *struggling* with it rather than the one where you settled it. The struggle is longer and uses the topic's vocabulary more.
+- **Recall is wiki-only** — the semantic index answers from the distilled wiki, which states each decision once. Raw chat logs are indexed (`source='chat'`) but not yet folded into recall; that hybrid is a future additive step. This sidesteps the old "resolution staleness" problem, where searching raw transcripts surfaced the messages where a decision was being *argued* over the one where it was settled.
 - **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams. (Reasoning still shows on the tool path — it just arrives all at once per step rather than streaming in.)
 - **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `:tools` tells you whether the active model qualifies.
 - Streaming token counts depend on the provider supporting `stream_options: {"include_usage": true}`. Without it, the post-response bar is skipped, but `:tokens` still works from stored data.
@@ -210,7 +216,7 @@ Known rough edges live in `BACKLOG.md`.
 | `ui.py` | the shared console and presentation helpers |
 | `config.py` | settings — gitignored |
 
-The memory layer is separate: `import_anthropic.py`, `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.
+The memory layer is separate: `import_wiki.py` (and `import_anthropic.py`), `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.
 
 ## Tests
 

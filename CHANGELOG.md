@@ -23,6 +23,16 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-19 — Bring README + HANDOVER current for the wiki migration
+Rewrote the coupled docs to the finished shape: wiki-based recall, self-hosted
+bge-m3 (EMBED_*), the source column, import_wiki + edit-survival, the 1.024
+floor, wiki-only recall with id citations, and auto-embed/:updatedb. Retired the
+"resolution staleness" open problem (the wiki addresses it) and added a
+wiki-identity invariant. No code change.
+- Files: README.md, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-19 — Auto-embed new chats on save + :updatedb (Step 8)
 Closes the wiki-DB migration. New chat messages are chunked + embedded into the
 index after each turn (source='chat'), so the corpus grows current for the
@@ -35,7 +45,7 @@ litter logic. Verified: incremental chat indexing, idempotent re-run, no golden
 diff, unit suite green.
 - Files: chunk.py, backfill.py, commands.py, main.py, config.example.py
 - Status: shipped
-- Commit: pending
+- Commit: 9ccbe5b
 
 ## 2026-07-19 — Repoint recall at the wiki corpus (floor 1.024, id citations)
 Steps 4–7 of the wiki-DB migration. Re-measured MAX_DISTANCE on the wiki corpus
