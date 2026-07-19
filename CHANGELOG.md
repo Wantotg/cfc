@@ -23,6 +23,18 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-19 — Add import_wiki.py: import the Obsidian wiki_db
+New importer for the wiki (markdown + YAML frontmatter). Each page → one
+session (provider='wiki', source_uuid=frontmatter id) + one message, keyed by
+the stable id so it survives edits; an edited page updates the message and drops
+its chunks/vectors to force re-chunk + re-embed under the same id. Embeds
+title + summary + Body, dropping Related/Sources; skips sources/, no-id files,
+and type: index. Adds PyYAML. Step 2 of the wiki-DB migration. Verified against
+the live wiki: 20 pages in, idempotent re-run, edit→re-chunk, vector cleanup.
+- Files: import_wiki.py, requirements.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-19 — Tag chunks with a source column (chat vs wiki)
 Added `source` to the `chunks` table (default 'chat', set 'wiki' when the
 message's session is provider='wiki'), with an ALTER migration for older DBs.
@@ -31,7 +43,7 @@ Step 3 of the wiki-DB migration. Verified: provider drives source, migration
 backfills existing rows to 'chat'.
 - Files: chunk.py
 - Status: shipped
-- Commit: pending
+- Commit: 5139384
 
 ## 2026-07-19 — Point embeddings at self-hosted bge-m3 (LM Studio)
 Split the embedding endpoint from chat (EMBED_BASE/EMBED_MODEL/EMBED_KEY) so the
