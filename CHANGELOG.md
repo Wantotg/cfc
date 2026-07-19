@@ -23,6 +23,16 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-19 — Tag chunks with a source column (chat vs wiki)
+Added `source` to the `chunks` table (default 'chat', set 'wiki' when the
+message's session is provider='wiki'), with an ALTER migration for older DBs.
+Makes the coming wiki/chat hybrid recall an additive filter, not a rewrite.
+Step 3 of the wiki-DB migration. Verified: provider drives source, migration
+backfills existing rows to 'chat'.
+- Files: chunk.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-19 — Point embeddings at self-hosted bge-m3 (LM Studio)
 Split the embedding endpoint from chat (EMBED_BASE/EMBED_MODEL/EMBED_KEY) so the
 RAG layer runs on local bge-m3 via LM Studio instead of nano-gpt's hosted copy;
@@ -31,7 +41,7 @@ Falls back to the hosted defaults when the new keys are absent. Step 1 of the
 wiki-DB migration.
 - Files: embed.py, config.py (gitignored), config.example.py, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: b7b8c98
 
 ## 2026-07-18 — Backfill changelog hashes on the next commit, not by amending
 The "same commit" rule was impossible for a self-referencing entry; switched the

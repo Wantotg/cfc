@@ -37,8 +37,13 @@ def ensure_table(db, rebuild):
             ordinal INTEGER,     -- position within the message
             text TEXT,
             token_est INTEGER,
+            source TEXT DEFAULT 'chat',  -- 'chat' | 'wiki'; lets hybrid recall filter/weight by corpus
             UNIQUE(message_id, kind, ordinal)
         )""")
+    # Migrate an older chunks table that predates the source column.
+    cols = {r[1] for r in db.execute("PRAGMA table_info(chunks)")}
+    if "source" not in cols:
+        db.execute("ALTER TABLE chunks ADD COLUMN source TEXT DEFAULT 'chat'")
     db.execute("CREATE INDEX IF NOT EXISTS idx_chunks_session ON chunks(session_id)")
     db.commit()
 
@@ -80,11 +85,18 @@ def main():
     ensure_table(db, rebuild)
 
     done = {(r[0], r[1], r[2]) for r in db.execute("SELECT message_id, kind, ordinal FROM chunks")}
-    rows = db.execute("SELECT id, session_id, content FROM messages WHERE content IS NOT NULL").fetchall()
+    # LEFT JOIN so a message whose session row is missing still chunks (source
+    # falls back to 'chat'); provider drives the corpus tag.
+    rows = db.execute("""
+        SELECT m.id, m.session_id, m.content, s.provider
+        FROM messages m LEFT JOIN sessions s ON s.id = m.session_id
+        WHERE m.content IS NOT NULL
+    """).fetchall()
 
     made = 0
     per_kind = {"message":0, "thinking":0}
-    for mid, sid, content in rows:
+    for mid, sid, content, provider in rows:
+        source = "wiki" if provider == "wiki" else "chat"
         ordinal = 0
         for kind, seg in split_kinds(content):
             for piece in slice_text(seg):
@@ -92,8 +104,8 @@ def main():
                 if key in done:
                     ordinal += 1; continue
                 db.execute(
-                    "INSERT OR IGNORE INTO chunks (message_id, session_id, kind, ordinal, text, token_est) VALUES (?,?,?,?,?,?)",
-                    (mid, sid, kind, ordinal, piece, est_tokens(piece)))
+                    "INSERT OR IGNORE INTO chunks (message_id, session_id, kind, ordinal, text, token_est, source) VALUES (?,?,?,?,?,?,?)",
+                    (mid, sid, kind, ordinal, piece, est_tokens(piece), source))
                 made += 1; per_kind[kind] = per_kind.get(kind,0)+1
                 ordinal += 1
     db.commit()
