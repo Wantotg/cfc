@@ -68,6 +68,25 @@ actually be chatted with, which is why this sat there unnoticed.
 
 ---
 
+## Local embedding endpoint IP is not stable across reboots
+
+**Found:** 2026-07-19, wiring bge-m3 on LM Studio (Windows) for the wiki migration.
+
+`embed.py` reaches LM Studio at `http://172.27.0.1:1233/v1` — the WSL2 NAT
+gateway to the Windows host. That gateway IP is **not guaranteed stable**; it
+can change on a WSL or Windows reboot, at which point embedding calls fail with
+a connection error that looks like a dead server but is really a moved address.
+
+Fix when it bites (or proactively): set `networkingMode=mirrored` in
+`C:\Users\<user>\.wslconfig`, then `wsl --shutdown` once. After that
+`localhost:1233` works from WSL and the IP stops mattering. The zero-setup
+alternative is to re-run `ip route show default` and update the base URL when it
+breaks. Also note LM Studio's "serve on local network" toggle must stay ON
+(it's the 0.0.0.0 bind) and the model id is `text-embedding-baai-bge-m3-568m`,
+not plain `bge-m3`.
+
+---
+
 ## Reasoning on the tool path is printed in full — may drown the answer
 
 **Found:** 2026-07-18, wiring reasoning into the tool path.

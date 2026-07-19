@@ -1,7 +1,8 @@
 # config.py — fill in your values from the nano-gpt dashboard
 API_BASE = "https://api.nano-gpt.com/v1"   # check their docs for the exact URL
-API_KEY  = "PLACEHOLDER"   # paste your key here
+API_KEY  = ""   # paste your key here
 MODEL    = "zai-org/glm-5.2:thinking"                    # pick a model your plan supports
+RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers :recall (grounded synthesis)
 
 # Path to a folder inside your Obsidian vault where chats will be exported
 VAULT_PATH = "PLACEHOLDER"
@@ -31,6 +32,17 @@ MODEL_LIMITS = {
     "moonshotai/kimi-k2.6:thinking": 256000,
     "longcat-2.0": 1000000,
 }
+
+# --- embeddings (RAG) ------------------------------------------------------
+# Where the RAG layer gets its vectors. Defaults to nano-gpt's hosted bge-m3,
+# using the same key/base as chat. To self-host instead (e.g. bge-m3 on
+# LM Studio), point EMBED_BASE at that server's OpenAI-compatible /v1 and set
+# EMBED_MODEL to its model id; EMBED_KEY can be any non-empty string if the
+# local server ignores auth. From WSL to a Windows host, use the NAT gateway
+# IP (see `ip route show default`) or mirrored networking, not 127.0.0.1.
+EMBED_BASE  = API_BASE
+EMBED_MODEL = "BAAI/bge-m3"
+EMBED_KEY   = API_KEY
 
 # --- :attach ---------------------------------------------------------------
 # Files can only be attached from inside one of ATTACH_ROOTS. A path passes if

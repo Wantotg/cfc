@@ -11,15 +11,20 @@ Standalone so it slots into the future api.py cleanly.
 """
 import time
 
-# Pulled from the user's existing config.py (same key/base as chat).
+# Pulled from config.py. The embedding endpoint is independent of chat
+# (EMBED_BASE/EMBED_MODEL/EMBED_KEY); if those aren't set it falls back to the
+# chat key/base and hosted bge-m3, so an older config keeps working.
 try:
     import config
     API_KEY  = getattr(config, "API_KEY", None)
-    API_BASE = getattr(config, "API_BASE", "https://nano-gpt.com/api/v1")
+    API_BASE = getattr(config, "API_BASE", "https://api.nano-gpt.com/v1")
+    EMBED_BASE  = getattr(config, "EMBED_BASE", API_BASE)
+    EMBED_MODEL = getattr(config, "EMBED_MODEL", "BAAI/bge-m3")
+    EMBED_KEY   = getattr(config, "EMBED_KEY", API_KEY)
 except Exception:
-    API_KEY, API_BASE = None, "https://nano-gpt.com/api/v1"
+    API_KEY, API_BASE = None, "https://api.nano-gpt.com/v1"
+    EMBED_BASE, EMBED_MODEL, EMBED_KEY = API_BASE, "BAAI/bge-m3", None
 
-EMBED_MODEL = "BAAI/bge-m3"
 EMBED_DIM   = 1024
 _BATCH      = 100          # well under the 2048 cap; keeps requests small
 _TIMEOUT    = 60.0
@@ -27,8 +32,8 @@ _RETRIES    = 4
 
 def _post(batch):
     import httpx  # lazy: only needed for the live call
-    url = API_BASE.rstrip("/") + "/embeddings"
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    url = EMBED_BASE.rstrip("/") + "/embeddings"
+    headers = {"Authorization": f"Bearer {EMBED_KEY}", "Content-Type": "application/json"}
     payload = {"model": EMBED_MODEL, "input": batch}
     last = None
     for attempt in range(_RETRIES):
