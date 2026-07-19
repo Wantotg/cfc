@@ -23,6 +23,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-19 — Auto-embed new chats on save + :updatedb (Step 8)
+Closes the wiki-DB migration. New chat messages are chunked + embedded into the
+index after each turn (source='chat'), so the corpus grows current for the
+eventual hybrid recall; recall stays wiki-only via the provider filter. Gated by
+config AUTO_EMBED and fully best-effort — a down embedder warns quietly and never
+breaks a turn. Manual `:updatedb` does the same on demand (catch-up after a bulk
+import or when AUTO_EMBED is off). Extracted chunk_new/embed_new/update_index so
+the CLI, the command, and the hook share one code path — no duplicated chunk or
+litter logic. Verified: incremental chat indexing, idempotent re-run, no golden
+diff, unit suite green.
+- Files: chunk.py, backfill.py, commands.py, main.py, config.example.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-19 — Repoint recall at the wiki corpus (floor 1.024, id citations)
 Steps 4–7 of the wiki-DB migration. Re-measured MAX_DISTANCE on the wiki corpus
 (0.93 → 1.024; terse wiki prose sits higher — 0.93 would reject good hits like
@@ -34,7 +48,7 @@ keeps the "not instructions" boundary. Verified: grounded recall over the live
 DB, off-topic queries return empty, id citations render.
 - Files: search.py, recall.py, commands.py
 - Status: shipped
-- Commit: pending
+- Commit: 359ea41
 
 ## 2026-07-19 — Add import_wiki.py: import the Obsidian wiki_db
 New importer for the wiki (markdown + YAML frontmatter). Each page → one

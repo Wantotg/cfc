@@ -41,6 +41,10 @@ try:
     from config import STREAM_USAGE
 except ImportError:
     STREAM_USAGE = True
+try:
+    from config import AUTO_EMBED
+except ImportError:
+    AUTO_EMBED = True
 
 try:
     from config import ATTACH_ROOTS
@@ -579,6 +583,44 @@ def do_forget(history, injected):
             break
     console.print(f"\nDropped the last injected block. "
                   f"{len(injected)} still in context.\n")
+
+
+def do_updatedb():
+    """Chunk + embed anything in the db not yet indexed. Manual counterpart to
+    the per-turn auto-embed — useful when AUTO_EMBED is off, after a bulk import,
+    or to catch up if the embedder was down."""
+    try:
+        from backfill import update_index
+    except Exception as e:
+        memory_unavailable(e)
+        return
+    try:
+        with Live(
+            Spinner("dots", text="Updating memory index...", style="magenta"),
+            console=console, refresh_per_second=8,
+        ):
+            made, added = update_index(str(DB_PATH))
+    except Exception as e:
+        console.print(f"\n[updatedb failed] {e}\n")
+        return
+    if made or added:
+        console.print(f"\nMemory index updated: +{made} chunks, "
+                      f"+{added} vectors.\n")
+    else:
+        console.print("\nMemory index already current.\n")
+
+
+def auto_embed():
+    """Silent per-turn index update. Best-effort: a failed embed (e.g. the local
+    embedder is down) must never break a chat turn, so it warns quietly and the
+    message stays saved for a later :updatedb to pick up."""
+    if not AUTO_EMBED:
+        return
+    try:
+        from backfill import update_index
+        update_index(str(DB_PATH))
+    except Exception as e:
+        console.print(f"[auto-embed skipped: {e}]")
 
 
 # --- :attach ---------------------------------------------------------------

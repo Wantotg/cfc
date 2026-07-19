@@ -53,6 +53,7 @@ from commands import (
     print_context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
+    do_updatedb, auto_embed,
     do_attach, show_attachments, do_detach,
     show_tools_state,
 )
@@ -341,6 +342,10 @@ def run_session(conn, session_id):
             do_forget(history, injected)
             continue
 
+        if user == ":updatedb":
+            do_updatedb()
+            continue
+
         # --- Attachments ---
         #
         # :attached and :detach are matched before :attach, because
@@ -592,6 +597,7 @@ def run_session(conn, session_id):
                     set_session_title(conn, session_id, new_title)
                     current_title = new_title
                     console.print(f"[title: {new_title}]\n")
+            auto_embed()   # index this turn's messages (best-effort)
             continue
 
         api_messages = list(prefix)
@@ -666,6 +672,8 @@ def run_session(conn, session_id):
                                   new_title)
                 current_title = new_title
                 console.print(f"[title: {new_title}]\n")
+
+        auto_embed()   # index this turn's messages (best-effort)
 
 if __name__ == "__main__":
     # Snapshot before the session touches anything. Deliberately here and not

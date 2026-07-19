@@ -76,14 +76,12 @@ def slice_text(text):
         i += step
     return out
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    rebuild = "--rebuild" in sys.argv
-    if len(args) != 1:
-        print("usage: python3 chunk.py /path/to/chat.db [--rebuild]"); sys.exit(1)
-    db = sqlite3.connect(os.path.expanduser(args[0]))
-    ensure_table(db, rebuild)
-
+def chunk_new(db):
+    """Chunk any messages not yet chunked; returns (made, per_kind). The caller
+    owns the connection. Incremental and idempotent — keyed by
+    (message_id, kind, ordinal), so repeated calls only add what's new. Used by
+    the CLI, by :updatedb, and by the per-turn auto-embed hook."""
+    ensure_table(db, rebuild=False)
     done = {(r[0], r[1], r[2]) for r in db.execute("SELECT message_id, kind, ordinal FROM chunks")}
     # LEFT JOIN so a message whose session row is missing still chunks (source
     # falls back to 'chat'); provider drives the corpus tag.
@@ -109,6 +107,18 @@ def main():
                 made += 1; per_kind[kind] = per_kind.get(kind,0)+1
                 ordinal += 1
     db.commit()
+    return made, per_kind
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    rebuild = "--rebuild" in sys.argv
+    if len(args) != 1:
+        print("usage: python3 chunk.py /path/to/chat.db [--rebuild]"); sys.exit(1)
+    db = sqlite3.connect(os.path.expanduser(args[0]))
+    if rebuild:
+        ensure_table(db, rebuild=True)
+
+    made, per_kind = chunk_new(db)
 
     total = db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     print(f"created {made} new chunks this run")

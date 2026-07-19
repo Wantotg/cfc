@@ -72,6 +72,46 @@ def pack(vec):
     """sqlite-vec accepts raw float32 bytes."""
     return struct.pack(f"{len(vec)}f", *vec)
 
+_BATCH = 100
+
+def embed_new(db, limit=None, progress=False):
+    """Embed chunks that lack a vector, skipping litter. Returns the count
+    embedded. The caller owns the connection and must have sqlite-vec loaded on
+    it (use connect() or update_index). Incremental — safe to call every turn."""
+    ensure_vec_table(db)
+    embedded = {r[0] for r in db.execute("SELECT chunk_id FROM vec_chunks")}
+    rows = db.execute("SELECT id, text, token_est FROM chunks").fetchall()
+    todo = [(cid, txt) for cid, txt, te in rows
+            if cid not in embedded and not is_litter(txt, te)]
+    if limit:
+        todo = todo[:limit]
+    done = 0
+    for i in range(0, len(todo), _BATCH):
+        batch = todo[i:i+_BATCH]
+        vecs = embed_texts([t for _, t in batch])
+        db.executemany(
+            "INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?, ?)",
+            [(cid, pack(v)) for (cid, _), v in zip(batch, vecs)])
+        db.commit()
+        done += len(batch)
+        if progress:
+            print(f"  embedded {done}/{len(todo)}")
+    return done
+
+def update_index(db_path, limit=None):
+    """Bring a db's chunks + vectors current in one call: chunk new messages,
+    then embed the new chunks. Opens its own connection with sqlite-vec loaded,
+    so callers needn't manage the extension. Returns (chunks_made,
+    vectors_added). This is what :updatedb and the per-turn auto-embed call."""
+    from chunk import chunk_new
+    db = connect(db_path)
+    try:
+        made, _ = chunk_new(db)
+        added = embed_new(db, limit=limit)
+    finally:
+        db.close()
+    return made, added
+
 def main():
     limit = None
     argv = sys.argv[1:]
@@ -122,17 +162,7 @@ def main():
     if not todo:
         print("nothing to embed."); return
 
-    BATCH = 100
-    done = 0
-    for i in range(0, len(todo), BATCH):
-        batch = todo[i:i+BATCH]
-        vecs = embed_texts([t for _, t in batch])
-        db.executemany(
-            "INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?, ?)",
-            [(cid, pack(v)) for (cid, _), v in zip(batch, vecs)])
-        db.commit()
-        done += len(batch)
-        print(f"  embedded {done}/{len(todo)}")
+    embed_new(db, limit=limit, progress=True)
     print(f"done. vec_chunks now holds {db.execute('SELECT COUNT(*) FROM vec_chunks').fetchone()[0]} vectors")
     db.close()
 
