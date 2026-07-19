@@ -21,12 +21,12 @@ except Exception:
     API_KEY, API_BASE, RECALL_MODEL = None, "https://nano-gpt.com/api/v1", None
 
 SYSTEM = (
-    "You answer questions about the user's own past conversations, using ONLY "
-    "the excerpts provided. Each excerpt is labelled with its source conversation "
-    "and date. Rules:\n"
+    "You answer questions from the user's own knowledge wiki, using ONLY the "
+    "excerpts provided. Each excerpt is labelled with its source page title and "
+    "stable id. Rules:\n"
     "- Answer only from the excerpts. Do not use outside knowledge.\n"
-    "- Cite the source of each point using its conversation title and date "
-    "(the 'From:' line above each excerpt). Never cite by number or position.\n"
+    "- Cite the source of each point by its page title and id (the 'From:' line "
+    "above each excerpt). Never cite by number or position.\n"
     "- If the excerpts do not contain the answer, say so plainly. Do not guess "
     "or fill gaps with plausible invention.\n"
     "- Distinguish decisions the user made from ideas that were only discussed.\n"
@@ -38,15 +38,19 @@ def build_context(hits):
     for h in hits:
         tag = " [reasoning]" if h["kind"] == "thinking" else ""
         date = (h["created_at"] or "")[:10]
+        wid = h.get("source_uuid") or "?"
+        datepart = f", {date}" if date else ""
         blocks.append(
-            f"From: {h['session_title']} ({date}){tag}\n"
+            f"From: {h['session_title']} (id {wid}{datepart}){tag}\n"
             f"{h['text']}"
         )
     return "\n\n---\n\n".join(blocks)
 
-def recall(db_path, question, k=8, kind=None):
+def recall(db_path, question, k=8, kind=None, provider="wiki"):
+    # provider='wiki' keeps recall grounded in the wiki even once the chat log
+    # accumulates its own (source='chat') chunks. Pass provider=None for all.
     import httpx
-    hits = search(db_path, question, k=k, kind=kind)
+    hits = search(db_path, question, k=k, kind=kind, provider=provider)
     if not hits:
         return "No relevant excerpts found in memory.", []
     context = build_context(hits)
@@ -75,4 +79,4 @@ if __name__ == "__main__":
     print(answer)
     print("="*60)
     print(f"\n(drew on {len(hits)} excerpts from "
-          f"{len(set(h['session_id'] for h in hits))} conversations)")
+          f"{len(set(h['session_id'] for h in hits))} wiki pages)")

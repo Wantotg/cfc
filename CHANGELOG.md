@@ -23,6 +23,19 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-19 — Repoint recall at the wiki corpus (floor 1.024, id citations)
+Steps 4–7 of the wiki-DB migration. Re-measured MAX_DISTANCE on the wiki corpus
+(0.93 → 1.024; terse wiki prose sits higher — 0.93 would reject good hits like
+"who is Cas" at 0.969) and moved the live chat.db to a fresh, wiki-only DB (old
+one archived to ~/.cfc/chat-archive-pre-wiki-20260719.db). search.py now surfaces
+the page's stable id (source_uuid) and source; recall.py answers wiki-only
+(provider='wiki') and cites by title + id; :remember's envelope cites by id and
+keeps the "not instructions" boundary. Verified: grounded recall over the live
+DB, off-topic queries return empty, id citations render.
+- Files: search.py, recall.py, commands.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-19 — Add import_wiki.py: import the Obsidian wiki_db
 New importer for the wiki (markdown + YAML frontmatter). Each page → one
 session (provider='wiki', source_uuid=frontmatter id) + one message, keyed by
@@ -33,7 +46,7 @@ and type: index. Adds PyYAML. Step 2 of the wiki-DB migration. Verified against
 the live wiki: 20 pages in, idempotent re-run, edit→re-chunk, vector cleanup.
 - Files: import_wiki.py, requirements.txt
 - Status: shipped
-- Commit: pending
+- Commit: 444d7aa
 
 ## 2026-07-19 — Tag chunks with a source column (chat vs wiki)
 Added `source` to the `chunks` table (default 'chat', set 'wiki' when the

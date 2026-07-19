@@ -16,18 +16,20 @@ import sqlite_vec
 from embed import embed_texts
 
 # KNN always returns k rows, however bad they are, so a question the corpus
-# can't answer still came back with eight confident-looking excerpts of lint.
-# The distance says so plainly. Measured over 36 probes against this corpus
-# (24 questions with a known answer, 12 on topics it has never discussed):
+# can't answer still came back with k confident-looking excerpts of lint. The
+# distance says so plainly. Re-measured over 36 probes against the WIKI corpus
+# (24 questions with a known answer, 12 on topics it never covers):
 #
-#   answerable:   distance 0.531 - 0.892   (median 0.788)
-#   unanswerable: distance 0.973 - 1.094   (median 1.029)
+#   answerable:   top-1 distance 0.648 - 0.969   (median 0.791)
+#   unanswerable: top-1 distance 1.080 - 1.168   (median 1.106)
 #
-# Separation was total, so anything in 0.90-0.97 scores identically; 0.93 sits
-# mid-gap for the widest margin either side. bge-m3 specific — re-measure if
-# the embedding model changes, as this is a property of its geometry, not a
-# universal constant.
-MAX_DISTANCE = 0.93
+# Total separation, a 0.111-wide gap; 1.024 sits mid-gap. This REPLACES the old
+# 0.93, which was tuned on the chatty Anthropic export: terse wiki prose sits
+# higher, and 0.93 would have rejected good hits (e.g. "who is Cas" at 0.969).
+# The floor is a property of the embedding geometry AND the corpus, not a
+# constant — re-measure (self-hosted bge-m3) if either changes, e.g. when the
+# chat log is folded in for hybrid recall.
+MAX_DISTANCE = 1.024
 
 def _connect(db_path):
     db = sqlite3.connect(os.path.expanduser(db_path))
@@ -62,8 +64,9 @@ def search(db_path, query, k=8, kind=None, provider=None,
         # then the row vanished, and a k=8 search quietly returned 7. Surface it
         # with a placeholder instead of hiding it.
         c = db.execute("""
-            SELECT c.id AS chunk_id, c.text, c.kind, c.session_id,
-                   s.title AS session_title, s.created_at, s.provider
+            SELECT c.id AS chunk_id, c.text, c.kind, c.session_id, c.source,
+                   s.title AS session_title, s.created_at, s.provider,
+                   s.source_uuid
             FROM chunks c LEFT JOIN sessions s ON s.id = c.session_id
             WHERE c.id = ?
         """, (row["chunk_id"],)).fetchone()
@@ -78,6 +81,7 @@ def search(db_path, query, k=8, kind=None, provider=None,
             "chunk_id": c["chunk_id"], "text": c["text"], "kind": c["kind"],
             "session_id": c["session_id"], "session_title": title,
             "created_at": c["created_at"], "distance": row["distance"],
+            "source_uuid": c["source_uuid"], "source": c["source"],
         })
         if len(results) >= k:
             break
