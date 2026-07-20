@@ -262,6 +262,59 @@ def main():
             ok("a disabled routine does not run", disabled[0] is False)
             ok("...and says so in the log",
                routines.last_run("off")[0] == "skipped")
+
+            print("\n--- an empty completion is a failure, not a quiet 'ok' ---")
+            # The bug: agent_turn returns the empty message, _summarise('')
+            # is '', and the run logged as ok with a blank summary. A routine
+            # that did nothing looked identical to one with nothing to do.
+            calls = []
+
+            def always_empty(*a, **kw):
+                calls.append(1)
+                return {"role": "assistant", "content": ""}
+
+            runner.agent_turn = always_empty
+            empty = make(id="empty", read_roots=[str(store.pdir)])
+            routines.save_routine(empty)
+            ok5, summary, _ = runner.run_routine("empty", conn, model="m")
+            ok("an empty completion fails the run", ok5 is False, summary)
+            ok("...and is logged as failed",
+               routines.last_run("empty")[0] == "failed")
+            ok("...not as ok with a blank summary",
+               routines.last_run("empty")[0] != "ok")
+            ok("...after re-rolling, not on the first try",
+               len(calls) == runner.EMPTY_COMPLETION_RETRIES + 1, len(calls))
+
+            # A hiccup that clears on a re-roll must not cost the run.
+            attempts = []
+
+            def empty_once_then_answer(*a, **kw):
+                attempts.append(1)
+                return {"role": "assistant",
+                        "content": "" if len(attempts) == 1 else "did it"}
+
+            runner.agent_turn = empty_once_then_answer
+            ok6, summary, _ = runner.run_routine("empty", conn, model="m")
+            ok("one hiccup does not cost the run", ok6 is True, summary)
+            ok("...and the answer is the retried one", summary == "did it",
+               summary)
+
+            # Whitespace is not an answer.
+            runner.agent_turn = lambda *a, **kw: {"role": "assistant",
+                                                  "content": "   \n  "}
+            ok7, _, _ = runner.run_routine("empty", conn, model="m")
+            ok("whitespace-only counts as empty", ok7 is False)
+
+            print("\n--- the retry does not consult ctx.interactive ---")
+            # Gating on `interactive` would make an on-command run give up on
+            # the first hiccup while an unattended one re-rolled — backwards.
+            for label, flag in (("unattended", False), ("on-command", True)):
+                seen = []
+                runner.agent_turn = lambda *a, **kw: (
+                    seen.append(1), {"role": "assistant", "content": ""})[1]
+                runner.run_routine("empty", conn, model="m", interactive=flag)
+                ok(f"{label} runs re-roll the same number of times",
+                   len(seen) == runner.EMPTY_COMPLETION_RETRIES + 1, len(seen))
         finally:
             runner.agent_turn = real_turn
             conn.close()

@@ -26,6 +26,7 @@ import datetime
 import traceback
 
 from agent import agent_turn
+from api import EMPTY_COMPLETION_RETRIES
 from db import new_session, save_message
 from routines import RoutineError, append_log, last_run, load_routine
 
@@ -68,6 +69,53 @@ def _summarise(text, limit=200):
     """One line for the log. The transcript keeps the full version."""
     flat = " ".join((text or "").split())
     return flat[:limit] + ("…" if len(flat) > limit else "")
+
+
+class EmptyCompletion(Exception):
+    """The model returned nothing, repeatedly. Treated as a failed run."""
+
+
+def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event):
+    """Run the turn, re-rolling an empty completion rather than accepting it.
+
+    Thinking models return the occasional empty completion — a provider
+    hiccup, not a size limit, and the same context usually answers on a
+    re-roll.
+
+    **The retry here is unconditional, and deliberately does NOT consult
+    `ctx.interactive`.** A routine is a batch job whether or not somebody
+    happens to be watching it run, so the policy is the same either way;
+    gating it on `interactive` would have made an on-command run give up on
+    the first hiccup while an unattended one re-rolled twice, which is exactly
+    backwards. `interactive` earns its keep in `main.py`, where it decides
+    whether there is a human to *ask* — a question that has no meaning here,
+    because this module owns no console and asks nobody anything.
+
+    **The bug this fixes was not a missing prompt.** `agent_turn` returns the
+    empty message, `_summarise("")` yields "", and the run was logged as `ok`
+    with a blank summary — a routine that did nothing looked exactly like a
+    routine that had nothing to do. Same failure mode standing decision #4
+    flags for zero-hit recall, arriving through a different door. That is why
+    this raises rather than returning something falsy for the caller to notice.
+
+    `history` is rebuilt per attempt so a re-roll re-sends the identical
+    request rather than one polluted by the previous empty answer. The empty
+    assistant rows `agent_turn` persists are left in the transcript on purpose:
+    the routine's session is the audit trail, and "it returned nothing twice"
+    is exactly what you want to see there.
+    """
+    attempts = EMPTY_COMPLETION_RETRIES + 1
+    for attempt in range(1, attempts + 1):
+        history = [{"role": "user", "content": task}]
+        final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx)
+        if (final.get("content") or "").strip():
+            return final
+        if attempt < attempts:
+            event(f"empty completion — re-rolling {attempt}/{attempts - 1}")
+
+    raise EmptyCompletion(
+        f"model returned an empty completion {attempts} time(s)"
+    )
 
 
 def run_routine(key, conn, model=None, interactive=False, on_event=None):
@@ -133,11 +181,11 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         return False, str(e), session_id
 
     prefix = [{"role": "system", "content": system}]
-    history = [{"role": "user", "content": task}]
     save_message(conn, session_id, "user", task, model=model)
 
     try:
-        final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx)
+        final = _turn_with_retry(prefix, task, model, conn, session_id, ctx,
+                                 event)
     except Exception as e:                      # noqa: BLE001 — see below
         # Deliberately broad. Anything from an HTTP timeout to a provider
         # returning a shape we don't expect has to reach the log, because an

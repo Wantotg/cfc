@@ -23,6 +23,36 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Consume `ToolContext.interactive`; stop logging empty runs as `ok`
+Wiring the flag turned up a worse bug than the one it was reserved for.
+- **`for_chat` defaults `interactive` to `sys.stdin.isatty()`** instead of
+  hard-coding True, which was a lie the moment input was piped. It is a
+  separate question from `gated`: a chat is always gated, but a chat driven
+  from a pipe has nobody to ask about a re-roll.
+- **`main.py`'s empty-completion handler consults it.** Human present: ask
+  `retry? (y/n)` as before. Nobody there: re-roll up to
+  `api.EMPTY_COMPLETION_RETRIES` (2), then give up loudly. The old code asked
+  unconditionally and read the `EOFError` as "no", so every piped hiccup
+  silently cost a turn.
+- **The routine bug was not the predicted hang.** The handover expected an
+  unattended run to block on that prompt; it couldn't, because routines take
+  the `agent_turn` path, which has no prompt. Instead `agent_turn` returned
+  the empty message, `_summarise("")` gave `""`, and the run was logged **`ok`
+  with a blank summary** — a routine that did nothing looked exactly like one
+  that had nothing to do. Same failure mode standing decision #4 flags for
+  zero-hit recall, through a different door. `runner._turn_with_retry` now
+  re-rolls and raises `EmptyCompletion`, which the broad `except` logs as a
+  failure.
+- **That retry deliberately does NOT consult `interactive`.** A routine is a
+  batch job whether or not somebody is watching; gating it on the flag would
+  have made an on-command run give up on the first hiccup while an unattended
+  one re-rolled twice — exactly backwards. Caught while writing it, and now
+  pinned by a test that asserts both paths re-roll identically.
+- Files: context.py, api.py, main.py, runner.py, tests/test_empty.py (new),
+  tests/test_gate.py, tests/test_routines.py, README.md, HANDOVER.md, CLAUDE.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-20 — Add propose/approve/move: `mover.py`, `:outbox`, `:file`
 Round three of the routines handover, which is now fully discharged. A routine
 writes into the outbox with a suggested `destination:`; you review and approve;

@@ -79,6 +79,13 @@ def _error_detail(r):
 # panel stays put and you can still see it's alive and what it's chewing on.
 _REASONING_TAIL_LINES = 12
 
+# How many times to silently re-send after an empty completion when there is no
+# human to ask. Thinking models return these now and then and the same context
+# usually answers on a re-roll, so one hiccup shouldn't cost an unattended run.
+# Bounded because the failure mode of "retry until it works" against a sick
+# provider is a very large bill, discovered late.
+EMPTY_COMPLETION_RETRIES = 2
+
 
 def _thinking_panel(reasoning):
     """The dim 'thinking' panel: last few lines of the reasoning stream."""

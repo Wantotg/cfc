@@ -25,6 +25,7 @@
 # Read scope and write scope are separate sets and the write set is never
 # derived from the read set by assignment. Both are passed in; nothing here
 # reaches for a default that would widen either.
+import sys
 from pathlib import Path
 
 CODE_ROOT = Path(__file__).resolve().parent
@@ -87,10 +88,28 @@ class ToolContext:
         return bool(self.write_roots)
 
     @classmethod
-    def for_chat(cls, read_roots, write_roots=()):
-        """Interactive chat: always gated, whatever else is configured."""
+    def for_chat(cls, read_roots, write_roots=(), interactive=None):
+        """Interactive chat: always gated, whatever else is configured.
+
+        `interactive` answers one question — **is there a human who can answer
+        a prompt right now?** It defaults to whether stdin is a terminal, which
+        is the only honest source for that. Hard-coding it True was a lie the
+        moment input was piped: the empty-completion handler would ask
+        `retry? (y/n)`, take the EOFError, and give up on a hiccup that a
+        re-roll would have fixed.
+
+        Note this is a separate question from `gated`. A chat is always gated —
+        tool calls are never auto-approved — but a chat driven from a pipe has
+        nobody to ask about a re-roll. Don't collapse the two.
+        """
+        if interactive is None:
+            try:
+                interactive = sys.stdin.isatty()
+            except (AttributeError, ValueError):
+                # A closed or replaced stdin (tests capture it) is not a human.
+                interactive = False
         return cls(read_roots=read_roots, write_roots=write_roots,
-                   gated=True, interactive=True, label="chat")
+                   gated=True, interactive=interactive, label="chat")
 
     @classmethod
     def for_routine(cls, name, read_roots, write_roots=(), interactive=False):

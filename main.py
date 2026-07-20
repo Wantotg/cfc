@@ -41,7 +41,8 @@ from db import (
     delete_session,
 )
 from agent import agent_turn, render_answer
-from api import stream_response, generate_title
+from context import chat_context
+from api import stream_response, generate_title, EMPTY_COMPLETION_RETRIES
 from backup import safe_backup
 from complete import install as install_completion
 from export import export_session, safe_export
@@ -101,6 +102,10 @@ def run_session(conn, session_id):
     """One session's REPL loop. Returns when the user leaves the session
     (`:q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'."""
     history = load_history(conn, session_id)
+    # Built once per session: `interactive` reports whether stdin is a
+    # terminal, which is what the empty-completion handler consults before it
+    # asks anyone anything.
+    chat_ctx = chat_context()
     injected = []          # blocks added by :remember, newest last
     tools_on = True        # session toggle; the master switch still gates it
     current_title = get_session_title(conn, session_id)
@@ -637,6 +642,7 @@ def run_session(conn, session_id):
 
         assistant = ""
         usage = None
+        empty_attempts = 0
         while True:
             try:
                 assistant, usage, reasoning = stream_response(
@@ -663,6 +669,24 @@ def run_session(conn, session_id):
                     "provider hiccup, common on thinking models]")
             else:
                 console.print("\n[empty response]")
+
+            # Who decides whether to re-roll depends on whether anyone is
+            # there. With a human at a terminal, ask — it's their tokens and
+            # they can see what happened. Driven from a pipe (or, later, a
+            # headless run), asking means blocking on a keypress that never
+            # comes, so retry a bounded number of times and then give up
+            # loudly. The old code asked unconditionally and read the EOFError
+            # as "no", which turned every piped hiccup into a lost turn.
+            if not chat_ctx.interactive:
+                empty_attempts += 1
+                if empty_attempts <= EMPTY_COMPLETION_RETRIES:
+                    console.print(f"[no human to ask — retrying "
+                                  f"{empty_attempts}/{EMPTY_COMPLETION_RETRIES}]")
+                    continue
+                console.print(f"[gave up after {EMPTY_COMPLETION_RETRIES} "
+                              f"retries]")
+                break
+
             try:
                 again = input("retry? (y/n) ").strip().lower()
             except (EOFError, KeyboardInterrupt):

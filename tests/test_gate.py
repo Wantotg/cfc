@@ -136,6 +136,45 @@ def main():
         ok("gated has no setter", True)
     ok("...still gated after the attempt", chat_ctx.gated)
 
+    print("\n--- interactive reports whether a human can be asked ---")
+    # Separate question from `gated`: a chat is always gated (tool calls are
+    # never auto-approved) but a chat driven from a pipe has nobody to ask
+    # about an empty-completion re-roll. Hard-coding it True was a lie the
+    # moment input was piped.
+    ok("explicit interactive=False is honoured",
+       ToolContext.for_chat(read_roots=(jail,), interactive=False)
+       .interactive is False)
+    ok("explicit interactive=True is honoured",
+       ToolContext.for_chat(read_roots=(jail,), interactive=True)
+       .interactive is True)
+    ok("...and it does not disturb gating",
+       ToolContext.for_chat(read_roots=(jail,), interactive=False).gated)
+
+    class NotATty:
+        def isatty(self):
+            return False
+
+    class ATty:
+        def isatty(self):
+            return True
+
+    real_stdin = sys.stdin
+    try:
+        sys.stdin = NotATty()
+        ok("a pipe defaults to non-interactive",
+           ToolContext.for_chat(read_roots=(jail,)).interactive is False)
+        sys.stdin = ATty()
+        ok("a terminal defaults to interactive",
+           ToolContext.for_chat(read_roots=(jail,)).interactive is True)
+        sys.stdin = None
+        ok("a missing stdin is not a human",
+           ToolContext.for_chat(read_roots=(jail,)).interactive is False)
+    finally:
+        sys.stdin = real_stdin
+
+    ok("a routine is non-interactive by default",
+       ToolContext.for_routine("n", read_roots=(jail,)).interactive is False)
+
     print("\n--- an ungated context is only reachable via for_routine ---")
     rt = ToolContext.for_routine("nightly", read_roots=(jail,),
                                  write_roots=(outbox,))

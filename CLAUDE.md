@@ -19,6 +19,15 @@ Talk to him as a peer. Direct, no hand-holding, no false enthusiasm. He has a dr
 - Iterative. Small blocks, verify, next block. Don't dump 400 lines and hope.
 - Git: commit at working states, push at end of session, imperative messages.
 - Ambiguity is fine — he'll steer. Ask when genuinely blocked, not to cover yourself.
+- **Handover briefs harden his suggestions into rules. Don't treat them as
+  settled.** A brief written at the end of a session is usually written by the
+  model, and it tends to promote "Cas mentioned doing X first" into "Build this
+  last, only once 1–4 are solid — Cas was explicit about this ordering." He
+  usually wasn't. Ordering, scope and bonus objectives in a brief are proposals
+  unless he says otherwise *in the conversation*. If a different order or design
+  makes more sense, say so **before starting**, not after. The genuinely fixed
+  things are the invariants in `HANDOVER.md` and the standing decisions — those
+  are recorded precisely because they're settled, and they say so.
 
 ## Environment
 

@@ -9,7 +9,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 ## Features
 
 - **Rich terminal UI** — live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
-- **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll prompt when a model returns an empty completion. Reasoning shows on the tool path too (rendered per step, not streamed)
+- **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll when a model returns an empty completion — it asks you if you're there, and retries on its own if you're not. Reasoning shows on the tool path too (rendered per step, not streamed)
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
 - **Per-session models** — switch models mid-project; each message records what generated it
@@ -246,6 +246,7 @@ python tests/test_schema.py      # the kind/meta migration
 python tests/test_litter.py      # the litter filter's marker coupling
 python tests/test_routines.py    # the routine file round-trip, scope refusal, run log
 python tests/test_mover.py       # filing: destination re-validation, refusals, atomicity
+python tests/test_empty.py       # empty completions: ask a human, or re-roll and give up
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.
