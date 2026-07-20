@@ -25,6 +25,7 @@ import agent
 import commands
 import db as dbmod
 import tools
+from context import ToolContext
 
 PASS, FAIL = [], []
 
@@ -79,8 +80,8 @@ def main():
     jail.mkdir(parents=True)
     (jail / "notes.md").write_text("alpha\nbeta\ngamma\n")
     tools.TOOLS_ROOTS = (jail,)
-    agent.TOOLS_ROOTS = (jail,)
-    agent.TOOLS_AUTO_APPROVE = set()
+    # agent builds its context from config; point it at the temp jail instead.
+    agent.chat_context = lambda: ToolContext.for_chat(read_roots=(jail,))
 
     dbmod.DB_PATH = tmp / "chat.db"
     conn = dbmod.db()
@@ -104,7 +105,8 @@ def main():
     agent.call_api = fake
     drive(agent.agent_turn, [], [{"role": "user", "content": "x"}], "m", conn, 1)
     names = {t["function"]["name"] for t in fake.seen[0]["tools"]}
-    ok("schemas passed to call_api", names == {"list_dir", "read_file", "grep"},
+    ok("schemas passed to call_api",
+       names == {"list_dir", "read_file", "grep", "write_file"},
        names)
 
     print("\n--- call -> approve -> result -> answer ---")

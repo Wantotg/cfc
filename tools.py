@@ -1,10 +1,10 @@
-# tools.py — the read-only tools a model may ask for, and the dispatcher.
+# tools.py — the tools a model may ask for, and the dispatcher.
 #
-# Read-only by design: list_dir, read_file, grep, and nothing else. No writes,
-# no shell. The approval gate (main.py) decides *whether* a call runs; this
+# list_dir, read_file, grep (read) and write_file (write). No shell, no delete,
+# no move. The approval gate (commands.py) decides *whether* a call runs; this
 # module decides what it does and, crucially, whether it is allowed to at all.
 #
-# Two rules hold this together:
+# Three rules hold this together:
 #
 #   1. Every path goes through path_guard() HERE, inside the dispatcher, not
 #      at the call site and never on the model's say-so. Approval does not
@@ -15,10 +15,17 @@
 #   2. Failures come back as tool results, never as exceptions. The model sees
 #      {"error": ...}, reads it, and adapts. Denial is data. Raising into the
 #      agent loop would turn a refusal into a crash.
+#
+#   3. Reads and writes are guarded against DIFFERENT root sets, chosen by tool
+#      name in _roots_for(). The write set is narrow (the vault outbox) and
+#      cannot overlap the source tree — see context.py. A read root never
+#      grants write access: a call arriving with only bare read roots gets an
+#      empty write set, so write_file fails closed.
 import json
 import os
 from pathlib import Path
 
+from context import ToolContext, as_context
 from paths import path_guard, PathError, denial_reason, _as_roots
 
 try:
@@ -34,6 +41,15 @@ except ImportError:
     TOOLS_MAX_RESULT_CHARS = 30_000
 
 GREP_MAX_MATCHES = 100
+
+# Tools that mutate the filesystem. Guarded against the write roots, never
+# auto-approved, and the only members of this set are ones that create files.
+WRITE_TOOLS = {"write_file"}
+
+# A runaway model writing a 50MB file into the vault is not a security problem
+# but it is a mess to clean up. Content over this is refused, not truncated —
+# a silently half-written note is worse than a failed call.
+WRITE_MAX_CHARS = 200_000
 
 # Directories that are never worth walking: huge, generated, or not source.
 # Skipped by grep so a search doesn't spend a minute in .venv and return
@@ -122,6 +138,39 @@ TOOL_SCHEMAS = [
                     },
                 },
                 "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Write a text file. Can only write inside the configured "
+                "write scope (the outbox), which is separate from and much "
+                "narrower than the readable scope — you cannot write next to "
+                "a file just because you can read it. Refuses to replace an "
+                "existing file unless overwrite is true."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File to write, inside the write scope.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full text to write. Not appended — "
+                                       "this is the whole file.",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Replace the file if it already "
+                                       "exists. Defaults to false.",
+                    },
+                },
+                "required": ["path", "content"],
             },
         },
     },
@@ -288,13 +337,85 @@ def grep(pattern, roots, path=None):
     return _truncate(body)
 
 
-def dispatch(name, arguments, roots=None):
+def write_file(path, content, roots, overwrite=False):
+    """Create or replace one text file inside the write roots.
+
+    Two properties worth stating, because they're the point:
+
+    * **Guarded before anything is touched.** Honours the standing invariant
+      that a write checks its path *before* the write, never after — a test
+      guard that asserted after its destructive step once deleted the real
+      database.
+    * **Atomic.** Content goes to a temp file in the same directory and is
+      moved into place with os.replace(), which is atomic on the same
+      filesystem. A crash or a full disk mid-write leaves the original intact
+      rather than a half-written file that looks complete.
+    """
+    if not roots:
+        return _err("writing is not enabled: no write roots are configured")
+
+    p, err = _guard(path, roots)
+    if err:
+        return err
+
+    if content is None:
+        return _err("write_file requires 'content'")
+    if not isinstance(content, str):
+        content = str(content)
+    if len(content) > WRITE_MAX_CHARS:
+        return _err(f"content is {len(content):,} chars, over the "
+                    f"{WRITE_MAX_CHARS:,} limit")
+    if p.is_dir():
+        return _err(f"{p} is a directory, not a file")
+
+    # Overwrite is an explicit capability, not a silent default. Clobbering is
+    # the one thing writes do that reads never could, so it takes its own flag
+    # and shows up as its own line at the approval gate.
+    existed = p.exists()
+    if existed and not overwrite:
+        return _err(f"{p.name} already exists — pass overwrite=true to "
+                    f"replace it")
+
+    # Parents of a guarded path are inside the root by construction, so this
+    # cannot create a directory outside the write scope.
+    tmp = p.with_name(f".{p.name}.tmp-{os.getpid()}")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError as e:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return _err(f"could not write {p.name}: {e}")
+
+    verb = "replaced" if existed else "wrote"
+    lines = content.count("\n") + (1 if content and not
+                                   content.endswith("\n") else 0)
+    return f"{verb} {p} ({len(content):,} chars, {lines:,} lines)"
+
+
+def _roots_for(name, ctx):
+    """The root set this tool is guarded against: write tools get the write
+    set, everything else the read set. This is the split — a tool cannot pick
+    its own scope, and there is no path by which a read root reaches a write.
+    """
+    return ctx.write_roots if name in WRITE_TOOLS else ctx.read_roots
+
+
+def dispatch(name, arguments, ctx=None):
     """(tool name, arguments) -> result string. Never raises.
 
     `arguments` is whatever the model sent: a JSON string in practice, a dict
     if a caller already parsed it.
+
+    `ctx` is a ToolContext. A bare roots value is still accepted and read as
+    read-only scope (see context.as_context) — passing read roots must never
+    imply write access.
     """
-    roots = roots if roots is not None else TOOLS_ROOTS
+    ctx = as_context(ctx if ctx is not None else TOOLS_ROOTS)
+    roots = _roots_for(name, ctx)
 
     if isinstance(arguments, str):
         try:
@@ -322,13 +443,20 @@ def dispatch(name, arguments, roots=None):
             if "pattern" not in args:
                 return _err("grep requires 'pattern'")
             return grep(args["pattern"], roots, args.get("path"))
+        if name == "write_file":
+            if "path" not in args:
+                return _err("write_file requires 'path'")
+            if "content" not in args:
+                return _err("write_file requires 'content'")
+            return write_file(args["path"], args["content"], roots,
+                              bool(args.get("overwrite")))
         return _err(f"unknown tool: {name}")
     except Exception as e:
         # A tool bug must not take the agent loop down with it.
         return _err(f"{name} failed: {type(e).__name__}: {e}")
 
 
-def precheck(name, arguments, roots=None):
+def precheck(name, arguments, ctx=None):
     """The jail error this call would fail with, or None. Never raises.
 
     Lets the approval gate refuse a doomed call without asking, so the user is
@@ -342,7 +470,8 @@ def precheck(name, arguments, roots=None):
     containment/deny failures are pre-checked; a missing file or a bad argument
     stays a normal tool error the model sees and adapts to.
     """
-    roots = roots if roots is not None else TOOLS_ROOTS
+    ctx = as_context(ctx if ctx is not None else TOOLS_ROOTS)
+    roots = _roots_for(name, ctx)
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments) if arguments.strip() else {}
@@ -353,9 +482,14 @@ def precheck(name, arguments, roots=None):
     if not isinstance(args, dict):
         return None
 
+    # A write with no write scope configured can never succeed, so refuse it
+    # here rather than prompting for something that will fail anyway.
+    if name in WRITE_TOOLS and not roots:
+        return _err("writing is not enabled: no write roots are configured")
+
     # grep's path is optional (no path = walk the roots, which is fine).
     path = args.get("path")
-    if not path or name not in ("list_dir", "read_file", "grep"):
+    if not path or name not in ("list_dir", "read_file", "grep", "write_file"):
         return None
     try:
         path_guard(path, roots)
@@ -364,7 +498,7 @@ def precheck(name, arguments, roots=None):
     return None
 
 
-def describe(name, arguments, roots=None):
+def describe(name, arguments, ctx=None):
     """A human-readable summary of a call, for the approval gate.
 
     Shows the resolved path and, for read_file, the real size — so the cost of
@@ -372,7 +506,8 @@ def describe(name, arguments, roots=None):
     validate: this is what the model *asked for*, and a call that will be
     refused should still be shown honestly rather than pre-filtered.
     """
-    roots = roots if roots is not None else TOOLS_ROOTS
+    ctx = as_context(ctx if ctx is not None else TOOLS_ROOTS)
+    roots = _roots_for(name, ctx)
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments) if arguments.strip() else {}
@@ -416,6 +551,24 @@ def describe(name, arguments, roots=None):
                 pass
         elif p is not None and not p.exists():
             lines.append("(does not exist)")
+
+    if name == "write_file":
+        # The one call that changes something on disk, so the panel has to say
+        # plainly what it will do. "replaces an existing file" is the line that
+        # should make a human stop and read.
+        body = args.get("content")
+        body = body if isinstance(body, str) else str(body or "")
+        lines.insert(0, "WRITE")
+        lines.append(f"{len(body):,} chars, "
+                     f"{body.count(chr(10)) + 1:,} lines")
+        if p is not None and p.exists():
+            if args.get("overwrite"):
+                lines.append("REPLACES an existing file")
+            else:
+                lines.append("(file exists — will be refused "
+                             "without overwrite)")
+        else:
+            lines.append("(new file)")
 
     return lines
 

@@ -21,8 +21,12 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+import inspect
+
 import commands
+import config
 import tools
+from context import ToolContext
 
 PASS, FAIL = [], []
 
@@ -68,7 +72,13 @@ def main():
     (jail / "notes.md").write_text("alpha\nbeta\n")
     (outside / "secret.txt").write_text("PRIVATE")
     (jail / "config.py").write_text("API_KEY='sk-LEAK'")
+    outbox = tmp / "outbox"
+    outbox.mkdir()
     tools.TOOLS_ROOTS = (jail,)
+
+    # The read jail and the write jail are deliberately different folders:
+    # every "can read but not write" assertion below depends on that.
+    chat_ctx = ToolContext.for_chat(read_roots=(jail,), write_roots=(outbox,))
 
     A = commands.TurnApproval
 
@@ -101,13 +111,50 @@ def main():
     v, _ = drive(commands.gate, call("grep", pattern="x"), fresh, jail, keys="d\n")
     ok("a new turn prompts again", v == "deny" and not fresh.allow_all)
 
-    print("\n--- auto-approve ---")
-    ap = A(auto_approve={"list_dir"})
-    v, out = drive(commands.gate, call("list_dir", path=str(jail)), ap, jail, keys="")
-    ok("auto-approved tool never prompts", v == "allow", v)
-    ok("...and prints no panel", "Tool call" not in out)
-    v, _ = drive(commands.gate, call("read_file", path="x"), ap, jail, keys="d\n")
-    ok("other tools still gated", v == "deny")
+    print("\n--- there is no per-tool auto-approve, by construction ---")
+    # The property Cas asked for: no config line can pre-clear a tool in a
+    # normal chat. TurnApproval takes no auto-approve argument any more, and
+    # config exposes nothing to feed it.
+    ok("TurnApproval takes no auto_approve argument",
+       "auto_approve" not in inspect.signature(A.__init__).parameters)
+    ok("config exposes no TOOLS_AUTO_APPROVE",
+       not hasattr(config, "TOOLS_AUTO_APPROVE"))
+    ok("commands exposes no TOOLS_AUTO_APPROVE",
+       not hasattr(commands, "TOOLS_AUTO_APPROVE"))
+    # keys="" means an empty stdin: anything that prompts comes back "deny".
+    v, out = drive(commands.gate, call("list_dir", path=str(jail)), A(),
+                   chat_ctx, keys="")
+    ok("an ordinary tool is still gated in chat", v == "deny", v)
+    ok("...and the panel was shown", "Tool call" in out)
+
+    print("\n--- a chat context cannot be made ungated ---")
+    ok("for_chat is gated", chat_ctx.gated)
+    try:
+        chat_ctx.gated = False
+        ok("gated has no setter", False)
+    except AttributeError:
+        ok("gated has no setter", True)
+    ok("...still gated after the attempt", chat_ctx.gated)
+
+    print("\n--- an ungated context is only reachable via for_routine ---")
+    rt = ToolContext.for_routine("nightly", read_roots=(jail,),
+                                 write_roots=(outbox,))
+    ok("for_routine is ungated", not rt.gated)
+    v, out = drive(commands.gate, call("read_file", path=str(jail / "notes.md")),
+                   A(), rt, keys="")
+    ok("a routine call is not prompted", v == "allow", v)
+    ok("...and no panel is shown", "Tool call" not in out, out)
+    # The load-bearing half: ungated does NOT mean unguarded. Its roots are the
+    # only guardrail left, so they had better still hold.
+    r, _ = drive(commands.gate_and_dispatch,
+                 call("read_file", path=str(outside / "secret.txt")), A(), rt,
+                 keys="")
+    ok("an ungated routine is still bound by its roots", is_err(r, "outside"), r)
+    ok("...and the secret never appears", "PRIVATE" not in r)
+    r, _ = drive(commands.gate_and_dispatch,
+                 call("read_file", path=str(jail / "config.py")), A(), rt,
+                 keys="")
+    ok("...and by the deny list", is_err(r, "deny list"), r)
 
     print("\n--- bad input at the prompt ---")
     v, out = drive(commands.gate, call("read_file", path="x"), A(),
@@ -148,11 +195,69 @@ def main():
     ok("approved read of config.py is still refused", is_err(r, "deny list"), r)
     ok("...and the key never appears", "sk-LEAK" not in r)
 
-    ap = A(auto_approve={"read_file"})
+    print("\n--- writes: always prompted, never covered by allow-all ---")
+    ap = A()
+    ap.allow_all = True
+    v, out = drive(commands.gate, call("write_file", path=str(outbox / "a.md"),
+                                       content="hi"), ap, chat_ctx, keys="a\n")
+    ok("'A' does not pre-approve a write", "Tool call" in out, out)
+    ok("...the write still had to be allowed by hand", v == "allow", v)
+    ok("...and the panel says WRITE", "WRITE" in out, out)
+    ok("...and does not offer [A]", "[A]llow all" not in out, out)
+
+    v, out = drive(commands.gate, call("write_file", path=str(outbox / "a.md"),
+                                       content="hi"), A(), chat_ctx, keys="A\na\n")
+    ok("typing 'A' at a write prompt is not accepted",
+       "Type a, d or s" in out, out)
+
+    print("\n--- writes go to the write roots, not the read roots ---")
     r, _ = drive(commands.gate_and_dispatch,
-                 call("read_file", path=str(outside / "secret.txt")), ap, jail,
-                 keys="")
-    ok("auto-approve doesn't bypass the guard either", is_err(r, "outside"), r)
+                 call("write_file", path=str(outbox / "note.md"),
+                      content="hello\n"), A(), chat_ctx, keys="a\n")
+    ok("a write inside the write root succeeds", "wrote" in r, r)
+    ok("...and the file is really there",
+       (outbox / "note.md").read_text() == "hello\n")
+
+    # The split, stated as a test: readable is not writable.
+    r, out = drive(commands.gate_and_dispatch,
+                   call("write_file", path=str(jail / "evil.md"),
+                        content="x"), A(), chat_ctx, keys="")
+    ok("a write into the READ root is refused", is_err(r, "outside"), r)
+    ok("...auto-denied, the user was never asked", "[a]llow" not in out, out)
+    ok("...and nothing was created", not (jail / "evil.md").exists())
+
+    r, _ = drive(commands.gate_and_dispatch,
+                 call("write_file", path=str(outside / "evil.md"),
+                      content="x"), A(), chat_ctx, keys="a\n")
+    ok("an approved write outside every root is still refused",
+       is_err(r, "outside"), r)
+    ok("...and nothing was created", not (outside / "evil.md").exists())
+
+    print("\n--- overwrite is an explicit capability ---")
+    r, _ = drive(commands.gate_and_dispatch,
+                 call("write_file", path=str(outbox / "note.md"),
+                      content="clobbered"), A(), chat_ctx, keys="a\n")
+    ok("writing over an existing file is refused by default",
+       is_err(r, "already exists"), r)
+    ok("...and the original is intact",
+       (outbox / "note.md").read_text() == "hello\n")
+    r, _ = drive(commands.gate_and_dispatch,
+                 call("write_file", path=str(outbox / "note.md"),
+                      content="clobbered", overwrite=True), A(), chat_ctx,
+                 keys="a\n")
+    ok("overwrite=true replaces it", "replaced" in r, r)
+    ok("...and the content changed",
+       (outbox / "note.md").read_text() == "clobbered")
+
+    print("\n--- a context with no write scope fails closed ---")
+    ro = ToolContext.for_chat(read_roots=(jail,))
+    r, out = drive(commands.gate_and_dispatch,
+                   call("write_file", path=str(outbox / "b.md"), content="x"),
+                   A(), ro, keys="")
+    ok("write refused when no write roots are configured",
+       is_err(r, "writing is not enabled"), r)
+    ok("...without prompting", "[a]llow" not in out, out)
+    ok("...and nothing was created", not (outbox / "b.md").exists())
 
     print("\n--- doomed calls are auto-refused without ever prompting ---")
     # keys="" means stdin is empty: if the gate asked anything, input() raises

@@ -64,7 +64,7 @@ you>                                            Sessions
 you>
 Current configuration:
   API base:      https://api.nano-gpt.com/v1
-  API key:       ...a6fc
+  API key:       ...64dd
   Default model: zai-org/glm-5.2:thinking
   Session model: glm-5.2
   Auto-export:   on
@@ -129,7 +129,9 @@ you>                Available models
 you>
 Available prompts (/mnt/c/Users/disse/cooking for cats/06 metadata/system instructions):
 
+  heavy prompt              <main instructions> Continue this conversation bet
   light prompt              <main instructions> Continue this conversation bet
+  medium prompt             <main instructions> Continue this conversation bet
 
 you> No system prompt set. Use ':prompts' to see available prompt files.
 you> System prompt removed.
@@ -154,6 +156,19 @@ No matches found for 'zzz-no-such-word'.
 
 you> Usage: :grep <keyword>
 Example: :grep indexing
+you>
+Tools: inactive this turn
+  master switch (TOOLS_ENABLED): on
+  session toggle (:tools on|off): on
+  model glm-5.2: NOT in TOOLS_MODELS
+    tools work with: zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
+moonshotai/kimi-k2.6:thinking
+  read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
+  write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
+  approval: every call is gated (no auto-approve exists)
+  max calls per turn: 8
+  available: list_dir, read_file, grep (read), write_file (write)
+
 you>
 Nothing injected in this session to forget.
 

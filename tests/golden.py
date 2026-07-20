@@ -60,6 +60,10 @@ SCRIPT = [
     ":grep vector",
     ":grep zzz-no-such-word",
     ":grep",
+    # :tools echoes the read/write root split and the "no auto-approve exists"
+    # line. Pinned here because that output is now a statement about the
+    # permission model, not just a status dump.
+    ":tools",
     ":forget",
     ":title 1 Renamed By Golden",
     ":title",

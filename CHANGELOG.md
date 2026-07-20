@@ -23,6 +23,45 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Split read and write scope, add write_file, delete TOOLS_AUTO_APPROVE
+Round one of the write substrate (routines handover, session 1 of 3). cfc can
+now write, but only into one narrow root, and only with a human saying yes.
+- **New `context.py`.** A `ToolContext` carries read roots, write roots, and
+  whether the run is gated. Permission scope is now a property of the caller
+  rather than a global, which is what lets an unattended routine have a
+  different scope from a chat without a parallel code path.
+- **`TOOLS_AUTO_APPROVE` is gone**, on Cas's ask: auto-approval must be
+  impossible in normal chats. It was one config line from turning "no human
+  present" into "everything pre-approved". `ToolContext.for_chat()` is always
+  gated and `gated` has no setter, so the only route to an ungated run is
+  `for_routine()`, which forces a declared write scope in the same call. `A`
+  (allow-all) survives — a human deciding once for one turn is a different
+  thing from a config file deciding forever — but it no longer covers writes.
+- **`WRITE_ROOTS`** is a standalone config tuple, never derived from
+  `ATTACH_ROOTS`/`TOOLS_ROOTS` by assignment. Set to the vault outbox.
+  `context.py` refuses at construction any write root that overlaps the cfc
+  source tree, checked both directions — the code is not protected from writes
+  by a deny-list entry, it is simply absent from the writable universe.
+- **`write_file`** — atomic (temp file + `os.replace`, so a crash mid-write
+  leaves the original intact), guarded before it touches anything (invariant
+  #1), refuses to clobber unless `overwrite=true`, capped at 200k chars.
+  Guarded against the *write* roots via `tools._roots_for`; a bare roots value
+  yields an empty write set, so it fails closed.
+- Write calls render a red `Tool call — WRITE` panel that states plainly
+  whether an existing file will be replaced, and don't offer `[A]`.
+Verified end to end against the real config: writing into the read root, into
+the vault's `00 inbox` (readable, not writable), and to a deny-listed name are
+all refused; no temp debris left behind.
+Deferred to sessions 2–3: the routine object and `:routine`, and the
+propose/approve/move pipeline. The `MAX_DISTANCE` regression is untouched and
+still blocks any memory-pass routine — see `BACKLOG.md`.
+- Files: context.py (new), tools.py, commands.py, agent.py, config.py
+  (gitignored), config.example.py, tests/test_paths.py, tests/test_tools.py,
+  tests/test_gate.py, tests/test_agent.py, tests/golden.py,
+  tests/golden_baseline.txt, HANDOVER.md, README.md, CLAUDE.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-20 — Auto-refuse doomed tool calls, hide denied files, close the .pyc gap
 Four changes to the read jail, prompted by "I don't want to roll the dice on a
 tool call reading config.py that I have to decline":
@@ -41,7 +80,7 @@ Found while testing: a *stale* API key sits in a compiled config in the old
 - Files: paths.py, tools.py, commands.py, config.py (gitignored),
   tests/test_paths.py, tests/test_gate.py, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: fa4b1ad
 
 ## 2026-07-20 — Put the shared inbox/outbox in the vault, not the repo
 Handovers and briefs are exchanged through `<vault>/00 inbox` and `99 outbox`

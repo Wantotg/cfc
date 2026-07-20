@@ -18,7 +18,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **Search** — case-insensitive substring search across all messages
 - **Semantic memory** — a knowledge wiki (Obsidian Markdown) embedded locally; ask it a question and get an answer cited by page, or pull the raw excerpts into the live context. New chats are indexed as they happen
 - **File attachments** — inject a local text file into a session; it persists and comes back on reopen
-- **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, read-only, behind an approval gate
+- **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, behind an approval gate. It can also `write_file`, but only into one narrow write root that cannot reach your code
 - **Token tracking** — live context-usage bar with warnings as the window fills
 - **Rolling backups** — the database is snapshotted on startup, automatically
 
@@ -169,17 +169,20 @@ Retrieval has a relevance floor: if nothing is within `MAX_DISTANCE` of the ques
 
 ## Security
 
-Read this before enabling write tools.
+Read this before turning tools on.
 
-- **Everything is jailed.** `ATTACH_ROOTS` and `TOOLS_ROOTS` bound every file operation — a path passes if it resolves inside *any* configured root. Paths are **resolved before** they're checked, which is what defeats `../` traversal and symlink escape — a symlink named `notes.md` pointing at `~/.ssh/id_rsa` is judged as what it resolves to, not what it's called.
+- **Reads and writes have separate scopes.** `ATTACH_ROOTS`/`TOOLS_ROOTS` bound what can be read; `WRITE_ROOTS` — a standalone setting, never derived from the read roots — bounds what can be written, and is one folder (an outbox). Being able to read a file says nothing about being able to write next to it. `WRITE_ROOTS = ()` keeps the model read-only.
+- **The code is structurally unwritable.** A write root that overlaps the cfc source tree is refused when the context is built, checked in both directions. The model isn't stopped from editing the scripts by a deny-list entry — the scripts aren't in the writable universe at all.
+- **Writes are atomic and don't clobber.** `write_file` writes to a temp file and moves it into place, so an interrupted write leaves the original intact. Replacing an existing file needs an explicit `overwrite`, and the approval panel says so in red before you agree.
+- **Everything is jailed.** Every file operation resolves inside *any* configured root for its direction — a path passes if it resolves inside *any* configured root. Paths are **resolved before** they're checked, which is what defeats `../` traversal and symlink escape — a symlink named `notes.md` pointing at `~/.ssh/id_rsa` is judged as what it resolves to, not what it's called.
 - **Some files are refused inside the jail.** A root like `~/projects` contains cfc, which contains `config.py`, which holds your API key — and `.py` is an attachable type. Containment alone is not enough. The deny list is root-agnostic: it runs on the resolved path no matter which root allowed it, so adding a root never un-denies anything. `paths.py` refuses `config.py`, `.env*`, `*.pem`, `*.key`, `id_rsa`, `.ssh/`, and friends. `config.py` may **add** to that list via `ATTACH_DENY_EXTRA`; nothing removes from it.
-- **The approval gate.** Every tool call is shown — resolved path, real file size — and confirmed before dispatch. `TOOLS_AUTO_APPROVE` is empty by default, so nothing runs unasked.
+- **The approval gate, with no way to switch it off.** Every tool call is shown — resolved path, real file size — and confirmed before dispatch. There is no auto-approve setting: it was removed deliberately, because "pre-clear these tools permanently" is one config line away from becoming "everything runs unattended and unwatched". `A` allows the rest of one turn and dies with it, and it never covers writes — those are asked one at a time.
 - **Approval does not bypass validation.** `path_guard` runs inside the dispatcher regardless of what was approved. You can approve a call that then fails the guard; that's correct. The gate is where *you* decide. The guard is what holds when you've stopped reading the gate carefully — which is what a gate that fires on every call eventually becomes.
 - **`TOOLS_ENABLED = False` by default.** Opt-in, not opt-out.
-- **Read-only by design.** `list_dir`, `read_file`, `grep`, and nothing else. No writes, no shell.
-- **Denial is data.** A denied, skipped or refused call returns `{"error": ...}` to the model as a tool result. It reads it and adapts; it doesn't crash the turn. Asked to fetch `API_KEY` with every tool auto-approved, the model gets `config.py is on the deny list` and moves on — the key never reaches it.
+- **A small surface.** `list_dir`, `read_file`, `grep`, `write_file`, and nothing else. No shell, no delete, no move.
+- **Denial is data.** A denied, skipped or refused call returns `{"error": ...}` to the model as a tool result. It reads it and adapts; it doesn't crash the turn. Asked to fetch `API_KEY`, the model gets `config.py is on the deny list` and moves on — the key never reaches it.
 
-The tests that back this up are worth keeping green: `tests/test_paths.py` covers traversal, symlink escape, and the deny list; `tests/test_gate.py` asserts that approving a call still doesn't bypass the guard.
+The tests that back this up are worth keeping green: `tests/test_paths.py` covers traversal, symlink escape, the deny list, and the write jail; `tests/test_gate.py` asserts that approving a call still doesn't bypass the guard, that writes are never auto-approved, and that a readable path is not a writable one.
 
 ## Roadmap
 
@@ -205,7 +208,8 @@ Known rough edges live in `BACKLOG.md`.
 | `main.py` | the REPL: dispatch, and the live session state |
 | `commands.py` | what each `:` command does, and the approval gate |
 | `agent.py` | the tool-calling turn |
-| `tools.py` | the read-only tools and the dispatcher |
+| `tools.py` | the tools and the dispatcher |
+| `context.py` | what a given run may read, write, and whether it's gated |
 | `paths.py` | the jail: containment and the deny list |
 | `complete.py` | Tab completion for `:attach` |
 | `hub.py` | the session browser and picker |

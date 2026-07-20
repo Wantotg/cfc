@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
 import tools
+from context import ToolContext
 
 PASS, FAIL = [], []
 
@@ -184,10 +185,70 @@ def main():
        is_err(tools.dispatch("read_file", "{}", R), "requires 'path'"))
     ok("missing grep pattern -> error",
        is_err(tools.dispatch("grep", "{}", R), "requires 'pattern'"))
+    ok("missing write content -> error",
+       is_err(tools.dispatch("write_file", json.dumps({"path": "x"}), R),
+              "requires 'content'"))
     ok("null arguments -> error, not a crash",
        is_err(tools.dispatch("read_file", None, R), "requires 'path'"))
     ok("empty arguments string -> error",
        is_err(tools.dispatch("read_file", "", R), "requires 'path'"))
+
+    print("\n--- write_file ---")
+    box = Path(tempfile.mkdtemp(prefix="outbox-"))
+    W = ToolContext.for_chat(read_roots=(jail,), write_roots=(box,))
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "a.md"),
+                                   "content": "one\ntwo\n"}), W)
+    ok("writes a new file", "wrote" in r, r)
+    ok("content is exact", (box / "a.md").read_text() == "one\ntwo\n")
+    ok("reports size and lines", "chars" in r and "lines" in r, r)
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "sub/deep/c.md"),
+                                   "content": "x"}), W)
+    ok("creates missing parent dirs inside the root", "wrote" in r, r)
+
+    # Atomicity is visible in what it leaves behind: no .tmp- debris on the
+    # happy path, and nothing partial on the unhappy one.
+    leftovers = [p.name for p in box.rglob("*") if ".tmp-" in p.name]
+    ok("no temp files left behind", not leftovers, leftovers)
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "a.md"),
+                                   "content": "no"}), W)
+    ok("refuses to clobber by default", is_err(r, "already exists"), r)
+    ok("original untouched", (box / "a.md").read_text() == "one\ntwo\n")
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "a.md"), "content": "new",
+                                   "overwrite": True}), W)
+    ok("overwrite=true replaces", "replaced" in r, r)
+    ok("...with the new content", (box / "a.md").read_text() == "new")
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(jail / "nope.md"),
+                                   "content": "x"}), W)
+    ok("cannot write into a read-only root", is_err(r, "outside"), r)
+    ok("...nothing created", not (jail / "nope.md").exists())
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "config.py"),
+                                   "content": "x"}), W)
+    ok("deny list applies to writes", is_err(r, "deny list"), r)
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "big.md"),
+                                   "content": "x" * (tools.WRITE_MAX_CHARS + 1)}),
+                       W)
+    ok("oversized content refused, not truncated", is_err(r, "over the"), r)
+    ok("...and no partial file written", not (box / "big.md").exists())
+
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(box / "d.md"), "content": "x"}), R)
+    ok("bare read roots grant no write access",
+       is_err(r, "writing is not enabled"), r)
+    ok("...nothing created", not (box / "d.md").exists())
 
     print("\n--- the dispatcher never raises ---")
     junk = [("read_file", '{"path": null}'), ("read_file", '{"path": 42}'),
@@ -206,10 +267,16 @@ def main():
 
     print("\n--- schemas are well formed ---")
     names = {s["function"]["name"] for s in tools.TOOL_SCHEMAS}
-    ok("exactly the three read-only tools",
-       names == {"list_dir", "read_file", "grep"}, names)
-    ok("no write tool has crept in",
-       not any(w in n for n in names for w in ("write", "delete", "run", "exec")))
+    ok("exactly the four tools",
+       names == {"list_dir", "read_file", "grep", "write_file"}, names)
+    # write_file is the only mutating tool, and it only creates files. Nothing
+    # that deletes, moves or executes has crept in — that stays out of scope
+    # deliberately, not by oversight.
+    ok("no delete/move/exec tool has crept in",
+       not any(w in n for n in names
+               for w in ("delete", "remove", "move", "run", "exec", "shell")))
+    ok("write_file is the only tool guarded against the write roots",
+       tools.WRITE_TOOLS == {"write_file"}, tools.WRITE_TOOLS)
     for s in tools.TOOL_SCHEMAS:
         f = s["function"]
         ok(f"{f['name']} schema has description+params",

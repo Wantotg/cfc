@@ -77,9 +77,9 @@ try:
 except ImportError:
     TOOLS_ROOTS = ATTACH_ROOTS
 try:
-    from config import TOOLS_AUTO_APPROVE
+    from config import WRITE_ROOTS
 except ImportError:
-    TOOLS_AUTO_APPROVE = set()
+    WRITE_ROOTS = ()
 try:
     from config import TOOLS_MAX_CALLS_PER_TURN
 except ImportError:
@@ -794,26 +794,39 @@ def do_detach(conn, session_id, history, arg):
 
 # --- tool approval gate ----------------------------------------------------
 #
-# Every tool call passes through here before dispatch, unless its name is in
-# TOOLS_AUTO_APPROVE. The panel shows the resolved path and the real file size,
-# so the cost of approving is visible before the decision rather than after.
+# In an interactive chat every tool call passes through here before dispatch.
+# The panel shows the resolved path and the real file size, so the cost of
+# approving is visible before the decision rather than after.
 #
 # This gate decides *whether* a call runs. It does not decide whether it is
 # allowed: path_guard runs inside tools.dispatch() regardless. Approving a call
 # that then fails validation is correct behaviour, not a contradiction.
+#
+# There is no per-tool auto-approve list. TOOLS_AUTO_APPROVE was removed
+# because it made "pre-clear these tools, permanently" a one-line config
+# change — harmless while a human is always watching, and precisely the wrong
+# machinery to have lying around once unattended routines exist. An ungated
+# run is now only reachable through ToolContext.for_routine(), which forces a
+# declared write scope in the same breath. 'A' (allow all) still exists and
+# still dies with the turn: that is a human deciding once for one turn, which
+# is a different thing from a config file deciding forever.
 
 
 class TurnApproval:
     """Per-turn approval state. 'A' (allow all) lives here, and dies with the
     turn — a fresh instance per turn is what makes 'resets at end of turn'
-    true by construction rather than by remembering to reset it."""
+    true by construction rather than by remembering to reset it.
 
-    def __init__(self, auto_approve=()):
-        self.auto = set(auto_approve or ())
+    Write tools are excluded from 'A'. Allow-all is a judgement about a batch
+    of reads whose worst case is a wasted call; a write's worst case is a file
+    you didn't want. Each one asks.
+    """
+
+    def __init__(self):
         self.allow_all = False
 
 
-def gate(call, approval, root=None):
+def gate(call, approval, ctx=None):
     """Ask about one tool call. Returns 'allow' | 'deny' | 'skip'.
 
     Reading a denial as data is the whole point: 'deny' and 'skip' both come
@@ -824,14 +837,26 @@ def gate(call, approval, root=None):
     name = fn.get("name", "?")
     args = fn.get("arguments", "{}")
 
-    if name in approval.auto or approval.allow_all:
+    # An ungated context has no human to ask. Its safety is its roots, which
+    # tools.dispatch enforces regardless of what happens here.
+    if ctx is not None and not getattr(ctx, "gated", True):
         return "allow"
 
-    body = "\n".join([name] + [f"  {l}" for l in tools.describe(name, args, root)])
+    if approval.allow_all and name not in tools.WRITE_TOOLS:
+        return "allow"
+
+    is_write = name in tools.WRITE_TOOLS
+    body = "\n".join([name] + [f"  {l}" for l in tools.describe(name, args, ctx)])
     console.print()
-    console.print(Panel(body, title="Tool call", title_align="left",
-                        border_style="yellow"))
-    console.print("[a]llow  [d]eny  [A]llow all this turn  [s]kip")
+    console.print(Panel(body, title="Tool call — WRITE" if is_write
+                        else "Tool call", title_align="left",
+                        border_style="red" if is_write else "yellow"))
+    if is_write:
+        # No [A] offered: allow-all does not cover writes, so don't advertise
+        # a key that won't apply to the next one anyway.
+        console.print("[a]llow  [d]eny  [s]kip")
+    else:
+        console.print("[a]llow  [d]eny  [A]llow all this turn  [s]kip")
 
     while True:
         try:
@@ -841,17 +866,18 @@ def gate(call, approval, root=None):
             return "deny"
         if choice == "a":
             return "allow"
-        if choice == "A":
+        if choice == "A" and not is_write:
             approval.allow_all = True
             return "allow"
         if choice == "d":
             return "deny"
         if choice == "s":
             return "skip"
-        console.print("Type a, d, A or s.")
+        console.print("Type a, d or s." if is_write
+                      else "Type a, d, A or s.")
 
 
-def gate_and_dispatch(call, approval, root=None):
+def gate_and_dispatch(call, approval, ctx=None):
     """Gate one call, then dispatch it if allowed. Always returns a string."""
     fn = call.get("function", {})
     name = fn.get("name", "?")
@@ -862,17 +888,17 @@ def gate_and_dispatch(call, approval, root=None):
     # gate. Reported, not silent — an auto-refusal the user can't see is a
     # boundary they can't audit. The model gets the real reason (deny list,
     # outside roots) rather than "user denied", which it can act on.
-    blocked = tools.precheck(name, args, root)
+    blocked = tools.precheck(name, args, ctx)
     if blocked:
         console.print(f"auto-denied {name}: outside the jail", style="dim")
         return blocked
 
-    verdict = gate(call, approval, root)
+    verdict = gate(call, approval, ctx)
     if verdict == "deny":
         return json.dumps({"error": "user denied"})
     if verdict == "skip":
         return json.dumps({"error": "user skipped"})
-    return tools.dispatch(name, args, root)
+    return tools.dispatch(name, args, ctx)
 
 
 def show_tools_state(current_model, session_on):
@@ -895,9 +921,11 @@ def show_tools_state(current_model, session_on):
                   f"{'supports tools' if supported else 'NOT in TOOLS_MODELS'}")
     if not supported and TOOLS_MODELS:
         console.print(f"    tools work with: {', '.join(TOOLS_MODELS)}")
-    console.print(f"  roots: {', '.join(str(r) for r in TOOLS_ROOTS)}")
-    console.print(f"  auto-approve: "
-                  f"{', '.join(sorted(TOOLS_AUTO_APPROVE)) or '(none — every call is gated)'}")
+    console.print(f"  read roots: {', '.join(str(r) for r in TOOLS_ROOTS)}")
+    console.print(f"  write roots: "
+                  f"{', '.join(str(r) for r in WRITE_ROOTS) or '(none — read-only)'}")
+    console.print(f"  approval: every call is gated (no auto-approve exists)")
     console.print(f"  max calls per turn: {TOOLS_MAX_CALLS_PER_TURN}")
-    console.print(f"  available: list_dir, read_file, grep (read-only)")
+    console.print(f"  available: list_dir, read_file, grep (read), "
+                  f"write_file (write)")
     console.print()

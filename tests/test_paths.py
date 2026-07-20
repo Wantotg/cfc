@@ -17,6 +17,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+from context import ScopeError, ToolContext, as_context
 from paths import path_guard, PathError
 
 PASS, FAIL = [], []
@@ -157,6 +158,46 @@ def main():
         refuses("the actual config.py holding API_KEY",
                 real_cfg, real_root, expect="deny list")
     allows("but main.py is attachable", ROOT / "main.py", real_root)
+
+    print("\n--- the write jail is a separate, narrower universe ---")
+    # The point of the split: a path being readable says nothing about it
+    # being writable. These use the same path_guard, against a different set.
+    outbox = Path(tempfile.mkdtemp(prefix="outbox-"))
+    allows("a path inside the write root passes", outbox / "note.md", outbox)
+    refuses("a READABLE path is not writable",
+            jail / "notes.md", outbox, expect="outside")
+    refuses("the cfc source is not writable",
+            ROOT / "main.py", outbox, expect="outside")
+    refuses("traversal out of the write root is refused",
+            outbox / ".." / "escape.md", outbox, expect="outside")
+    # The deny list is root-agnostic: it applies to writes too, so a write
+    # root can never be used to *create* a file the read jail would refuse.
+    refuses("deny list still applies inside the write root",
+            outbox / "config.py", outbox, expect="deny list")
+
+    print("\n--- a write root may not overlap the source tree ---")
+    # Enforced at construction rather than by a deny-list entry: the scripts
+    # simply do not exist in the writable universe.
+    for bad, why in [(ROOT, "the source dir itself"),
+                     (ROOT / "sub", "a dir inside the source"),
+                     (ROOT.parent, "a dir containing the source")]:
+        try:
+            ToolContext.for_chat(read_roots=(jail,), write_roots=(bad,))
+            ok(f"write root rejected: {why}", False)
+            print(f"       LET THROUGH -> {bad}")
+        except ScopeError:
+            ok(f"write root rejected: {why}", True)
+    try:
+        ToolContext.for_chat(read_roots=(jail,), write_roots=(outbox,))
+        ok("an unrelated write root is fine", True)
+    except ScopeError as e:
+        ok("an unrelated write root is fine", False)
+        print(f"       unexpected refusal: {e}")
+
+    print("\n--- read roots never imply write access ---")
+    bare = as_context((jail,))
+    ok("a bare roots value yields no write scope", bare.write_roots == ())
+    ok("...and cannot write", not bare.can_write)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

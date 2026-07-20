@@ -32,14 +32,7 @@ try:
     from config import TOOLS_MAX_CALLS_PER_TURN
 except ImportError:
     TOOLS_MAX_CALLS_PER_TURN = 8
-try:
-    from config import TOOLS_AUTO_APPROVE
-except ImportError:
-    TOOLS_AUTO_APPROVE = set()
-try:
-    from config import TOOLS_ROOTS
-except ImportError:
-    TOOLS_ROOTS = None
+from context import chat_context
 
 LIMIT_MESSAGE = "[tool call limit reached — TOOLS_MAX_CALLS_PER_TURN]"
 
@@ -96,7 +89,11 @@ def agent_turn(prefix, history, model, conn, session_id):
     vanish from live context until the session was reopened: the model would
     forget it had just read a file.
     """
-    approval = TurnApproval(TOOLS_AUTO_APPROVE)
+    # An interactive chat turn: gated, always. ToolContext.for_chat cannot
+    # produce an ungated context, so there is no config or argument that turns
+    # the gate off from here.
+    ctx = chat_context()
+    approval = TurnApproval()
 
     for _ in range(TOOLS_MAX_CALLS_PER_TURN):
         messages = list(prefix) + history
@@ -139,7 +136,7 @@ def agent_turn(prefix, history, model, conn, session_id):
 
         for call in calls:
             _render_call(call)
-            result = gate_and_dispatch(call, approval, TOOLS_ROOTS)
+            result = gate_and_dispatch(call, approval, ctx)
             _render_result(result)
 
             fn = call.get("function", {})

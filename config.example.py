@@ -69,8 +69,8 @@ ATTACH_BUDGET_FRACTION = 0.4   # max share of the model's context one file may t
 ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")
 
 # --- local file tools ------------------------------------------------------
-# Read-only tools the model can request: list_dir, read_file, grep. Off by
-# default — opt in per session with ":tools on".
+# Tools the model can request: list_dir, read_file, grep (read) and write_file
+# (write). Off by default — opt in per session with ":tools on".
 #
 # TOOLS_MODELS was verified against the nano-gpt subscription, not assumed:
 # these three emit OpenAI-style tool_calls; longcat-2.0 rejects
@@ -81,7 +81,20 @@ TOOLS_MODELS = [
     "deepseek/deepseek-v4-pro:thinking",
     "moonshotai/kimi-k2.6:thinking",
 ]
-TOOLS_ROOTS = ATTACH_ROOTS        # same jail, same deny list
-TOOLS_AUTO_APPROVE = set()        # e.g. {"list_dir"} once trusted; empty gates everything
+TOOLS_ROOTS = ATTACH_ROOTS        # read scope: same jail, same deny list
+
+# Write scope — where write_file may land a file. Deliberately NOT derived
+# from ATTACH_ROOTS/TOOLS_ROOTS: an alias is how a read root becomes a write
+# root by accident later. Keep it to one narrow folder (an "outbox"), and move
+# files out of it by a separate, human-approved step.
+#
+# Leave it empty to keep the model read-only. context.py refuses any write
+# root that overlaps the cfc source tree, so this cannot be widened into the
+# code by editing this line.
+WRITE_ROOTS = ()
+
+# There is no TOOLS_AUTO_APPROVE. It was removed deliberately: it made
+# "pre-clear these tools for everything, forever" a one-line config change.
+# Interactive chat gates every call ('A' allows the rest of one turn only).
 TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker
 TOOLS_MAX_RESULT_CHARS = 30_000   # truncate tool output

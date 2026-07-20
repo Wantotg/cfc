@@ -25,6 +25,17 @@ Talk to him as a peer. Direct, no hand-holding, no false enthusiasm. He has a dr
 - WSL2 / Ubuntu on Windows. Projects live in `~/projects/`.
 - Some project files (Obsidian markdown, notes) live on the Windows side.
 - Obsidian is the text environment for everything not code.
+- **Session handovers live in the vault, at `<vault>/00 inbox`.** That's where
+  Cas leaves the brief for the next session — check it at the start of a session
+  when he says he's left one, and read it before planning. `99 outbox` is the
+  return direction (model → Cas) — and as of 2026-07-20 it is the **only**
+  writable path in the whole system (`WRITE_ROOTS`). Everything the model
+  produces lands there.
+  `CLAUDE.md` and `HANDOVER.md` are *not* part of this — they stay in
+  `~/projects/cfc` as the permanent project docs. The inbox carries the
+  per-session, disposable briefs.
+- Don't create `inbox/`/`outbox/` in the project tree — that was tried and
+  removed; reasoning is in `HANDOVER.md`.
 - Python: SQLite, httpx, rich are familiar territory. sqlite-vec for vectors.
 - `config.py` is gitignored. Keep it that way.
 
@@ -55,7 +66,9 @@ The `chat.py` split is **done**. `main.py` (REPL + dispatch + session state), `c
 
 `backup.py` snapshots `~/.cfc/chat.db` to `~/.cfc/backups/` on startup (throttled to 6h, skipped when unchanged, rolling 10). `--list`, `--force`, `--restore latest|<name>`. This exists because a test guard that ran *after* its destructive step deleted the whole database — restored from a temp-dir copy that got lucky. **Anything that writes to a database must check the path before the write, not after.**
 
-The attach/tools handoff is done; its scratch doc has been removed. One leftover from it: the README rewrite is only partly done — structure and entry point are current, the roadmap and Security section still aren't.
+The attach/tools handoff is done; its scratch doc has been removed. One leftover from it: the README rewrite is only partly done — structure, entry point and Security are current, the roadmap still isn't.
+
+**Write access shipped 2026-07-20** (session 1 of 3 from the routines handover). `context.py` holds a `ToolContext` carrying read roots, write roots and whether the run is gated; `write_file` writes atomically into `WRITE_ROOTS` (the vault outbox, and nothing else). `TOOLS_AUTO_APPROVE` was **deleted** — auto-approval is impossible in a normal chat by construction, and an ungated run is reachable only via `ToolContext.for_routine()`. Don't reintroduce a config flag that skips the gate; that's the invariant. Sessions 2 (the routine object + `:routine`) and 3 (propose/approve/move) are still open — brief is in the vault inbox.
 
 Next: the wiki-DB migration (see `WIKI_MIGRATION.md`, being archived). Step 1 (embeddings on self-hosted bge-m3 via LM Studio) is shipped; Steps 2–3 are `import_wiki.py` + a `source` column on `chunks`.
 
