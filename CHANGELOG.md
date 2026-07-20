@@ -59,7 +59,7 @@ code does the move.
 - Files: mover.py (new), commands.py, main.py, config.py (gitignored),
   config.example.py, tests/test_mover.py, README.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 1e43017
 
 ## 2026-07-20 — Add the routine object, `:routine`, and the run log
 Round two of the routines handover (session 2 of 3). A routine is a task the
