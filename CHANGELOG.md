@@ -23,6 +23,53 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Add the routine object, `:routine`, and the run log
+Round two of the routines handover (session 2 of 3). A routine is a task the
+model runs on command now and on a schedule later; this is everything except
+the scheduler, which is deferred on purpose rather than forgotten.
+- **New `routines.py`** — the `Routine` object and its file store. One markdown
+  file per routine (frontmatter for the fields, body for notes), keyed by a
+  stable `id` rather than the filename, so renaming one keeps its log history.
+  The invariant is that a routine is **fully reconstructable from its file**:
+  no hidden DB state, which is what makes list/delete/edit into folder
+  operations. That round-trip failed on first run over a single trailing
+  newline — `body` is now normalised once in `__init__`.
+- **New `runner.py`** — `run_routine()`, which is the headless entry point in
+  all but name. `:routine <name>` calls it with nothing in between, so a future
+  `--run-routine` reuses it unchanged. It never raises for an expected failure:
+  every path out reaches the run log, because an unattended run that dies
+  silently is indistinguishable from one that had nothing to do.
+- **Validation happens twice, on purpose.** Each path is checked with
+  `denial_reason()` as it is typed, and the whole routine is re-validated at
+  save by building its real `ToolContext`. A routine whose write root overlaps
+  the cfc source **cannot be saved**, not merely cannot be run — an invalid
+  routine sitting on disk looking fine is the 03:00 surprise this prevents.
+- **`:routine` / `:routine new` / `:routine <name>`** — list with each one's
+  last outcome, create via sequential prompts (no TUI), run now. Write access
+  defaults to off and turning it on is a separate explicit answer.
+- **The run log** (`<vault>/99 outbox/routine logs/<id>.md`) is append-only and
+  written through the same temp-file + `os.replace` path as everything else: a
+  log that can corrupt itself on the failure it exists to record is worse than
+  no log. Two consumers — a human, and the next run, which reads the previous
+  outcome off the file because a scheduled run is a fresh process.
+- **`agent_turn` grew `ctx=None`** — the injection seam, a parameter rather
+  than a global so "which scope is this turn under" can't depend on execution
+  order. `None` still means chat; no existing caller changed.
+- **Two things the model had to be told**, both found by running the throwaway
+  `heartbeat` routine: the **date** (it stamped a file 2025-07-10 on
+  2026-07-20 — a model has no clock, and a scheduled task is exactly what must
+  not guess) and **its own roots** (it tried a relative path every run, which
+  resolved against the process cwd and cost a full round trip on the refusal).
+  Both now go into the system prompt. Neither weakens the boundary — dispatch
+  still enforces the jail regardless of what the prompt says.
+- **`EMBED_BASE` repointed to `localhost:1233`.** WSL2 now runs
+  `networkingMode=mirrored`, so the old NAT gateway IP no longer resolves and
+  auto-embed had been failing quietly. Backlog item closed.
+- Files: routines.py, runner.py, commands.py, main.py, agent.py, config.py,
+  config.example.py, tests/test_routines.py, README.md, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-20 — Split read and write scope, add write_file, delete TOOLS_AUTO_APPROVE
 Round one of the write substrate (routines handover, session 1 of 3). cfc can
 now write, but only into one narrow root, and only with a human saying yes.

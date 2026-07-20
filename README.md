@@ -119,6 +119,9 @@ still returns to the hub.
 | `:detach <n>` | Remove an attachment by its `:attached` index |
 | `:tools` | Show whether tools are active, and why |
 | `:tools on` / `:tools off` | Toggle tools for this session |
+| `:routine` | List routines, with the outcome of each one's last run |
+| `:routine new` | Create a routine (name, prompt, roots, trigger) |
+| `:routine <name>` | Run a routine now |
 | `:tokens` | Detailed context-usage breakdown |
 | `:export` | Manually export the session to Obsidian |
 | `:config` | Show current configuration (key masked) |
@@ -181,13 +184,15 @@ Read this before turning tools on.
 - **`TOOLS_ENABLED = False` by default.** Opt-in, not opt-out.
 - **A small surface.** `list_dir`, `read_file`, `grep`, `write_file`, and nothing else. No shell, no delete, no move.
 - **Denial is data.** A denied, skipped or refused call returns `{"error": ...}` to the model as a tool result. It reads it and adapts; it doesn't crash the turn. Asked to fetch `API_KEY`, the model gets `config.py is on the deny list` and moves on — the key never reaches it.
+- **Routines are the one ungated path, and that is the whole reason they declare their own roots.** A chat has two guardrails: the roots, and you at the gate. A routine that runs at 03:00 has no human, so the gate cannot function and its roots are the only thing left. That is why a routine names its own read and write roots in its file, why those are validated when it is created rather than when it runs, and why a routine whose write root overlaps the source **cannot be saved at all**. The safety is the narrow root — never a pre-cleared tool. Every run appends to a log, so an unattended run that failed can't look like one that had nothing to do.
 
 The tests that back this up are worth keeping green: `tests/test_paths.py` covers traversal, symlink escape, the deny list, and the write jail; `tests/test_gate.py` asserts that approving a call still doesn't bypass the guard, that writes are never auto-approved, and that a readable path is not a writable one.
 
 ## Roadmap
 
 - **Phase 2.5** — bulk export (`:export all`), hub tag filtering, global `:stats`
-- **Write tools** — the gate exists so that adding them later is small. Not now.
+- **Scheduled routines** — routines run on command today; the run path is built so an OS scheduler can call the same entry point unchanged. Deliberately not an in-process timer thread.
+- **Propose / approve / move** — the model writes to the outbox with a suggested destination; a separate, non-LLM step re-validates that destination and moves the file. The suggestion is data, not authority.
 
 ## Known limitations
 
@@ -211,6 +216,8 @@ Known rough edges live in `BACKLOG.md`.
 | `tools.py` | the tools and the dispatcher |
 | `context.py` | what a given run may read, write, and whether it's gated |
 | `paths.py` | the jail: containment and the deny list |
+| `routines.py` | the routine object, its file store, and the run log |
+| `runner.py` | running one routine — the headless entry point in all but name |
 | `complete.py` | Tab completion for `:attach` |
 | `hub.py` | the session browser and picker |
 | `db.py` | connection, schema, every query |
@@ -233,6 +240,7 @@ python tests/test_agent.py       # the agent loop and tool replay
 python tests/test_attach.py      # :attach / :attached / :detach
 python tests/test_schema.py      # the kind/meta migration
 python tests/test_litter.py      # the litter filter's marker coupling
+python tests/test_routines.py    # the routine file round-trip, scope refusal, run log
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

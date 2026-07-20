@@ -68,9 +68,17 @@ actually be chatted with, which is why this sat there unnoticed.
 
 ---
 
-## Local embedding endpoint IP is not stable across reboots
+## ~~Local embedding endpoint IP is not stable across reboots~~ — FIXED
 
 **Found:** 2026-07-19, wiring bge-m3 on LM Studio (Windows) for the wiki migration.
+**Fixed:** 2026-07-20. `networkingMode=mirrored` in `.wslconfig` + `wsl --shutdown`.
+`EMBED_BASE` is now `http://localhost:1233/v1`; the old gateway IP no longer
+resolves at all, so a stale config fails closed rather than drifting. Verified
+end-to-end (`embed_texts` returns 1024-d). LM Studio's "serve on local network"
+toggle must still be ON, and the model id is still
+`text-embedding-baai-bge-m3-568m`, not plain `bge-m3`. Kept for the record
+below because the failure mode — embedding calls erroring like a dead server
+when the address merely moved — is worth recognising if it ever recurs.
 
 `embed.py` reaches LM Studio at `http://172.27.0.1:1233/v1` — the WSL2 NAT
 gateway to the Windows host. That gateway IP is **not guaranteed stable**; it
@@ -140,3 +148,54 @@ Note also: `search()` over-fetches `k*4` before applying the provider filter, so
 a low `k` with `provider='wiki'` can return zero rows purely because the fetch
 window filled with `source='chat'` chunks. Hit this at k=1 while probing. Not
 the cause of the above, but a sharp edge worth widening the window for.
+
+---
+
+## Routine runs clutter the session hub
+
+**Found:** 2026-07-20, session 2 of the routines work.
+
+Every routine run creates its own session, so the transcript is inspectable
+afterwards like any other — that's deliberate and worth keeping. The side
+effect is that `:list` and the hub picker fill up with
+`routine: Heartbeat — 2026-07-20 19:18` rows, and a routine on a nightly
+trigger will produce one per day forever.
+
+Nothing is broken; it's noise. Options, roughly in order of appeal: filter the
+hub to hide sessions whose title/provider marks them as routine runs (needs a
+marker — probably a `provider='routine'` or a `kind` on the session, not a
+title prefix, which is not data); or prune routine sessions older than N days
+on startup like the backup rotation does; or give routines a single long-lived
+session per routine rather than one per run — cheapest, but then a run's
+transcript is buried in a growing log and the token cost of replay grows.
+
+Worth deciding before the scheduler lands, since that's when the volume
+arrives. Note `chunk.py` derives `source` from the session's provider, so
+anything that touches provider has to consider what routine transcripts should
+do to the memory index — probably `source='chat'` as now, but say so on purpose.
+
+---
+
+## `write_file` refuses relative paths, and only the prompt prevents it
+
+**Found:** 2026-07-20, first end-to-end routine run.
+
+A relative path handed to `write_file` is resolved against the **process
+working directory**, which is not one of the roots and is not predictable on a
+scheduled run. The model tried `heartbeat.md` on the first two runs, got
+`outside the allowed roots`, and recovered — correctly, because the guard
+returns the real reason rather than "denied". But it cost a full API round trip
+each time.
+
+Currently fixed at the **prompt** level: `runner.SYSTEM` names the roots and
+says "always pass absolute paths". That worked (one-shot writes since), but a
+prompt is a suggestion and this is the one tool where a near-miss writes a file
+somewhere unintended — or rather, would, if containment weren't holding.
+
+The alternative is resolving a relative path against the write root inside
+`write_file` when there is exactly one. Not done, deliberately: it makes the
+tool's behaviour depend on how many roots are configured, and "the path you
+passed is not the path that was written" is a bad property for the one tool
+that mutates the filesystem. Explicit refusal is defensible. Revisit only if a
+model turns up that doesn't take the hint — and if so, prefer failing with a
+better error over silently reinterpreting the path.

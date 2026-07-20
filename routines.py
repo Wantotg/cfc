@@ -1,0 +1,362 @@
+# routines.py — the routine object and its store.
+#
+# A routine is a task the model runs on demand now, and on a schedule later.
+# It is one markdown file: YAML frontmatter for the machine-readable fields,
+# the body reserved for notes. The task prompt is a separate file under
+# ROUTINE_PROMPT_DIR.
+#
+# The load-bearing property is that **a routine is fully reconstructable from
+# its file**. No hidden database state, no sidecar index. That is what makes
+# "list" mean list the folder, "delete" mean remove a file, and "edit" mean
+# edit it in Obsidian — and it is why management costs nothing to add later.
+# Anything you are tempted to keep only in the DB either belongs in the
+# frontmatter or belongs in the run log.
+#
+# Identity is the `id` field, not the filename. The wiki importer learned this
+# the hard way (HANDOVER: "wiki identity survives edits"): key off a stable id
+# and renaming a routine keeps its log history instead of orphaning it.
+#
+# Validation happens twice on purpose:
+#
+#   at type time      — paths.denial_reason() as each path is entered, so a
+#                       typo is rejected while the human is still looking at it
+#   at construction   — Routine.context() builds the real ToolContext, so a
+#                       write root overlapping the source raises ScopeError and
+#                       the routine cannot be saved, let alone run
+#
+# A routine that silently stores an out-of-bounds path is the failure you do
+# not see until 03:00 six weeks later. Both checks are cheap; keep both.
+import datetime
+import os
+import re
+from pathlib import Path
+
+import yaml
+
+from context import ScopeError, ToolContext
+from paths import denial_reason
+
+DEFAULTS = {
+    "trigger": "command",
+    "on_failure": "retry",
+    "enabled": True,
+}
+
+# Frontmatter keys written in this order — a stable field order keeps the diff
+# of an edited routine readable in git/Obsidian.
+FIELD_ORDER = ("id", "name", "prompt", "read_roots", "write_roots",
+               "trigger", "on_failure", "enabled")
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_TRIGGER_RE = re.compile(r"^(command|\d{4})$")
+
+
+class RoutineError(Exception):
+    """A routine file is malformed, missing, or names something that isn't there."""
+
+
+def slugify(name):
+    """A stable id from a display name. Lowercase, hyphen-separated."""
+    return _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-")
+
+
+def _cfg(key, default=None):
+    try:
+        import config
+        return getattr(config, key, default)
+    except ImportError:
+        return default
+
+
+def routine_dir():
+    return Path(_cfg("ROUTINE_DIR", "~/.cfc/routines")).expanduser()
+
+
+def prompt_dir():
+    return Path(_cfg("ROUTINE_PROMPT_DIR", "~/.cfc/routine prompts")).expanduser()
+
+
+def log_dir():
+    return Path(_cfg("ROUTINE_LOG_DIR", "~/.cfc/routine logs")).expanduser()
+
+
+def split_frontmatter(text):
+    """Return (frontmatter_dict, body). ({}, text) if there's no frontmatter.
+
+    Same shape as import_wiki's — duplicated rather than shared because that
+    one is about a corpus and this one is about config, and a change to either
+    should not silently move the other.
+    """
+    if not text.startswith("---"):
+        return {}, text
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}, text
+    try:
+        fm = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError as e:
+        raise RoutineError(f"bad frontmatter: {e}")
+    if not isinstance(fm, dict):
+        raise RoutineError("frontmatter is not a mapping")
+    return fm, parts[2].lstrip("\n")
+
+
+class Routine:
+    """One routine, as loaded from (or about to be written to) its file.
+
+    `path` is where it was read from and is NOT part of the identity — it is
+    None for a routine built in memory and never round-trips through the
+    frontmatter.
+    """
+
+    def __init__(self, id, name, prompt, read_roots=(), write_roots=(),
+                 trigger="command", on_failure="retry", enabled=True,
+                 body="", path=None):
+        self.id = id
+        self.name = name
+        self.prompt = prompt
+        self.read_roots = tuple(str(r) for r in read_roots)
+        self.write_roots = tuple(str(r) for r in write_roots)
+        self.trigger = trigger
+        self.on_failure = on_failure
+        self.enabled = bool(enabled)
+        # Normalised once, here, so the file's trailing newline can never be
+        # part of the object's identity. to_markdown() strips on the way out
+        # too; without this the round-trip differs by exactly "\n" and the
+        # "reconstructable from its file" invariant fails on a technicality.
+        self.body = (body or "").strip()
+        self.path = path
+
+    # --- validation --------------------------------------------------------
+
+    def validate(self):
+        """Every reason this routine is unusable, as a list of strings.
+
+        Non-raising and exhaustive: the creation flow wants to show all the
+        problems at once, and a caller that wants an exception can raise on a
+        non-empty list. Path *containment* is not checked here — that is
+        ToolContext's job, via context(), which this deliberately does not
+        duplicate.
+        """
+        problems = []
+        if not self.id:
+            problems.append("id is empty")
+        elif self.id != slugify(self.id):
+            problems.append(f"id {self.id!r} is not a slug "
+                            f"(expected {slugify(self.id)!r})")
+        if not self.name:
+            problems.append("name is empty")
+        if not self.prompt:
+            problems.append("prompt is empty")
+        elif not (prompt_dir() / self.prompt).exists():
+            problems.append(f"prompt file not found: {prompt_dir() / self.prompt}")
+        if not _TRIGGER_RE.match(str(self.trigger)):
+            problems.append(f"trigger {self.trigger!r} is not 'command' or HHMM")
+        elif str(self.trigger) != "command":
+            hh, mm = int(str(self.trigger)[:2]), int(str(self.trigger)[2:])
+            if hh > 23 or mm > 59:
+                problems.append(f"trigger {self.trigger!r} is not a valid time")
+        if self.on_failure not in ("retry", "skip"):
+            problems.append(f"on_failure {self.on_failure!r} is not retry|skip")
+
+        for label, roots in (("read", self.read_roots),
+                             ("write", self.write_roots)):
+            for r in roots:
+                p = Path(r).expanduser()
+                why = denial_reason(p)
+                if why:
+                    problems.append(f"{label} root {r}: {why}")
+                elif not p.exists():
+                    problems.append(f"{label} root does not exist: {r}")
+
+        # Construction-time scope check. A write root overlapping the source
+        # must make the routine unsaveable, not merely unrunnable.
+        try:
+            self.context()
+        except ScopeError as e:
+            problems.append(str(e))
+        return problems
+
+    def context(self, interactive=False):
+        """The ToolContext this routine runs under. Ungated by construction."""
+        return ToolContext.for_routine(
+            self.id,
+            read_roots=self.read_roots,
+            write_roots=self.write_roots,
+            interactive=interactive,
+        )
+
+    def prompt_text(self):
+        p = prompt_dir() / self.prompt
+        try:
+            return p.read_text(encoding="utf-8")
+        except OSError as e:
+            raise RoutineError(f"cannot read prompt {p}: {e}")
+
+    # --- serialisation -----------------------------------------------------
+
+    def to_markdown(self):
+        fm = {
+            "id": self.id,
+            "name": self.name,
+            "prompt": self.prompt,
+            "read_roots": list(self.read_roots),
+            "write_roots": list(self.write_roots),
+            "trigger": self.trigger,
+            "on_failure": self.on_failure,
+            "enabled": self.enabled,
+        }
+        ordered = "".join(
+            yaml.safe_dump({k: fm[k]}, default_flow_style=False,
+                           allow_unicode=True, sort_keys=False)
+            for k in FIELD_ORDER
+        )
+        return f"---\n{ordered}---\n\n{self.body.strip()}\n"
+
+    @classmethod
+    def from_markdown(cls, text, path=None):
+        fm, body = split_frontmatter(text)
+        if not fm:
+            raise RoutineError(f"{path or 'routine'} has no frontmatter")
+        missing = [k for k in ("id", "name", "prompt") if not fm.get(k)]
+        if missing:
+            raise RoutineError(f"{path or 'routine'} is missing: "
+                               f"{', '.join(missing)}")
+        return cls(
+            id=str(fm["id"]),
+            name=str(fm["name"]),
+            prompt=str(fm["prompt"]),
+            read_roots=fm.get("read_roots") or (),
+            write_roots=fm.get("write_roots") or (),
+            trigger=str(fm.get("trigger", DEFAULTS["trigger"])),
+            on_failure=str(fm.get("on_failure", DEFAULTS["on_failure"])),
+            enabled=fm.get("enabled", DEFAULTS["enabled"]),
+            body=body,
+            path=path,
+        )
+
+    def __repr__(self):
+        return (f"<Routine {self.id} trigger={self.trigger} "
+                f"enabled={self.enabled}>")
+
+    def __eq__(self, other):
+        """Field equality, ignoring `path` — that's provenance, not identity.
+
+        This is what the round-trip test asserts against: write a routine,
+        read it back, get an equal object.
+        """
+        if not isinstance(other, Routine):
+            return NotImplemented
+        return all(getattr(self, f) == getattr(other, f) for f in
+                   ("id", "name", "prompt", "read_roots", "write_roots",
+                    "trigger", "on_failure", "enabled", "body"))
+
+
+# --- the store -------------------------------------------------------------
+
+
+def list_routines():
+    """Every routine file that parses, sorted by id. Malformed files are
+    skipped rather than fatal — one bad file must not hide the rest."""
+    out, bad = [], []
+    d = routine_dir()
+    if not d.is_dir():
+        return out, bad
+    for f in sorted(d.glob("*.md")):
+        try:
+            out.append(Routine.from_markdown(f.read_text(encoding="utf-8"), f))
+        except (RoutineError, OSError) as e:
+            bad.append((f.name, str(e)))
+    return sorted(out, key=lambda r: r.id), bad
+
+
+def load_routine(key):
+    """By id, then by display name (case-insensitive). Raises RoutineError."""
+    routines, _ = list_routines()
+    for r in routines:
+        if r.id == key:
+            return r
+    for r in routines:
+        if r.name.lower() == (key or "").lower():
+            return r
+    known = ", ".join(r.id for r in routines) or "(none)"
+    raise RoutineError(f"no routine {key!r} — known: {known}")
+
+
+def save_routine(routine, overwrite=False):
+    """Write the routine to ROUTINE_DIR/<id>.md, atomically.
+
+    Refuses to save an invalid routine. That's the point of validating at
+    construction: an unsaveable routine can never become a 03:00 surprise.
+    """
+    problems = routine.validate()
+    if problems:
+        raise RoutineError("; ".join(problems))
+    d = routine_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    dest = d / f"{routine.id}.md"
+    if dest.exists() and not overwrite:
+        raise RoutineError(f"{dest.name} already exists")
+    tmp = dest.with_name(f".{dest.name}.tmp")
+    tmp.write_text(routine.to_markdown(), encoding="utf-8")
+    os.replace(tmp, dest)
+    routine.path = dest
+    return dest
+
+
+# --- the run log -----------------------------------------------------------
+#
+# One file per routine, append-only. Two consumers, and the second is why this
+# is a log and not a print: a human asking "did the nightly thing work", and
+# **the next run**, which has to see that the last one failed to honour
+# on_failure.
+#
+# Appended through a temp file + os.replace like every other write here. A
+# plain append that is interrupted mid-write leaves a torn final line; a log
+# that can corrupt itself on the failure it exists to record is worse than no
+# log.
+
+_LOG_RE = re.compile(r"^- \*\*(?P<ts>[^*]+)\*\* — (?P<status>\w+)")
+
+
+def log_path(routine_id):
+    return log_dir() / f"{routine_id}.md"
+
+
+def append_log(routine_id, status, detail="", touched=()):
+    """Record one run. `status` is 'ok' or 'failed'."""
+    d = log_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    path = log_path(routine_id)
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"- **{ts}** — {status}"
+    if touched:
+        line += f" — wrote {', '.join(str(t) for t in touched)}"
+    if detail:
+        line += f" — {detail.strip()}"
+
+    head = f"# Run log — {routine_id}\n\n" if not path.exists() else ""
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(existing + head + line + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def last_run(routine_id):
+    """(status, timestamp) of the most recent run, or (None, None).
+
+    This is what on_failure is decided against, so it reads the file rather
+    than any in-memory state — a scheduled run is a fresh process.
+    """
+    path = log_path(routine_id)
+    if not path.exists():
+        return None, None
+    match = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = _LOG_RE.match(line.strip())
+        if m:
+            match = m
+    if not match:
+        return None, None
+    return match.group("status"), match.group("ts")

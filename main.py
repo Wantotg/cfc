@@ -56,6 +56,7 @@ from commands import (
     do_updatedb, auto_embed,
     do_attach, show_attachments, do_detach,
     show_tools_state,
+    show_routines, create_routine, do_routine,
 )
 
 # --- Main REPL ---
@@ -545,6 +546,23 @@ def run_session(conn, session_id):
                 show_tools_state(current_model, tools_on)
             else:
                 console.print("Usage: :tools | :tools on | :tools off")
+            continue
+
+        # --- Routines ---
+        #
+        # ':routine new' is matched before the run form, or a routine would
+        # have to be called something other than "new" for either to work.
+
+        if user == ":routine":
+            show_routines()
+            continue
+
+        if user.startswith(":routine"):
+            arg = user.split(maxsplit=1)[1].strip()
+            if arg == "new":
+                create_routine()
+            else:
+                do_routine(conn, arg, model=current_model)
             continue
 
         # --- Chat ---

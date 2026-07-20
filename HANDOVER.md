@@ -98,40 +98,13 @@ A wiki page maps to a session keyed by its **stable frontmatter id** (stored as 
 
 ### Embedding endpoint is separate from chat
 
-`embed.py` reads `EMBED_BASE`/`EMBED_MODEL`/`EMBED_KEY`, falling back to the chat `API_BASE`/`API_KEY` + hosted `bge-m3` when absent (so an old config still works). Here it points at self-hosted `bge-m3` on LM Studio, reached from WSL via the Windows host IP (BACKLOG notes the IP-stability gotcha — mirrored networking makes `localhost` work). Same geometry as the hosted copy — verified cosine ≥ 0.999 over 6 probes — so `vec_chunks` stays `float[1024]`. **Swap the embedding model → re-measure `MAX_DISTANCE`**; the floor is geometry-specific.
+`embed.py` reads `EMBED_BASE`/`EMBED_MODEL`/`EMBED_KEY`, falling back to the chat `API_BASE`/`API_KEY` + hosted `bge-m3` when absent (so an old config still works). Here it points at self-hosted `bge-m3` on LM Studio at `localhost:1233`: WSL2 runs `networkingMode=mirrored` as of 2026-07-20, so localhost reaches the Windows host and the old NAT gateway IP (`172.27.0.1`) no longer resolves at all. Don't put a gateway IP back — a stale one now fails closed instead of silently drifting. LM Studio's "serve on local network" must stay on, and the model id is `text-embedding-baai-bge-m3-568m`, not plain `bge-m3`. Same geometry as the hosted copy — verified cosine ≥ 0.999 over 6 probes — so `vec_chunks` stays `float[1024]`. **Swap the embedding model → re-measure `MAX_DISTANCE`**; the floor is geometry-specific.
 
 ---
 
 ## Tool calling & the file jail
 
-`list_dir`, `read_file`, `grep` (read) and `write_file` (write) — `tools.py`, schemas in `TOOL_SCHEMAS`. No shell, no delete, no move.
-
-### Scope is per-context, not global — `context.py`
-
-A `ToolContext` carries **read roots, write roots, and whether the run is gated**. This exists because interactive chat and an unattended routine need different scopes and the difference must be structural, not a config value:
-
-- Chat has two guardrails, the roots **and** the human at the gate.
-- A routine has no human, so the gate cannot function — **its roots are the only guardrail left.**
-
-Three properties are enforced by construction rather than documented:
-
-1. **No config knob pre-clears a tool.** `TOOLS_AUTO_APPROVE` was deleted. It made "pre-clear these tools, permanently" a one-line config change — harmless while a human always watches, and exactly the wrong machinery to have lying around once routines exist. `ToolContext.for_chat()` is always gated, and `gated` is a property with **no setter**, so it can't be disarmed by assignment either. The only ungated context comes from `for_routine()`, which forces you to declare a write scope in the same call.
-2. **A write root may not overlap the cfc source tree.** Checked both directions against `context.CODE_ROOT` (this file's own directory, so it can't drift out of date): `~/projects/cfc/notes` is inside it, `~/projects` contains it, both refused with `ScopeError`. The model isn't stopped from editing the source by a deny-list entry — the source is **not in the writable universe**.
-3. **Read roots never imply write access.** `as_context()` accepts a bare roots value (the old `roots=` argument, still used by tests) and yields an **empty write set**, so `write_file` fails closed rather than inheriting read scope.
-
-`WRITE_ROOTS` in `config.py` is standalone — deliberately *not* `= TOOLS_ROOTS`, because an alias is how a read root becomes a write root by accident six months later. It is one folder: the vault outbox.
-
-**Write safety is containment first, deny list second.** The deny list still applies to writes and is still add-only, but it is an exact-name match against a list — an open-ended commitment that leaked in two directions at once on 2026-07-20 (`config.py.bak` shapes, and `.pyc` files holding the key as a compiled literal). A single narrow root you may write to is a closed commitment. For reads a leaky deny list costs an awkward refusal; for writes it costs a file you didn't want.
-
-### `write_file`
-
-- **Guarded before it touches anything** — invariant #1. The path is resolved and checked before any filesystem call.
-- **Atomic**: content goes to a dot-prefixed temp file in the same directory and lands via `os.replace()`. A crash or full disk mid-write leaves the original intact rather than a half-written file that looks complete.
-- **Overwrite is an explicit capability**, not a silent default — clobbering is the one thing writes do that reads never could, so it takes its own argument and its own line at the gate.
-- Capped at `WRITE_MAX_CHARS` (200k), refused rather than truncated: a silently half-written note is worse than a failed call.
-- `tools._roots_for(name, ctx)` picks the root set by tool name (`WRITE_TOOLS`). A tool cannot choose its own scope.
-
-Write calls render a **red `Tool call — WRITE` panel** stating whether an existing file will be replaced, and do not offer `[A]`.
+Four tools: `list_dir`, `read_file`, `grep` (read) and `write_file` (write) — `tools.py`, schemas in `TOOL_SCHEMAS`. No shell, no delete, no move. `WRITE_TOOLS` names the write set and `_roots_for(name, ctx)` picks the read or write root set **by tool name**, which is what keeps a read root from ever implying write access.
 
 **`paths.py` is the entire file-access security boundary.** `path_guard(path, roots)`:
 1. **Resolves first, then checks** — this is what defeats `../` traversal and symlink escape. A symlink named `notes.md` pointing at `~/.ssh/id_rsa` is judged as its resolved target.
@@ -146,7 +119,7 @@ Write calls render a **red `Tool call — WRITE` panel** stating whether an exis
 
 The deny list itself covers `config.py`, its **backup shapes** (`config.py.bak/.old/.save/…` — denial is an exact-name match, so every copy escaped it until the `config.py.*` glob landed), and **compiled bytecode** (`*.pyc`, `__pycache__/`), which embeds the source's string literals — `__pycache__/config.cpython-*.pyc` contains the API key verbatim. That never leaked (`read_file` rejects invalid UTF-8, `grep` opens `errors="strict"`), but that was the *file format* saving us, not this boundary.
 
-**Known weakness, unresolved:** denial is name-based, so the protection lives in a list that must keep pace with what secrets get called. That is acceptable for reads, and it is why writes are scoped by containment instead — see `context.py` above. `~/projects/cfc` is read-only and structurally unwritable.
+**Known weakness, and how writes dodge it:** denial is name-based, so the read protection lives in a list that must keep pace with what secrets get called. That is acceptable for reads and a much weaker basis for writes — so writes don't lean on it. **Write safety is containment first, deny list second:** a deny list is an open-ended commitment (every `config.py.bak` shape escaped it once), while a single narrow root you may write to is a closed one. `WRITE_ROOTS` is the vault outbox and nothing else, is never derived from `TOOLS_ROOTS`, and `context.py` refuses any write root overlapping the source — so it cannot be widened into the code by editing config. `~/projects/cfc` is readable and structurally unwritable.
 
 Guard invariants:
 - **The guard runs inside the dispatcher, not at the gate and never on the model's say-so.** Approval decides *whether* a call runs; the guard decides whether it's *allowed to at all*. You can approve a call that then fails the guard — that's correct. (`tests/test_gate.py` asserts approval doesn't bypass it, and that the pre-filter never swallows a call the human should see.)
@@ -160,13 +133,15 @@ Files exchanged between Cas and an LLM — handover docs, briefs, notes, and
 
 ```
 <vault>/00 inbox    → Cas writes, the model reads
-<vault>/99 outbox   → the model writes, Cas reads   (needs write tools; not yet)
+<vault>/99 outbox   → the model writes, Cas reads   (the entire write scope)
 ```
 
 The vault is already inside `ATTACH_ROOTS`/`TOOLS_ROOTS`, so both folders are
-readable with no extra config. When write tools arrive, `99 outbox` is the
-intended narrow write scope — see the per-context roots argument in the routines
-handover.
+readable with no extra config. `99 outbox` is `WRITE_ROOTS` and **the only
+writable path in the system**. Verified: a write to `<vault>/00 inbox` is
+refused as "outside the allowed roots". That is correct and intentional — don't
+"fix" it when a routine wants to file something into the vault proper. Session
+3's mover is what does that, as a separate non-model step.
 
 An `inbox/`+`outbox/` pair briefly existed at the repo root and was **deliberately
 removed**. The reasoning generalises: this content isn't code, so it would have to
@@ -177,7 +152,64 @@ pair is backed up, editable from Obsidian without a terminal, and reached over
 WSL's fast direction (`/mnt/c`, Linux→Windows) rather than the slow, flakier
 `\\wsl.localhost` (Windows→Linux). Don't reintroduce the repo folders.
 
-**Approval:** `TurnApproval` is per-turn state; `A` (allow-all) lives on the instance and dies with the turn — "resets each turn" is true by construction, not by remembering to reset. `A` **does not cover write tools**: allow-all is a judgement about a batch of reads whose worst case is a wasted call, where a write's worst case is a file you didn't want. There is no per-tool auto-approve list at all (see `context.py`). Three switches must line up for tools to fire (master `TOOLS_ENABLED`, session `:tools on|off`, model in `TOOLS_MODELS`); `:tools` prints which of the three is blocking, plus both root sets.
+**Approval:** `TurnApproval` is per-turn state; `A` (allow-all) lives on the instance and dies with the turn — "resets each turn" is true by construction, not by remembering to reset. `A` never covers write tools, and the write panel doesn't offer the key. **There is no `TOOLS_AUTO_APPROVE`** — it was deleted, and `tests/test_gate.py` asserts its absence by `hasattr`. Three switches must line up for tools to fire (master `TOOLS_ENABLED`, session `:tools on|off`, model in `TOOLS_MODELS`); `:tools` prints which of the three is blocking.
+
+---
+
+## Routines
+
+A routine is a task the model runs on command now and on a schedule later. Two modules: `routines.py` (the object and its file store — light, imports only `context`/`paths`/`yaml`) and `runner.py` (execution — reaches for the API, the DB and the tool loop).
+
+```
+<vault>/06 metadata/routines/<id>.md        ROUTINE_DIR        the routine
+<vault>/06 metadata/routine prompts/*.md    ROUTINE_PROMPT_DIR the task
+<vault>/99 outbox/routine logs/<id>.md      ROUTINE_LOG_DIR    the run log
+```
+
+`ROUTINE_PROMPT_DIR` is a **sibling of, not the same as, `PROMPTS_DIR`** — those are chat personas, these are tasks. All three are config paths so a container mount can remap them; none is hard-coded.
+
+**A routine is fully reconstructable from its file.** No hidden DB state, no sidecar index. That is what makes `list` = list the folder, `delete` = remove a file, `edit` = edit it in Obsidian, and it is why management costs nothing to add later. Anything tempting to keep only in the DB belongs in the frontmatter or in the run log. `tests/test_routines.py` pins the round-trip — and it **failed on first run over a single trailing newline**, which is why `Routine.__init__` strips `body` once: the file's trailing whitespace must never be part of identity, or the invariant quietly becomes a nearly-invariant.
+
+Identity is the `id` field, **not the filename** — the same lesson as the wiki importer. Renaming a routine keeps its log history instead of orphaning it. `Routine.__eq__` compares fields and ignores `path`, which is provenance.
+
+### Why validation happens twice
+
+- **At type time** (`commands._ask_paths`) — `paths.denial_reason()` per path as it's entered. Non-raising, returns a reason string, which is exactly the shape a reject-and-re-prompt loop wants.
+- **At construction** (`Routine.validate` → `.context()`) — builds the real `ToolContext`, so `ScopeError` fires on a write root overlapping the source.
+
+`save_routine` refuses an invalid routine outright. **A routine whose write root overlaps the source cannot be saved, not merely cannot be run** — an invalid routine sitting on disk looking fine is the 03:00 surprise this exists to prevent. `list_routines` returns `(good, bad)` and skips malformed files rather than dying on them; one bad file must not hide the rest, and the bad ones are *reported*, since a routine that stopped parsing is the one most likely to matter.
+
+### Execution
+
+`runner.run_routine(key, conn, ...)` returns `(ok, summary, session_id)` and **never raises for an expected failure** — the `except Exception` around `agent_turn` is deliberately broad because every path out of here must reach the log. An unattended run that dies silently is indistinguishable from one that had nothing to do.
+
+**This is the headless entry point in everything but name.** `:routine <name>` calls it with nothing in between, and a future `--run-routine` will too — that is the whole reason the scheduler was deferred rather than designed around. Keep REPL state, prompting and terminal assumptions out of `runner.py`; the on-command path has a human and the scheduled path does not, and they must not diverge. Progress is reported through an optional `on_event` callback so the module owns no console.
+
+**Do not build an in-process timer thread.** Invariant #4 (prompt_toolkit and rich must never drive the terminal at once) makes a background thread rendering panels mid-input a real bug, and a heartbeat has to fire when the REPL is closed. The OS scheduler calls the entry point.
+
+`agent_turn` grew an optional `ctx=None` parameter — the injection seam. A **parameter, not a global**, on purpose: a global makes "which scope is this turn under" depend on execution order, which is precisely the property you cannot audit. `None` still means chat, so every existing caller and every test that patches `agent.chat_context` is unchanged.
+
+Each run gets **its own session**, so the transcript is inspectable afterwards like any other — a routine that did something surprising can be read back. (Side effect: routine sessions accumulate in the hub. See `BACKLOG.md`.)
+
+### Two things the model doesn't know unless told
+
+Both were found by running the throwaway `heartbeat` routine, and both are in `runner.SYSTEM`:
+
+1. **The date.** The first run confidently stamped a file `2025-07-10` on `2026-07-20`. A model has no clock and its sense of the date is whatever training left it. A routine that runs on a schedule is exactly the thing that must not guess — the real timestamp is interpolated into the system prompt.
+2. **Its own roots.** The model guessed a *relative* path every run, which resolved against the process cwd, got refused, and cost a full round trip before it recovered. It recovered only because `precheck` hands back the real reason rather than "denied" — the boundary working as designed, but paying for the lesson once per run. The roots now go into the prompt, with "always pass absolute paths". This weakens nothing: `dispatch` still enforces the jail regardless of what the prompt says.
+
+The system prompt also tells the model no human is present and not to end its turn with a question — an unattended run that ends by asking for confirmation has done nothing.
+
+### The run log
+
+Append-only, one file per routine, written through a temp file + `os.replace` like every other write here. A plain append interrupted mid-write leaves a torn final line, and a log that corrupts itself on the failure it exists to record is worse than no log.
+
+Two consumers, and the second is why it is a log and not a `print`: a human asking "did the nightly thing work", and **the next run**, which reads `last_run()` off the file to honour `on_failure`. A scheduled run is a fresh process — it has no memory to consult. `on_failure` is currently stored and surfaced; the scheduler is what will act on it.
+
+### Still open
+
+- **`ToolContext.interactive` is declared and deliberately unconsumed.** `main.py`'s empty-completion handler asks `retry? (y/n)` on stdin; a 03:00 run that hits one waits for a keypress that never comes. Routines currently always take the `agent_turn` path, which has no such prompt, so this doesn't bite yet — but it is a prerequisite for the scheduler, not a nicety. Wiring it in is a three-line change because the flag is already there.
+- Session 3 (propose/approve/move) is untouched. The mover re-validates the model's suggested `destination` — the suggestion is **data, not authority** — and is allowed to write outside `WRITE_ROOTS` precisely because it is not the model. Keep it a separate entry point with its own validation; do not widen `WRITE_ROOTS` to give the model the same reach.
 
 ---
 
@@ -186,12 +218,12 @@ WSL's fast direction (`/mnt/c`, Linux→Windows) rather than the slow, flakier
 1. **Any DB write checks its path *before* the write, not after.** A test guard that ran its assertion *after* a destructive `unlink()` once deleted the real database. `backup.py` and `tests/golden.py` both assert-not-real before touching anything.
 2. **Orphan tool_call drop on replay** — see above; interrupted turns must stay reopenable.
 3. **`path_guard` resolves before checking; the deny list is add-only.**
-3a. **Reads and writes are guarded against different root sets, and the write set never comes from the read set.** A write root that overlaps the cfc source tree raises `ScopeError` at construction. There is no per-tool auto-approve; an ungated context is reachable only through `ToolContext.for_routine()`, whose safety is its narrow roots — **never** pre-cleared tools. If you find yourself adding a config flag that skips the gate, that is the invariant you are breaking.
 4. **Single shared `rich.Console`** (`ui.py`). Rich tracks terminal/live state per Console; two writing to one terminal interleave badly during streaming. `markup=False` so literal `[...]` in content isn't parsed (the panel helpers wrap human/reasoning text in `Text`, which is markup-safe regardless). `ui.py` imports no other cfc module (bottom of the dependency graph). It owns `read_input` (the prompt_toolkit editor — see below), the turn palette, and the `_speaker_panel` helpers everything else renders through. **prompt_toolkit and rich must never drive the terminal at the same time.** They don't: input is read at the top of the loop and returns before any `rich.Live` starts. Keep it that way.
 5. **Marker formats are pinned by tests** (`test_litter.py`, `test_schema.py`) — changing a marker string in `commands.py`/`import_anthropic.py` fails a test instead of silently re-embedding markers or breaking recall_marker parsing.
 6. **The two turn paths end identically** (`print_context_bar`).
 7. **`search.py` LEFT JOINs chunks→sessions** — a chunk with a dangling `session_id` surfaces with a `(missing session N)` placeholder rather than being silently dropped by an inner join (which is why k=8 could return 7).
-8. **Wiki recall keys off the frontmatter id and stays wiki-only.** `import_wiki` identifies a page by `source_uuid` (the id), not filename/hash, and on edit drops the page's chunks+vectors so they rebuild — never orphaning a `session_id` (the parked bug). Recall filters `provider='wiki'`; the chat log is indexed (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and must never break a chat turn.
+8. **A routine is reconstructable from its file alone**, keyed by its `id`, and an invalid one cannot be *saved*. The only ungated context in the system comes from `ToolContext.for_routine()`, which forces a declared write scope in the same call; `gated` has no setter and there is no config flag that pre-clears a tool. Don't rebuild one under a new name.
+9. **Wiki recall keys off the frontmatter id and stays wiki-only.** `import_wiki` identifies a page by `source_uuid` (the id), not filename/hash, and on edit drops the page's chunks+vectors so they rebuild — never orphaning a `session_id` (the parked bug). Recall filters `provider='wiki'`; the chat log is indexed (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and must never break a chat turn.
 
 ---
 
@@ -199,7 +231,9 @@ WSL's fast direction (`/mnt/c`, Linux→Windows) rather than the slow, flakier
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
-Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker — verified by hand. Unit suites: `test_paths` (jail), `test_tools`, `test_gate` (approval≠bypass), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling). None need an API key.
+Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure). 341 assertions across 8 suites. None need an API key.
+
+`test_routines` patches `routines.routine_dir`/`prompt_dir`/`log_dir` rather than `config` — that is the single seam every function goes through, and patching config would miss a caller that read the value at import time. Its DB test asserts the temp path **before** writing, per invariant #1.
 
 ---
 
@@ -210,8 +244,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker 
 | `main.py` | hub loop (`repl`), session loop (`run_session`), command dispatch, live session state |
 | `commands.py` | every `:` command; the approval gate; `print_context_bar` |
 | `agent.py` | the tool-calling turn (`agent_turn`, `render_answer`) |
-| `tools.py` | the tools (read + `write_file`) + dispatcher + `describe` (for the gate) |
-| `context.py` | `ToolContext`: read roots, write roots, gated/interactive. Imports nothing from cfc |
+| `tools.py` | read-only tools + dispatcher + `describe` (for the gate) |
 | `paths.py` | the jail: `path_guard`, containment + deny list |
 | `api.py` | `stream_response` (streaming chat + live reasoning panel, returns `(text, usage, reasoning)`), `call_api` (non-streaming: titles, agent), provider error extraction |
 | `db.py` | connection, schema/migrations, every query, `load_history` + orphan drop |
@@ -219,18 +252,21 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker 
 | `complete.py` | Tab completion for `:attach`, scoped to roots |
 | `export.py` | one Markdown file per session → Obsidian vault (overwrite on re-export) |
 | `backup.py` | rolling snapshots via SQLite online-backup API, integrity-checked, 6h-throttled, keep 10 |
+| `context.py` | `ToolContext`: read roots, write roots, gated/interactive. `for_chat` / `for_routine` |
+| `routines.py` | the `Routine` object, its markdown file store, and the append-only run log |
+| `runner.py` | `run_routine` — one routine's execution; the headless entry point in all but name |
 | `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor) |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `ATTACH_ROOTS`/`TOOLS_ROOTS`/`WRITE_ROOTS`, deny-extra, `TOOLS_*`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 
 ## Current state & open threads
 
-- **Just landed:** the write substrate — `context.py`, `WRITE_ROOTS`, `write_file`, and the removal of `TOOLS_AUTO_APPROVE` (session 1 of 3 from the routines handover). cfc can write, into one narrow root, only with a human saying yes. Sessions 2 and 3 (the routine object + `:routine`; the propose/approve/move pipeline) are **not built** — see the session 2+3 handover in `<vault>/00 inbox`.
-- **Sequencing dependency:** a memory-pass routine must not ship until the `MAX_DISTANCE` regression is resolved. Recall currently returns zero hits for answerable queries, and zero hits is indistinguishable from "nothing to report" — a nightly digest would look like it was working while doing nothing. Fix the floor, or make the routine fail loudly on zero hits. See `BACKLOG.md`.
-- **Before that:** the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
+- **Just landed:** routines, session 2 of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `:routine` / `:routine new` / `:routine <name>`, the run log, and `test_routines`. Verified end to end against a throwaway `heartbeat` routine that writes a file into the outbox. Session 3 (propose/approve/move) is open; the scheduler is deferred by design, not forgotten.
+- **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
 - **Cosmetic backlog:** tool-path reasoning prints in full (not tail-limited like the live panel) and once per loop step — can bury the answer on a verbose model. See `BACKLOG.md`.
+- **Blocked, not forgotten:** a memory-pass routine (the obvious first real one) is blocked on `MAX_DISTANCE` — the measured gap collapsed 0.111 → 0.025 and the floor now sits below the top of the answerable band, so recall returns nothing for good queries. Zero hits and "nothing worth reporting" produce **identical output**, so a nightly digest would look like it was working while doing nothing. Fix the floor first, or make the routine fail loudly on zero hits. `BACKLOG.md` has the unexplained 0.969-vs-1.036 discrepancy — don't just nudge the floor.
 - **Backlog (parked, DB-flavored):** (a) the dangling `session_id` root cause in `import_anthropic.py` (chunks committed against an uncommitted session id, or a delete without cascade) — moot on the current wiki-only db, but unfixed if the Anthropic export is ever re-imported; `import_wiki.py` deliberately avoids it. (b) `chunk.py` overlap slices mid-word (fixed-char window, no boundary seek) — cosmetic, but a fix means re-chunk + re-embed (costs an embedding run). (c) the endpoint-IP instability for the WSL→Windows embedder — see `BACKLOG.md`.
 - **DB-layer rework is anticipated** — treat the chunk/vector schema as in flux. `TARGET_TOKENS`/`OVERLAP`/`CHARS_PER_TOK` are naive (char-based); the design note "SQLite stays the source of truth, sqlite-vec is an index over it" is the intended shape.
 - **Constraints that are choices, not bugs:** streaming off under tools; tool calling needs a model in `TOOLS_MODELS` (verified against nano-gpt, not assumed); `:grep` and history search are substring (`LIKE`), FTS5 a possible upgrade; sessions are linear (no branching).

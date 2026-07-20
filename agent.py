@@ -76,7 +76,7 @@ def _render_result(result):
         console.print(f"    ({len(lines):,} lines)", style="dim")
 
 
-def agent_turn(prefix, history, model, conn, session_id):
+def agent_turn(prefix, history, model, conn, session_id, ctx=None):
     """Run a turn that may use tools. Returns the final assistant message.
 
     Takes the system `prefix` and `history` separately, and appends every
@@ -92,7 +92,13 @@ def agent_turn(prefix, history, model, conn, session_id):
     # An interactive chat turn: gated, always. ToolContext.for_chat cannot
     # produce an ungated context, so there is no config or argument that turns
     # the gate off from here.
-    ctx = chat_context()
+    #
+    # `ctx` is the routine runner's injection point, and it is a parameter
+    # rather than a global on purpose: a global would make "which scope is this
+    # turn under" depend on execution order, which is exactly the property you
+    # cannot audit. Passing None still means chat, so every existing caller —
+    # and every test that patches chat_context — is unchanged.
+    ctx = ctx or chat_context()
     approval = TurnApproval()
 
     for _ in range(TOOLS_MAX_CALLS_PER_TURN):

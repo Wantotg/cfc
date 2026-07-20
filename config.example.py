@@ -98,3 +98,24 @@ WRITE_ROOTS = ()
 # Interactive chat gates every call ('A' allows the rest of one turn only).
 TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker
 TOOLS_MAX_RESULT_CHARS = 30_000   # truncate tool output
+
+# --- routines --------------------------------------------------------------
+# A routine is a task the model runs on demand (":routine <name>") and, later,
+# on a schedule. One markdown file per routine: frontmatter for the fields,
+# a separate file for the task prompt.
+#
+# A routine must be fully reconstructable from its file — no hidden DB state.
+# That is what makes "list" mean list the folder and "delete" mean remove a
+# file. Keep these outside the repo (a vault folder is ideal): they are not
+# code, so in the working tree they would have to be gitignored, which makes
+# them invisible to clones and destroyed by a fresh checkout.
+#
+# ROUTINE_PROMPT_DIR is a sibling of, not the same as, PROMPTS_DIR — those are
+# chat personas, these are tasks.
+ROUTINE_DIR = ""            # e.g. "<vault>/06 metadata/routines"
+ROUTINE_PROMPT_DIR = ""     # e.g. "<vault>/06 metadata/routine prompts"
+
+# Append-only run log, one file per routine. Put it inside WRITE_ROOTS so the
+# same jail covers it. The next run reads this to see whether the last one
+# failed — which is why it is a log and not a print.
+ROUTINE_LOG_DIR = ""        # e.g. "<vault>/99 outbox/routine logs"

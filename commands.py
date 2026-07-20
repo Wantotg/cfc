@@ -929,3 +929,208 @@ def show_tools_state(current_model, session_on):
     console.print(f"  available: list_dir, read_file, grep (read), "
                   f"write_file (write)")
     console.print()
+
+
+# --- routines --------------------------------------------------------------
+#
+# A routine is a task the model runs on demand now and on a schedule later.
+# The store is routines.py; this is only the REPL surface over it.
+#
+# The creation flow validates **every path at the moment it is typed**, and
+# re-validates the whole routine at save. That double check is deliberate: a
+# routine that silently stores a typo'd or out-of-bounds path is a failure you
+# do not see until 03:00 six weeks later, by which time nobody remembers
+# typing it. Rejecting at type time is what keeps the mistake attached to the
+# person who made it.
+#
+# Imported lazily inside each function, like the memory layer above, so a
+# broken routine store degrades ':routine' alone rather than stopping cfc from
+# starting.
+
+
+def _ask(prompt, default=None):
+    """One line from the human. Returns None if they bailed out.
+
+    Ctrl-C/Ctrl-D here abandons the routine being built rather than the
+    session — a half-built routine is never written, so there is nothing to
+    clean up.
+    """
+    suffix = f" [{default}]" if default else ""
+    try:
+        answer = input(f"{prompt}{suffix}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\nCancelled.")
+        return None
+    return answer or (default or "")
+
+
+def _ask_paths(label, routines):
+    """Collect roots one line at a time, rejecting each bad one as it's typed.
+
+    Blank ends the list. denial_reason() is used rather than path_guard()
+    because it is non-raising and returns a reason string — exactly the shape
+    a reject-and-re-prompt loop wants. Containment is not checked here: a
+    routine's roots define its own jail, and the ScopeError at construction is
+    what stops that jail reaching the source.
+    """
+    from paths import denial_reason
+    console.print(f"  {label} roots — one per line, blank when done:",
+                  style="dim")
+    out = []
+    while True:
+        raw = _ask("   path")
+        if raw is None:
+            return None
+        if not raw:
+            return out
+        p = Path(raw).expanduser()
+        why = denial_reason(p)
+        if why:
+            console.print(f"   refused: {why}", style="red")
+            continue
+        if not p.exists():
+            console.print(f"   no such path: {p}", style="red")
+            continue
+        out.append(str(p.resolve()))
+        console.print(f"   ok: {p.resolve()}", style="dim green")
+
+
+def show_routines():
+    """:routine — what exists, and what's broken."""
+    from routines import RoutineError, last_run, list_routines, routine_dir
+
+    try:
+        found, bad = list_routines()
+    except Exception as e:                      # noqa: BLE001
+        console.print(f"Cannot read routines: {e}", style="red")
+        return
+
+    console.print()
+    console.print(f"Routines ({routine_dir()})")
+    if not found and not bad:
+        console.print("  (none yet — ':routine new' to make one)", style="dim")
+        console.print()
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None,
+                  padding=(0, 2, 0, 0))
+    for col in ("id", "name", "trigger", "write", "last run"):
+        table.add_column(col)
+    for r in found:
+        status, ts = last_run(r.id)
+        when = f"{status} {ts}" if status else "never"
+        table.add_row(r.id if r.enabled else f"{r.id} (disabled)",
+                      r.name, str(r.trigger),
+                      "yes" if r.write_roots else "no", when)
+    console.print(table)
+
+    # Malformed files are listed, not swallowed. A routine that stopped
+    # parsing is the one most likely to matter.
+    for name, why in bad:
+        console.print(f"  ! {name}: {why}", style="red")
+    console.print()
+
+
+def create_routine():
+    """:routine new — the sequential creation flow. No TUI."""
+    from routines import (Routine, RoutineError, prompt_dir, save_routine,
+                          slugify)
+
+    console.print()
+    console.print("New routine. Ctrl-C at any point abandons it.", style="dim")
+
+    name = _ask("  name")
+    if not name:
+        console.print("Cancelled." if name is None else "A name is required.")
+        return
+    rid = slugify(name)
+    console.print(f"  id: {rid}", style="dim")
+
+    # The prompt picker lists what's there rather than asking for a filename —
+    # a task prompt that doesn't exist is the single most likely typo, and the
+    # routine cannot be saved with one.
+    pdir = prompt_dir()
+    available = sorted(p.name for p in pdir.glob("*.md")) if pdir.is_dir() else []
+    if not available:
+        console.print(f"  No task prompts in {pdir}", style="red")
+        console.print("  Create one there first — the prompt is the task.",
+                      style="dim")
+        return
+    console.print(f"  task prompts in {pdir}:", style="dim")
+    for i, p in enumerate(available, 1):
+        console.print(f"   {i}. {p}", style="dim")
+    choice = _ask("  prompt (number or filename)")
+    if not choice:
+        console.print("Cancelled." if choice is None else "A prompt is required.")
+        return
+    if choice.isdigit() and 1 <= int(choice) <= len(available):
+        prompt = available[int(choice) - 1]
+    elif choice in available:
+        prompt = choice
+    else:
+        console.print(f"  No such prompt: {choice}", style="red")
+        return
+
+    read_roots = _ask_paths("read", None)
+    if read_roots is None:
+        return
+    if not read_roots:
+        console.print("  (no read roots — the routine will have no file access)",
+                      style="dim")
+
+    # Write defaults to off. Turning it on is a separate, explicit answer:
+    # read=true/write=false is the default the handover specifies, and a
+    # routine that can write should be a decision somebody made out loud.
+    write_roots = []
+    if (_ask("  allow writing? (y/N)") or "n").lower().startswith("y"):
+        write_roots = _ask_paths("write", None)
+        if write_roots is None:
+            return
+
+    trigger = _ask("  trigger (command, or HHMM)", "command")
+    if trigger is None:
+        return
+    on_failure = _ask("  on failure (retry/skip)", "retry")
+    if on_failure is None:
+        return
+
+    routine = Routine(id=rid, name=name, prompt=prompt,
+                      read_roots=read_roots, write_roots=write_roots,
+                      trigger=trigger, on_failure=on_failure, enabled=True,
+                      body=f"Created via :routine new.")
+
+    # Second validation pass. The per-field checks above cannot see a write
+    # root that overlaps the cfc source — that is ScopeError's job, raised
+    # while building the ToolContext, and it must make the routine unsaveable
+    # rather than merely unrunnable.
+    try:
+        dest = save_routine(routine)
+    except RoutineError as e:
+        console.print(f"  Not saved: {e}", style="red")
+        return
+    console.print(f"  Saved: {dest}", style="green")
+    console.print(f"  Run it with ':routine {rid}'", style="dim")
+    console.print()
+
+
+def do_routine(conn, arg, model=None):
+    """:routine <name> — run one now, narrating as it goes."""
+    from routines import RoutineError
+    from runner import run_routine
+
+    console.print()
+    console.print(f"Running routine: {arg}")
+    ok, summary, session_id = run_routine(
+        arg, conn, model=model,
+        # A human is present for an on-command run. The scheduled path passes
+        # False, which is what ToolContext.interactive is reserved for.
+        interactive=True,
+        on_event=lambda m: console.print(f"  {m}", style="dim"),
+    )
+    if ok:
+        console.print(f"  done — {summary}", style="green")
+    else:
+        console.print(f"  FAILED — {summary}", style="red")
+    if session_id:
+        console.print(f"  transcript: session #{session_id}", style="dim")
+    console.print()
