@@ -34,6 +34,14 @@ Talk to him as a peer. Direct, no hand-holding, no false enthusiasm. He has a dr
   `CLAUDE.md` and `HANDOVER.md` are *not* part of this — they stay in
   `~/projects/cfc` as the permanent project docs. The inbox carries the
   per-session, disposable briefs.
+- **A rewritten `HANDOVER.md` is written straight to `~/projects/cfc/`, next to
+  `CLAUDE.md` — the repo root you are already working in.** Not the vault, not
+  `99 outbox`, not anywhere else. It is a versioned project doc and belongs in
+  git; a copy in the outbox is a copy that goes stale and gets read as current
+  (that has already happened once). The outbox is for *output* — briefs,
+  drafts, generated notes — not for the permanent docs. Same for `README.md`,
+  `BACKLOG.md` and `CHANGELOG.md`. If a handover already exists there, edit it
+  in place rather than writing a second one beside it.
 - Don't create `inbox/`/`outbox/` in the project tree — that was tried and
   removed; reasoning is in `HANDOVER.md`.
 - Python: SQLite, httpx, rich are familiar territory. sqlite-vec for vectors.

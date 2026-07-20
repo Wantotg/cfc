@@ -68,7 +68,7 @@ the scheduler, which is deferred on purpose rather than forgotten.
 - Files: routines.py, runner.py, commands.py, main.py, agent.py, config.py,
   config.example.py, tests/test_routines.py, README.md, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 60ed2dd
 
 ## 2026-07-20 — Split read and write scope, add write_file, delete TOOLS_AUTO_APPROVE
 Round one of the write substrate (routines handover, session 1 of 3). cfc can
@@ -107,7 +107,7 @@ still blocks any memory-pass routine — see `BACKLOG.md`.
   tests/test_gate.py, tests/test_agent.py, tests/golden.py,
   tests/golden_baseline.txt, HANDOVER.md, README.md, CLAUDE.md
 - Status: shipped
-- Commit: pending
+- Commit: 60ed2dd
 
 ## 2026-07-20 — Auto-refuse doomed tool calls, hide denied files, close the .pyc gap
 Four changes to the read jail, prompted by "I don't want to roll the dice on a
