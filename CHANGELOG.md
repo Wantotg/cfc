@@ -23,6 +23,21 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Repoint config at the reorganised Obsidian vault
+The vault was restructured (renamed + refoldered) and every path in the
+gitignored `config.py` pointed at the old `Claude/01_Projects/Cooking_for_Cats`
+tree, which no longer exists — breaking `:export`, `:prompts`, `:personas`,
+`:attach` and the file tools. Repointed VAULT_PATH (now outside the vault, at
+the backup dir), PROMPTS_DIR, PERSONAS_DIR and the ATTACH_ROOTS vault entry.
+Golden baseline re-recorded: the 34-line diff is entirely the path echoes in
+`:config` plus the renamed prompt/persona files (`main_prompt` → `light prompt`,
+`coding_assistant` → `EVA`), no structural change. The DB needed nothing — all
+20 wiki pages matched their files, because identity is the frontmatter id and
+not the path. Unit suites green.
+- Files: config.py (gitignored), tests/golden_baseline.txt, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-19 — Bring README + HANDOVER current for the wiki migration
 Rewrote the coupled docs to the finished shape: wiki-based recall, self-hosted
 bge-m3 (EMBED_*), the source column, import_wiki + edit-survival, the 1.024
@@ -31,7 +46,7 @@ floor, wiki-only recall with id citations, and auto-embed/:updatedb. Retired the
 wiki-identity invariant. No code change.
 - Files: README.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 17509cd
 
 ## 2026-07-19 — Auto-embed new chats on save + :updatedb (Step 8)
 Closes the wiki-DB migration. New chat messages are chunked + embedded into the
@@ -97,7 +112,7 @@ The "same commit" rule was impossible for a self-referencing entry; switched the
 convention to `pending`-then-backfill so it stops costing extra commits.
 - Files: CHANGELOG.md, CLAUDE.example.md (and gitignored CLAUDE.md)
 - Status: shipped
-- Commit: pending
+- Commit: e13840e
 
 ## 2026-07-18 — Require a changelog entry per shipped change
 Added this file and made "log every change here" a standing instruction, so

@@ -103,3 +103,40 @@ tail it there too (reuse `_REASONING_TAIL_LINES`, or a larger cap), or add a
 config toggle to collapse/hide reasoning. Purely cosmetic — reasoning is never
 persisted or replayed either way.
 
+
+---
+
+## MAX_DISTANCE no longer separates: measured gap collapsed 0.111 → 0.025
+
+**Found:** 2026-07-20, smoke-testing recall after the vault restructure.
+
+`:recall` / `:remember` return nothing for some good queries. Re-measured over
+30 probes on the unchanged wiki corpus (20 answerable, 10 unanswerable):
+
+    answerable    0.734 – 1.036   (20/20 returned the CORRECT page at rank 1)
+    unanswerable  1.061 – 1.203
+    gap 0.025, vs the 0.111 recorded in HANDOVER
+
+The floor (1.024) now sits *below* the top of the answerable band, so
+`"who is Cas"` (1.036) is rejected outright while
+`"orchestrator specialist architecture"` (1.023) passes by 0.001.
+
+**Unresolved:** HANDOVER records `"who is Cas"` at **0.969**. It now measures
+1.036 on the same query, same corpus, same embedder. Verified, not assumed:
+re-embedding a stored chunk and comparing to its stored vector gives cosine
+1.000000 (embedder identical); all 20 pages are byte-identical to their files
+(corpus identical); the vectors are valid and ranking is correct. Distance is a
+pure function of query vector and chunk vector, both verified unchanged — so the
+number should reproduce and does not. No explanation fits the evidence yet.
+Ruled out: the vault restructure, which touches none of this.
+
+**Do not just nudge the floor.** ~1.048 would admit both borderline queries, but
+a 0.025 gap is too thin to tune against with confidence, and the discrepancy
+above suggests the recorded baseline itself may not be trustworthy. Resolve the
+0.969-vs-1.036 question first — a floor built on a number that doesn't reproduce
+is a floor that will fail again silently.
+
+Note also: `search()` over-fetches `k*4` before applying the provider filter, so
+a low `k` with `provider='wiki'` can return zero rows purely because the fetch
+window filled with `source='chat'` chunks. Hit this at k=1 while probing. Not
+the cause of the above, but a sharp edge worth widening the window for.

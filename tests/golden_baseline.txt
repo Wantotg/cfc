@@ -69,8 +69,8 @@ Current configuration:
   Session model: glm-5.2
   Auto-export:   on
   Stream usage:  on
-  Vault path:    /mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/AI_Chats
-  Prompts dir:   /mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Prompts
+  Vault path:    /mnt/c/Users/disse/backup/cfc/cfc_chat_backup
+  Prompts dir:   /mnt/c/Users/disse/cooking for cats/06 metadata/system instructions
   Quick models:  zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
 moonshotai/kimi-k2.6:thinking, longcat-2.0
 
@@ -127,16 +127,16 @@ you>                Available models
 └───────────────────────────────────┴────────┘
 
 you>
-Available prompts (/mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Prompts):
+Available prompts (/mnt/c/Users/disse/cooking for cats/06 metadata/system instructions):
 
-  main_prompt               <core_directive>
+  light prompt              <main instructions> Continue this conversation bet
 
 you> No system prompt set. Use ':prompts' to see available prompt files.
 you> System prompt removed.
 you>
-Available personas (/mnt/c/Users/disse/Claude/01_Projects/Cooking_for_Cats/Personas):
+Available personas (/mnt/c/Users/disse/cooking for cats/06 metadata/persona):
 
-  coding_assistant          Coding Assistant
+  EVA                       <persona>
   muse                      <persona>
   personal_assistant        Personal Assistant
 
