@@ -23,6 +23,44 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Add propose/approve/move: `mover.py`, `:outbox`, `:file`
+Round three of the routines handover, which is now fully discharged. A routine
+writes into the outbox with a suggested `destination:`; you review and approve;
+code does the move.
+- **New `mover.py`** — `plan()` reads one outbox file and computes its verdict,
+  `commit()` carries it out, `drop()` discards it. The model's suggested
+  destination is **data, not authority**: re-validated from scratch against
+  `MOVE_ROOTS` exactly as if a stranger had typed it.
+- **Outside the roots is refused, not guessed at.** No nearest-match, no
+  fallback folder — a silently-wrong path is worse than an error, because
+  nobody re-reads a file that filed successfully. Verified against the real
+  config: traversal, absolute system paths, and the cfc source tree are all
+  refused by containment.
+- **Wiki destinations are refused outright**, against `WIKI_DIR`, rather than
+  left to habit. A page written there changes the corpus while the index
+  doesn't know until `import_wiki.py` runs, so recall would answer from a
+  stale copy **with no signal that it's stale** — a silent failure arriving
+  weeks later has to be structural.
+- **`MOVE_ROOTS` is separate from `WRITE_ROOTS`, and that separation is the
+  design.** The mover may write across the whole vault precisely *because it
+  is not the model*. Widening `WRITE_ROOTS` to do the same would hand the
+  model the reach the outbox exists to deny it.
+- **`:outbox` computes verdicts at list time** — you see what `:file 1` will do
+  before you type it. `commit()` then re-plans before writing, because the list
+  you're looking at may be minutes old; a test covers the race where the target
+  appears between plan and commit.
+- **Write-then-unlink, in that order.** A crash between them leaves both
+  copies, which is recoverable; the reverse can lose the file. `destination:`
+  is stripped on the way out — a carried-out instruction left in a filed
+  document is one a later sweep could act on twice — and the rest of the
+  frontmatter is preserved untouched.
+- **`:file <n> drop` moves aside rather than deletes.** Rejecting a draft and
+  destroying it are different intentions, and only one is recoverable.
+- Files: mover.py (new), commands.py, main.py, config.py (gitignored),
+  config.example.py, tests/test_mover.py, README.md, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-20 — Add the routine object, `:routine`, and the run log
 Round two of the routines handover (session 2 of 3). A routine is a task the
 model runs on command now and on a schedule later; this is everything except

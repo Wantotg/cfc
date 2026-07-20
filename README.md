@@ -122,6 +122,9 @@ still returns to the hub.
 | `:routine` | List routines, with the outcome of each one's last run |
 | `:routine new` | Create a routine (name, prompt, roots, trigger) |
 | `:routine <name>` | Run a routine now |
+| `:outbox` | List files the model has proposed, and where each would go |
+| `:file <n>` | File one proposal at its destination (`:file all` for every valid one) |
+| `:file <n> drop` | Discard a proposal — moved aside, not deleted |
 | `:tokens` | Detailed context-usage breakdown |
 | `:export` | Manually export the session to Obsidian |
 | `:config` | Show current configuration (key masked) |
@@ -184,6 +187,7 @@ Read this before turning tools on.
 - **`TOOLS_ENABLED = False` by default.** Opt-in, not opt-out.
 - **A small surface.** `list_dir`, `read_file`, `grep`, `write_file`, and nothing else. No shell, no delete, no move.
 - **Denial is data.** A denied, skipped or refused call returns `{"error": ...}` to the model as a tool result. It reads it and adapts; it doesn't crash the turn. Asked to fetch `API_KEY`, the model gets `config.py is on the deny list` and moves on — the key never reaches it.
+- **The model proposes where a file should go; it doesn't put it there.** A routine writes into the outbox with a suggested `destination:` in the frontmatter. `:outbox` shows you each suggestion and what would happen; `:file <n>` carries it out. The mover re-validates the destination from scratch against its own `MOVE_ROOTS` — the suggestion is **data, not authority** — and refuses anything outside them rather than guessing at a near-miss. It may write outside `WRITE_ROOTS` precisely *because it is not the model*, which is why it stays a separate step instead of widening what the model can reach. Wiki destinations are refused outright: a page written there would leave the recall index stale with no signal that it's stale.
 - **Routines are the one ungated path, and that is the whole reason they declare their own roots.** A chat has two guardrails: the roots, and you at the gate. A routine that runs at 03:00 has no human, so the gate cannot function and its roots are the only thing left. That is why a routine names its own read and write roots in its file, why those are validated when it is created rather than when it runs, and why a routine whose write root overlaps the source **cannot be saved at all**. The safety is the narrow root — never a pre-cleared tool. Every run appends to a log, so an unattended run that failed can't look like one that had nothing to do.
 
 The tests that back this up are worth keeping green: `tests/test_paths.py` covers traversal, symlink escape, the deny list, and the write jail; `tests/test_gate.py` asserts that approving a call still doesn't bypass the guard, that writes are never auto-approved, and that a readable path is not a writable one.
@@ -192,7 +196,6 @@ The tests that back this up are worth keeping green: `tests/test_paths.py` cover
 
 - **Phase 2.5** — bulk export (`:export all`), hub tag filtering, global `:stats`
 - **Scheduled routines** — routines run on command today; the run path is built so an OS scheduler can call the same entry point unchanged. Deliberately not an in-process timer thread.
-- **Propose / approve / move** — the model writes to the outbox with a suggested destination; a separate, non-LLM step re-validates that destination and moves the file. The suggestion is data, not authority.
 
 ## Known limitations
 
@@ -218,6 +221,7 @@ Known rough edges live in `BACKLOG.md`.
 | `paths.py` | the jail: containment and the deny list |
 | `routines.py` | the routine object, its file store, and the run log |
 | `runner.py` | running one routine — the headless entry point in all but name |
+| `mover.py` | filing a proposal out of the outbox: re-validates the destination, or refuses |
 | `complete.py` | Tab completion for `:attach` |
 | `hub.py` | the session browser and picker |
 | `db.py` | connection, schema, every query |
@@ -241,6 +245,7 @@ python tests/test_attach.py      # :attach / :attached / :detach
 python tests/test_schema.py      # the kind/meta migration
 python tests/test_litter.py      # the litter filter's marker coupling
 python tests/test_routines.py    # the routine file round-trip, scope refusal, run log
+python tests/test_mover.py       # filing: destination re-validation, refusals, atomicity
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

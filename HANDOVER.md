@@ -206,10 +206,42 @@ Append-only, one file per routine, written through a temp file + `os.replace` li
 
 Two consumers, and the second is why it is a log and not a `print`: a human asking "did the nightly thing work", and **the next run**, which reads `last_run()` off the file to honour `on_failure`. A scheduled run is a fresh process — it has no memory to consult. `on_failure` is currently stored and surfaced; the scheduler is what will act on it.
 
+---
+
+## Filing: propose / approve / move
+
+The last third of the routines work. A routine writes into `99 outbox` with a suggested `destination:` in the file's frontmatter; `:outbox` lists proposals with their verdicts; `:file <n>` carries one out. `mover.py` holds it all.
+
+```
+model  → writes <vault>/99 outbox/<name>.md, frontmatter carries `destination:`
+Cas    → :outbox to review, :file <n> to approve  (or :file <n> drop)
+mover  → re-validates the destination against MOVE_ROOTS, then moves it
+```
+
+Three properties, and they are the module's whole reason to exist:
+
+1. **The suggested destination is data, not authority.** It arrives as text written by a model and is re-validated from scratch, exactly as if a stranger had typed it. Same shape as the read jail: never act on the model's say-so.
+2. **The move is not an LLM task.** It has a correct answer, so it is code — deterministic, auditable, free. Use a model for judgement under ambiguity (what to write, roughly where it belongs); use code for anything with a right answer.
+3. **Outside the roots is refused, not guessed at.** No nearest-match, no fallback folder. `plan()` returns a `Proposal` with `target=None` and a reason. A silently-wrong path is worse than an error, because nobody re-reads a file that filed successfully.
+
+**The asymmetry that makes this safe: the mover may write outside `WRITE_ROOTS`, because the mover is not the model.** It validates against its own `MOVE_ROOTS` (the whole vault). Do **not** widen `WRITE_ROOTS` to achieve the same reach — the separation *is* the design. `MOVE_ROOTS` and `WRITE_ROOTS` are independent config tuples; neither is derived from the other.
+
+**Wiki destinations are refused outright**, enforced in `_reject_wiki` against `WIKI_DIR` rather than left to habit. Writing a page there changes the corpus, but the index doesn't know until `import_wiki.py` runs, so recall would keep answering from a stale copy **with no signal that it's stale**. The failure is silent and arrives weeks later, which is exactly the kind that has to be structural. Verified against the real config, not just the test vault.
+
+### Details that are load-bearing
+
+- **Verdicts are computed at list time.** `:outbox` shows what `:file 1` *will* do before you type it — a review step that doesn't show you the consequence isn't a review step.
+- **`commit()` re-plans before it writes.** The list you're looking at may be minutes old and nothing guarantees the tree hasn't changed under it. The plan-time check drew the screen; this is the one that guards the write. A test covers the race (target appears between plan and commit).
+- **Write-then-unlink, in that order.** A crash in between leaves *both* copies, which is recoverable by hand; the reverse order can lose the file outright. The write itself is temp file + `os.replace` like everything else here.
+- **`destination:` is stripped on the way out**, everything else in the frontmatter preserved. The suggestion has been carried out, so leaving it behind leaves a stale instruction in a filed document — and one a later sweep could act on twice. The mover is not otherwise an editor: it does not add provenance keys or touch the body.
+- **`drop` moves aside, it doesn't delete.** "Reject this draft" and "destroy this draft" are different intentions and only one is recoverable. Dropped files go to `99 outbox/dropped/` with a timestamp prefix.
+- **Only top-level `*.md` in the outbox are considered** — the run logs live in a subfolder and are not proposals. Same shape as the wiki importer's top-level-only rule.
+- A file with no `destination:` is listed as "no destination" rather than hidden. That means the outbox's own `99 readme.md` shows up as a permanent non-proposal; noise, judged not worth a special case, since hiding non-proposals would also hide a *malformed* one where the model forgot the key.
+
 ### Still open
 
 - **`ToolContext.interactive` is declared and deliberately unconsumed.** `main.py`'s empty-completion handler asks `retry? (y/n)` on stdin; a 03:00 run that hits one waits for a keypress that never comes. Routines currently always take the `agent_turn` path, which has no such prompt, so this doesn't bite yet — but it is a prerequisite for the scheduler, not a nicety. Wiring it in is a three-line change because the flag is already there.
-- Session 3 (propose/approve/move) is untouched. The mover re-validates the model's suggested `destination` — the suggestion is **data, not authority** — and is allowed to write outside `WRITE_ROOTS` precisely because it is not the model. Keep it a separate entry point with its own validation; do not widen `WRITE_ROOTS` to give the model the same reach.
+- **The scheduler.** `run_routine()` is the entry point; wire an OS scheduler (cron/Task Scheduler) to a `--run-routine <name>` flag on `main.py`. Do not build an in-process timer thread — see the Routines section. `trigger` (HHMM) and `on_failure` are already stored and parsed, waiting to be honoured.
 
 ---
 
@@ -231,7 +263,7 @@ Two consumers, and the second is why it is a log and not a `print`: a human aski
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
-Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure). 341 assertions across 8 suites. None need an API key.
+Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity). 383 assertions across 9 suites. None need an API key.
 
 `test_routines` patches `routines.routine_dir`/`prompt_dir`/`log_dir` rather than `config` — that is the single seam every function goes through, and patching config would miss a caller that read the value at import time. Its DB test asserts the temp path **before** writing, per invariant #1.
 
@@ -255,15 +287,16 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `context.py` | `ToolContext`: read roots, write roots, gated/interactive. `for_chat` / `for_routine` |
 | `routines.py` | the `Routine` object, its markdown file store, and the append-only run log |
 | `runner.py` | `run_routine` — one routine's execution; the headless entry point in all but name |
+| `mover.py` | filing a proposal out of the outbox: `plan`/`commit`/`drop`, destination re-validation |
 | `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor) |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 
 ## Current state & open threads
 
-- **Just landed:** routines, session 2 of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `:routine` / `:routine new` / `:routine <name>`, the run log, and `test_routines`. Verified end to end against a throwaway `heartbeat` routine that writes a file into the outbox. Session 3 (propose/approve/move) is open; the scheduler is deferred by design, not forgotten.
+- **Just landed:** routines, sessions 2 **and 3** of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `:routine` / `:routine new` / `:routine <name>`, the run log, and `test_routines`. Then `mover.py` + `:outbox` / `:file`, verified end to end: a throwaway routine proposes a file into the outbox, `:file` re-validates the destination and moves it. **The routines handover is now fully discharged.** The scheduler is the next piece and is deferred by design, not forgotten — `run_routine` is already the entry point it will call.
 - **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
 - **Cosmetic backlog:** tool-path reasoning prints in full (not tail-limited like the live panel) and once per loop step — can bury the answer on a verbose model. See `BACKLOG.md`.
 - **Blocked, not forgotten:** a memory-pass routine (the obvious first real one) is blocked on `MAX_DISTANCE` — the measured gap collapsed 0.111 → 0.025 and the floor now sits below the top of the answerable band, so recall returns nothing for good queries. Zero hits and "nothing worth reporting" produce **identical output**, so a nightly digest would look like it was working while doing nothing. Fix the floor first, or make the routine fail loudly on zero hits. `BACKLOG.md` has the unexplained 0.969-vs-1.036 discrepancy — don't just nudge the floor.

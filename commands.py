@@ -1134,3 +1134,98 @@ def do_routine(conn, arg, model=None):
     if session_id:
         console.print(f"  transcript: session #{session_id}", style="dim")
     console.print()
+
+
+# --- filing proposals out of the outbox ------------------------------------
+#
+# ':outbox' lists what the model has left for you, each with its verdict
+# already computed — you should be able to see what ':file 1' will do before
+# you type it. ':file <n>' carries one out, ':file all' every valid one,
+# ':file <n> drop' discards.
+#
+# The verdicts come from mover.py, which re-validates the model's suggested
+# destination from scratch. Nothing here decides whether a move is allowed;
+# this is presentation over that decision.
+
+
+def show_outbox():
+    """:outbox — pending proposals and what would happen to each."""
+    from mover import list_proposals, outbox_roots
+
+    proposals = list_proposals()
+    console.print()
+    roots = ", ".join(str(r) for r in outbox_roots()) or "(none configured)"
+    console.print(f"Outbox ({roots})")
+    if not proposals:
+        console.print("  (nothing pending)", style="dim")
+        console.print()
+        return proposals
+
+    for i, p in enumerate(proposals, 1):
+        if p.ok:
+            console.print(f"  {i}. {p.name}", style="bold")
+            console.print(f"     → {p.target}", style="green")
+        else:
+            console.print(f"  {i}. {p.name}", style="bold")
+            # A refusal shows the destination that was *asked for* next to the
+            # reason, so the model's suggestion stays visible and auditable
+            # rather than being replaced by the error.
+            if p.destination:
+                console.print(f"     → {p.destination}", style="dim")
+            console.print(f"     REFUSED — {p.reason}", style="red")
+
+    filable = sum(1 for p in proposals if p.ok)
+    console.print()
+    console.print(f"  {filable} of {len(proposals)} can be filed", style="dim")
+    console.print("  :file <n> | :file all | :file <n> drop", style="dim")
+    console.print()
+    return proposals
+
+
+def do_file(arg):
+    """:file <n> [drop] | :file all — carry out or discard a proposal."""
+    from mover import MoveError, commit, drop, list_proposals
+
+    proposals = list_proposals()
+    if not proposals:
+        console.print("Nothing in the outbox.")
+        return
+
+    parts = (arg or "").split()
+    if not parts:
+        console.print("Usage: :file <n> | :file all | :file <n> drop")
+        return
+
+    if parts[0] == "all":
+        filable = [p for p in proposals if p.ok]
+        if not filable:
+            console.print("Nothing filable — see :outbox for why.", style="dim")
+            return
+        for p in filable:
+            try:
+                target = commit(p)
+                console.print(f"  filed {p.name} → {target}", style="green")
+            except (MoveError, OSError) as e:
+                console.print(f"  FAILED {p.name}: {e}", style="red")
+        return
+
+    try:
+        index = int(parts[0])
+        proposal = proposals[index - 1]
+        if index < 1:
+            raise IndexError
+    except (ValueError, IndexError):
+        console.print(f"No proposal {parts[0]!r} — :outbox lists them.",
+                      style="red")
+        return
+
+    if len(parts) > 1 and parts[1] == "drop":
+        target = drop(proposal)
+        console.print(f"  dropped {proposal.name} → {target}", style="dim")
+        return
+
+    try:
+        target = commit(proposal)
+        console.print(f"  filed {proposal.name} → {target}", style="green")
+    except (MoveError, OSError) as e:
+        console.print(f"  cannot file {proposal.name}: {e}", style="red")

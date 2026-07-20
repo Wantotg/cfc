@@ -57,6 +57,7 @@ from commands import (
     do_attach, show_attachments, do_detach,
     show_tools_state,
     show_routines, create_routine, do_routine,
+    show_outbox, do_file,
 )
 
 # --- Main REPL ---
@@ -563,6 +564,17 @@ def run_session(conn, session_id):
                 create_routine()
             else:
                 do_routine(conn, arg, model=current_model)
+            continue
+
+        # --- Outbox ---
+
+        if user == ":outbox":
+            show_outbox()
+            continue
+
+        if user.startswith(":file"):
+            do_file(user.split(maxsplit=1)[1].strip()
+                    if len(user.split(maxsplit=1)) > 1 else "")
             continue
 
         # --- Chat ---

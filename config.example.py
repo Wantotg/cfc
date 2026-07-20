@@ -119,3 +119,21 @@ ROUTINE_PROMPT_DIR = ""     # e.g. "<vault>/06 metadata/routine prompts"
 # same jail covers it. The next run reads this to see whether the last one
 # failed — which is why it is a log and not a print.
 ROUTINE_LOG_DIR = ""        # e.g. "<vault>/99 outbox/routine logs"
+
+# --- filing proposals out of the outbox ------------------------------------
+# The model writes into the outbox with a suggested `destination:` in the
+# file's frontmatter; ":outbox" lists proposals and ":file <n>" carries one
+# out. The mover re-validates that destination from scratch — the suggestion
+# is data, never authority — and refuses anything outside these roots rather
+# than guessing at what was meant.
+#
+# The mover may write outside WRITE_ROOTS **because it is not the model**.
+# Keep this separate: widening WRITE_ROOTS to the whole vault would hand the
+# model the same reach, which is what the outbox exists to prevent.
+MOVE_ROOTS = ()             # e.g. (Path("<vault>"),)
+
+# Destinations under here are refused outright. Writing a page into the wiki
+# changes the corpus, but the index doesn't know until import_wiki.py runs, so
+# recall would answer from a stale copy with no signal that it's stale. Leave
+# empty if you have no wiki corpus.
+WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
