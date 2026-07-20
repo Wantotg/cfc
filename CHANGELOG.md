@@ -51,7 +51,7 @@ Wiring the flag turned up a worse bug than the one it was reserved for.
 - Files: context.py, api.py, main.py, runner.py, tests/test_empty.py (new),
   tests/test_gate.py, tests/test_routines.py, README.md, HANDOVER.md, CLAUDE.md
 - Status: shipped
-- Commit: pending
+- Commit: 2af708a
 
 ## 2026-07-20 — Add propose/approve/move: `mover.py`, `:outbox`, `:file`
 Round three of the routines handover, which is now fully discharged. A routine
