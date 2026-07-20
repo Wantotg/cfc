@@ -116,6 +116,30 @@ Guard invariants:
 - **Denial is data.** Every failure returns `{"error": …}` as the tool result; nothing raises into the loop. The model reads it and adapts. Asked to fetch the key with everything auto-approved, it gets "config.py is on the deny list" and moves on.
 - **`grep` guards per file, not just the directory it was pointed at** — otherwise `grep("API_KEY", "~/projects")` would print `config.py`'s key line by line.
 
+### The shared workspace is in the vault, not the repo
+
+Files exchanged between Cas and an LLM — handover docs, briefs, notes, and
+(once write tools land) generated output — live in the **Obsidian vault**:
+
+```
+<vault>/00 inbox    → Cas writes, the model reads
+<vault>/99 outbox   → the model writes, Cas reads   (needs write tools; not yet)
+```
+
+The vault is already inside `ATTACH_ROOTS`/`TOOLS_ROOTS`, so both folders are
+readable with no extra config. When write tools arrive, `99 outbox` is the
+intended narrow write scope — see the per-context roots argument in the routines
+handover.
+
+An `inbox/`+`outbox/` pair briefly existed at the repo root and was **deliberately
+removed**. The reasoning generalises: this content isn't code, so it would have to
+be gitignored — and a gitignored folder inside the repo is invisible to clones,
+excluded from the vault's daily backup, and destroyed by a fresh checkout. If it
+doesn't belong in version control, don't put it in the working tree. The vault
+pair is backed up, editable from Obsidian without a terminal, and reached over
+WSL's fast direction (`/mnt/c`, Linux→Windows) rather than the slow, flakier
+`\\wsl.localhost` (Windows→Linux). Don't reintroduce the repo folders.
+
 **Approval:** `TurnApproval` is per-turn state; `A` (allow-all) lives on the instance and dies with the turn — "resets each turn" is true by construction, not by remembering to reset. `TOOLS_AUTO_APPROVE` (default empty) pre-clears named tools. Three switches must line up for tools to fire (master `TOOLS_ENABLED`, session `:tools on|off`, model in `TOOLS_MODELS`); `:tools` prints which of the three is blocking.
 
 ---

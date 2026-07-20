@@ -23,6 +23,19 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Put the shared inbox/outbox in the vault, not the repo
+Handovers and briefs are exchanged through `<vault>/00 inbox` and `99 outbox`
+instead of folders in the project tree. Both were already inside the tool roots
+after the config repoint, so this needed no code — only a decision and the docs
+to make it stick. The repo pair would have had to be gitignored, which means
+invisible to clones, outside the vault's daily backup, and lost to a fresh
+checkout; content that isn't code shouldn't sit in the working tree. Moved the
+routines handover to the vault inbox, removed the empty repo folders, and swept
+10 orphaned `*:Zone.Identifier` stubs (Windows download metadata) from the root.
+- Files: HANDOVER.md, README.md, CLAUDE.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-20 — Repoint config at the reorganised Obsidian vault
 The vault was restructured (renamed + refoldered) and every path in the
 gitignored `config.py` pointed at the old `Claude/01_Projects/Cooking_for_Cats`
@@ -36,7 +49,7 @@ Golden baseline re-recorded: the 34-line diff is entirely the path echoes in
 not the path. Unit suites green.
 - Files: config.py (gitignored), tests/golden_baseline.txt, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 381a92e
 
 ## 2026-07-19 — Bring README + HANDOVER current for the wiki migration
 Rewrote the coupled docs to the finished shape: wiki-based recall, self-hosted

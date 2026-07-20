@@ -58,7 +58,7 @@ Then edit `config.py` and set:
 
 - `API_KEY` — your provider's API key
 - `API_BASE` — the provider's base URL
-- `VAULT_PATH` — folder in your Obsidian vault for exported chats
+- `VAULT_PATH` — folder where exported chats are written; anywhere you like, in your Obsidian vault or outside it
 - `PROMPTS_DIR` / `PERSONAS_DIR` — folders for your system-prompt and persona Markdown files
 - `MODELS` / `MODEL_LIMITS` — the models your plan supports and their context sizes
 - `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` — the embedding endpoint; defaults to the hosted `bge-m3`, or point it at a local server to self-host
