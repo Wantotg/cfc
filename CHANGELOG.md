@@ -107,7 +107,7 @@ still blocks any memory-pass routine — see `BACKLOG.md`.
   tests/test_gate.py, tests/test_agent.py, tests/golden.py,
   tests/golden_baseline.txt, HANDOVER.md, README.md, CLAUDE.md
 - Status: shipped
-- Commit: 60ed2dd
+- Commit: 87b34ea
 
 ## 2026-07-20 — Auto-refuse doomed tool calls, hide denied files, close the .pyc gap
 Four changes to the read jail, prompted by "I don't want to roll the dice on a
