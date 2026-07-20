@@ -111,8 +111,18 @@ Read-only tools only: `list_dir`, `read_file`, `grep` (`tools.py`, schemas in `T
 2. **Containment** — must resolve inside *any* configured root.
 3. **Denial** — a root-agnostic deny list (`config.py`, `.env*`, `*.pem/*.key`, `id_rsa`, `.ssh/` and friends) runs on the resolved path regardless of which root allowed it. `config.py` may **add** via `ATTACH_DENY_EXTRA`; nothing removes. Rationale: a root like `~/projects` contains cfc contains `config.py` contains the API key, and `.py` is attachable — containment alone would hand over the key.
 
+**Denial is layered, and only one layer is the boundary.** Three things now stand between the model and a denied file; keep them straight, because two of them are ergonomics:
+
+1. `path_guard` inside `tools.dispatch` — **the boundary.** Runs for every call whatever the gate decided. `dispatch` is reachable without a gate at all, so the check cannot move out of it.
+2. `tools.precheck` at the gate (`commands.gate_and_dispatch`) — a **pre-filter**. Refuses a call the guard would reject anyway, without prompting, and hands the model the real reason instead of "user denied". Exists because a gate that fires on calls that *cannot* succeed is a gate that gets rubber-stamped. It reports the refusal (`auto-denied …`) rather than swallowing it — an invisible boundary is an unauditable one.
+3. `list_dir` omitting denied entries — **noise reduction.** Stops the model forming the intent to read `config.py` by never showing it. This protects nothing: a model that simply guesses the name is refused by layer 1 exactly the same. Don't mistake it for security.
+
+The deny list itself covers `config.py`, its **backup shapes** (`config.py.bak/.old/.save/…` — denial is an exact-name match, so every copy escaped it until the `config.py.*` glob landed), and **compiled bytecode** (`*.pyc`, `__pycache__/`), which embeds the source's string literals — `__pycache__/config.cpython-*.pyc` contains the API key verbatim. That never leaked (`read_file` rejects invalid UTF-8, `grep` opens `errors="strict"`), but that was the *file format* saving us, not this boundary.
+
+**Known weakness, unresolved:** denial is name-based, so the protection lives in a list that must keep pace with what secrets get called. That is acceptable for reads. It is a much weaker basis for **writes** — the plan is to scope writes to the vault only (`99 outbox`), via a separate roots tuple, never by extending `TOOLS_ROOTS`. `~/projects/cfc` stays read-only.
+
 Guard invariants:
-- **The guard runs inside the dispatcher, not at the gate and never on the model's say-so.** Approval decides *whether* a call runs; the guard decides whether it's *allowed to at all*. You can approve a call that then fails the guard — that's correct. (`tests/test_gate.py` asserts approval doesn't bypass it.)
+- **The guard runs inside the dispatcher, not at the gate and never on the model's say-so.** Approval decides *whether* a call runs; the guard decides whether it's *allowed to at all*. You can approve a call that then fails the guard — that's correct. (`tests/test_gate.py` asserts approval doesn't bypass it, and that the pre-filter never swallows a call the human should see.)
 - **Denial is data.** Every failure returns `{"error": …}` as the tool result; nothing raises into the loop. The model reads it and adapts. Asked to fetch the key with everything auto-approved, it gets "config.py is on the deny list" and moves on.
 - **`grep` guards per file, not just the directory it was pointed at** — otherwise `grep("API_KEY", "~/projects")` would print `config.py`'s key line by line.
 

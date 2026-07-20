@@ -49,11 +49,22 @@ _DENY_GLOBS = (
     "*.pem", "*.key", "*.pfx", "*.p12", "*.jks", "*.keystore",
     "*_rsa", "*_dsa", "*_ecdsa", "*_ed25519",
     "*.kdbx",
+    # Denial above is an *exact* name match, so any copy of config.py escapes
+    # it: config.py.bak, config.py.old, config.py.save all held the key and
+    # none were refused. Cover the backup shapes editors and shells produce.
+    "config.py.*",
+    # Compiled bytecode embeds the source's string literals, so
+    # __pycache__/config.cpython-*.pyc contains the API key verbatim. It does
+    # not currently leak — read_file rejects it as invalid UTF-8 and grep opens
+    # with errors='strict' — but that is the file format saving us, not this
+    # boundary. Make it explicit rather than accidental.
+    "*.pyc", "*.pyo",
 )
 
 # Any path with one of these as a directory component is refused entirely.
 _DENY_DIRS = {
     ".ssh", ".gnupg", ".aws", ".kube", ".docker", ".password-store",
+    "__pycache__",            # see the *.pyc note above
 }
 
 try:
@@ -78,6 +89,20 @@ def _denied(resolved):
             return f"{resolved.name} matches denied pattern {pattern!r}"
 
     return None
+
+
+def denial_reason(path):
+    """Why the deny list refuses this path, or None. Never raises.
+
+    The deny half only — containment is NOT checked. For callers that already
+    know a path is inside a root and want to *filter* rather than refuse, e.g.
+    list_dir hiding denied entries instead of listing them. Use path_guard for
+    anything that decides whether an operation may proceed.
+    """
+    try:
+        return _denied(Path(path).expanduser().resolve())
+    except OSError:
+        return None
 
 
 def _as_roots(roots):

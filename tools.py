@@ -19,7 +19,7 @@ import json
 import os
 from pathlib import Path
 
-from paths import path_guard, PathError, _as_roots
+from paths import path_guard, PathError, denial_reason, _as_roots
 
 try:
     from config import TOOLS_ROOTS
@@ -159,6 +159,14 @@ def list_dir(path, roots):
 
     rows = []
     for child in sorted(p.iterdir(), key=lambda c: (not c.is_dir(), c.name)):
+        # Denied entries are omitted entirely — not listed-and-refused. A
+        # listing that shows config.py invites a read that path_guard will
+        # refuse, which costs the user a prompt to decline a call that was
+        # never going to succeed. Hiding is ergonomics, not security: the
+        # deny list still refuses the path if the model simply guesses the
+        # name, so nothing here is load-bearing for safety.
+        if denial_reason(child):
+            continue
         try:
             size = child.stat().st_size if child.is_file() else 0
         except OSError:
@@ -318,6 +326,42 @@ def dispatch(name, arguments, roots=None):
     except Exception as e:
         # A tool bug must not take the agent loop down with it.
         return _err(f"{name} failed: {type(e).__name__}: {e}")
+
+
+def precheck(name, arguments, roots=None):
+    """The jail error this call would fail with, or None. Never raises.
+
+    Lets the approval gate refuse a doomed call without asking, so the user is
+    never prompted to decline something path_guard was going to reject anyway.
+    A gate that fires on calls that cannot succeed is a gate that gets
+    rubber-stamped.
+
+    This is a pre-filter, NOT the boundary. path_guard still runs inside
+    dispatch() for every call regardless of what the gate decided — dispatch is
+    reachable without a gate at all, so the guard cannot live here. Only
+    containment/deny failures are pre-checked; a missing file or a bad argument
+    stays a normal tool error the model sees and adapts to.
+    """
+    roots = roots if roots is not None else TOOLS_ROOTS
+    if isinstance(arguments, str):
+        try:
+            args = json.loads(arguments) if arguments.strip() else {}
+        except json.JSONDecodeError:
+            return None          # unparseable: let dispatch report it
+    else:
+        args = arguments or {}
+    if not isinstance(args, dict):
+        return None
+
+    # grep's path is optional (no path = walk the roots, which is fine).
+    path = args.get("path")
+    if not path or name not in ("list_dir", "read_file", "grep"):
+        return None
+    try:
+        path_guard(path, roots)
+    except PathError as e:
+        return _err(str(e))
+    return None
 
 
 def describe(name, arguments, roots=None):

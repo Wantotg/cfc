@@ -128,6 +128,22 @@ def main():
     sneaky.symlink_to(jail / "config.py")
     refuses("symlink named .md -> config.py", sneaky, jail, expect="deny list")
 
+    print("\n--- copies of config.py escape an exact-name match ---")
+    for name in ["config.py.bak", "config.py.old", "config.py.save",
+                 "config.py.orig", "config.py.swp"]:
+        (jail / name).write_text("API_KEY = 'sk-LEAK'")
+        refuses(f"{name} refused", jail / name, jail, expect="denied pattern")
+
+    print("\n--- compiled bytecode embeds the source's string literals ---")
+    cache = jail / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / "config.cpython-314.pyc").write_bytes(b"\x00sk-LEAK")
+    refuses("__pycache__/config.*.pyc refused",
+            cache / "config.cpython-314.pyc", jail, expect="never readable")
+    (jail / "loose.pyc").write_bytes(b"\x00sk-LEAK")
+    refuses("a .pyc outside __pycache__ too",
+            jail / "loose.pyc", jail, expect="denied pattern")
+
     print("\n--- lookalikes that must still be allowed ---")
     for name in ["config.example.py", "configuration.py", "environment.md",
                  "keyboard.py", "monkey.txt"]:

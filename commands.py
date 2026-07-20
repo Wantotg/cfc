@@ -857,6 +857,16 @@ def gate_and_dispatch(call, approval, root=None):
     name = fn.get("name", "?")
     args = fn.get("arguments", "{}")
 
+    # Refuse jail failures before asking. The dispatcher would reject these
+    # anyway, so prompting first only teaches the habit of rubber-stamping the
+    # gate. Reported, not silent — an auto-refusal the user can't see is a
+    # boundary they can't audit. The model gets the real reason (deny list,
+    # outside roots) rather than "user denied", which it can act on.
+    blocked = tools.precheck(name, args, root)
+    if blocked:
+        console.print(f"auto-denied {name}: outside the jail", style="dim")
+        return blocked
+
     verdict = gate(call, approval, root)
     if verdict == "deny":
         return json.dumps({"error": "user denied"})

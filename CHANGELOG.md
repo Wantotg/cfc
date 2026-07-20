@@ -23,6 +23,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-20 — Auto-refuse doomed tool calls, hide denied files, close the .pyc gap
+Four changes to the read jail, prompted by "I don't want to roll the dice on a
+tool call reading config.py that I have to decline":
+- `tools.precheck` lets the gate refuse a call `path_guard` would reject anyway,
+  without prompting — a gate that fires on impossible calls gets rubber-stamped.
+  The dispatcher guard is untouched and still runs for every call.
+- `list_dir` omits denied entries instead of listing them. Ergonomics, not
+  security: guessing the name is refused identically.
+- Deny list now covers `config.py.*` backups (exact-name matching let every copy
+  through) and `*.pyc`/`__pycache__` — compiled bytecode embeds the API key as a
+  string literal. It never leaked, but only because read_file rejects non-UTF-8
+  and grep opens strict; that was the file format, not the boundary.
+- `ATTACH_ROOTS` narrowed from `~/projects` to `~/projects/cfc`.
+Found while testing: a *stale* API key sits in a compiled config in the old
+`C:\Users\disse\CFC\__pycache__` — outside the roots, but live on disk.
+- Files: paths.py, tools.py, commands.py, config.py (gitignored),
+  tests/test_paths.py, tests/test_gate.py, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-20 — Put the shared inbox/outbox in the vault, not the repo
 Handovers and briefs are exchanged through `<vault>/00 inbox` and `99 outbox`
 instead of folders in the project tree. Both were already inside the tool roots
@@ -34,7 +54,7 @@ routines handover to the vault inbox, removed the empty repo folders, and swept
 10 orphaned `*:Zone.Identifier` stubs (Windows download metadata) from the root.
 - Files: HANDOVER.md, README.md, CLAUDE.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 02ae8d6
 
 ## 2026-07-20 — Repoint config at the reorganised Obsidian vault
 The vault was restructured (renamed + refoldered) and every path in the

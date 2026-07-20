@@ -154,6 +154,39 @@ def main():
                  keys="")
     ok("auto-approve doesn't bypass the guard either", is_err(r, "outside"), r)
 
+    print("\n--- doomed calls are auto-refused without ever prompting ---")
+    # keys="" means stdin is empty: if the gate asked anything, input() raises
+    # EOFError and the result comes back as "user denied". Getting the *guard's*
+    # reason instead proves no prompt was shown.
+    r, out = drive(commands.gate_and_dispatch,
+                   call("read_file", path=str(jail / "config.py")), A(), jail,
+                   keys="")
+    ok("read of config.py auto-denied, no prompt",
+       is_err(r, "deny list"), r)
+    ok("...the user was not asked", "[a]llow" not in out, out)
+    ok("...but it is reported, not silent", "auto-denied" in out, out)
+    ok("...and the key never appears", "sk-LEAK" not in r)
+
+    r, out = drive(commands.gate_and_dispatch,
+                   call("list_dir", path=str(outside)), A(), jail, keys="")
+    ok("listing outside the roots auto-denied, no prompt",
+       is_err(r, "outside"), r)
+    ok("...the user was not asked", "[a]llow" not in out, out)
+
+    # The pre-filter must not swallow legitimate calls: an allowed path still
+    # reaches the human. Deny it by hand to prove the prompt happened.
+    r, out = drive(commands.gate_and_dispatch,
+                   call("read_file", path=str(jail / "notes.md")), A(), jail,
+                   keys="d\n")
+    ok("an allowed path is still gated by the human", "[a]llow" in out, out)
+    ok("...and 'd' reads as the user's own denial",
+       is_err(r, "user denied"), r)
+
+    print("\n--- list_dir hides denied entries rather than listing them ---")
+    listing = tools.list_dir(str(jail), jail)
+    ok("config.py absent from the listing", "config.py" not in listing, listing)
+    ok("...while ordinary files remain", "notes.md" in listing, listing)
+
     print("\n--- unknown tools and junk still gate cleanly ---")
     r, _ = drive(commands.gate_and_dispatch,
                  {"function": {"name": "rm_rf", "arguments": "{}"}}, A(), jail,
