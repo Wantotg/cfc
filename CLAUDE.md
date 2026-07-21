@@ -58,36 +58,72 @@ Talk to him as a peer. Direct, no hand-holding, no false enthusiasm. He has a dr
 
 ## Current project
 
-**cfc** ("Cooking for Cats") — terminal Python AI chat client, nano-gpt OpenAI-compatible API, SQLite backend, `rich` for the REPL. Private repo `Wantotg/cfc`.
+**cfc** ("Cooking for Cats") — terminal Python AI chat client, nano-gpt
+OpenAI-compatible API, SQLite backend, `rich` for the REPL. Private repo
+`Wantotg/cfc`. Entry point is `python main.py [session_id]`.
 
-RAG memory layer in progress: Anthropic exports imported → chunked (500 tokens, 75 overlap, never crossing message boundaries) → embedded via `BAAI/bge-m3` into `sqlite-vec`. Modules: `import_anthropic.py`, `chunk.py`, `backfill.py`, `embed.py`, `search.py`, `recall.py`.
+**This section is orientation, not truth.** `HANDOVER.md` is the technical
+document and wins on every point of detail — architecture, invariants, tuned
+constants, why a thing is the way it is. `CHANGELOG.md` is the history.
+`BACKLOG.md` is what's owed. If this section and one of those disagree, this
+one is stale; fix it.
 
-REPL commands are wired and working: `:recall` (cited synthesis, no session effect), `:remember` (raw chunk injection, ephemeral, marker row persisted), `:forget` (drops the last injected block). The old `:search` is now `:grep`.
+What exists, in one pass:
 
-Retrieval quality: **done**, and the original diagnosis was wrong. Recorded because the wrong version is intuitive and will otherwise get re-derived:
+- **The REPL**, split across `main.py` (hub + session loop + dispatch),
+  `commands.py`, `hub.py`, `db.py`, `api.py`, `agent.py`, `export.py`,
+  `ui.py`, `config.py`. A launch splash, a session picker, colored speaker
+  panels, a `prompt_toolkit` line editor.
+- **Memory / RAG over a distilled Obsidian wiki** — `import_wiki.py`,
+  `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`. Embeddings
+  run on **self-hosted `bge-m3` via LM Studio** (`EMBED_*` in config), stored
+  in `sqlite-vec`. REPL commands: `:recall`, `:remember`, `:forget`,
+  `:updatedb`, plus per-turn auto-embed. `import_anthropic.py` survives for the
+  old export format; that corpus is archived out of the live db.
+- **Tool calling and the file jail** — `tools.py`, `paths.py`, `context.py`.
+  Four tools (`list_dir`, `read_file`, `grep`, `write_file`). `WRITE_ROOTS` is
+  the vault outbox and nothing else. There is no auto-approve flag and
+  reintroducing one is a broken invariant.
+- **Routines** — `routines.py` + `runner.py`, run on command via `:routine`.
+  No scheduler yet; that's deliberate, and `run_routine()` is the entry point
+  it will call.
+- **Filing** — `mover.py`, `:outbox` / `:file`. A routine proposes a
+  destination; code re-validates it and carries it out.
+- **`backup.py`** snapshots `~/.cfc/chat.db` on startup. It exists because a
+  test guard that checked its path *after* a destructive step deleted the whole
+  database. **Anything that writes to a database checks the path before the
+  write, not after.**
+- **Tests** — `tests/golden.py` pins the REPL's exact output for every command
+  that makes no API call; run `check` after touching those modules, `record`
+  to re-baseline an intended change. Plus ten unit suites. None need an API
+  key. Not covered: the chat turn, `:recall`/`:remember`, `:export`, the
+  picker, `:routine` — those are verified by hand.
 
-- The junk in top-k wasn't crowding by content-free chunks. `:remember "what did we decide about chunking"` scored 1.034 — statistically identical to a control query about the mating habits of the Patagonian toothfish. The corpus is the *Anthropic export*; cfc's own chunking decisions were made in Claude Code and were never in it. Retrieval was working. There was simply nothing to find, and KNN returns k rows regardless.
-- Real fix: `MAX_DISTANCE = 0.93` in `search.py`. Measured over 36 probes — answerable 0.531–0.892, unanswerable 0.973–1.094, total separation. bge-m3 specific.
-- Flat spread is a *symptom* of an unanswerable query, not a cause, and is a poor discriminator: a good query scored 1.4% spread. Don't build on it.
-- The litter floor shipped too (`is_litter` also had a real bug — it matched a single marker against the whole chunk, so concatenated markers were embedded). Worth having, but it moved junk-in-top-8 only 28.9% → 24.4%. Floor is 5 tokens, not 20: the 7–20 band is real material.
+### Versions and the roadmap
 
-Retrieval is good when the answer exists: 24/24 probes returned the right session in top-8, 18/24 at rank 1.
+As of **v0.1 (2026-07-21)** the project is versioned and has a roadmap
+(`ROADMAP.md`). v0.1 means "the state of things on that date" — everything
+above works and Cas has used it. It does **not** claim the test suite covers
+it. Don't read the tag as a verification claim.
 
-Still open, and distinct from the above: **resolution staleness** (semantic search matches struggle messages over the resolution) per the memory design doc.
+Each version gets a human-written note from Cas about what landed and what's
+next. The roadmap addresses `BACKLOG.md` at chosen points rather than all at
+once — a feature session is not obliged to clear unrelated debt, but the
+roadmap says which version owns which item.
 
-Smaller findings park in `BACKLOG.md` — read it before touching the memory layer.
+### The one live blocker
 
-The `chat.py` split is **done**. `main.py` (REPL + dispatch + session state), `commands.py`, `hub.py`, `db.py`, `api.py`, `export.py`, `ui.py` (shared console), `config.py`. Entry point is now `python main.py [session_id]`.
+**`MAX_DISTANCE` no longer separates.** The measured gap between answerable and
+unanswerable queries collapsed 0.111 → 0.025, and the floor now sits below the
+top of the answerable band, so good queries return nothing. Worse: a recorded
+baseline (`"who is Cas"` at 0.969) now measures 1.036 on the same corpus with
+the same embedder, and that discrepancy has no explanation that fits the
+evidence. **Don't just nudge the floor** — a floor built on a number that
+doesn't reproduce will fail again silently. Full write-up in `BACKLOG.md`; this
+blocks anything that depends on recall being trustworthy, including the tiered
+memory work.
 
-`tests/golden.py` pins the REPL's exact output for every command that makes no API call — it's what made the split safe. Run `check` after touching any of those modules; `record` re-baselines when a change to the output is intended. It doesn't cover the chat turn, `:recall`/`:remember`, `:export` or the picker; those were verified by hand.
-
-`backup.py` snapshots `~/.cfc/chat.db` to `~/.cfc/backups/` on startup (throttled to 6h, skipped when unchanged, rolling 10). `--list`, `--force`, `--restore latest|<name>`. This exists because a test guard that ran *after* its destructive step deleted the whole database — restored from a temp-dir copy that got lucky. **Anything that writes to a database must check the path before the write, not after.**
-
-The attach/tools handoff is done; its scratch doc has been removed. One leftover from it: the README rewrite is only partly done — structure, entry point and Security are current, the roadmap still isn't.
-
-**Write access shipped 2026-07-20** (session 1 of 3 from the routines handover). `context.py` holds a `ToolContext` carrying read roots, write roots and whether the run is gated; `write_file` writes atomically into `WRITE_ROOTS` (the vault outbox, and nothing else). `TOOLS_AUTO_APPROVE` was **deleted** — auto-approval is impossible in a normal chat by construction, and an ungated run is reachable only via `ToolContext.for_routine()`. Don't reintroduce a config flag that skips the gate; that's the invariant. Sessions 2 (the routine object + `:routine`) and 3 (propose/approve/move) are still open — brief is in the vault inbox.
-
-Next: the wiki-DB migration (see `WIKI_MIGRATION.md`, being archived). Step 1 (embeddings on self-hosted bge-m3 via LM Studio) is shipped; Steps 2–3 are `import_wiki.py` + a `source` column on `chunks`.
+Read `BACKLOG.md` before touching the memory layer.
 
 ## Things to remember
 
@@ -101,3 +137,8 @@ Next: the wiki-DB migration (see `WIKI_MIGRATION.md`, being archived). Step 1 (e
   backfill it on the next commit; don't amend to self-reference (a commit can't
   hold its own final hash). Format is at the head of that file. This is the
   running history; `HANDOVER.md` stays invariants and design reasoning, not a log.
+- `ROADMAP.md` is **Cas's document, not yours.** Propose changes to it, don't
+  make them unasked — an LLM editing the roadmap mid-session is exactly how
+  "Cas mentioned X" becomes "X was decided." Finishing a version's work means
+  saying so and offering to update it, and the per-version note is written by
+  Cas in his own words.

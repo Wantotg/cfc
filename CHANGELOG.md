@@ -23,6 +23,32 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Add ROADMAP.md; reconcile CLAUDE.md with reality
+Documentation only, no behaviour change. The project is versioned from here.
+- **`ROADMAP.md`** — v0.1 (today) through v1.0, with each version owning named
+  `BACKLOG.md` items rather than deferring all debt to one cleanup. v0.1 means
+  "the state of things on 2026-07-21", explicitly *not* a verification claim.
+  Numbering leaves room above v0.2 for versions not yet foreseen.
+- Ordering rationale worth keeping: v0.2 bundles the `chunk.py` overlap fix with
+  the `MAX_DISTANCE` re-measurement because re-chunking changes the corpus, and
+  the floor is a property of the corpus as well as the embedding geometry —
+  splitting them costs a second measurement run.
+- v1.0 also carries the **public-repo decision** (solid enough? sanitized
+  enough?), parked there deliberately so it stops taking up room now.
+- **`CLAUDE.md`'s Current project section was stale** — it still described the
+  Anthropic export as the corpus, `MAX_DISTANCE = 0.93`, the `chat.py` split and
+  wiki migration as pending work, and the README roadmap as unfinished. Rewritten
+  to point at `HANDOVER.md` / `CHANGELOG.md` / `BACKLOG.md` as the authorities
+  instead of restating them, and to carry the one live blocker (the collapsed
+  `MAX_DISTANCE` gap).
+- Added: `ROADMAP.md` is Cas's document — a session proposes changes, it doesn't
+  make them.
+- Files: ROADMAP.md, CLAUDE.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-21 — Make the README accurate; drop the roadmap
 Documentation only, no behaviour change.
 - Documents the splash (Enter/Esc, once per launch, skipped on a non-TTY) and
@@ -39,7 +65,7 @@ Documentation only, no behaviour change.
   `main.py`, `backup.py`'s flags, the test list, and `requirements.txt`.
 - Files: README.md
 - Status: shipped
-- Commit: pending
+- Commit: 6a64057
 
 ---
 
