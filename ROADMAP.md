@@ -24,8 +24,13 @@ a lot, but not the chat turn, `:recall`/`:remember`, `:export`, the picker or
 Chat client, wiki-backed RAG memory, tool calling behind a file jail, routines
 that run on command, a filing pipeline, and a cat on the splash screen.
 
-> *Note: to be written.*
-
+> *Note: Created the first roadmap to coordinate cfc going forward. Declared v0.1 and started using Git Tag. Previous changes were too random in direction, scope and planning; the roadmap is created to fix that before it breaks cfc. There is room for delay before V1.0 and plenty of ideas past that.*
+```
+／l、／\
+(=ↀ▂ↀ=)  'it hurts, please make v1.0 come quickly'
+l  ~ ~~\
+じしfー,)ノ
+```
 ---
 
 ## v0.2 — Retrieval you can trust
