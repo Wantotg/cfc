@@ -367,9 +367,20 @@ recall. One line at launch turns it into an event.
   port hangs to the timeout rather than refusing, so a reflexive second probe
   cost 20s in front of an app that hadn't opened.
 
-Not verified by hand: the `server start` path, because testing it means stopping
-a running server. The `lms` invocation is right per its `--help`; treat it as
-unproven until it fires for real.
+**Verified 2026-07-21:** the happy path, end to end, from the real shortcut —
+0.16s, cfc opens. Also the diagnostic paths (dead port, hosted endpoint, no
+`lms` CLI), which degrade and start cfc anyway.
+
+**Not verified: either of the two paths that actually fix something** —
+`server start` and `lms load`. Cas keeps LM Studio running in the system tray
+with the server already on and bge-m3 already loaded, which is the case the
+probe short-circuits, so neither branch has ever fired. Note the distinction
+that hides this: **LM Studio running is not the same as its server running.**
+The tray app can sit there for weeks with the server off, and that is exactly
+the state the preflight exists for. The `lms` invocations are right per its
+`--help` and the arguments are pinned by a test, but treat both as unproven
+until one fires for real. Quitting LM Studio entirely and launching is the
+test.
 
 ---
 
