@@ -72,7 +72,13 @@ via a `gitdir:` pointer so Obsidian never sees it and git isn't crawling the
 `/mnt/c` bridge. That's what unblocks `:wiki diff` in v0.3. The README explains
 the setup; it has no local-only history backup yet (see v1.0).
 
-> *Note: to be written.*
+> *Note: added the Obsidian Vault to .git to track it, not all files are included (pdf etc). Future note to myself: any online LLM that maintains the Vault is already sharing your information, this it not much different from having a private online repo to track db's, unconnected to cfc. V0.2 launched as expected, there is no one shot fix for a small database. Tackled the backlog, improved how it works. The wiki db will grow -> retweaking will improve function.*
+```
+  ／l、／\          
+(=ↀᆺↀ=)        'This is fine, really.' 
+   l  ~ ~  \      
+  じしf_,)ノ
+```
 
 ---
 
