@@ -56,7 +56,7 @@ completion **had not been running at all**.
 - Files: complete.py, ui.py, main.py, config.example.py, config.py,
   tests/test_complete.py (new), README.md, HANDOVER.md, CLAUDE.md
 - Status: shipped
-- Commit: pending
+- Commit: 9431ada
 
 ## 2026-07-21 — Add a launcher that checks the embedder before opening cfc
 v0.3's second piece. Retires the class of failure where LM Studio simply wasn't

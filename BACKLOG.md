@@ -8,6 +8,34 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
+## `golden.py check` writes a file into VAULT_PATH
+
+**Found:** 2026-07-21, driving `:wiki` through the real dispatch for v0.3.
+
+The harness ends its script with `:q`, and `:q` honours `AUTO_EXPORT` — so
+every `golden.py check` exports the fixture session into the **real**
+`VAULT_PATH`, leaving files like
+`2026-01-01_Session-1_Renamed By Golden.md` in Cas's export folder. They
+overwrite each other, so it's one or two files rather than a growing pile, and
+nothing is corrupted: the fixture DB itself is correctly isolated.
+
+But it is a test harness with a side effect outside its fixture, which is the
+category invariant #1 exists for. The DB got the full assert-before-touch
+treatment; the export path was never considered, because `:q` reads as a
+navigation command rather than a write.
+
+Fix: patch `AUTO_EXPORT` to False for the harness run, or redirect
+`export.VAULT_PATH` to a temp dir the same way `DB_PATH` is redirected (the
+loop that finds `DB_PATH` on every cfc module is the obvious place). Prefer
+redirecting over disabling — the export path then stays exercised instead of
+becoming untested.
+
+Not urgent: it writes one predictable file to a backup folder. Noted because
+"the tests don't touch anything real" is currently a slightly false claim, and
+that claim is load-bearing for how freely the suite gets run.
+
+---
+
 ## A chunk with a dangling `session_id` — where does it come from?
 
 **Found:** 2026-07-15, while verifying the distance threshold.
