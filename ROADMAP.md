@@ -33,33 +33,57 @@ l  ~ ~~\
 ```
 ---
 
-## v0.2 — Retrieval you can trust
+## v0.2 — Retrieval you can trust — **complete, 2026-07-21**
 
-Recall currently returns nothing for good queries. Nothing that depends on
-memory is trustworthy until this is fixed, which is why it goes first.
+Recall returned nothing for good queries. Nothing that depends on memory was
+trustworthy until that was fixed, which is why it went first.
 
-- Resolve the **0.969-vs-1.036 discrepancy** in `BACKLOG.md`. First, before any
-  tuning. A floor built on a number that doesn't reproduce will fail again
-  silently.
-- Re-establish `MAX_DISTANCE` on a measurement that holds.
-- Widen `search()`'s `k*4` over-fetch window so a low `k` with a provider filter
-  can't return zero rows just because the window filled with `source='chat'`.
-- Fix `chunk.py`'s mid-word overlap slicing, re-chunk, re-embed.
+- **The 0.969-vs-1.036 discrepancy is resolved, and the premise was wrong.**
+  `MAX_DISTANCE = 1.024` and its "0.111-wide gap" were measured on the
+  **Anthropic export** and recorded as wiki numbers. Nothing had regressed — the
+  wiki corpus has measured the same distances since it was created, verified
+  against the rolling backups. The lesson kept: **a tuned constant must record
+  which corpus it was measured on.**
+- **The floor was reframed rather than re-tuned.** It turns out it cannot judge
+  relevance at all: on this corpus, answerable and unanswerable questions
+  interleave — a guitar-tuning question scores better than a real question about
+  the wiki's own contents. There is no threshold, and a relative metric doesn't
+  rescue it either. So the floor is a **lint filter** now (1.08), set to admit
+  generously, and `recall.py`'s grounded synthesis does the judging. The old
+  value was losing 4 of 20 real query phrasings.
+- `search()`'s over-fetch window widens until it is provably deep enough. The
+  flat `k*4` could return zero wiki hits purely because the window filled with
+  chat chunks — and that got worse every day the chat log grew.
+- `chunk.py` seeks to word boundaries at both edges; corpus re-chunked and
+  re-embedded. 22 of 26 chunks used to open mid-word.
+- `tests/test_chunk.py` added, and checked against the old chunker to confirm it
+  actually fails on the bug.
 
-**Why the chunker fix belongs here and not later:** the floor is a property of
-the embedding geometry *and* the corpus. Re-chunking changes the corpus. Fixing
-the chunker in a later version invalidates whatever floor this version
-establishes and buys a second measurement run. Re-embedding is cheap now that
-the embedder is local — it wasn't when that backlog entry was written.
+**Why the chunker fix belonged here and not later:** the floor is a property of
+the embedding geometry *and* the corpus. Re-chunking changes the corpus, so
+fixing the chunker later would have invalidated this version's floor and bought
+a second measurement run. It landed first, and the floor was measured after it.
 
 Backlog cleared: mid-word overlap, `MAX_DISTANCE`, the over-fetch edge.
+
+**Also this session, outside the codebase:** the Obsidian vault is now a git
+repo — text tracked, binaries ignored, `.git` relocated to `~/vaults/wiki.git`
+via a `gitdir:` pointer so Obsidian never sees it and git isn't crawling the
+`/mnt/c` bridge. That's what unblocks `:wiki diff` in v0.3. The README explains
+the setup; it has no local-only history backup yet (see v1.0).
+
+> *Note: to be written.*
 
 ---
 
 ## v0.3 — The shell
 
-The parts around the app rather than in it: getting in, and typing.
+The parts around the app rather than in it: getting in, typing, and now seeing
+what changed in the wiki.
 
+- **`:wiki diff` / `:wiki commit`.** Mirrors `mover.py`'s pattern: a code-driven
+  action scoped to a fixed root (`WIKI_DIR`), not an LLM tool call. Shows what
+  changed in the vault repo and commits it from inside the REPL.
 - **Launcher.** A shortcut on the taskbar/desktop opens cfc in an Ubuntu
   terminal. Checks LM Studio: not running → start it; running without the
   embedding server → tell it to serve.
@@ -71,6 +95,12 @@ The parts around the app rather than in it: getting in, and typing.
 Mostly outside the Python codebase, so it's low-risk work after a heavy v0.2.
 The launcher retires the class of failures where the embedder simply wasn't
 running, which everything memory-shaped quietly assumes away.
+
+**Why `:wiki` sits here rather than in v0.6, where it's actually needed:** it's
+useful the moment pages get edited by hand, which is now — not only when a model
+starts proposing changes. And proving the plumbing a version early de-risks
+v0.6, which would otherwise be building the review step and the thing being
+reviewed at the same time.
 
 ---
 
@@ -127,6 +157,10 @@ a stale copy with no signal that it's stale. v0.6 is the version that resolves
 that (most likely: a move into the wiki triggers a re-import). It is not the
 version that quietly deletes the refusal.
 
+Builds on `:wiki diff` from v0.3 — reviewing a proposed page as a diff before
+accepting it is the whole approval step, and by here it should already work on
+pages Cas edited by hand.
+
 ---
 
 ## v0.7 — Tiered memory
@@ -147,6 +181,17 @@ No new features.
 
 - The remaining backlog: the dangling `session_id` root cause in
   `import_anthropic.py`, and the `write_file` relative-path question.
+- **Document the skeleton around cfc**, not just the app: the vault and its
+  repo, the inbox/outbox convention, where the embedder lives, what backs up
+  what and what doesn't. The README's vault-git section is the first piece of
+  this. The gap it closes: cfc is understandable from its own source, but the
+  system it sits in — three storage locations, two machines' worth of paths, a
+  backup that covers files and not history — is currently only in Cas's head and
+  in `HANDOVER.md`'s asides.
+- **A remote for the vault repo.** `~/vaults/wiki.git` sits on ext4, outside the
+  Windows daily backup, so a WSL reinstall keeps every note and loses every
+  commit. Wants a decision on whether the `02 areas` medical material is going
+  to someone else's server, private repo or not.
 - The DB-layer rework `HANDOVER.md` has been anticipating. The intended shape is
   recorded there: SQLite stays the source of truth, sqlite-vec is an index over
   it.

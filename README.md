@@ -280,6 +280,38 @@ python backup.py --restore latest # roll back to the newest snapshot
 
 Snapshots use SQLite's online backup API rather than a file copy, so they're safe to take while the database is in use, and each is integrity-checked before it's kept. A restore backs up the current database first — restoring the wrong one is recoverable.
 
+Those snapshots have already earned their keep beyond disaster recovery: v0.2 resolved a retrieval mystery by measuring the same query against five months of daily snapshots and proving the corpus had never changed. A rolling backup is also a record of what used to be true.
+
+## The vault, and why it's a git repo
+
+cfc's memory is not stored in cfc. The corpus is an Obsidian vault on the Windows side (`/mnt/c/...` from WSL), and the app reads it, indexes it, and writes into one folder of it. Understanding that split explains most of the path handling in `config.py`.
+
+```
+<vault>/03 resources/wiki db   the distilled pages that recall answers from
+<vault>/00 inbox               Cas writes, the model reads
+<vault>/99 outbox              the model writes, Cas reads  (the only writable path)
+```
+
+As of 2026-07-21 the vault is a git repo. Obsidian has no real diff or rollback of its own, and the daily file backup answers "what does this note say now" but never "what did it say last week, and what changed it." More to the point, it's the plumbing the wiki automation needs: before a model is allowed to propose edits to the corpus, there has to be a way to see exactly what it changed and refuse it.
+
+Two setup decisions are worth recording, because both are easy to get wrong and neither is obvious.
+
+**`.git` does not live in the vault.** It was moved to native Linux storage and replaced with a one-line pointer:
+
+```bash
+git init                                  # inside the vault
+mv .git ~/vaults/wiki.git
+echo "gitdir: /home/<user>/vaults/wiki.git" > .git
+```
+
+`gitdir:` is a standard git redirect — the same mechanism worktrees and submodules use — so every `git` command run from inside the vault works unchanged. It buys two things. Git's internals stop being read and written across the `/mnt/c` bridge, which is markedly slower than ext4; and `.git` becomes a 36-byte file rather than a folder full of objects, which keeps Obsidian's file explorer, search and graph clear of it. (Obsidian hides dotfiles anyway — this was confirmed by looking, not assumed.)
+
+The tradeoff, stated plainly: the history now lives outside the Windows daily backup that covers the notes themselves. A WSL reinstall would keep every note and lose every commit. A remote would close that, and is parked at v1.0 alongside the question of whether the vault's medical reference material belongs on someone else's server.
+
+**Binaries are not tracked.** `.gitignore` excludes PDFs and images, which drops the repo from 131 MB to about 7. They're static reference material that never gets edited, they're already backed up, and a committed blob is in the history permanently. The extracted Markdown of those PDFs *is* tracked, so the content is versioned even where the source file isn't. Also ignored: `.obsidian/workspace.json` and `.claude/settings.local.json` (per-device state that rewrites itself every session — a repo that's always dirty is a repo whose `git status` you stop reading), and everything in `99 outbox` except its readme, since a scratch folder has no meaningful clean state.
+
+**One git config that matters.** `core.autocrlf` is pinned to `false` and `.gitattributes` sets `* text=auto eol=lf`. Windows git and WSL git normalize line endings differently, and a file written under one then diffed under the other shows as *entirely rewritten* with no visible change. The vault is worked on from Ubuntu only; the `.gitattributes` is belt-and-braces in case that ever slips.
+
 ## License
 
 Personal project. No license specified.
