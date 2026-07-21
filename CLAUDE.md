@@ -111,6 +111,20 @@ next. The roadmap addresses `BACKLOG.md` at chosen points rather than all at
 once — a feature session is not obliged to clear unrelated debt, but the
 roadmap says which version owns which item.
 
+**Versions are git tags, annotated, named `vX.Y`.** A version number that only
+exists in markdown can't be checked out, so "what did this look like at v0.2"
+would have no answer. Tag the commit that completes the version's work, after
+the docs for it are in:
+
+```
+git tag -a v0.2 -m "<one line>"
+git push --tags          # tags do NOT ride along on a normal push
+```
+
+Don't tag mid-version, don't move a tag once pushed (someone may have it),
+and don't tag on Cas's behalf without asking — a tag is a public claim that a
+version is done, and that's his call to make.
+
 ### The one live blocker
 
 **`MAX_DISTANCE` no longer separates.** The measured gap between answerable and

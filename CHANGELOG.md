@@ -23,6 +23,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Tag versions in git, starting at v0.1
+Documentation only, no behaviour change.
+- Versions are **annotated git tags** named `vX.Y`. A version number that lives
+  only in markdown can't be checked out, so "what did this look like at v0.2"
+  had no answer.
+- `v0.1` tags this commit — the docs that declare v0.1 exists are part of it.
+- Convention recorded in `CLAUDE.md`: tag the commit that completes a version's
+  work, after its docs are in; `git push --tags` is a separate step from a normal
+  push; don't move a published tag; don't tag on Cas's behalf unasked, since a
+  tag is a public claim that a version is done.
+- Also backfills 4dc416e.
+- Files: CLAUDE.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-21 — Add ROADMAP.md; reconcile CLAUDE.md with reality
 Documentation only, no behaviour change. The project is versioned from here.
 - **`ROADMAP.md`** — v0.1 (today) through v1.0, with each version owning named
@@ -45,7 +62,7 @@ Documentation only, no behaviour change. The project is versioned from here.
   make them.
 - Files: ROADMAP.md, CLAUDE.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 4dc416e
 
 ---
 
