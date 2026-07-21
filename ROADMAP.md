@@ -82,23 +82,36 @@ the setup; it has no local-only history backup yet (see v1.0).
 
 ---
 
-## v0.3 — The shell
+## v0.3 — The shell — **complete, 2026-07-21**
 
 The parts around the app rather than in it: getting in, typing, and now seeing
 what changed in the wiki.
 
-- **`:wiki diff` / `:wiki commit`.** Mirrors `mover.py`'s pattern: a code-driven
-  action scoped to a fixed root (`WIKI_DIR`), not an LLM tool call. Shows what
-  changed in the vault repo and commits it from inside the REPL.
-- **Launcher.** A shortcut on the taskbar/desktop opens cfc in an Ubuntu
-  terminal. Checks LM Studio: not running → start it; running without the
-  embedding server → tell it to serve.
-- **Terminal input.** Click to position the cursor. Rework `:attach`
-  autocompletion, including making it look in the vault first and the repo
-  second — it currently misses vault items it would find under the same name in
-  the repo.
+- **`:wiki` / `:wiki diff` / `:wiki commit`.** Mirrors `mover.py`'s pattern: a
+  code-driven action scoped to a fixed root (`WIKI_DIR`), not an LLM tool call.
+  Scoped to the wiki corpus by default; `all` widens it to the whole vault and
+  has to be typed. No push — the repo has no remote and that decision is v1.0's.
+  The commit carries the pathspec as well as the `add`, so a file staged
+  elsewhere in the vault can't ride along on a wiki commit.
+- **Launcher.** `launch.sh` + `preflight.py`. A shortcut opens cfc in an Ubuntu
+  terminal; the preflight confirms the embedder actually answers, starting the
+  LM Studio server and loading bge-m3 if they aren't up. It never blocks the
+  launch — a failure prints why and cfc opens anyway.
+- **Terminal input.** `:attach` completion reworked, `MOUSE_INPUT` added for
+  click-to-position (default off; it captures the mouse for the whole window,
+  so it costs click-drag selection of the scrollback).
 
-Mostly outside the Python codebase, so it's low-risk work after a heavy v0.2.
+**The thing this version actually found: `:attach` completion had not been
+running at all.** `complete.py` wired into readline; input moved to
+prompt_toolkit, which implements its own line editing and never consults
+readline. Tab silently did nothing on the interactive path from the moment the
+editor landed — nothing raised, nothing failed, `install()` kept returning True.
+Underneath that was the bug this version had actually planned to fix: the
+completer only ever listed *one directory level*, and the vault's documents live
+one or two down, so it found the repo's top-level files and none of the vault's.
+A bare fragment now searches breadth-first, vault before repo.
+
+Mostly outside the Python codebase, so it was low-risk work after a heavy v0.2.
 The launcher retires the class of failures where the embedder simply wasn't
 running, which everything memory-shaped quietly assumes away.
 
@@ -107,6 +120,12 @@ useful the moment pages get edited by hand, which is now — not only when a mod
 starts proposing changes. And proving the plumbing a version early de-risks
 v0.6, which would otherwise be building the review step and the thing being
 reviewed at the same time.
+
+New backlog: `golden.py check` writes the fixture session into the real
+`VAULT_PATH`, because its script ends with `:q` and `:q` honours `AUTO_EXPORT`.
+Harmless, but "the tests don't touch anything real" is a load-bearing claim.
+
+> *Note: pending — Cas writes this one.*
 
 ---
 
@@ -124,6 +143,26 @@ reviewed at the same time.
 - **Token counter colours:** green <15%, orange 15–35%, red >35%. Thresholds in
   `config.py`. Percentages stay honest; only the colours change — a 1M-token
   context claim isn't trusted.
+- **Private chat.** `p` instead of `n` on the selection screen. Behaves exactly
+  like a normal chat — same model, prompts, personas, tools — but **nothing is
+  written down.** History lives only in the live loop that keeps the
+  conversation going. `:q`, Ctrl-D, or quitting the app ends it; there is no
+  restore, and it never appears in the hub.
+
+**Private chat is the one item here that isn't cosmetic, and it needs a
+chokepoint rather than care.** "Private" is a claim whose failure is *silent*:
+miss one write path and the conversation is on disk with nothing to indicate it.
+Every path that currently persists has to be off, and they don't share a switch
+today — `save_message`, the per-turn auto-embed (which would put a private chat
+into the memory index, where `:recall` could later quote it back), `AUTO_EXPORT`
+on the way out, and the title-generation call that writes a title. Deciding
+where the single gate lives is the design work; sprinkling `if private:` across
+five call sites is how one gets forgotten. Same lesson as the file jail: the
+guard belongs at the chokepoint, not at each caller's discretion.
+
+It sits in v0.4 because it starts on the selection screen, which is being
+rebuilt here anyway — adding a key while that screen is already open costs less
+than doing it before or after.
 
 Backlog swept here because it's adjacent, not out of tidiness: **routine runs
 cluttering the hub** (the selection screen has to tell a routine run from a chat,
