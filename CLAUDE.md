@@ -119,17 +119,34 @@ roadmap says which version owns which item.
 
 **Versions are git tags, annotated, named `vX.Y`.** A version number that only
 exists in markdown can't be checked out, so "what did this look like at v0.2"
-would have no answer. Tag the commit that completes the version's work, after
-the docs for it are in:
+would have no answer.
+
+**The release order, settled 2026-07-21 — the tag is always last:**
 
 ```
-git tag -a v0.2 -m "<one line>"
+1. commit and push        in the session, by the model
+2. write the version note on github.com, by Cas, straight into ROADMAP.md
+3. git pull && git tag    locally, by Cas, after the note is in
+```
+
+```
+git pull
+git tag -a v0.3 -m "<one line>"
 git push --tags          # tags do NOT ride along on a normal push
 ```
 
-Don't tag mid-version, don't move a tag once pushed (someone may have it),
-and don't tag on Cas's behalf without asking — a tag is a public claim that a
-version is done, and that's his call to make.
+The order isn't ceremony. The note lives in `ROADMAP.md`, which is a file in
+the repo — tag before it's written and the tag points at a commit that doesn't
+contain its own version's note, so `git checkout v0.3` shows a roadmap that
+doesn't mention v0.3. Since a pushed tag must not move, that's permanent. Cas
+works only from Claude Code on this project, so "push, then write, then tag"
+means the model never has to decide whether the docs are in yet: they aren't,
+because he hasn't written them.
+
+So: **push in-session, never tag in-session.** Don't tag mid-version, don't
+move a tag once pushed (someone may have it), and don't tag on Cas's behalf —
+a tag is a public claim that a version is done, and that's his call to make.
+Offering the three commands at the end of a version is the right hand-off.
 
 ### The retrieval floor — settled at v0.2, and worth knowing why
 
