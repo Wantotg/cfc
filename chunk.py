@@ -63,17 +63,61 @@ def split_kinds(content):
     if tail: segments.append(("message", tail))
     return segments
 
+# Where a chunk may end, best first. A paragraph break is a better seam than a
+# line break, which is better than a sentence end, which beats a bare space.
+_END_BOUNDARIES = ("\n\n", "\n", ". ", "? ", "! ", "; ", ", ", " ")
+# How much of the window we're willing to give up to reach a better seam. At
+# 0.6 a chunk is never shorter than 60% of target, so seeking can't collapse
+# chunk sizes on prose that happens to lack paragraph breaks.
+_MIN_FILL = 0.6
+# How far to scan forward for a word boundary when opening the overlap.
+_SEEK_WINDOW = 120
+
+_WS = re.compile(r"\s")
+
+def _end_at(text, start, hard_end):
+    """Best place to end a chunk at or before hard_end. Falls back to a hard cut
+    when the span holds no boundary at all (one enormous unbroken token)."""
+    if hard_end >= len(text):
+        return len(text)
+    floor = start + int((hard_end - start) * _MIN_FILL)
+    for sep in _END_BOUNDARIES:
+        idx = text.rfind(sep, floor, hard_end)
+        if idx != -1:
+            return idx + len(sep)
+    return hard_end
+
+def _open_at(text, pos):
+    """Nudge pos forward to the next whitespace so the overlap doesn't open
+    mid-word. Deliberately minimal — preferring a *better* boundary here would
+    silently eat the overlap it exists to preserve."""
+    m = _WS.search(text, pos, min(len(text), pos + _SEEK_WINDOW))
+    return m.end() if m else pos
+
 def slice_text(text):
-    """Return list of chunk strings. Whole if short; sliding window if long."""
+    """Return list of chunk strings. Whole if short; sliding window if long.
+
+    The window seeks to a boundary at both edges. It used to be a flat
+    fixed-char cut, which sliced mid-word at both ends — a chunk opening
+    `'ne that decides when the AC stops...'` embeds a fragment, and the leading
+    garbage is dead weight in the vector.
+    """
     if est_tokens(text) <= TARGET_TOKENS:
         return [text]
     target_chars = TARGET_TOKENS * CHARS_PER_TOK
     overlap_chars = OVERLAP_TOKENS * CHARS_PER_TOK
-    step = target_chars - overlap_chars
     out, i = [], 0
     while i < len(text):
-        out.append(text[i:i+target_chars])
-        i += step
+        end = _end_at(text, i, i + target_chars)
+        piece = text[i:end].strip()
+        if piece:
+            out.append(piece)
+        if end >= len(text):
+            break
+        # Step back by the overlap, then forward to a clean word boundary.
+        # max(i+1, ...) guarantees forward progress: without it a pathological
+        # seam could put the next start at or before this one and spin forever.
+        i = max(i + 1, _open_at(text, max(i + 1, end - overlap_chars)))
     return out
 
 def chunk_new(db):

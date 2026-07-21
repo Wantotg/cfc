@@ -31,7 +31,17 @@ Not investigated — belongs with the DB-layer rework.
 
 ---
 
-## `chunk.py` overlap cuts mid-word
+## ~~`chunk.py` overlap cuts mid-word~~ — FIXED (v0.2, 2026-07-21)
+
+**Fixed:** `slice_text` now seeks to a boundary at both edges — `_end_at`
+(paragraph > line > sentence > space, never surrendering more than 40% of the
+window) and `_open_at` (next whitespace only, so the overlap isn't eaten).
+Measured against the old implementation on the same input: **22 of 26 chunks
+opened on a fragment; now 0.** Corpus re-chunked and re-embedded (519 chunks,
+512 vectors, 0 orphans), which is why `MAX_DISTANCE` was re-measured *after*
+this landed rather than before. `tests/test_chunk.py` pins it.
+
+Original report below.
 
 **Found:** 2026-07-15, reading top-k output.
 
@@ -114,7 +124,50 @@ persisted or replayed either way.
 
 ---
 
-## MAX_DISTANCE no longer separates: measured gap collapsed 0.111 → 0.025
+## ~~MAX_DISTANCE no longer separates~~ — RESOLVED (v0.2, 2026-07-21)
+
+**The premise of this entry was wrong, and that turned out to be the finding.**
+
+Nothing collapsed and nothing regressed. The old 1.024, and the "0.111-wide gap,
+total separation" it was built on, were measured against the **Anthropic export**
+and written into `HANDOVER.md` as if they were wiki numbers. Evidence:
+
+- `"Who is Cas"` (capitalised, no question mark) measures **0.970 on the
+  Anthropic corpus** — that is the recorded 0.969, to rounding.
+- The same query has measured **1.036 on every wiki snapshot**, back to the first
+  wiki-only db (`chat-20260719-151026.db`), with byte-identical chunk text
+  throughout. The rolling backups made this checkable rather than arguable.
+- So the wiki corpus never had a 0.111 gap to lose. Its gap has always been thin.
+
+Ruled out first, each by measurement rather than reasoning: **the embedder**
+(re-embedding a stored chunk reproduces its stored vector at L2 = 0.000000);
+**the endpoint** (hosted vs self-hosted bge-m3 differ by 0.003 on the same query
+— note that the "cosine ≥ 0.999 equivalence" in HANDOVER is a much weaker claim
+than it sounds, since cosine is magnitude-blind and `vec0` ranks by **L2**);
+**corpus drift** (none, per the snapshots).
+
+**Lesson, and the reason this cost a session:** a tuned constant must record
+*which corpus it was measured on*. Without that, a number outlives the thing it
+described and the next person measures a "regression" that never happened.
+
+**What replaced it:** the floor is no longer a relevance judge at all — the
+answerable and unanswerable bands genuinely interleave (`"what was agentmail
+about"` needs 1.065; `"How do I tune a guitar to drop D?"` scores 1.055), so no
+threshold can separate them, and a relative metric doesn't either. It is now a
+lint filter at **1.08**, set to admit generously because the two failures are
+asymmetric: a rejected good hit is silent, an admitted bad one is caught by
+recall's grounded synthesis. Full reasoning is in `search.py` and `HANDOVER.md`.
+The old 1.024 was losing **4 of 20** real query phrasings.
+
+Also fixed here: `search()`'s `k*4` over-fetch (noted at the foot of the original
+report) now widens until it has k results, crosses the floor, or exhausts the
+table — a low `k` with `provider='wiki'` could return zero rows purely because
+the window filled with `source='chat'` chunks, and that got worse every day the
+chat log grew.
+
+Original report below, kept because the reasoning it prompted is worth the room.
+
+---
 
 **Found:** 2026-07-20, smoke-testing recall after the vault restructure.
 

@@ -23,6 +23,34 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Make retrieval trustworthy (v0.2)
+Recall returned nothing for good queries. The cause was not what the backlog
+thought, and the fix is a change of role rather than a change of number.
+- **The 0.969-vs-1.036 discrepancy is explained.** `MAX_DISTANCE = 1.024` and its
+  "0.111-wide gap" were measured on the **Anthropic export** and recorded as wiki
+  numbers. `"Who is Cas"` reproduces at 0.970 there, and has measured 1.036 on
+  every wiki snapshot since the corpus was created (checked against the rolling
+  backups, chunk text byte-identical). Nothing regressed; the baseline was
+  mislabelled. Embedder, endpoint and corpus drift each ruled out by measurement.
+- **The floor is now a lint filter, not a relevance judge** — `1.08`. The
+  answerable and unanswerable bands interleave (a guitar-tuning question scores
+  1.055; a real question needs 1.065), so no threshold separates them and a
+  relative metric doesn't either. Set to admit generously, because a rejected
+  good hit is silent while an admitted bad one is caught by recall's synthesis.
+  The old value was losing 4 of 20 real query phrasings.
+- **`search()`'s over-fetch window widens** until it has k results, crosses the
+  floor, or exhausts the table. The flat `k*4` could return zero wiki hits purely
+  because the window filled with `source='chat'` chunks — worsening daily.
+- **`chunk.py` seeks to word boundaries at both edges.** It was a fixed-char cut:
+  22 of 26 chunks opened on a fragment. Corpus re-chunked and re-embedded (519
+  chunks, 512 vectors, 0 orphans); snapshot kept at `~/.cfc/chat-prechunk-*.db`.
+- **`tests/test_chunk.py`** added — 24 assertions, verified to fail against the
+  old chunker. Suite is now 435 assertions across 11 suites.
+- Files: search.py, chunk.py, tests/test_chunk.py, HANDOVER.md, BACKLOG.md,
+  README.md, CLAUDE.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-21 — Tag versions in git, starting at v0.1
 Documentation only, no behaviour change.
 - Versions are **annotated git tags** named `vX.Y`. A version number that lives

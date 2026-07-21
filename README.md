@@ -189,7 +189,9 @@ Editing a page and re-importing re-chunks and re-embeds it under the same id, so
 
 The embedder is self-hosted here (`bge-m3` on LM Studio) but any OpenAI-compatible `/embeddings` endpoint works — set `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY`, or leave them to fall back to the chat provider's hosted copy.
 
-Retrieval has a relevance floor: if nothing is within `MAX_DISTANCE` of the question, memory says it has no answer rather than returning eight mediocre excerpts. The threshold (`1.024`) was measured against the wiki corpus (answerable questions land at 0.65–0.97, questions it has never discussed at 1.08–1.17) and is specific to `bge-m3` **and** this corpus — re-measure if either changes (e.g. when the chat log is folded in).
+Retrieval has a floor (`MAX_DISTANCE`, currently `1.08`): if nothing is within it, memory says it has no answer rather than returning eight mediocre excerpts. It is deliberately **loose**. Measured over 32 probes, the questions this wiki can answer and the questions it can't overlap so thoroughly that no threshold tells them apart — a question about guitar tuning scores better against the corpus than a real question about its own contents. So the floor only rejects obvious lint, and the model reading the excerpts decides whether they actually answer anything, which it is told to say. Setting it tighter doesn't buy precision, it just loses good questions silently.
+
+The number is specific to `bge-m3` **and** this corpus, including how the corpus is chunked — re-measure if any of those change.
 
 ## Security
 

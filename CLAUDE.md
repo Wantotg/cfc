@@ -125,19 +125,23 @@ Don't tag mid-version, don't move a tag once pushed (someone may have it),
 and don't tag on Cas's behalf without asking — a tag is a public claim that a
 version is done, and that's his call to make.
 
-### The one live blocker
+### The retrieval floor — settled at v0.2, and worth knowing why
 
-**`MAX_DISTANCE` no longer separates.** The measured gap between answerable and
-unanswerable queries collapsed 0.111 → 0.025, and the floor now sits below the
-top of the answerable band, so good queries return nothing. Worse: a recorded
-baseline (`"who is Cas"` at 0.969) now measures 1.036 on the same corpus with
-the same embedder, and that discrepancy has no explanation that fits the
-evidence. **Don't just nudge the floor** — a floor built on a number that
-doesn't reproduce will fail again silently. Full write-up in `BACKLOG.md`; this
-blocks anything that depends on recall being trustworthy, including the tiered
-memory work.
+There is no live blocker. `MAX_DISTANCE` was the one, and v0.2 resolved it:
+the old 1.024 turned out to be an **Anthropic-corpus number recorded as a wiki
+one**, so the "collapse" it described never happened. Two things came out of
+that and both are load-bearing:
 
-Read `BACKLOG.md` before touching the memory layer.
+1. **The floor cannot judge relevance.** Answerable and unanswerable queries
+   interleave on this corpus — no threshold separates them. It is a lint filter
+   now (1.08), set to admit generously, and `recall.py`'s grounded synthesis does
+   the actual judging. Don't re-tighten it to "improve precision"; that trades a
+   visible failure for a silent one.
+2. **A tuned constant must say which corpus it was measured on.** The omission
+   is what cost a session.
+
+Full reasoning in `search.py`'s comment and `HANDOVER.md`. Read `BACKLOG.md`
+before touching the memory layer.
 
 ## Things to remember
 
