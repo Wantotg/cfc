@@ -10,57 +10,79 @@
 # would be falsy, and None and "quit" mean different things.
 from rich.table import Table
 
-from config import MODEL
-
 from ui import console, format_ts
+
+# Columns are Tags- and Model-free on purpose. Both were near-permanently empty
+# (a tag is rare, and Model only ever printed when a session overrode the
+# default), and every column they occupied came out of Title's budget — which is
+# the one field you actually pick a session by. Dropping them also drops the
+# GROUP_CONCAT subquery that fed Tags. `:tags` still shows a session's tags.
+
+
+def _strip_md(name):
+    """Prompt and persona files are always Markdown, so the extension carries
+    no information in a table — it just eats width. Display-only: the stored
+    name keeps its extension, and everywhere else still shows it."""
+    if name and name.endswith(".md"):
+        return name[:-3]
+    return name or ""
+
+
+def _session_table(title):
+    """Both views are the same table at different limits; building them in one
+    place is what stops them drifting apart again.
+
+    Title is no_wrap + ellipsis rather than wrapping: a wrapped title stacked a
+    single row four lines high and pushed the rest of the list off the screen,
+    which is worse than a truncated one you can still read."""
+    table = Table(title=title, border_style="dim")
+    table.add_column("#", style="cyan", justify="right", width=3)
+    table.add_column("Updated", width=17)
+    table.add_column("Msgs", justify="right", width=4)
+    # Every column here carries an explicit width, and that is deliberate.
+    # Rich grants a no_wrap column whatever its longest row asks for and takes
+    # it out of the flexible columns — one 58-char title starved #, Msgs,
+    # Prompt and Persona to zero width, printing a table of empty verticals.
+    # Fixing widths first reserves them, so Title truncates instead of bullying.
+    # width, not min_width: a flexible Title claims all the slack and starves
+    # the fixed columns back to zero, which is the bug this whole block exists
+    # to avoid. A fixed 32 keeps every column visible from 80 cols up.
+    table.add_column("Title", no_wrap=True, overflow="ellipsis",
+                     width=32)
+    table.add_column("Prompt", style="magenta", no_wrap=True,
+                     overflow="ellipsis", width=8)
+    table.add_column("Persona", style="green", no_wrap=True,
+                     overflow="ellipsis", width=8)
+    return table
+
+
+_SELECT = (
+    "SELECT s.id, s.title, s.updated_at, "
+    "(SELECT COUNT(*) FROM messages m "
+    "WHERE m.session_id = s.id) as msg_count, "
+    "s.system_prompt_name, "
+    "s.persona_name "
+    "FROM sessions s ORDER BY s.updated_at DESC"
+)
 
 
 def list_sessions(conn):
-    rows = conn.execute(
-        "SELECT s.id, s.title, s.model, s.updated_at, "
-        "(SELECT COUNT(*) FROM messages m "
-        "WHERE m.session_id = s.id) as msg_count, "
-        "(SELECT GROUP_CONCAT(t.name, ', ') "
-        "FROM session_tags st JOIN tags t "
-        "ON t.id = st.tag_id "
-        "WHERE st.session_id = s.id) as tags, "
-        "s.system_prompt_name, "
-        "s.persona_name "
-        "FROM sessions s ORDER BY s.updated_at DESC"
-    ).fetchall()
+    rows = conn.execute(_SELECT).fetchall()
     if not rows:
         console.print("No sessions yet.")
         return
-    table = Table(
-        title="Sessions",
-        show_lines=False,
-        border_style="dim",
-    )
-    table.add_column("ID", style="cyan", justify="right",
-                     width=4)
-    table.add_column("Updated", width=17)
-    table.add_column("Msgs", justify="right", width=4)
-    table.add_column("Title")
-    table.add_column("Tags", style="dim")
-    table.add_column("Prompt", style="magenta")
-    table.add_column("Persona", style="green")
-    table.add_column("Model", style="dim")
 
-    for sid, title, model, ts, msg_count, tags, \
-            prompt_name, persona_name in rows:
-        tag_str = tags or ""
-        prompt_str = prompt_name or ""
-        model_str = model if model and model != MODEL \
-            else ""
+    table = _session_table("Sessions")
+    table.columns[0].header = "ID"
+    table.columns[0].width = 4
+    for sid, title, ts, msg_count, prompt_name, persona_name in rows:
         table.add_row(
             str(sid),
             format_ts(ts),
             str(msg_count),
             title,
-            tag_str,
-            prompt_str,
-            persona_name or "",
-            model_str,
+            _strip_md(prompt_name),
+            _strip_md(persona_name),
         )
     console.print(table)
     console.print()
@@ -69,52 +91,23 @@ def list_sessions(conn):
 def pick_session(conn):
     """Show recent sessions and let the user pick one or
     start new."""
-    rows = conn.execute(
-        "SELECT s.id, s.title, s.model, s.updated_at, "
-        "(SELECT COUNT(*) FROM messages m "
-        "WHERE m.session_id = s.id) as msg_count, "
-        "(SELECT GROUP_CONCAT(t.name, ', ') "
-        "FROM session_tags st JOIN tags t "
-        "ON t.id = st.tag_id "
-        "WHERE st.session_id = s.id) as tags, "
-        "s.system_prompt_name, "
-        "s.persona_name "
-        "FROM sessions s ORDER BY s.updated_at DESC "
-        "LIMIT 20"
-    ).fetchall()
+    rows = conn.execute(_SELECT + " LIMIT 20").fetchall()
 
     if not rows:
         console.print("\nNo sessions yet. Starting a new "
                       "one.\n")
         return None
 
-    table = Table(title="Recent sessions", border_style="dim")
-    table.add_column("#", style="cyan", justify="right",
-                     width=3)
-    table.add_column("Updated", width=17)
-    table.add_column("Msgs", justify="right", width=4)
-    table.add_column("Title")
-    table.add_column("Tags", style="dim")
-    table.add_column("Prompt", style="magenta")
-    table.add_column("Persona", style="green")
-    table.add_column("Model", style="dim")
-
-    for i, (sid, title, model, ts, msg_count, tags,
-            prompt_name, persona_name) in enumerate(
-            rows, 1):
-        tag_str = tags or ""
-        prompt_str = prompt_name or ""
-        model_str = model if model and model != MODEL \
-            else ""
+    table = _session_table("Recent sessions")
+    for i, (sid, title, ts, msg_count,
+            prompt_name, persona_name) in enumerate(rows, 1):
         table.add_row(
             str(i),
             format_ts(ts),
             str(msg_count),
             title,
-            tag_str,
-            prompt_str,
-            persona_name or "",
-            model_str,
+            _strip_md(prompt_name),
+            _strip_md(persona_name),
         )
     console.print(table)
     console.print()

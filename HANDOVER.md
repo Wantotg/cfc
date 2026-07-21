@@ -11,12 +11,33 @@ Stack: Python 3.10+, `httpx`, `rich`, `prompt_toolkit`, `sqlite-vec`, `PyYAML`. 
 Entry: `python main.py [session_id]`.
 
 ```
-main.py:__main__ → safe_backup() → repl(sid)
+main.py:__main__ → safe_backup() → ui.splash() → repl(sid)
 repl()  = outer hub loop: pick_session ⇄ run_session, quits only from the hub
 run_session() = one session's REPL: read line → dispatch → repeat
 ```
 
 `repl()` owns the connection and the loop; `run_session()` runs one session and returns when the user leaves it (`:q`, EOF, Ctrl-C), which `repl()` reads as "back to the hub." A `session_id` from the CLI still returns to the hub on `:q`. This split is also what keeps `tests/golden.py` able to drive one session in isolation — it calls `run_session` directly.
+
+**The splash is in `__main__`, not `repl()`** — it fires once per launch, and
+returning from a session to the hub must not re-show it. Enter continues, Esc
+quits before `repl()` is ever called. It is legal under invariant #4 only
+because nothing is driving the terminal at that point; the same blocking read
+anywhere else in the app would be a bug. It is a **no-op when stdin isn't a
+TTY**, so a piped run never blocks and `tests/golden.py` is unaffected. Art and
+renderer live in `ui.py` (the app's look), the chosen frame in `config.py` (a
+preference) — the same split as the palette. Frames are ordered lists per mood
+and `_render_frame()` is separate, so the animation is a loop over data that
+already exists, not a redesign; **don't spawn a thread for it.** Two things bite
+here and are commented in place: the art is full-width CJK, so widths must come
+from `rich.cells.cell_len` and never `len`; and Esc requires raw mode
+(`tty.setcbreak`, restored in a `finally`) because a bare Escape is not a line
+and never arrives through a line-buffered read.
+
+**The hub's table columns carry fixed widths on purpose.** Rich grants a
+`no_wrap` column whatever its longest row asks for and takes it out of the
+*flexible* columns — one 58-char session title starved #, Msgs, Prompt and
+Persona to zero width and printed a table of empty verticals. `min_width`
+reproduces it from the other side. If you add a column here, give it a width.
 
 A chat turn takes one of **two mutually exclusive paths**, chosen per turn:
 
@@ -288,7 +309,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `paths.py` | the jail: `path_guard`, containment + deny list |
 | `api.py` | `stream_response` (streaming chat + live reasoning panel, returns `(text, usage, reasoning)`), `call_api` (non-streaming: titles, agent), provider error extraction |
 | `db.py` | connection, schema/migrations, every query, `load_history` + orphan drop |
-| `hub.py` | session browser (`list_sessions`) + picker (`pick_session`) |
+| `hub.py` | session browser (`list_sessions`) + picker (`pick_session`), both from one `_session_table()` |
 | `complete.py` | Tab completion for `:attach`, scoped to roots |
 | `export.py` | one Markdown file per session → Obsidian vault (overwrite on re-export) |
 | `backup.py` | rolling snapshots via SQLite online-backup API, integrity-checked, 6h-throttled, keep 10 |
@@ -296,7 +317,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `routines.py` | the `Routine` object, its markdown file store, and the append-only run log |
 | `runner.py` | `run_routine` — one routine's execution; the headless entry point in all but name |
 | `mover.py` | filing a proposal out of the outbox: `plan`/`commit`/`drop`, destination re-validation |
-| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor) |
+| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `splash` + `SPLASH_FRAMES` |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
 | `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
 

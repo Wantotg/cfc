@@ -23,6 +23,56 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Add the launch splash; trim the hub tables
+A mascot screen at startup, and the session list stops spending its width on
+columns that were almost always empty.
+- **`ui.splash()`** renders once per launch from `__main__`, between
+  `safe_backup()` and `repl()` — deliberately not inside `repl()`, so returning
+  from a session to the hub doesn't re-show it. **Enter continues, Esc quits**
+  (`sys.exit(0)`, `repl()` never runs). It is safe under invariant #4 only
+  because nothing is driving the terminal yet at that point.
+- **The art lives in `ui.py`**, the choice of frame in `config.py`
+  (`SPLASH_FRAME = "serious.1"`) — the same look-vs-knob split as the palette.
+  `SPLASH_FRAMES` is an ordered list per mood ("serious", "chilling", three
+  frames each) and `_render_frame()` is its own function, so animating this is
+  swapping one call for a loop, not a re-architecture. An unrecognised
+  `SPLASH_FRAME` falls back to the default rather than raising, and a missing
+  one is caught — `config.py` is gitignored, so an existing one predates this.
+- Frames are **raw strings**: three of them end a line in a backslash, which in
+  a normal string splices the next line on and eats the cat's flank.
+- Layout maths uses **`rich.cells.cell_len`, not `len`** — the art is full-width
+  CJK, so `len` under-measures every line and shears the block off the right
+  edge. The block is right-aligned as a block (one shared left pad), so the
+  whisker spacing survives. Filler targets `height - 1`; exactly `height` lines
+  scrolls the title off the top.
+- **Esc needs raw mode** — a bare Escape never arrives through a line-buffered
+  read, because it isn't a line. `_wait_key()` reads one byte under
+  `tty.setcbreak` and restores the terminal in a `finally`; leaving it in cbreak
+  would break every prompt_toolkit read for the rest of the session. No
+  `termios` (non-POSIX) degrades to Enter-only instead of failing to boot.
+- **No-op on a non-TTY** — a piped or headless run must never block on a
+  keypress, and `tests/golden.py` output must stay byte-for-byte. Verified both
+  ways: piped runs show no splash, and the splash's own TTY paths were driven
+  through a real pty (Esc → no hub, exit 0; Enter → hub).
+- **`hub.py`**: dropped the Tags and Model columns from both tables (and the
+  `GROUP_CONCAT` subquery that fed Tags), and `.md` is stripped from prompt and
+  persona names — display only, the stored name keeps its extension. Both views
+  now build from one `_session_table()` helper so they can't drift apart again.
+- Title is `no_wrap` + ellipsis at a **fixed** width. This is the fiddly bit: a
+  `no_wrap` column is granted whatever its longest row asks for, taken out of
+  the flexible columns — one 58-char title starved #, Msgs, Prompt and Persona
+  to zero and printed a table of empty verticals. `min_width` reproduces it from
+  the other direction. Fixed widths reserve the space, so Title truncates
+  instead of bullying.
+- Golden re-baselined (177 lines); the diff was one hunk, exactly the dropped
+  columns. All 10 unit suites pass.
+- Files: ui.py, hub.py, main.py, config.py, config.example.py,
+  tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-20 — Consume `ToolContext.interactive`; stop logging empty runs as `ok`
 Wiring the flag turned up a worse bug than the one it was reserved for.
 - **`for_chat` defaults `interactive` to `sys.stdin.isatty()`** instead of

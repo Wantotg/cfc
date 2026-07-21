@@ -137,3 +137,11 @@ MOVE_ROOTS = ()             # e.g. (Path("<vault>"),)
 # recall would answer from a stale copy with no signal that it's stale. Leave
 # empty if you have no wiki corpus.
 WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
+
+# --- splash ----------------------------------------------------------------
+# Which mascot frame the launch splash shows: "<mood>.<n>", 1-based, from
+# ui.SPLASH_FRAMES ("serious" and "chilling", three frames each). The art
+# itself lives in ui.py — it's the app's look, not a deployment knob; only the
+# choice of favourite is a preference. Unrecognised values fall back to
+# "serious.1" rather than raising, so a typo here never stops the app booting.
+SPLASH_FRAME = "serious.1"

@@ -26,7 +26,7 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 
-from ui import console, human_panel, read_input
+from ui import console, human_panel, read_input, splash
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
@@ -734,5 +734,11 @@ if __name__ == "__main__":
     # in repl(): repl() is called directly by tests/golden.py, which must not
     # write snapshots of its fixture into the real backup directory.
     safe_backup()
+    # Once per launch, deliberately not inside repl(): returning from a session
+    # to the hub must not re-show it. It also has to finish before repl() reads
+    # any input — the splash is safe under invariant #4 only because nothing is
+    # driving the terminal yet.
+    if splash() == "quit":
+        sys.exit(0)
     sid = int(sys.argv[1]) if len(sys.argv) > 1 else None
     repl(sid)
