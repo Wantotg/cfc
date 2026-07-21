@@ -26,7 +26,8 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 
-from ui import console, human_panel, read_input, set_completer, splash
+from splash import splash
+from ui import console, human_panel, read_input, set_completer
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (

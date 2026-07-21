@@ -136,7 +136,8 @@ l  ~ ~~\
 
 ## v0.4 — The screens
 
-- **Splash:** animate the cat across its three frames, add more pixel art.
+- **Splash:** pixel art background, one asset per launch from a rotation. The
+  ASCII cat returns later. *(done — see `CHANGELOG.md`)*
 - **Selection screen:** 10 most recent chats and the last 5 routine runs. Chats
   show name, attached prompt, token usage, message count. Routines show a
   freshness signal from their log — green <24h, orange 24–48h, red >48h. Only
@@ -148,33 +149,51 @@ l  ~ ~~\
 - **Token counter colours:** green <15%, orange 15–35%, red >35%. Thresholds in
   `config.py`. Percentages stay honest; only the colours change — a 1M-token
   context claim isn't trusted.
+
+Everything here is cosmetic, which is the point: it's one session's worth of
+screens, and nothing in it can fail silently.
+
+Backlog swept here because it's adjacent, not out of tidiness: **routine runs
+cluttering the hub** (the selection screen has to tell a routine run from a chat,
+so it needs the marker regardless — and `chunk.py` derives `source` from the
+session's provider, so whatever marks a routine session has to say on purpose
+what that does to the memory index), and **tool-path reasoning printing in
+full**.
+
+Closed rather than fixed: **`longcat-2.0`** is gone from `MODELS` and
+`MODEL_LIMITS`. It was never wanted, so there was nothing to repair — only a
+mention to delete.
+
+---
+
+## v0.41 — Private chat
+
+Its own version and its own session, because it is the one thing in this stretch
+that isn't cosmetic and it should not share a session with work that is.
+
 - **Private chat.** `p` instead of `n` on the selection screen. Behaves exactly
   like a normal chat — same model, prompts, personas, tools — but **nothing is
   written down.** History lives only in the live loop that keeps the
   conversation going. `:q`, Ctrl-D, or quitting the app ends it; there is no
   restore, and it never appears in the hub.
 
-**Private chat is the one item here that isn't cosmetic, and it needs a
-chokepoint rather than care.** "Private" is a claim whose failure is *silent*:
-miss one write path and the conversation is on disk with nothing to indicate it.
-Every path that currently persists has to be off, and they don't share a switch
-today — `save_message`, the per-turn auto-embed (which would put a private chat
-into the memory index, where `:recall` could later quote it back), `AUTO_EXPORT`
-on the way out, and the title-generation call that writes a title. Deciding
-where the single gate lives is the design work; sprinkling `if private:` across
-five call sites is how one gets forgotten. Same lesson as the file jail: the
-guard belongs at the chokepoint, not at each caller's discretion.
+**It needs a chokepoint rather than care.** "Private" is a claim whose failure
+is *silent*: miss one write path and the conversation is on disk with nothing to
+indicate it. Every path that currently persists has to be off, and they don't
+share a switch today — `save_message`, the per-turn auto-embed (which would put
+a private chat into the memory index, where `:recall` could later quote it
+back), `AUTO_EXPORT` on the way out, and the title-generation call that writes a
+title. Deciding where the single gate lives is the design work; sprinkling
+`if private:` across five call sites is how one gets forgotten. Same lesson as
+the file jail: the guard belongs at the chokepoint, not at each caller's
+discretion.
 
-It sits in v0.4 because it starts on the selection screen, which is being
-rebuilt here anyway — adding a key while that screen is already open costs less
-than doing it before or after.
-
-Backlog swept here because it's adjacent, not out of tidiness: **routine runs
-cluttering the hub** (the selection screen has to tell a routine run from a chat,
-so it needs the marker regardless — and `chunk.py` derives `source` from the
-session's provider, so whatever marks a routine session has to say on purpose
-what that does to the memory index), **tool-path reasoning printing in full**,
-and **`longcat-2.0`** sitting in `MODELS` unable to chat.
+**What splitting it out of v0.4 costs, stated plainly:** the selection screen
+will already be finished, so adding the `p` key means opening it a second time.
+That is a small, visible cost. What it buys is that the session which has to get
+a silent-failure guarantee right isn't also the session redesigning three
+screens — and unlike the screens, this one wants tests before it can be
+believed. Verification is the deliverable here, not the keybinding.
 
 ---
 

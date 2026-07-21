@@ -11,7 +11,7 @@ Stack: Python 3.10+, `httpx`, `rich`, `prompt_toolkit`, `sqlite-vec`, `PyYAML`. 
 Entry: `python main.py [session_id]`.
 
 ```
-main.py:__main__ → safe_backup() → ui.splash() → repl(sid)
+main.py:__main__ → safe_backup() → splash.splash() → repl(sid)
 repl()  = outer hub loop: pick_session ⇄ run_session, quits only from the hub
 run_session() = one session's REPL: read line → dispatch → repeat
 ```
@@ -23,15 +23,83 @@ returning from a session to the hub must not re-show it. Enter continues, Esc
 quits before `repl()` is ever called. It is legal under invariant #4 only
 because nothing is driving the terminal at that point; the same blocking read
 anywhere else in the app would be a bug. It is a **no-op when stdin isn't a
-TTY**, so a piped run never blocks and `tests/golden.py` is unaffected. Art and
-renderer live in `ui.py` (the app's look), the chosen frame in `config.py` (a
-preference) — the same split as the palette. Frames are ordered lists per mood
-and `_render_frame()` is separate, so the animation is a loop over data that
-already exists, not a redesign; **don't spawn a thread for it.** Two things bite
-here and are commented in place: the art is full-width CJK, so widths must come
-from `rich.cells.cell_len` and never `len`; and Esc requires raw mode
-(`tty.setcbreak`, restored in a `finally`) because a bare Escape is not a line
-and never arrives through a line-buffered read.
+TTY**, so a piped run never blocks and `tests/golden.py` is unaffected.
+
+**It lives in `splash.py`, not `ui.py`** (v0.4). The ASCII mascot frames it
+replaced are gone from `ui.py` — they are in the archive and are coming back
+later, so `git log` for `SPLASH_FRAMES` is the way to retrieve them. The split
+is about weight, not the dependency graph: a whole screen with a binary asset
+format behind it is a feature module like `mover.py`, whereas `ui.py` is shared
+presentation primitives. Note that "`ui.py` imports no other cfc module" has
+always meant *at module level* — it reaches for `config` lazily inside a
+function (`MOUSE_INPUT`), and did the same for the old splash frame. Lazy
+imports run after both modules are loaded, so they can't cycle; `test_splash.py`
+pins the module-level form of the invariant.
+
+### How the art is drawn, and the constraint that shapes it
+
+Assets are baked pixel data in `assets/splash_<name>.raw` — 2 bytes width, 2
+bytes height, then raw RGB. **Deliberately not PNG:** decoding PNG means Pillow,
+and a launch screen is not worth a runtime image dependency. `dev/bake_splash.py`
+produces them and is the only thing that needs Pillow (`requirements-dev.txt`,
+kept out of `requirements.txt` so a clean checkout proves the runtime is stdlib).
+
+Each cell is `▀` with the foreground set to the top pixel and the background to
+the bottom one, so one text row carries two pixel rows and the result is roughly
+square in a normal font.
+
+- **The art is 2:3 portrait and terminals are landscape, so it cannot bleed to
+  the left and right edges without cropping the cat's ears and feet.** It
+  doesn't have to: the source background is pure black, so the whole screen is
+  painted black and the art composited into the middle of it. The letterboxing
+  is the artwork. The screen is *painted* rather than left as the terminal's own
+  background for the same reason — a background that isn't exactly `#000` would
+  otherwise show the art as a visible rectangle. Verified on Cas's terminal:
+  uniformly black apart from the picture and the text.
+- **Resampling is box-average, not nearest-neighbour, and that is specific to
+  this art.** It is a one-pixel rim light on black. The asset is baked at 96×144
+  and a 140×40 terminal displays it at ~48×72, so it halves on a normal launch —
+  and nearest-neighbour halving drops every other pixel, breaking the rim into
+  dashes along the tail and the spine. Compared by eye before choosing. The
+  trade is that averaged colours fall outside the baked 40-colour palette, so
+  this is not strictly palette-pure pixel art; invisible on truecolor, unlike a
+  dashed outline. Upscaling degenerates to nearest, which is what you want when
+  enlarging pixel art.
+- **Bake resolution is not display resolution.** The asset is a source of truth
+  that gets resampled to whatever the terminal gives it, which is why one asset
+  survives Cas resizing the window. Don't "fix" the bake to match a terminal.
+- **Text is composited in the same pass as the image**, into a glyph layer read
+  by the render loop, rather than printed over it afterwards. A stamped cell
+  covers two pixel rows, so its background is their average — using one row
+  would drop the other. Widths come from `rich.cells.cell_len`, never `len`,
+  and the trailing cell of a double-width glyph is marked consumed; the old
+  full-width CJK cat taught that lesson once already.
+- **Runs of identical style are merged before emitting.** A 140×40 screen is
+  5,600 cells and one styled span each makes Rich do real work for nothing. The
+  art is mostly flat black, so this collapses it to ~870 spans and 3.7 ms.
+- **`rows` is one short of the terminal height.** Printing exactly `height`
+  lines pushes the cursor past the last row and scrolls the title away.
+- **The key wait polls rather than blocking**, so a resize while the splash is
+  up redraws instead of leaving a torn image. The 0.25 s poll is also the seam
+  an animation would use; **don't spawn a thread for it** — a blocking loop is
+  correct here precisely because nothing else is driving the terminal yet.
+- **Bytes are read with `os.read` on the fd, never `sys.stdin.read`.** This is
+  not style. `sys.stdin` is buffered, so reading one character pulls the whole
+  waiting burst into Python's buffer, leaving the fd empty — and the `select`
+  that distinguishes a bare Esc from an escape *sequence* then sees nothing and
+  calls every arrow key a bare Esc, quitting the app. That bug was live and was
+  caught by a pty test, not by reading the code. cbreak is restored in a
+  `finally`; leaving the terminal in it would break every prompt_toolkit read
+  for the rest of the session.
+- **A missing or malformed asset skips the splash rather than raising.** It is
+  the first thing that runs at launch, so anything it throws is a total failure
+  to start, over decoration.
+
+`SPLASH_ART` in `config.py` chooses: a name, a list to pick from at random, or
+`"*"` for everything in `assets/`. Art in the repo, choice in config — the same
+split as the palette. The rotation lives in `_choose` rather than at the call
+site, so dropping a new `.raw` into `assets/` joins it with no code change and,
+under `"*"`, no config change either.
 
 **The hub's table columns carry fixed widths on purpose.** Rich grants a
 `no_wrap` column whatever its longest row asks for and takes it out of the
@@ -443,7 +511,7 @@ same events.
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
-Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds). 502 assertions across 14 suites. None need an API key.
+Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot). 538 assertions across 15 suites. None need an API key.
 
 `test_chunk` exists because the chunker is the one part of the memory layer whose output silently becomes permanent: a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking. The mid-word bug sat in `BACKLOG.md` for six days precisely because nothing failed.
 
@@ -473,9 +541,11 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `wikigit.py` | the vault repo: `status`/`diff`/`commit`, scoped to `WIKI_DIR` unless widened. Owns no console |
 | `preflight.py` | the launcher's embedder check — real POST, dimension guard, never blocks the launch |
 | `launch.sh` | what the desktop shortcut runs: repo + venv + preflight, then `main.py` |
-| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer`, `splash` + `SPLASH_FRAMES` |
+| `dev/bake_splash.py` | image → `assets/splash_<name>.raw`. Dev-time only; the one thing needing Pillow |
+| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer` |
+| `splash.py` | the launch screen: baked pixel art composited under the title, asset rotation, Enter/Esc gate. Depends on `ui`, not the reverse |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, `SPLASH_ART`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 

@@ -23,6 +23,73 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Replace the ASCII mascot splash with pixel art
+First piece of v0.4. The launch screen is now a baked pixel-art image
+composited under the title, instead of the four-line ASCII cat.
+- **New `splash.py`.** The screen is painted black edge to edge and the art
+  centred into it, with the title and prompt stamped into the same render pass.
+  The art is 2:3 portrait and terminals are landscape, so it cannot bleed
+  sideways without cropping the cat — but the source background is pure black,
+  so the letterboxing is invisible and the screen reads as one image.
+- **Assets are `assets/splash_<name>.raw`** — width, height, raw RGB. Not PNG,
+  because decoding PNG means Pillow and a splash screen isn't worth a runtime
+  image dependency. `dev/bake_splash.py` makes them and is the only thing that
+  needs Pillow; it's in a new `requirements-dev.txt`, kept out of
+  `requirements.txt` so a clean checkout proves the runtime is stdlib.
+- **`SPLASH_ART`** replaces `SPLASH_FRAME`: a name, a list to pick from at
+  random, or `"*"` for everything in `assets/`. Groundwork for a rotation.
+- **The ASCII cats are gone from `ui.py`** — `SPLASH_FRAMES`, `_resolve_frame`
+  and `_render_frame`. **They are coming back later**; retrieve them with
+  `git log -S SPLASH_FRAMES -- ui.py` rather than retyping them. They are also
+  in the archive.
+- **Box-average resampling, not nearest.** The art is a one-pixel rim light on
+  black and halves on a normal launch; nearest-neighbour halving broke the rim
+  into dashes along the tail and the spine.
+- **Two bugs found by testing, not by reading.** Arrow keys quit the app:
+  `sys.stdin.read(1)` is buffered, so it swallowed the rest of an escape
+  sequence and the `select` meant to tell a sequence from a bare Esc saw an
+  empty fd. Reads the raw fd now. And the cat's ears sat on row 0, because the
+  art is height-bound on any normal terminal and scaled to fill exactly.
+- **`test_splash.py`**, 36 assertions, checked against four deliberate
+  mutations. Two of them survived the first version of the tests — the aspect
+  check only used height-bound terminal sizes, and the wide-glyph check counted
+  characters where the bug is about cells.
+- Files: splash.py, ui.py, main.py, config.py, config.example.py,
+  tests/test_splash.py, dev/bake_splash.py, assets/splash_balthazar.raw,
+  requirements-dev.txt, HANDOVER.md, README.md, CLAUDE.md
+- Status: shipped
+- Commit: pending
+
+---
+
+## 2026-07-21 — Split private chat into v0.41; drop `longcat-2.0`
+Roadmap restructure, Cas's call, plus the one backlog item that turned out to
+need deleting rather than fixing.
+- **Private chat moves out of v0.4 into its own version, v0.41**, to be its own
+  session. It's the only non-cosmetic item in that stretch and the only one
+  whose failure mode is silent, so it shouldn't share a session with three
+  screen redesigns. The cost is recorded in the roadmap rather than glossed:
+  the selection screen will already be built, so adding the `p` key means
+  opening it a second time.
+- **`longcat-2.0` removed** from `MODELS`, `MODEL_LIMITS` and the
+  `TOOLS_MODELS` comment, in both `config.py` and `config.example.py`. It was
+  never wanted; there was nothing to repair, only a mention to delete. The
+  backlog entry is closed, not fixed, and says so.
+- The observation underneath it — nothing validates that a model in `MODELS`
+  can actually be chatted with — is deliberately **not** carried forward as
+  work. A bad name fails at the first message with a provider 400, which is
+  loud and immediate.
+- **`golden.py` re-baselined**, 177 → 176 lines. The harness reads the real
+  `config.py`, so dropping a model legitimately changes `:config` and
+  `:models` output. Diff inspected first: three lines, all longcat, nothing
+  else — which is the entire reason that harness exists.
+- Files: ROADMAP.md, BACKLOG.md, config.py, config.example.py,
+  tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-21 — Rework `:attach` completion; add MOUSE_INPUT
 v0.3's third piece. Started as "vault before repo" and turned up that
 completion **had not been running at all**.

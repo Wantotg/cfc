@@ -8,7 +8,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 
 ## Features
 
-- **Rich terminal UI** — a mascot splash at launch, live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
+- **Rich terminal UI** — a pixel-art splash at launch, live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
 - **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll when a model returns an empty completion — it asks you if you're there, and retries on its own if you're not. Reasoning shows on the tool path too (rendered per step, not streamed)
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
@@ -65,7 +65,7 @@ Then edit `config.py` and set:
 - `MODELS` / `MODEL_LIMITS` — the models your plan supports and their context sizes
 - `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` — the embedding endpoint; defaults to the hosted `bge-m3`, or point it at a local server to self-host
 - `AUTO_EMBED` — index new chat messages into memory after each turn (default on)
-- `SPLASH_FRAME` — which mascot frame the launch splash shows (default `"serious.1"`)
+- `SPLASH_ART` — which pixel art the launch splash shows: a name from `assets/`, a list to pick from at random, or `"*"` for all of them (default `"*"`)
 - `MOUSE_INPUT` — click to position the cursor in the input line (default off; see Usage for the trade-off)
 - `LMS_CLI` — only if `launch.sh` can't find the LM Studio CLI on its own
 
@@ -144,9 +144,19 @@ vanishes silently exited cleanly.
 
 ---
 
-Launch shows the **splash** — the mascot, once per run. **Enter** continues,
-**Esc** quits. It's skipped entirely when input isn't a terminal, so piping into
-cfc behaves exactly as it did before it existed.
+Launch shows the **splash** — pixel art, once per run. **Enter** continues,
+**Esc** quits. Resize the window while it's up and it redraws. It's skipped
+entirely when input isn't a terminal, so piping into cfc behaves exactly as it
+did before it existed.
+
+The art is drawn with Unicode half-blocks in truecolor, from a baked asset in
+`assets/` — no image library at runtime. Drop another one in and it joins the
+rotation. To make one from your own image:
+
+```bash
+pip install -r requirements-dev.txt          # Pillow, dev-time only
+python dev/bake_splash.py cat.png mittens    # → assets/splash_mittens.raw
+```
 
 Past it is the **hub**, listing your 20 most recent sessions with their id, last
 update, message count, title, system prompt and persona. From there:
@@ -325,7 +335,8 @@ Known rough edges live in `BACKLOG.md`.
 | `api.py` | streaming and non-streaming calls to the endpoint |
 | `export.py` | writing a session out to the vault |
 | `backup.py` | rolling snapshots of the database |
-| `ui.py` | the shared console, presentation helpers, the line editor, and the splash |
+| `ui.py` | the shared console, presentation helpers, and the line editor |
+| `splash.py` | the launch screen — pixel art, composited with the title |
 | `config.py` | settings — gitignored |
 | `launch.sh` | preflight, then cfc — what the desktop shortcut runs |
 
@@ -349,6 +360,7 @@ python tests/test_chunk.py       # chunk sizing and boundary seeking at both edg
 python tests/test_wikigit.py     # vault git: scope containment, the -z parse, no push
 python tests/test_preflight.py   # the embedder check: dimension guard, never hangs
 python tests/test_complete.py    # :attach completion: vault first, and the jail holds
+python tests/test_splash.py      # the splash compositor: aspect, resampling, the key read
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

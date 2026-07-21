@@ -21,7 +21,6 @@ MODELS = [
     "zai-org/glm-5.2:thinking",
     "deepseek/deepseek-v4-pro:thinking",
     "moonshotai/kimi-k2.6:thinking",
-    "longcat-2.0",
 ]
 
 # Context window size in tokens for each model
@@ -30,7 +29,6 @@ MODEL_LIMITS = {
     "zai-org/glm-5.2:thinking": 1000000,
     "deepseek/deepseek-v4-pro:thinking": 1000000,
     "moonshotai/kimi-k2.6:thinking": 256000,
-    "longcat-2.0": 1000000,
 }
 
 # --- embeddings (RAG) ------------------------------------------------------
@@ -79,8 +77,8 @@ ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")
 # (write). Off by default — opt in per session with ":tools on".
 #
 # TOOLS_MODELS was verified against the nano-gpt subscription, not assumed:
-# these three emit OpenAI-style tool_calls; longcat-2.0 rejects
-# /v1/chat/completions outright. GLM 5.2 is the intended primary driver.
+# these three emit OpenAI-style tool_calls. GLM 5.2 is the intended primary
+# driver.
 TOOLS_ENABLED = False
 TOOLS_MODELS = [
     "zai-org/glm-5.2:thinking",
@@ -155,9 +153,14 @@ WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
 MOUSE_INPUT = False
 
 # --- splash ----------------------------------------------------------------
-# Which mascot frame the launch splash shows: "<mood>.<n>", 1-based, from
-# ui.SPLASH_FRAMES ("serious" and "chilling", three frames each). The art
-# itself lives in ui.py — it's the app's look, not a deployment knob; only the
-# choice of favourite is a preference. Unrecognised values fall back to
-# "serious.1" rather than raising, so a typo here never stops the app booting.
-SPLASH_FRAME = "serious.1"
+# Which pixel art the launch splash shows. The art itself lives in assets/ —
+# it's the app's look, not a deployment knob; only the choice is a preference.
+#
+#   "balthazar"                one asset, every launch
+#   ["balthazar", "mittens"]   one of these, picked at random per launch
+#   "*"                        one of everything in assets/, at random
+#
+# Names map to assets/splash_<name>.raw. A missing or malformed asset skips the
+# splash rather than raising — it's decoration, not a reason not to boot.
+# dev/bake_splash.py turns an image into one of these.
+SPLASH_ART = "*"

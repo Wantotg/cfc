@@ -72,8 +72,8 @@ What exists, in one pass:
 
 - **The REPL**, split across `main.py` (hub + session loop + dispatch),
   `commands.py`, `hub.py`, `db.py`, `api.py`, `agent.py`, `export.py`,
-  `ui.py`, `config.py`. A launch splash, a session picker, colored speaker
-  panels, a `prompt_toolkit` line editor.
+  `ui.py`, `splash.py`, `config.py`. A pixel-art launch splash, a session
+  picker, colored speaker panels, a `prompt_toolkit` line editor.
 - **Memory / RAG over a distilled Obsidian wiki** — `import_wiki.py`,
   `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`. Embeddings
   run on **self-hosted `bge-m3` via LM Studio** (`EMBED_*` in config), stored

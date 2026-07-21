@@ -72,7 +72,7 @@ Current configuration:
   Vault path:    /mnt/c/Users/disse/backup/cfc/cfc_chat_backup
   Prompts dir:   /mnt/c/Users/disse/cooking for cats/06 metadata/system instructions
   Quick models:  zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
-moonshotai/kimi-k2.6:thinking, longcat-2.0
+moonshotai/kimi-k2.6:thinking
 
 you>
 Token usage for session #1 "Golden session one"
@@ -123,7 +123,6 @@ you>                Available models
 │ zai-org/glm-5.2:thinking          │        │
 │ deepseek/deepseek-v4-pro:thinking │        │
 │ moonshotai/kimi-k2.6:thinking     │        │
-│ longcat-2.0                       │        │
 └───────────────────────────────────┴────────┘
 
 you>

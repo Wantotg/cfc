@@ -88,21 +88,17 @@ time, unlike the litter prune, which only deleted).
 
 ---
 
-## `longcat-2.0` is in MODELS but can't chat
+## ~~`longcat-2.0` is in MODELS but can't chat~~ — CLOSED
 
 **Found:** 2026-07-15, while verifying which models do tool calling.
+**Closed:** 2026-07-21, v0.4. Dropped from `MODELS`, `MODEL_LIMITS` and the
+`TOOLS_MODELS` comment in both `config.py` and `config.example.py`. Cas's call:
+the model isn't wanted, so there was nothing to fix — only a mention to remove.
 
-`longcat-2.0` is listed in `config.py`'s `MODELS` and `MODEL_LIMITS`, so
-`:model longcat-2.0` switches to it happily — and then every message fails:
-
-```
-HTTP 400: Model longcat-2.0 is not supported on /v1/chat/completions.
-```
-
-Pre-existing; nothing to do with tools. It presumably lives on a different
-nano-gpt endpoint, or the name has changed. Either drop it from `MODELS` or
-find the right endpoint. Nothing validates that a model in `MODELS` can
-actually be chatted with, which is why this sat there unnoticed.
+The observation underneath it is still true and is *not* tracked as work:
+**nothing validates that a model in `MODELS` can actually be chatted with.**
+A wrong name fails at the first message with a provider 400, which is loud and
+immediate, so it doesn't need a guard.
 
 ---
 

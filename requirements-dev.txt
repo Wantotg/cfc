@@ -1,0 +1,7 @@
+# Dev-time only. Nothing in the shipped app imports these.
+#
+# pillow — dev/bake_splash.py, which converts an image into an assets/*.raw
+# splash asset. The runtime loads that asset with stdlib alone, which is the
+# reason the format exists; keep Pillow out of requirements.txt so a clean
+# checkout proves it.
+pillow>=11.0
