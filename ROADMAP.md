@@ -179,6 +179,8 @@ answer nothing), and the "context nearly full" nudge moved from 80% to the same
 threshold the bar turns red, since a red bar with nothing said about it reads as
 a rendering bug.
 
+> *Note: ASCII cat is learning new tricks, overhaul of splash and selection screen, and improving chat 'feel'; rounding off the last ugly bits of the terminal.*
+
 ---
 
 ## v0.41 — Private chat
