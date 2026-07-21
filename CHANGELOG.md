@@ -68,7 +68,7 @@ actually mean.
   config.py, config.example.py, tests/test_hub.py, tests/test_schema.py,
   tests/golden.py, tests/golden_baseline.txt, HANDOVER.md, README.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 77bff61
 
 ---
 

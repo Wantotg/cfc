@@ -134,10 +134,10 @@ l  ~ ~~\
 ```
 ---
 
-## v0.4 — The screens
+## v0.4 — The screens — **complete, 2026-07-21**
 
 - **Splash:** pixel art background, one asset per launch from a rotation. The
-  ASCII cat returns later. *(done — see `CHANGELOG.md`)*
+  ASCII cat returns later.
 - **Selection screen:** 10 most recent chats and the last 5 routine runs. Chats
   show name, attached prompt, token usage, message count. Routines show a
   freshness signal from their log — green <24h, orange 24–48h, red >48h. Only
@@ -163,6 +163,21 @@ full**.
 Closed rather than fixed: **`longcat-2.0`** is gone from `MODELS` and
 `MODEL_LIMITS`. It was never wanted, so there was nothing to repair — only a
 mention to delete.
+
+**What this version turned up, both in the tests rather than in use:** the hub's
+own test *rebuilt the picker's SQL instead of calling it*, so it passed against
+a filter that was deliberately broken to check — which is why `recent_chats` is
+now a function with one definition. And the golden harness needed its own
+prompt/persona fixture, because the new chat header lists which prompts are
+*available*: without it the baseline read the real vault and would have broken
+every time a prompt file was added. A test that cries wolf is a test that gets
+ignored.
+
+Two judgement calls worth knowing about, both easy to reverse: routine rows are
+one per **routine** rather than per run (five rows of the same nightly job
+answer nothing), and the "context nearly full" nudge moved from 80% to the same
+threshold the bar turns red, since a red bar with nothing said about it reads as
+a rendering bug.
 
 ---
 
