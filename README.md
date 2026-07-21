@@ -8,7 +8,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 
 ## Features
 
-- **Rich terminal UI** — live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
+- **Rich terminal UI** — a mascot splash at launch, live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
 - **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll when a model returns an empty completion — it asks you if you're there, and retries on its own if you're not. Reasoning shows on the tool path too (rendered per step, not streamed)
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
@@ -63,6 +63,7 @@ Then edit `config.py` and set:
 - `MODELS` / `MODEL_LIMITS` — the models your plan supports and their context sizes
 - `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` — the embedding endpoint; defaults to the hosted `bge-m3`, or point it at a local server to self-host
 - `AUTO_EMBED` — index new chat messages into memory after each turn (default on)
+- `SPLASH_FRAME` — which mascot frame the launch splash shows (default `"serious.1"`)
 
 `config.py` is gitignored and will never be committed — it holds your key and stays local. It's also on the deny list in `paths.py`, so `:attach` and the file tools refuse to read it even though it sits inside the project.
 
@@ -80,7 +81,12 @@ alias cfc='cd ~/projects/cfc && source .venv/bin/activate && python main.py'
 
 ## Usage
 
-Launch to land on the **hub**, listing your 20 most recent sessions. From there:
+Launch shows the **splash** — the mascot, once per run. **Enter** continues,
+**Esc** quits. It's skipped entirely when input isn't a terminal, so piping into
+cfc behaves exactly as it did before it existed.
+
+Past it is the **hub**, listing your 20 most recent sessions with their id, last
+update, message count, title, system prompt and persona. From there:
 
 | Key | Action |
 |-----|--------|
@@ -89,7 +95,8 @@ Launch to land on the **hub**, listing your 20 most recent sessions. From there:
 | `q` | Quit |
 
 The hub is home base: `:q` inside a session brings you back here rather than
-quitting, so the program only exits from the hub (`q`, or Ctrl-D/Ctrl-C).
+quitting, so the program only exits from the hub (`q`, or Ctrl-D/Ctrl-C). The
+splash does **not** reappear on the way back — it's a launch screen, not a menu.
 
 `python main.py 5` opens session 5 directly, skipping the hub — but its `:q`
 still returns to the hub.
@@ -100,12 +107,17 @@ still returns to the hub.
 |---------|--------|
 | `:q` | Back to the hub (auto-exports if enabled) |
 | `:new` | Start a new session in place |
+| `:list` | Every session, not just the recent 20 |
+| `:delete [n]` | Delete a session (this one by default), after a confirmation |
 | `:model <name>` | Switch the current session's model |
+| `:model` | Show the current model |
 | `:models` | List configured models |
 | `:persona <name>` | Load a persona from `PERSONAS_DIR` |
 | `:persona off` | Remove the persona |
+| `:personas` | List available personas |
 | `:prompt <name>` | Load a system prompt from `PROMPTS_DIR` |
 | `:prompt off` | Remove the system prompt |
+| `:prompts` | List available system prompts |
 | `:tag <name>` | Add a tag (auto-lowercased) |
 | `:untag <name>` | Remove a tag |
 | `:tags` / `:taglist` | Show tags / all tags with counts |
@@ -123,12 +135,15 @@ still returns to the hub.
 | `:routine new` | Create a routine (name, prompt, roots, trigger) |
 | `:routine <name>` | Run a routine now |
 | `:outbox` | List files the model has proposed, and where each would go |
-| `:file <n>` | File one proposal at its destination (`:file all` for every valid one) |
+| `:file <n>` | File one proposal at its destination |
+| `:file all` | File every valid proposal |
 | `:file <n> drop` | Discard a proposal — moved aside, not deleted |
 | `:tokens` | Detailed context-usage breakdown |
-| `:export` | Manually export the session to Obsidian |
+| `:export [n]` | Export a session to Obsidian (this one by default) |
 | `:config` | Show current configuration (key masked) |
-| `:title <n> <name>` | Rename a session |
+| `:title` | Show the current title |
+| `:title <n>` | Show session `n`'s title |
+| `:title <n> <name>` | Rename session `n` |
 
 **Multi-line input:** just type or paste. Enter sends; **Alt+Enter** inserts a
 newline. A pasted block keeps its line breaks and doesn't submit early. Ctrl+C
@@ -144,10 +159,13 @@ directory.
 The flow:
 
 ```
-main.py → repl() ┬→ pick_session() → run_session() ─┐
-                 └───────────← :q ←─────────────────┘
-                   q at the hub → quit
+main.py → splash() → repl() ┬→ pick_session() → run_session() ─┐
+          Esc → exit         └───────────← :q ←─────────────────┘
+                              q at the hub → quit
 ```
+
+The splash sits outside `repl()` deliberately, which is why it shows once per
+launch rather than every time you return to the hub.
 
 - **SQLite** (`~/.cfc/chat.db`) holds sessions, messages, tags, and a session↔tag junction table. Schema and migrations run automatically on start — safe to re-run on an existing database.
 - **API layer** streams from an OpenAI-compatible `/chat/completions` endpoint, prepending persona and system prompt as system messages.
@@ -192,13 +210,9 @@ Read this before turning tools on.
 
 The tests that back this up are worth keeping green: `tests/test_paths.py` covers traversal, symlink escape, the deny list, and the write jail; `tests/test_gate.py` asserts that approving a call still doesn't bypass the guard, that writes are never auto-approved, and that a readable path is not a writable one.
 
-## Roadmap
-
-- **Phase 2.5** — bulk export (`:export all`), hub tag filtering, global `:stats`
-- **Scheduled routines** — routines run on command today; the run path is built so an OS scheduler can call the same entry point unchanged. Deliberately not an in-process timer thread.
-
 ## Known limitations
 
+- **Routines run on command, not on a schedule** — `:routine <name>` runs one now. There's no scheduler yet; the run path is built so an OS scheduler can call the same entry point unchanged, and deliberately isn't an in-process timer thread.
 - **Recall is wiki-only** — the semantic index answers from the distilled wiki, which states each decision once. Raw chat logs are indexed (`source='chat'`) but not yet folded into recall; that hybrid is a future additive step. This sidesteps the old "resolution staleness" problem, where searching raw transcripts surfaced the messages where a decision was being *argued* over the one where it was settled.
 - **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams. (Reasoning still shows on the tool path — it just arrives all at once per step rather than streaming in.)
 - **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `:tools` tells you whether the active model qualifies.
@@ -228,7 +242,7 @@ Known rough edges live in `BACKLOG.md`.
 | `api.py` | streaming and non-streaming calls to the endpoint |
 | `export.py` | writing a session out to the vault |
 | `backup.py` | rolling snapshots of the database |
-| `ui.py` | the shared console and presentation helpers |
+| `ui.py` | the shared console, presentation helpers, the line editor, and the splash |
 | `config.py` | settings — gitignored |
 
 The memory layer is separate: `import_wiki.py` (and `import_anthropic.py`), `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.

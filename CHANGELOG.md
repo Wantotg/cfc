@@ -23,6 +23,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Make the README accurate; drop the roadmap
+Documentation only, no behaviour change.
+- Documents the splash (Enter/Esc, once per launch, skipped on a non-TTY) and
+  the hub's trimmed columns; adds `SPLASH_FRAME` to the config list and the
+  splash to the flow diagram.
+- The command table had drifted: `:list`, `:delete`, `:prompts`, `:personas`,
+  bare `:model` and `:file all` existed but weren't listed, `:title` has three
+  forms rather than one, and `:export` takes an optional session id.
+- **Roadmap removed** rather than updated — it described work that was never
+  actually planned. A real one comes with the first tagged version. The one
+  genuine item in it (routines run on command, no scheduler yet) moved to
+  Known limitations, where it belongs.
+- Verified against the source rather than trusted: command dispatch in
+  `main.py`, `backup.py`'s flags, the test list, and `requirements.txt`.
+- Files: README.md
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-21 — Add the launch splash; trim the hub tables
 A mascot screen at startup, and the session list stops spending its width on
 columns that were almost always empty.
@@ -69,7 +89,7 @@ columns that were almost always empty.
 - Files: ui.py, hub.py, main.py, config.py, config.example.py,
   tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: c3194c8
 
 ---
 
