@@ -23,6 +23,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Add `:wiki` — review and commit the vault repo from the REPL
+v0.3's first piece. The vault became a git repo in v0.2; this is the window
+onto it, so hand-edited pages can be reviewed and committed without leaving
+cfc. Same shape as `mover.py`: code-driven, scoped to a fixed root, no model
+anywhere near it and no tool schema.
+- `:wiki` — status. Wiki changes listed, the rest of the vault *counted* with a
+  pointer to `all`. The count exists so "wiki db: clean" can't be misread as
+  "the vault is clean", which is its usual state.
+- `:wiki diff [all]` / `:wiki commit [all] <message>`. Default scope is the
+  wiki corpus; `all` widens to the whole repo and has to be typed.
+- **The commit carries the pathspec too, not just the `add`.** `git add --
+  <spec>` alone still lets the following `git commit` sweep up anything already
+  staged elsewhere in the vault. Pinned by a test that stages a file outside
+  the scope and asserts it survives — and verified by breaking it on purpose.
+- Repo discovery anchors at `WIKI_DIR`, never the process cwd: cfc runs inside
+  its *own* git repo, so a cwd-relative git would diff and commit cfc's source
+  while calling it the wiki.
+- Status parses `--porcelain -z`. Every path in this vault contains a space, so
+  git's quoted form is the normal case, not the exotic one.
+- No push, and it says "local only" after every commit. The repo has no remote;
+  whether the `02 areas` medical material goes to someone else's server is a
+  v1.0 decision, and a push that silently no-ops today is one that silently
+  starts working the day a remote appears.
+- Untracked files are listed by name rather than diffed — the alternative
+  (`--intent-to-add`) mutates the index as a side effect of looking.
+- Files: wikigit.py (new), commands.py, main.py, tests/test_wikigit.py (new)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-21 — Put the vault under git; document it
 Infrastructure on the Obsidian vault, not cfc code — no module changes.
 - The vault is a git repo. `.git` relocated to `~/vaults/wiki.git` with a

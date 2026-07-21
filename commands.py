@@ -1229,3 +1229,150 @@ def do_file(arg):
         console.print(f"  filed {proposal.name} → {target}", style="green")
     except (MoveError, OSError) as e:
         console.print(f"  cannot file {proposal.name}: {e}", style="red")
+
+
+# --- the vault repo -------------------------------------------------------
+#
+# ':wiki' is a review screen for the Obsidian vault's git repo, and ':wiki
+# commit' is the only thing in cfc that writes git history. Both are plain
+# code — no model, no tool schema, nothing the LLM can reach. See wikigit.py
+# for why, and for why the default scope is the wiki corpus rather than the
+# whole vault.
+#
+# The rendering lives here and the git lives there: wikigit.py owns no console,
+# the same split as runner.py, so a future headless caller isn't dragging rich
+# along behind it.
+
+def _wiki_scope(word):
+    """'all' → whole vault, anything else → the wiki corpus."""
+    import wikigit
+    return wikigit.ALL if (word or "").strip() == "all" else wikigit.WIKI
+
+
+def _print_changes(changes, indent="     "):
+    styles = {"new": "green", "deleted": "red", "renamed": "yellow"}
+    for c in changes:
+        style = styles.get(c.label, "white")
+        console.print(f"{indent}{c.label:9} {c.path}", style=style)
+
+
+def show_wiki_status():
+    """':wiki' — what has changed, wiki first, the rest of the vault counted.
+
+    The vault line is a count and a pointer, not a listing. It exists so that
+    "wiki db: clean" can never be mistaken for "the vault is clean" — which is
+    exactly the state the vault is in most of the time, since pages get edited
+    far less often than notes do.
+    """
+    import wikigit
+
+    try:
+        wiki, other = wikigit.summary()
+        tracked = wikigit.tracked_count()
+    except wikigit.GitError as e:
+        console.print(f"\n  {e}", style="red")
+        console.print()
+        return
+
+    console.print()
+    console.print("Vault repo", style="bold")
+
+    if wiki:
+        console.print(f"  wiki db: {len(wiki)} changed "
+                      f"({tracked} pages tracked)", style="yellow")
+        _print_changes(wiki)
+    else:
+        console.print(f"  wiki db: clean ({tracked} pages tracked)",
+                      style="green")
+
+    if other:
+        console.print(f"  vault:   {len(other)} changed elsewhere "
+                      f"→ :wiki diff all", style="dim")
+    else:
+        console.print("  vault:   clean", style="dim")
+
+    for short, when, subject in wikigit.log(3, scope=wikigit.ALL):
+        console.print(f"  {short}  {when}  {subject}", style="dim")
+
+    console.print()
+    console.print("  :wiki diff [all] | :wiki commit [all] <message>",
+                  style="dim")
+    console.print()
+
+
+def show_wiki_diff(arg=""):
+    """':wiki diff [all]' — the textual diff, plus untracked files by name."""
+    import wikigit
+    from rich.syntax import Syntax
+
+    scope = _wiki_scope(arg)
+    try:
+        changes = wikigit.status(scope)
+        text = wikigit.diff(scope)
+    except wikigit.GitError as e:
+        console.print(f"\n  {e}", style="red")
+        console.print()
+        return
+
+    where = "the vault" if scope == wikigit.ALL else "wiki db"
+    console.print()
+    if not changes:
+        console.print(f"  {where}: nothing changed", style="green")
+        console.print()
+        return
+
+    if text.strip():
+        # Rendered as a diff rather than printed raw so + and - lines are
+        # readable at a glance. This is a review step; if it isn't scannable
+        # it will get skipped, and a review nobody reads approves everything.
+        console.print(Syntax(text, "diff", theme="ansi_dark",
+                             word_wrap=False, background_color="default"))
+
+    # Untracked files have no baseline, so they cannot appear in a diff. They
+    # are listed instead of omitted — a new page is the single most likely
+    # thing you are here to commit, and silently leaving it off the screen
+    # would be the worst possible omission.
+    new = [c for c in changes if c.untracked]
+    if new:
+        console.print(f"  {len(new)} new file(s), not yet tracked "
+                      "(no diff to show):", style="green")
+        _print_changes(new, indent="    ")
+
+    console.print()
+    console.print(f"  :wiki commit {'all ' if scope == wikigit.ALL else ''}"
+                  "<message>", style="dim")
+    console.print()
+
+
+def do_wiki_commit(arg=""):
+    """':wiki commit [all] <message>' — stage and commit everything in scope.
+
+    The message is required and is never generated. A commit message written by
+    code says nothing a timestamp doesn't already say, and this is the one
+    place in cfc that writes permanent history.
+    """
+    import wikigit
+
+    parts = (arg or "").split(maxsplit=1)
+    if parts and parts[0] == "all":
+        scope, message = wikigit.ALL, (parts[1] if len(parts) > 1 else "")
+    else:
+        scope, message = wikigit.WIKI, (arg or "")
+
+    if not message.strip():
+        console.print("Usage: :wiki commit [all] <message>", style="red")
+        return
+
+    where = "the vault" if scope == wikigit.ALL else "wiki db"
+    try:
+        count = len(wikigit.status(scope))
+        short, subject = wikigit.commit(message, scope)
+    except wikigit.GitError as e:
+        console.print(f"  {e}", style="red")
+        return
+
+    console.print(f"  committed {count} change(s) in {where} — "
+                  f"{short} {subject}", style="green")
+    # Said every time, deliberately. The repo has no remote (see wikigit.py),
+    # and "committed" reads as "safe" to anyone who has ever used git with one.
+    console.print("  local only — this repo has no remote", style="dim")

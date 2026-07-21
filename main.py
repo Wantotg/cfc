@@ -59,6 +59,7 @@ from commands import (
     show_tools_state,
     show_routines, create_routine, do_routine,
     show_outbox, do_file,
+    show_wiki_status, show_wiki_diff, do_wiki_commit,
 )
 
 # --- Main REPL ---
@@ -580,6 +581,28 @@ def run_session(conn, session_id):
         if user.startswith(":file"):
             do_file(user.split(maxsplit=1)[1].strip()
                     if len(user.split(maxsplit=1)) > 1 else "")
+            continue
+
+        # --- The vault repo ---
+        #
+        # Matched before the bare ':wiki' so ':wiki diff' can't be read as an
+        # unknown argument to the status screen. Same shape as ':routine'.
+
+        if user == ":wiki":
+            show_wiki_status()
+            continue
+
+        if user.startswith(":wiki "):
+            rest = user.split(maxsplit=1)[1].strip()
+            verb, _, rest_arg = rest.partition(" ")
+            if verb == "diff":
+                show_wiki_diff(rest_arg.strip())
+            elif verb == "commit":
+                do_wiki_commit(rest_arg.strip())
+            else:
+                console.print(
+                    "Usage: :wiki | :wiki diff [all] | "
+                    ":wiki commit [all] <message>", style="red")
             continue
 
         # --- Chat ---
