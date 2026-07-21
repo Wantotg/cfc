@@ -44,7 +44,7 @@ Infrastructure on the Obsidian vault, not cfc code — no module changes.
   docs and the vault remote.
 - Files: README.md, ROADMAP.md, CHANGELOG.md (+ the vault repo itself)
 - Status: shipped
-- Commit: pending
+- Commit: b8e38db
 
 ## 2026-07-21 — Make retrieval trustworthy (v0.2)
 Recall returned nothing for good queries. The cause was not what the backlog
@@ -72,7 +72,7 @@ thought, and the fix is a change of role rather than a change of number.
 - Files: search.py, chunk.py, tests/test_chunk.py, HANDOVER.md, BACKLOG.md,
   README.md, CLAUDE.md
 - Status: shipped
-- Commit: 56d4f4c
+- Commit: b2acf03
 
 ## 2026-07-21 — Tag versions in git, starting at v0.1
 Documentation only, no behaviour change.
@@ -87,7 +87,7 @@ Documentation only, no behaviour change.
 - Also backfills 4dc416e.
 - Files: CLAUDE.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 0e2e596
 
 ---
 
