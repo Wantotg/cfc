@@ -66,6 +66,8 @@ Then edit `config.py` and set:
 - `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` — the embedding endpoint; defaults to the hosted `bge-m3`, or point it at a local server to self-host
 - `AUTO_EMBED` — index new chat messages into memory after each turn (default on)
 - `SPLASH_FRAME` — which mascot frame the launch splash shows (default `"serious.1"`)
+- `MOUSE_INPUT` — click to position the cursor in the input line (default off; see Usage for the trade-off)
+- `LMS_CLI` — only if `launch.sh` can't find the LM Studio CLI on its own
 
 `config.py` is gitignored and will never be committed — it holds your key and stays local. It's also on the deny list in `paths.py`, so `:attach` and the file tools refuse to read it even though it sits inside the project.
 
@@ -214,9 +216,22 @@ newline. A pasted block keeps its line breaks and doesn't submit early. Ctrl+C
 at the prompt clears the current line (it no longer leaves the session — use
 `:q` or Ctrl-D for that); Ctrl+C during streaming cancels the request.
 
-`:attach` completes paths on Tab, scoped to `ATTACH_ROOTS`. Completion stays
-quiet until you've typed a few characters of a name rather than dumping a whole
-directory.
+**Tab completion** on `:attach`, scoped to `ATTACH_ROOTS`. Type three or more
+characters of a name and press Tab; it stays quiet before that rather than
+dumping a directory.
+
+A fragment **with a slash** navigates — `~/projects/cfc/READ` lists that folder.
+A fragment **without one** searches by name across the roots, breadth-first, so
+a note two folders deep in the vault is found by typing its name. Vault matches
+come before repo matches, because the first candidate is the one Tab takes
+without a second keystroke. Matching is case-insensitive and never offers a path
+`:attach` would then refuse.
+
+**`MOUSE_INPUT`** (in `config.py`, default off) lets you click to position the
+cursor in the input line. The trade is real: while the prompt is live it
+captures the mouse for the whole window, so click-drag selection of the
+conversation above needs Shift held down. Worth it if you edit long multi-line
+prompts more than you copy text out of the scrollback.
 
 ## How it works
 
@@ -333,6 +348,7 @@ python tests/test_empty.py       # empty completions: ask a human, or re-roll an
 python tests/test_chunk.py       # chunk sizing and boundary seeking at both edges
 python tests/test_wikigit.py     # vault git: scope containment, the -z parse, no push
 python tests/test_preflight.py   # the embedder check: dimension guard, never hangs
+python tests/test_complete.py    # :attach completion: vault first, and the jail holds
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

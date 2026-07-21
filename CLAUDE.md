@@ -89,14 +89,20 @@ What exists, in one pass:
   it will call.
 - **Filing** — `mover.py`, `:outbox` / `:file`. A routine proposes a
   destination; code re-validates it and carries it out.
+- **The vault repo** — `wikigit.py`, `:wiki` / `:wiki diff` / `:wiki commit`.
+  Same shape as the mover: code-driven, scoped to `WIKI_DIR` unless you type
+  `all`, no model anywhere near it, and no push.
+- **The launcher** — `launch.sh` + `preflight.py`. Confirms the embedder
+  answers (starting LM Studio and loading bge-m3 if not) before cfc opens, then
+  starts it regardless. `python main.py` is untouched.
 - **`backup.py`** snapshots `~/.cfc/chat.db` on startup. It exists because a
   test guard that checked its path *after* a destructive step deleted the whole
   database. **Anything that writes to a database checks the path before the
   write, not after.**
 - **Tests** — `tests/golden.py` pins the REPL's exact output for every command
   that makes no API call; run `check` after touching those modules, `record`
-  to re-baseline an intended change. Plus ten unit suites. None need an API
-  key. Not covered: the chat turn, `:recall`/`:remember`, `:export`, the
+  to re-baseline an intended change. Plus thirteen unit suites. None need an
+  API key. Not covered: the chat turn, `:recall`/`:remember`, `:export`, the
   picker, `:routine` — those are verified by hand.
 
 ### Versions and the roadmap

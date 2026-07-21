@@ -23,6 +23,41 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Rework `:attach` completion; add MOUSE_INPUT
+v0.3's third piece. Started as "vault before repo" and turned up that
+completion **had not been running at all**.
+- **`complete.py` wired into readline; input moved to prompt_toolkit, which
+  never consults readline.** Tab silently did nothing on the interactive path
+  from the moment the editor landed. Nothing raised, nothing failed, and
+  `install()` kept returning True. It didn't break — it stopped existing.
+- Two front ends over one `_candidates()` now: `AttachCompleter` for
+  prompt_toolkit, `install()` still covering the `input()` fallback. The
+  completer is **injected** via `ui.set_completer()` rather than imported —
+  `ui.py` sits at the bottom of the dependency graph (invariant #4) and
+  `complete.py` pulls in `paths` + `config`.
+- **A slash navigates, a bare name searches.** The old code listed one
+  directory level, and the vault's documents live a level or two down, so it
+  found the repo's top-level files and none of the vault's — which is what
+  "misses vault items" was. Bare fragments now search breadth-first, depth 4,
+  capped at 50 results.
+- **Vault before repo**, identified as the root containing `WIKI_DIR` rather
+  than by a new config key. The first candidate is what Tab takes.
+- `os.scandir` instead of `iterdir`: the file-type flag comes back with the
+  directory read, so recursing costs no extra stat. 0.9s → 0.2s across /mnt/c.
+- Matching is case-insensitive now — the vault has `00 inbox`, the repo has
+  `HANDOVER.md`, and remembering which is which isn't the user's job.
+- `MOUSE_INPUT` (default off) enables click-to-position in the input line. Off
+  by default because it captures the mouse for the whole window while the
+  prompt is live, costing click-drag selection of the scrollback. On in Cas's
+  config to be judged in use. Note it collides with "select text in chat,
+  right-click to copy" in the Beyond-v1.0 pile — same events.
+- `tests/test_complete.py` pins the front end the REPL actually uses, the
+  ordering, and that the jail still holds.
+- Files: complete.py, ui.py, main.py, config.example.py, config.py,
+  tests/test_complete.py (new), README.md, HANDOVER.md, CLAUDE.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-21 — Add a launcher that checks the embedder before opening cfc
 v0.3's second piece. Retires the class of failure where LM Studio simply wasn't
 running — which everything memory-shaped quietly assumes away, and which shows
@@ -54,7 +89,7 @@ up as recall returning nothing rather than as an error.
 - Files: launch.sh (new), preflight.py (new), tests/test_preflight.py (new),
   config.example.py, README.md
 - Status: shipped
-- Commit: pending
+- Commit: 7cd6447
 
 ## 2026-07-21 — Add `:wiki` — review and commit the vault repo from the REPL
 v0.3's first piece. The vault became a git repo in v0.2; this is the window

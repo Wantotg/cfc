@@ -26,7 +26,7 @@ try:
 except ImportError:
     TOOLS_MODELS = []
 
-from ui import console, human_panel, read_input, splash
+from ui import console, human_panel, read_input, set_completer, splash
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
@@ -44,7 +44,7 @@ from agent import agent_turn, render_answer
 from context import chat_context
 from api import stream_response, generate_title, EMPTY_COMPLETION_RETRIES
 from backup import safe_backup
-from complete import install as install_completion
+from complete import install as install_completion, make_completer
 from export import export_session, safe_export
 from hub import list_sessions, pick_session
 from commands import (
@@ -80,7 +80,11 @@ def repl(session_id=None):
     so the hub is the one way out.
     """
     conn = db()
+    # Two completion front ends for two readers: prompt_toolkit on a real
+    # terminal, readline behind the input() fallback. See complete.py — the
+    # readline one silently stopped running when the editor landed.
     install_completion()
+    set_completer(make_completer())
 
     while True:
         if session_id is None:

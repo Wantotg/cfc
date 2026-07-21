@@ -281,6 +281,139 @@ Its one real consumer is `main.py`'s empty-completion handler. With a human: ask
 
 ---
 
+## The vault repo: `:wiki`
+
+`wikigit.py` + `show_wiki_status`/`show_wiki_diff`/`do_wiki_commit`. The vault
+is a git repo (v0.2); this is the REPL's window onto it. **Same shape as
+`mover.py`, deliberately:** code-driven, scoped to a fixed root, and the model
+cannot reach it — there is no tool schema and no dispatch path. Committing has a
+right answer, so it is code.
+
+```
+:wiki                      status — wiki changes listed, the rest of the vault counted
+:wiki diff [all]           the diff
+:wiki commit [all] <msg>   stage + commit everything in scope
+```
+
+**Scope defaults to `WIKI_DIR` and widens only on the literal word `all`.** The
+wiki corpus is what recall reads, so it is what `:wiki` watches; the rest of the
+vault (`02 areas` holds medical material) is reachable but has to be asked for.
+The status screen *counts* the out-of-scope changes rather than hiding them —
+"wiki db: clean" must not read as "the vault is clean", which is its usual state.
+
+Four things are load-bearing:
+
+1. **The commit carries the pathspec, not just the `add`.** `git add -- <spec>`
+   alone leaves the following `git commit` free to sweep up anything already
+   staged elsewhere in the vault. Both halves take the spec, so the commit holds
+   scope and nothing else whatever state something outside cfc left the index in.
+   `tests/test_wikigit.py` stages a file outside the scope and asserts it
+   survives — and that assertion was verified by breaking the property on purpose.
+2. **Repo discovery anchors at `WIKI_DIR`, never the process cwd.** cfc runs
+   inside *its own* git repo, so a cwd-relative `git -C .` would diff and commit
+   cfc's source tree while calling it the wiki. Containment is then checked
+   rather than assumed, because `rev-parse` walks upward and a misconfigured
+   `WIKI_DIR` could land on an unrelated ancestor repo.
+3. **`--porcelain -z`.** Without `-z`, git quotes and escapes any path with a
+   space, and *every* path in this vault has one (`03 resources/wiki db/…`). The
+   quoted form is the normal case here, not the exotic one.
+4. **There is no push, and the module says so after every commit.** The vault
+   repo has no remote; whether `02 areas` goes to someone else's server is parked
+   at v1.0. A push that silently no-ops today is one that silently starts working
+   the day a remote appears — the wrong way for that decision to get made. A test
+   reads the git subcommands off the AST and asserts the set, so adding one fails
+   loudly rather than sliding in.
+
+Untracked files are **listed by name, not diffed**: they have no baseline, and
+the alternative (`git add --intent-to-add`) mutates the index as a side effect of
+*looking*. A read command must not stage anything, and a test pins that.
+
+`wikigit.py` owns no console — same discipline as `runner.py`. Rendering is in
+`commands.py`, so a future headless caller isn't dragging rich behind it.
+
+---
+
+## The launcher and the preflight
+
+`launch.sh` → `preflight.py` → `main.py`. **`python main.py` still works and is
+untouched**; the launcher is what the desktop shortcut runs.
+
+The problem it solves is an asymmetry, not an inconvenience. Everything
+memory-shaped assumes LM Studio is up with bge-m3 loaded, and **none of it says
+so when it isn't**: auto-embed is best-effort and warns quietly by design,
+`:recall` returns nothing, and "nothing" is indistinguishable from "memory has no
+answer" — the same silent-failure shape standing decision #4 flags for zero-hit
+recall. One line at launch turns it into an event.
+
+- **The probe is a real `/embeddings` POST**, not a GET on `/v1/models`. The
+  model list reports what LM Studio has on *disk*, so it answers happily while
+  the model is unloaded and the thing cfc actually needs still fails. Test what
+  you need, not a proxy for it.
+- **It checks the vector width against `vec_chunks`'s `float[1024]`.** A
+  wrong-sized embedder does not raise — it *inserts*, and the damage surfaces
+  weeks later as slightly worse ranking with no event to trace back to. This is
+  the same class of bug as the mislabelled `MAX_DISTANCE` corpus.
+- **It never blocks the launch.** Any failure prints why and cfc opens anyway;
+  chat is fine without an embedder. `__main__` always exits 0, so a future
+  `set -e` in a wrapper cannot turn a degraded embedder into a refusal to start.
+- **Endpoint comes from `config.py`, never a second copy.** A launcher that
+  reports a healthy embedder cfc can't reach is exactly what duplication buys.
+- Fixes what it can: server off → `lms server start -p <port> --bind 0.0.0.0`
+  (the "serve on local network" toggle); model not loaded → `lms load -y`. **The
+  `-y` is not optional** — without it the CLI opens an interactive picker, and a
+  launcher that stops to ask a question hangs behind a terminal nobody is
+  watching. Both are parsed from `--json`, not scraped.
+- **Only re-probes when something was actually changed.** On WSL a dead local
+  port hangs to the timeout rather than refusing, so a reflexive second probe
+  cost 20s in front of an app that hadn't opened.
+
+Not verified by hand: the `server start` path, because testing it means stopping
+a running server. The `lms` invocation is right per its `--help`; treat it as
+unproven until it fires for real.
+
+---
+
+## `:attach` completion had silently stopped working
+
+Worth recording as a failure mode, not just a fix. `complete.py` wired itself
+into **readline**. Input then moved to `prompt_toolkit`, which implements its own
+line editing and **never consults readline** — so completion stopped happening on
+the interactive path. Nothing raised, no test covered it, and `install()` kept
+returning True. It didn't break; it quietly stopped existing.
+
+Now there are two front ends over one `_candidates()`: `AttachCompleter`
+(prompt_toolkit) and `install()` (readline, still live behind the `input()`
+fallback for piped stdin). `tests/test_complete.py` pins the one the REPL
+actually uses.
+
+- **The completer is injected, not imported.** `ui.set_completer()` takes an
+  opaque object from `main.py`; `ui.py` must not import `complete.py`, which
+  pulls in `paths` + `config` — invariant #4 puts `ui` at the bottom of the graph.
+- **A slash means navigate, a bare name means search.** The old code only ever
+  listed one directory level, and the vault's documents all live a level or two
+  down (`00 inbox/`, `03 resources/wiki db/`) — so it found the repo's top-level
+  files and none of the vault's, which read as the vault being skipped. A bare
+  fragment now searches breadth-first, depth-capped.
+- **Vault before repo.** Identified as the root containing `WIKI_DIR` rather than
+  by a new config key — the vault is already defined once, by where the wiki
+  lives. The first candidate is what Tab takes without a second keystroke.
+- **`os.scandir`, not `iterdir`** — it carries the file-type flag back from the
+  directory read, so recursing costs no extra stat per entry. Across `/mnt/c`
+  that is 0.9s → 0.2s on this vault; a stat per file over the Windows bridge is
+  not cheap and there are several hundred.
+- Completion remains **a courtesy, not a control**. `do_attach`'s `path_guard` is
+  the boundary and runs regardless of what was typed or completed.
+
+**`MOUSE_INPUT`** (config, default False) enables prompt_toolkit's mouse support
+— click to position the cursor. Off by default because of a trade, not caution:
+it puts the terminal into a reporting mode that captures clicks and drags for the
+whole window while the prompt is live, so it costs ordinary click-drag selection
+of the scrollback (Shift still works in most terminals). Note this collides with
+"select text in chat, right-click to copy" in the Beyond-v1.0 pile; they want the
+same events.
+
+---
+
 ## Load-bearing invariants (don't break these)
 
 1. **Any DB write checks its path *before* the write, not after.** A test guard that ran its assertion *after* a destructive `unlink()` once deleted the real database. `backup.py` and `tests/golden.py` both assert-not-real before touching anything.
@@ -299,7 +432,7 @@ Its one real consumer is `main.py`'s empty-completion handler. With a human: ask
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
-Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound). 435 assertions across 11 suites. None need an API key.
+Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds). 502 assertions across 14 suites. None need an API key.
 
 `test_chunk` exists because the chunker is the one part of the memory layer whose output silently becomes permanent: a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking. The mid-word bug sat in `BACKLOG.md` for six days precisely because nothing failed.
 
@@ -326,7 +459,10 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `routines.py` | the `Routine` object, its markdown file store, and the append-only run log |
 | `runner.py` | `run_routine` — one routine's execution; the headless entry point in all but name |
 | `mover.py` | filing a proposal out of the outbox: `plan`/`commit`/`drop`, destination re-validation |
-| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `splash` + `SPLASH_FRAMES` |
+| `wikigit.py` | the vault repo: `status`/`diff`/`commit`, scoped to `WIKI_DIR` unless widened. Owns no console |
+| `preflight.py` | the launcher's embedder check — real POST, dimension guard, never blocks the launch |
+| `launch.sh` | what the desktop shortcut runs: repo + venv + preflight, then `main.py` |
+| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer`, `splash` + `SPLASH_FRAMES` |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
 | `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, vault/prompt/persona dirs — **gitignored** |
 
@@ -334,7 +470,16 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 
 ## Current state & open threads
 
-- **Just landed (v0.2, "retrieval you can trust"):** the floor rebuilt as a lint filter at 1.08 after the 1.024 provenance bug was traced (see Retrieval tuning — the short version is that 1.024 was an Anthropic-corpus number wearing a wiki label, and nothing had regressed); `search()`'s over-fetch window now widens until it is provably deep enough, instead of a flat `k*4` that could return **zero** wiki hits purely because the window filled with chat chunks; `chunk.py` seeks to word boundaries at both edges, with the corpus re-chunked and re-embedded; `tests/test_chunk.py` added. The vault also became a git repo this session — that is infrastructure, not cfc code, and lives at `<vault>/.git` → `~/vaults/wiki.git` via a `gitdir:` pointer.
+- **Just landed (v0.3, "the shell"):** the parts around the app rather than in
+  it. `:wiki` (status/diff/commit over the vault repo, scoped to the wiki
+  corpus); `launch.sh` + `preflight.py` (the embedder is checked, and started,
+  before cfc opens); and the `:attach` completion rework — which turned up that
+  completion **had not been running at all** since prompt_toolkit replaced
+  `input()`, because `complete.py` only ever wired into readline. Three sections
+  above cover each. `MOUSE_INPUT` added (default off; on in Cas's config, to be
+  judged in use). Not yet done in this version: nothing outstanding, but the
+  `lms server start` path is unverified by hand — see the launcher section.
+- **Before that (v0.2, "retrieval you can trust"):** the floor rebuilt as a lint filter at 1.08 after the 1.024 provenance bug was traced (see Retrieval tuning — the short version is that 1.024 was an Anthropic-corpus number wearing a wiki label, and nothing had regressed); `search()`'s over-fetch window now widens until it is provably deep enough, instead of a flat `k*4` that could return **zero** wiki hits purely because the window filled with chat chunks; `chunk.py` seeks to word boundaries at both edges, with the corpus re-chunked and re-embedded; `tests/test_chunk.py` added. The vault also became a git repo this session — that is infrastructure, not cfc code, and lives at `<vault>/.git` → `~/vaults/wiki.git` via a `gitdir:` pointer.
 - **Before that:** routines, sessions 2 **and 3** of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `:routine` / `:routine new` / `:routine <name>`, the run log, and `test_routines`. Then `mover.py` + `:outbox` / `:file`, verified end to end: a throwaway routine proposes a file into the outbox, `:file` re-validates the destination and moves it. **The routines handover is now fully discharged.** The scheduler is the next piece and is deferred by design, not forgotten — `run_routine` is already the entry point it will call.
 - **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
 - **Cosmetic backlog:** tool-path reasoning prints in full (not tail-limited like the live panel) and once per loop step — can bury the answer on a verbose model. See `BACKLOG.md`.

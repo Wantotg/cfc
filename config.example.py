@@ -144,6 +144,16 @@ MOVE_ROOTS = ()             # e.g. (Path("<vault>"),)
 # empty if you have no wiki corpus.
 WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
 
+# --- terminal input --------------------------------------------------------
+# Let the mouse position the cursor in the input line. Off by default, and the
+# reason is a trade rather than caution: prompt_toolkit's mouse support puts
+# the terminal into a reporting mode that captures clicks and drags for the
+# whole window while the prompt is live, so click-to-position costs you
+# ordinary click-drag selection of the conversation scrolled above it. Most
+# terminals still select with Shift held down. Turn it on if you click into
+# long multi-line prompts more often than you copy text out of the scrollback.
+MOUSE_INPUT = False
+
 # --- splash ----------------------------------------------------------------
 # Which mascot frame the launch splash shows: "<mood>.<n>", 1-based, from
 # ui.SPLASH_FRAMES ("serious" and "chilling", three frames each). The art

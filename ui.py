@@ -272,6 +272,39 @@ def make_snippet(content, query, context=40):
 _prompt_session = None
 
 
+# The `:attach` completer, injected by main.py via set_completer(). It is not
+# imported here: ui.py sits at the bottom of the dependency graph (see the
+# module header) and complete.py pulls in paths + config, so importing it would
+# put a cycle where the invariant says there is none. ui.py holds it as an
+# opaque object and never looks inside.
+_completer = None
+
+
+def set_completer(completer):
+    """Give the line editor a prompt_toolkit Completer. Call before the first
+    read_input(); the session is built once and cached."""
+    global _completer
+    _completer = completer
+
+
+def _mouse_enabled():
+    """Whether to let the terminal's mouse position the cursor.
+
+    Off by default, and that is not timidity. prompt_toolkit's mouse support
+    puts the terminal in a reporting mode that captures clicks and drags for
+    the whole window while the prompt is live — so click-to-position costs you
+    ordinary click-drag text selection of the conversation scrolled above,
+    which is the more common gesture by a distance. Most terminals still allow
+    selection with Shift held, but a feature that silently changes what the
+    mouse does everywhere else should be opt-in.
+    """
+    try:
+        from config import MOUSE_INPUT
+        return bool(MOUSE_INPUT)
+    except ImportError:
+        return False
+
+
 def _make_prompt_session():
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
@@ -294,7 +327,15 @@ def _make_prompt_session():
     # erase_when_done wipes the "you> <text>" line once Enter is hit; the caller
     # re-echoes it in the bordered human_panel, so without this the message shows
     # twice — once raw, once framed.
-    return PromptSession(multiline=True, key_bindings=kb, erase_when_done=True)
+    #
+    # complete_while_typing is off: completion is Tab-triggered on purpose, to
+    # match complete.py's MIN_CHARS rule. A menu that opens as you type would
+    # pop up over the conversation on every ':attach ~/p' keystroke, and the
+    # candidate list is a directory scan across /mnt/c, which is slow enough
+    # that doing it per keypress would be felt.
+    return PromptSession(multiline=True, key_bindings=kb, erase_when_done=True,
+                         completer=_completer, complete_while_typing=False,
+                         mouse_support=_mouse_enabled())
 
 
 def read_input(prompt="you> "):
