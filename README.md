@@ -20,7 +20,9 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **File attachments** — inject a local text file into a session; it persists and comes back on reopen
 - **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, behind an approval gate. It can also `write_file`, but only into one narrow write root that cannot reach your code
 - **Token tracking** — live context-usage bar with warnings as the window fills
+- **Vault git from the REPL** — review and commit hand-edited wiki pages with `:wiki diff` / `:wiki commit`, scoped to the wiki corpus unless you widen it
 - **Rolling backups** — the database is snapshotted on startup, automatically
+- **A launcher that checks its dependencies** — `launch.sh` confirms the embedder is up (starting LM Studio and loading the model if not) before opening the app, so memory failing silently stops being a thing
 
 ## Requirements
 
@@ -70,16 +72,75 @@ Then edit `config.py` and set:
 **4. Run**
 
 ```bash
-python main.py
+python main.py          # straight in
+./launch.sh             # venv + an embedder check first (see Usage)
 ```
 
 Optional shell alias for convenience:
 
 ```bash
-alias cfc='cd ~/projects/cfc && source .venv/bin/activate && python main.py'
+alias cfc='~/projects/cfc/launch.sh'
 ```
 
 ## Usage
+
+`python main.py` works and always will. `./launch.sh` is the same thing with a
+**preflight check** in front of it: it activates the venv, then confirms the
+embedder actually answers before opening the app.
+
+That check exists because of an asymmetry. Everything memory-shaped — `:recall`,
+`:remember`, `:updatedb`, the per-turn auto-embed — assumes LM Studio is running
+with bge-m3 loaded, and when it isn't, none of them say so. Auto-embed warns
+quietly by design; recall just returns nothing, which looks exactly like "memory
+has nothing on that". The preflight turns a silent degradation into one line at
+launch:
+
+```
+  embedder: http://localhost:1233/v1
+  ✓ embedder ready — text-embedding-baai-bge-m3-568m (1024-d)
+```
+
+If the LM Studio server is off it starts it; if the server is up but the model
+isn't loaded it loads it; if it can't fix things it says why and **starts cfc
+anyway**. Chat works fine without an embedder, and a launcher that refuses to
+open the app because a subsystem is down is worse than the problem it's
+guarding. It also checks the vector width against `vec_chunks`'s `float[1024]` —
+a wrong-sized embedder doesn't error, it inserts, and you'd find out weeks later
+as slightly worse ranking.
+
+### A Windows shortcut
+
+To open cfc from the taskbar or desktop:
+
+1. Right-click the desktop → **New → Shortcut**.
+2. For the location, paste this — one line, adjusting the distro name if yours
+   isn't `Ubuntu`:
+
+   ```
+   wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
+   ```
+
+3. Name it `cfc`. Finish.
+4. Optional, and worth it: right-click the shortcut → **Properties** → **Change
+   Icon**, and pick something. Then right-click → **Pin to taskbar**.
+
+`bash -lc` gives you a login shell, so your normal environment is loaded.
+`--cd ~` keeps the working directory off `/mnt/c`, which matters because
+Windows-side paths are slow to stat from WSL — `launch.sh` finds the repo from
+its own location, so the starting directory doesn't otherwise matter.
+
+To get **Windows Terminal** instead of the plain console window (better fonts,
+better colours, and the box-drawing characters render properly):
+
+```
+wt.exe -p Ubuntu wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
+```
+
+If the window closes instantly on a crash, that's the console exiting with the
+process — `launch.sh` already holds it open on a non-zero exit, so anything that
+vanishes silently exited cleanly.
+
+---
 
 Launch shows the **splash** — the mascot, once per run. **Enter** continues,
 **Esc** quits. It's skipped entirely when input isn't a terminal, so piping into
@@ -138,6 +199,9 @@ still returns to the hub.
 | `:file <n>` | File one proposal at its destination |
 | `:file all` | File every valid proposal |
 | `:file <n> drop` | Discard a proposal — moved aside, not deleted |
+| `:wiki` | Vault repo status — wiki changes listed, the rest counted |
+| `:wiki diff [all]` | Show the diff; `all` widens past the wiki to the vault |
+| `:wiki commit [all] <msg>` | Stage and commit everything in scope |
 | `:tokens` | Detailed context-usage breakdown |
 | `:export [n]` | Export a session to Obsidian (this one by default) |
 | `:config` | Show current configuration (key masked) |
@@ -238,6 +302,8 @@ Known rough edges live in `BACKLOG.md`.
 | `routines.py` | the routine object, its file store, and the run log |
 | `runner.py` | running one routine — the headless entry point in all but name |
 | `mover.py` | filing a proposal out of the outbox: re-validates the destination, or refuses |
+| `wikigit.py` | the vault repo: status, diff and commit, scoped to the wiki by default |
+| `preflight.py` | the launcher's embedder check — is LM Studio up with bge-m3 loaded? |
 | `complete.py` | Tab completion for `:attach` |
 | `hub.py` | the session browser and picker |
 | `db.py` | connection, schema, every query |
@@ -246,6 +312,7 @@ Known rough edges live in `BACKLOG.md`.
 | `backup.py` | rolling snapshots of the database |
 | `ui.py` | the shared console, presentation helpers, the line editor, and the splash |
 | `config.py` | settings — gitignored |
+| `launch.sh` | preflight, then cfc — what the desktop shortcut runs |
 
 The memory layer is separate: `import_wiki.py` (and `import_anthropic.py`), `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.
 
@@ -263,6 +330,9 @@ python tests/test_litter.py      # the litter filter's marker coupling
 python tests/test_routines.py    # the routine file round-trip, scope refusal, run log
 python tests/test_mover.py       # filing: destination re-validation, refusals, atomicity
 python tests/test_empty.py       # empty completions: ask a human, or re-roll and give up
+python tests/test_chunk.py       # chunk sizing and boundary seeking at both edges
+python tests/test_wikigit.py     # vault git: scope containment, the -z parse, no push
+python tests/test_preflight.py   # the embedder check: dimension guard, never hangs
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

@@ -49,6 +49,12 @@ EMBED_KEY   = API_KEY
 # False and running :updatedb manually. A failed embed never breaks a chat turn.
 AUTO_EMBED = True
 
+# Where the `lms` CLI lives, for launch.sh's preflight check (it starts the
+# LM Studio server and loads EMBED_MODEL if they aren't already up). Leave
+# unset and preflight.py finds it: `lms` on PATH for a native install, or
+# /mnt/c/Users/*/.lmstudio/bin/lms.exe from WSL. Only set this if that fails.
+# LMS_CLI = "/mnt/c/Users/you/.lmstudio/bin/lms.exe"
+
 # --- :attach ---------------------------------------------------------------
 # Files can only be attached from inside one of ATTACH_ROOTS. A path passes if
 # it's inside any of them. Paths are resolved before the check, so ../ and

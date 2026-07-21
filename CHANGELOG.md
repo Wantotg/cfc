@@ -23,6 +23,39 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — Add a launcher that checks the embedder before opening cfc
+v0.3's second piece. Retires the class of failure where LM Studio simply wasn't
+running — which everything memory-shaped quietly assumes away, and which shows
+up as recall returning nothing rather than as an error.
+- `launch.sh` — finds the repo from its own location (a Windows shortcut starts
+  in an unpredictable cwd), activates the venv, runs the preflight, starts cfc.
+  Holds the window open on a non-zero exit only, so a crash is readable.
+- `preflight.py` — probes the embedder with a real `/embeddings` POST rather
+  than a GET on `/v1/models`: the model list reports what LM Studio has on
+  *disk*, so it answers happily while the model is unloaded and the thing cfc
+  needs still fails. Server off → `lms server start`; model not loaded →
+  `lms load -y`. `-y` matters, since without it the CLI opens an interactive
+  picker and a launcher that asks a question is a launcher that hangs.
+- **It checks the vector width against `vec_chunks`'s `float[1024]`.** A
+  wrong-sized embedder doesn't raise, it inserts — the damage would surface
+  weeks later as slightly worse ranking with no event to trace it to.
+- **It never blocks the launch.** Any failure prints why and starts cfc anyway;
+  chat works fine without an embedder. `__main__` always exits 0 so a future
+  `set -e` wrapper can't turn a degraded embedder into a refusal to open.
+- Reads the endpoint from `config.py` rather than carrying a second copy — a
+  launcher reporting a healthy embedder that cfc can't reach is the failure
+  that duplication buys you. Optional `LMS_CLI` override; otherwise the CLI is
+  found on PATH or globbed from `/mnt/c/Users/*/.lmstudio/bin/lms.exe`.
+- Only re-probes when something was actually changed. On WSL a dead local port
+  hangs to the timeout rather than refusing, so a pointless second probe cost
+  20s in front of an app that hadn't opened; the failure path is 8.7s now.
+- README gains Windows shortcut instructions (plain console and Windows
+  Terminal) and a Usage section explaining what the preflight is for.
+- Files: launch.sh (new), preflight.py (new), tests/test_preflight.py (new),
+  config.example.py, README.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-21 — Add `:wiki` — review and commit the vault repo from the REPL
 v0.3's first piece. The vault became a git repo in v0.2; this is the window
 onto it, so hand-edited pages can be reviewed and committed without leaving
@@ -50,7 +83,7 @@ anywhere near it and no tool schema.
   (`--intent-to-add`) mutates the index as a side effect of looking.
 - Files: wikigit.py (new), commands.py, main.py, tests/test_wikigit.py (new)
 - Status: shipped
-- Commit: pending
+- Commit: c1e1681
 
 ## 2026-07-21 — Put the vault under git; document it
 Infrastructure on the Obsidian vault, not cfc code — no module changes.
