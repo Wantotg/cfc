@@ -88,7 +88,7 @@ time, unlike the litter prune, which only deleted).
 
 ---
 
-## ~~`longcat-2.0` is in MODELS but can't chat~~ — CLOSED
+## `longcat-2.0` is in MODELS but can't chat — ~~CLOSED~~ re-opened
 
 **Found:** 2026-07-15, while verifying which models do tool calling.
 **Closed:** 2026-07-21, v0.4. Dropped from `MODELS`, `MODEL_LIMITS` and the
@@ -99,6 +99,8 @@ The observation underneath it is still true and is *not* tracked as work:
 **nothing validates that a model in `MODELS` can actually be chatted with.**
 A wrong name fails at the first message with a provider 400, which is loud and
 immediate, so it doesn't need a guard.
+
+Edit by Cas: even with longcat gone, we still need to fix the underlying issue.
 
 ---
 
