@@ -18,6 +18,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 
 from config import API_BASE, API_KEY, MODEL, VAULT_PATH, AUTO_EXPORT
 
@@ -85,7 +86,8 @@ try:
 except ImportError:
     TOOLS_MAX_CALLS_PER_TURN = 8
 
-from ui import console, make_bar, make_snippet
+from ui import (console, context_style, context_thresholds, make_bar,
+                make_snippet)
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
 from paths import path_guard, PathError
@@ -342,13 +344,16 @@ def show_token_stats(conn, session_id, current_model,
 
         console.print(make_bar(pct, width=40))
 
-        if pct > 80:
-            console.print("\nContext is nearly full.",
+        # Tied to the same thresholds as the bar's colour. A red bar with no
+        # word said about it reads as a rendering bug, not as reassurance.
+        green_max, orange_max = context_thresholds()
+        if pct > orange_max:
+            console.print("\nContext is getting long.",
                           style="yellow")
             console.print("Consider starting a new session "
                           "(:new)")
-        elif pct > 60:
-            console.print("\nContext is getting full.",
+        elif pct > green_max:
+            console.print("\nContext is filling up.",
                           style="yellow")
             console.print("New session soon if responses "
                           "degrade.")
@@ -375,6 +380,193 @@ def show_token_stats(conn, session_id, current_model,
     console.print()
 
 
+# ── the chat screen ──────────────────────────────────────────────────
+# What you see on entering a session. Two rules shape it, both from v0.4:
+#
+# 1. **State, don't warn.** "No system prompt attached" is a fact about this
+#    session, not a problem — most sessions don't want one. It is printed in
+#    the same voice as the rows that do have a value, and followed by what is
+#    available, because the reason to mention it at all is to make attaching
+#    one a single keystroke away rather than a trip through `:prompts`.
+# 2. **A curated list, not all of them.** The full command dump was forty-odd
+#    lines and scrolled the session header off the screen every time you opened
+#    a conversation — so the thing it existed to tell you was the thing it hid.
+#    Nine commands here, `:help` for the rest.
+
+def _names_in(directory):
+    """Sorted stems of the .md files in a prompt/persona folder, or []. Never
+    raises: these are vault paths over the /mnt/c bridge and a missing or
+    unmounted folder must not stop a session opening."""
+    try:
+        return sorted(p.stem for p in Path(directory).glob("*.md"))
+    except (OSError, TypeError):
+        return []
+
+
+def _header_row(label, value, style=None):
+    line = Text(f"  {label:<16}", style="dim")
+    line.append(value, style=style or "")
+    console.print(line)
+
+
+def _strip_md(name):
+    """Display-only, same as the hub's: the .md is noise in a status line.
+    The stored name keeps its extension and every other command still shows
+    it."""
+    if name and name.endswith(".md"):
+        return name[:-3]
+    return name or ""
+
+
+def print_session_header(conn, session_id, model, title,
+                         system_prompt_name, persona_name):
+    """The chat screen's status block."""
+    heading = Text(f"\nSession #{session_id}", style="bold")
+    heading.append(f"  ·  {model}  ·  ", style="dim")
+    heading.append(title or "(untitled)")
+    console.print(heading)
+
+    if system_prompt_name:
+        _header_row("System prompt", _strip_md(system_prompt_name), "magenta")
+    else:
+        available = ", ".join(_names_in(get_prompts_dir())) or "none found"
+        _header_row("System prompt", f"not set — available: {available}", "dim")
+
+    if persona_name:
+        _header_row("Persona", _strip_md(persona_name), "green")
+    else:
+        available = ", ".join(_names_in(get_personas_dir())) or "none found"
+        _header_row("Persona", f"not set — available: {available}", "dim")
+
+    items = list_attachments(conn, session_id)
+    if items:
+        est = sum(a.get("est_tokens", 0) for a in items)
+        names = ", ".join(a.get("name", "?") for a in items[:3])
+        if len(items) > 3:
+            names += f", +{len(items) - 3} more"
+        _header_row("Attached", f"{names}  (~{est:,} tokens)", "cyan")
+
+    tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
+    limit = MODEL_LIMITS.get(model)
+    if ctx and limit:
+        pct = ctx / limit * 100
+        _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
+                    context_style(pct))
+    elif ctx:
+        _header_row("Context", f"{ctx:,} tokens", "dim")
+    else:
+        _header_row("Context", "empty — no messages yet", "dim")
+
+    # Once, here — not on every turn. A warning printed every turn is a
+    # warning nobody reads.
+    if TOOLS_ENABLED and model not in TOOLS_MODELS:
+        _header_row("Tools", f"{model} is not in TOOLS_MODELS — off", "yellow")
+
+
+# (command, what it does). The nine that earn a place on the screen you look at
+# most; everything else is one `:help` away.
+_CORE_COMMANDS = [
+    (":help", "every command"),
+    (":q", "back to the session list"),
+    (":new", "start a new session"),
+    (":prompt name", "set the system prompt  (:prompts to list)"),
+    (":persona name", "set the persona  (:personas to list)"),
+    (":attach path", "attach a local text file"),
+    (":remember q", "pull matching excerpts into this conversation"),
+    (":tokens", "token usage for this session"),
+    ("Alt+Enter", "insert a newline  (Enter sends)"),
+]
+
+_ALL_COMMANDS = [
+    ("session", [
+        (":q", "back to the session list"),
+        (":new", "start a new session"),
+        (":list", "show every session, routine runs included"),
+        (":title", "show this session's title"),
+        (":title 5 Name", "rename session #5"),
+        (":delete", "delete this session (with confirm)"),
+        (":delete 5", "delete session #5 (with confirm)"),
+        (":export", "export this session to Obsidian"),
+        (":export 5", "export session #5"),
+        (":tokens", "token usage for this session"),
+        (":config", "show all settings"),
+    ]),
+    ("prompts & personas", [
+        (":prompts", "list available system prompt files"),
+        (":prompt", "show the current system prompt"),
+        (":prompt name", "set the system prompt from 'name.md'"),
+        (":prompt off", "remove the system prompt"),
+        (":personas", "list available persona files"),
+        (":persona", "show the current persona"),
+        (":persona name", "set the persona from 'name.md'"),
+        (":persona off", "remove the persona"),
+    ]),
+    ("memory", [
+        (":recall q", "ask your wiki a question (cited answer)"),
+        (":remember q", "pull matching excerpts into this conversation"),
+        (":forget", "drop the last injected excerpts"),
+        (":updatedb", "index anything not yet embedded"),
+    ]),
+    ("files", [
+        (":attach path", "attach a local text file (persistent)"),
+        (":attached", "list attachments in this session"),
+        (":detach 1", "remove attachment #1"),
+        (":outbox", "review filing proposals"),
+        (":file 1", "carry out proposal #1"),
+    ]),
+    ("wiki & routines", [
+        (":wiki", "wiki repo status"),
+        (":wiki diff [all]", "the diff"),
+        (":wiki commit [all] msg", "stage and commit in scope"),
+        (":routine", "list routines"),
+        (":routine name", "run one now"),
+        (":routine new", "create one"),
+    ]),
+    ("models & tools", [
+        (":model", "show the current model"),
+        (":model name", "switch to model 'name'"),
+        (":models", "list configured models"),
+        (":tools", "show tool state for this session"),
+        (":tools on|off", "toggle tools for this session"),
+    ]),
+    ("tags & search", [
+        (":grep word", "search all messages for 'word'"),
+        (":tag python", "add tag 'python' to this session"),
+        (":tag 3 python", "add tag to session #3"),
+        (":tags", "show tags on this session"),
+        (":untag python", "remove tag from this session"),
+        (":taglist", "show all tags with session counts"),
+    ]),
+    ("editing", [
+        ("Alt+Enter", "insert a newline (Enter sends)"),
+        ("Ctrl-C", "cancel the current line, stay in the session"),
+        ("Ctrl-D", "leave the session (on an empty line)"),
+    ]),
+]
+
+
+def print_core_commands():
+    """The short list, printed on entering a session."""
+    console.print()
+    for cmd, what in _CORE_COMMANDS:
+        line = Text(f"  {cmd:<15}", style="cyan")
+        line.append(what, style="dim")
+        console.print(line)
+    console.print()
+
+
+def print_help():
+    """`:help` — everything, grouped."""
+    console.print()
+    for group, items in _ALL_COMMANDS:
+        console.print(f"  {group}", style="bold")
+        for cmd, what in items:
+            line = Text(f"    {cmd:<24}", style="cyan")
+            line.append(what, style="dim")
+            console.print(line)
+        console.print()
+
+
 def context_bar(conn, session_id, model):
     """Return a short context string for display, or empty."""
     _, _, ctx = get_context_info(conn, session_id, model)
@@ -396,8 +588,8 @@ def print_context_bar(model, tok_in, tok_out):
     pct = ctx / limit * 100
     console.print()
     console.print(make_bar(pct, ctx=ctx, limit=limit))
-    if pct > 80:
-        console.print("Context nearly full -- consider :new",
+    if pct > context_thresholds()[1]:
+        console.print("Context getting long -- consider :new",
                       style="yellow")
 
 

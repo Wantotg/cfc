@@ -48,15 +48,46 @@ def _render_call(call):
     console.print(f"  → {fn.get('name')}({pretty})", style="dim")
 
 
+# How much of a step's reasoning to show on the tool path. This was full text
+# and it buried the answer: a tool turn prints one of these *per loop
+# iteration*, so a verbose thinking model could push its own conclusion off the
+# top of the scrollback. The streaming path tail-limits for a different reason
+# (keeping a live region still); here it is purely about not drowning the thing
+# you asked for.
+#
+# Larger than the live panel's 12 because this is scrollback, not a jumping
+# region — you can read it. The head *and* tail are kept rather than just the
+# tail: on the tool path the opening lines are usually "what am I about to do",
+# which is the part worth seeing next to the tool call it explains.
+REASONING_HEAD_LINES = 6
+REASONING_TAIL_LINES = 10
+
+
+def _elide(reasoning):
+    """Middle-elide to head + tail lines, or return it unchanged if short."""
+    lines = reasoning.splitlines()
+    keep = REASONING_HEAD_LINES + REASONING_TAIL_LINES
+    if len(lines) <= keep + 1:   # +1: eliding one line saves nothing
+        return reasoning
+    hidden = len(lines) - keep
+    return "\n".join(
+        lines[:REASONING_HEAD_LINES]
+        + [f"    … {hidden} more lines of reasoning …"]
+        + lines[-REASONING_TAIL_LINES:]
+    )
+
+
 def _render_reasoning(reasoning):
     """The model's thinking for this step, in the same dim panel the streaming
-    path uses. Shown full, not tail-limited: unlike the live panel there's no
-    region to keep from jumping — this prints once, complete, into scrollback,
-    like the tool call/result lines below it."""
+    path uses, middle-elided so several steps' worth can't bury the answer.
+
+    Nothing is lost that was ever kept: reasoning is presentation-only on both
+    paths — never persisted, never replayed to the API. This changes what is
+    shown, not what exists."""
     if not (reasoning or "").strip():
         return
     console.print()
-    console.print(ai_reasoning_panel(Text(reasoning, style="dim italic")))
+    console.print(ai_reasoning_panel(Text(_elide(reasoning), style="dim italic")))
 
 
 def _render_result(result):

@@ -66,6 +66,7 @@ Then edit `config.py` and set:
 - `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` — the embedding endpoint; defaults to the hosted `bge-m3`, or point it at a local server to self-host
 - `AUTO_EMBED` — index new chat messages into memory after each turn (default on)
 - `SPLASH_ART` — which pixel art the launch splash shows: a name from `assets/`, a list to pick from at random, or `"*"` for all of them (default `"*"`)
+- `CONTEXT_GREEN_MAX` / `CONTEXT_ORANGE_MAX` — when the context bar turns orange and red, as a percent of the model's claimed limit (default 15 / 35)
 - `MOUSE_INPUT` — click to position the cursor in the input line (default off; see Usage for the trade-off)
 - `LMS_CLI` — only if `launch.sh` can't find the LM Studio CLI on its own
 
@@ -158,8 +159,12 @@ pip install -r requirements-dev.txt          # Pillow, dev-time only
 python dev/bake_splash.py cat.png mittens    # → assets/splash_mittens.raw
 ```
 
-Past it is the **hub**, listing your 20 most recent sessions with their id, last
-update, message count, title, system prompt and persona. From there:
+Past it is the **hub**, listing your 10 most recent **chats** — id, last
+update, message count, how full the context is, title, system prompt and
+persona — and, below that, your routines with a traffic light on when each last
+ran (green under a day, orange under two, red beyond). Routine transcripts and
+wiki pages are kept off this list; `:list` inside a session still shows every
+session there is. From there:
 
 | Key | Action |
 |-----|--------|
@@ -361,6 +366,7 @@ python tests/test_wikigit.py     # vault git: scope containment, the -z parse, n
 python tests/test_preflight.py   # the embedder check: dimension guard, never hangs
 python tests/test_complete.py    # :attach completion: vault first, and the jail holds
 python tests/test_splash.py      # the splash compositor: aspect, resampling, the key read
+python tests/test_hub.py         # the screens: chat filter, colours, routine freshness
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

@@ -27,7 +27,7 @@ import traceback
 
 from agent import agent_turn
 from api import EMPTY_COMPLETION_RETRIES
-from db import new_session, save_message
+from db import PROVIDER_ROUTINE, new_session, save_message
 from routines import RoutineError, append_log, last_run, load_routine
 
 try:
@@ -157,8 +157,12 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     model = model or MODEL
     started = datetime.datetime.now()
 
+    # provider marks this as a routine run so the hub can filter it out
+    # without parsing the title. The title prefix stays because it is what a
+    # human reads in the transcript; it is no longer what the code keys off.
     title = f"routine: {routine.name} — {started.strftime('%Y-%m-%d %H:%M')}"
-    session_id = new_session(conn, title=title, model=model)
+    session_id = new_session(conn, title=title, model=model,
+                             provider=PROVIDER_ROUTINE)
     event(f"session {session_id} — {ctx}")
 
     # The roots go into the prompt because the model otherwise learns them only

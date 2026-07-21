@@ -23,6 +23,55 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-21 — The screens: filtered hub, chat status, context colours
+Rest of v0.4. The picker, the session header, and what the token bar's colours
+actually mean.
+- **The picker shows chats; `:list` shows everything.** `provider` is the
+  session-kind discriminator (`db.PROVIDER_CHAT/WIKI/ROUTINE`), and routine runs
+  and wiki pages are filtered out of `hub.recent_chats`. Seven of twenty hub
+  rows were routine transcripts, and the wiki — 20 sessions, growing every
+  import — was about to take the rest.
+- **The filter is a deny list.** An unrecognised or NULL provider still shows as
+  a chat. An extra row is visible and correctable; a conversation that silently
+  stops appearing is indistinguishable from a deleted one.
+- **Routine sessions are marked at insert**, with a one-shot migration for the
+  ones that predate it, matched on the exact generated title shape rather than a
+  bare `routine:` prefix — a chat called "routine: ideas" has to survive.
+  Routine transcripts keep indexing as `source='chat'`; `test_schema.py` pins
+  that coupling to `chunk.py`.
+- **The hub grew a routine panel** — one row per routine, not per run, with
+  freshness from the run log (green <24h, orange <48h, red beyond). Never-run is
+  dim, not red: "never" and "overdue" are different facts.
+- **Chat screen.** The forty-line command dump is gone — it scrolled the session
+  header off the screen every time you opened a conversation, so the thing it
+  existed to tell you was the thing it hid. Nine commands on entry, `:help` for
+  the rest. The header *states* rather than warns: no system prompt is a fact,
+  printed in the same voice as one that is set, followed by what is available.
+- **Context colours** are now 15/35 (`CONTEXT_GREEN_MAX`/`CONTEXT_ORANGE_MAX`),
+  from one `ui.context_style` read by the bar, the hub column and the post-turn
+  nudge — three literals away from disagreeing. Percentages are unchanged and
+  still honest; only the colour is opinionated. The nudge moved to the red
+  threshold, because a red bar with nothing said about it reads as a bug.
+- **Tool-path reasoning is middle-elided** (6 head + 10 tail). Head as well as
+  tail: the opening lines say what the model is about to do, next to the tool
+  call they explain.
+- **`golden.py` now pins its own prompt/persona fixture.** The new header lists
+  *available* prompts, so without it the baseline depended on the contents of
+  the vault and would have broken every time a prompt file was added — a test
+  that cries wolf is a test that gets ignored. Baseline re-recorded, 176 → 213
+  lines (`:help` added to the script).
+- **`tests/test_hub.py`**, 38 assertions, checked against five mutations. Two
+  survived the first pass: the picker test **rebuilt hub's SQL instead of
+  calling it**, so it passed against a deliberately broken filter — which is
+  what `hub.recent_chats` now exists for.
+- Files: hub.py, db.py, runner.py, agent.py, commands.py, main.py, ui.py,
+  config.py, config.example.py, tests/test_hub.py, tests/test_schema.py,
+  tests/golden.py, tests/golden_baseline.txt, HANDOVER.md, README.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-21 — Replace the ASCII mascot splash with pixel art
 First piece of v0.4. The launch screen is now a baked pixel-art image
 composited under the title, instead of the four-line ASCII cat.
@@ -58,7 +107,7 @@ composited under the title, instead of the four-line ASCII cat.
   tests/test_splash.py, dev/bake_splash.py, assets/splash_balthazar.raw,
   requirements-dev.txt, HANDOVER.md, README.md, CLAUDE.md
 - Status: shipped
-- Commit: pending
+- Commit: 42e9605
 
 ---
 
@@ -86,7 +135,7 @@ need deleting rather than fixing.
 - Files: ROADMAP.md, BACKLOG.md, config.py, config.example.py,
   tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 42e9605
 
 ---
 

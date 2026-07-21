@@ -68,17 +68,46 @@ def format_ts(iso_str):
         return iso_str
 
 
+# Context-usage thresholds, as a percentage of the model's claimed limit.
+# Deliberately far below the old 60/80: a 1M-token context window is a vendor
+# claim, not a promise that the last 900k tokens are as well attended to as the
+# first. The *percentages stay honest* — they are computed against the claimed
+# limit exactly as before. Only the colour is opinionated, and the opinion is
+# that a third of a claimed million is already a lot of conversation.
+_CTX_GREEN_MAX = 15   # green below this
+_CTX_ORANGE_MAX = 35  # orange up to this, red above
+
+
+def context_thresholds():
+    """(green_max, orange_max), from config if it says otherwise.
+
+    One function so the bar, the hub's token column and the "nearly full" nudge
+    cannot drift apart — they were three separate literals away from doing
+    exactly that."""
+    try:
+        from config import CONTEXT_GREEN_MAX, CONTEXT_ORANGE_MAX
+        return float(CONTEXT_GREEN_MAX), float(CONTEXT_ORANGE_MAX)
+    except (ImportError, TypeError, ValueError):
+        return float(_CTX_GREEN_MAX), float(_CTX_ORANGE_MAX)
+
+
+def context_style(pct):
+    """The colour for a context percentage. The single source of that mapping."""
+    green_max, orange_max = context_thresholds()
+    if pct > orange_max:
+        return "red"
+    if pct > green_max:
+        return "orange3"
+    return "green"
+
+
 def make_bar(pct, width=24, ctx=None, limit=None):
     """Build a styled progress bar as a Rich Text.
-    Color shifts: green < 60%, yellow 60-80%, red > 80%.
-    """
+
+    Colour comes from context_style, so it matches the hub's token column and
+    the post-turn nudge without repeating the thresholds."""
     filled = int(width * pct / 100)
-    if pct > 80:
-        fill_style = "red"
-    elif pct > 60:
-        fill_style = "yellow"
-    else:
-        fill_style = "green"
+    fill_style = context_style(pct)
 
     bar = Text()
     bar.append("█" * filled, style=fill_style)

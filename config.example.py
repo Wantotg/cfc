@@ -152,6 +152,15 @@ WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
 # long multi-line prompts more often than you copy text out of the scrollback.
 MOUSE_INPUT = False
 
+# --- context usage colours ------------------------------------------------
+# When the token bar turns orange and red, as a percentage of the model's
+# claimed context limit. Far below the old 60/80 on purpose: a 1M-token window
+# is a vendor claim, not a promise that the last 900k tokens get the same
+# attention as the first. The percentages themselves stay honest — these change
+# only the colour.
+CONTEXT_GREEN_MAX = 15    # green below this
+CONTEXT_ORANGE_MAX = 35   # orange up to this, red above
+
 # --- splash ----------------------------------------------------------------
 # Which pixel art the launch splash shows. The art itself lives in assets/ —
 # it's the app's look, not a deployment knob; only the choice is a preference.

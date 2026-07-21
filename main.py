@@ -61,6 +61,7 @@ from commands import (
     show_routines, create_routine, do_routine,
     show_outbox, do_file,
     show_wiki_status, show_wiki_diff, do_wiki_commit,
+    print_session_header, print_core_commands, print_help,
 )
 
 # --- Main REPL ---
@@ -123,86 +124,9 @@ def run_session(conn, session_id):
     persona = get_persona(conn, session_id)
     persona_name = get_persona_name(conn, session_id)
 
-    console.print(f"\nSession #{session_id} | "
-                  f"model={current_model} | "
-                  f"{current_title}")
-    if system_prompt_name:
-        console.print(f"System prompt: {system_prompt_name}")
-    if persona_name:
-        console.print(f"Persona: {persona_name}")
-
-    ctx_str = context_bar(conn, session_id, current_model)
-    if ctx_str:
-        console.print(f"Context: {ctx_str}")
-
-    # Once, here — not on every turn. The handoff is explicit about that, and
-    # a warning printed each turn is a warning nobody reads.
-    if TOOLS_ENABLED and current_model not in TOOLS_MODELS:
-        console.print(f"Tools are enabled but {current_model} is not in "
-                      f"TOOLS_MODELS — proceeding without tools.")
-
-    console.print("Commands:")
-    console.print("  :q            back to the session list")
-    console.print("  :list         show all sessions")
-    console.print("  :new          start a new session")
-    console.print("  :export       export this session to "
-                  "Obsidian")
-    console.print("  :export 5     export session #5 to "
-                  "Obsidian")
-    console.print("  :tokens       show token usage for this "
-                  "session")
-    console.print("  :title        show this session's title")
-    console.print("  :title 5 Name rename session #5 to "
-                  "'Name'")
-    console.print("  :delete       delete this session "
-                  "(with confirm)")
-    console.print("  :delete 5     delete session #5 "
-                  "(with confirm)")
-    console.print("  :grep word    search all messages for "
-                  "'word'")
-    console.print("  :recall q     ask your history a "
-                  "question (cited answer)")
-    console.print("  :remember q   pull matching excerpts "
-                  "into this conversation")
-    console.print("  :forget       drop the last injected "
-                  "excerpts")
-    console.print("  :attach path  attach a local text file "
-                  "(persistent)")
-    console.print("  :attached     list attachments in this "
-                  "session")
-    console.print("  :detach 1     remove attachment #1")
-    console.print("  :tag python   add tag 'python' to this "
-                  "session")
-    console.print("  :tag 3 python add tag to session #3")
-    console.print("  :tags         show tags on this session")
-    console.print("  :tags 3       show tags on session #3")
-    console.print("  :untag python remove tag from this "
-                  "session")
-    console.print("  :taglist      show all tags with "
-                  "session counts")
-    console.print("  :prompts      list available system "
-                  "prompt files")
-    console.print("  :prompt       show current system "
-                  "prompt")
-    console.print("  :prompt name  set system prompt from "
-                  "'name.md'")
-    console.print("  :prompt off   remove system prompt")
-    console.print("  :personas     list available persona "
-                  "files")
-    console.print("  :persona      show current persona")
-    console.print("  :persona name set persona from "
-                  "'name.md'")
-    console.print("  :persona off  remove persona")    
-    console.print("  :model        show current model")
-    console.print("  :model name   switch to model 'name'")
-    console.print("  :models       list configured models")
-    console.print("  :tools        show tool state for this "
-                  "session")
-    console.print("  :tools on     enable tools this session")
-    console.print("  :config       show all settings")
-    console.print("  Alt+Enter     insert a newline "
-                  "(Enter sends)")
-    console.print()
+    print_session_header(conn, session_id, current_model, current_title,
+                         system_prompt_name, persona_name)
+    print_core_commands()
 
     if history:
         console.print("--- Previous messages in this session "
@@ -242,6 +166,10 @@ def run_session(conn, session_id):
             if AUTO_EXPORT and history:
                 safe_export(conn, session_id)
             break
+
+        if user in (":help", ":h", ":?"):
+            print_help()
+            continue
 
         if user == ":list":
             list_sessions(conn)

@@ -129,7 +129,7 @@ not plain `bge-m3`.
 
 ---
 
-## Reasoning on the tool path is printed in full — may drown the answer
+## ~~Reasoning on the tool path is printed in full~~ — FIXED (v0.4, 2026-07-21)
 
 **Found:** 2026-07-18, wiring reasoning into the tool path.
 
@@ -140,10 +140,12 @@ it's a one-shot print into scrollback with no live region to keep still — and 
 tool turn can print several such panels (one per loop iteration). On a verbose
 thinking model that can bury the actual answer under walls of reasoning.
 
-Left in full deliberately, to see how it reads in real use. If it's too much,
-tail it there too (reuse `_REASONING_TAIL_LINES`, or a larger cap), or add a
-config toggle to collapse/hide reasoning. Purely cosmetic — reasoning is never
-persisted or replayed either way.
+**Fixed:** middle-elided to `agent.REASONING_HEAD_LINES` + `REASONING_TAIL_LINES`
+(6 + 10) with a "… N more lines …" marker. Head *and* tail rather than just the
+tail: on this path the opening lines are usually "what am I about to do", which
+is the part worth reading next to the tool call it explains. Larger than the
+live panel's 12 because scrollback doesn't jump. Purely cosmetic either way —
+reasoning is never persisted or replayed.
 
 
 ---
@@ -228,7 +230,7 @@ the cause of the above, but a sharp edge worth widening the window for.
 
 ---
 
-## Routine runs clutter the session hub
+## ~~Routine runs clutter the session hub~~ — FIXED (v0.4, 2026-07-21)
 
 **Found:** 2026-07-20, session 2 of the routines work.
 
@@ -246,10 +248,16 @@ on startup like the backup rotation does; or give routines a single long-lived
 session per routine rather than one per run — cheapest, but then a run's
 transcript is buried in a growing log and the token cost of replay grows.
 
-Worth deciding before the scheduler lands, since that's when the volume
-arrives. Note `chunk.py` derives `source` from the session's provider, so
-anything that touches provider has to consider what routine transcripts should
-do to the memory index — probably `source='chat'` as now, but say so on purpose.
+**Fixed:** the first option. Routine sessions carry `provider='routine'`
+(`db.PROVIDER_ROUTINE`), set at insert by `runner.py`, with a one-shot migration
+backfilling the runs that predate it — matched on the exact generated title
+shape, so a chat called "routine: ideas" survives. The picker filters them out;
+`:list` still shows them, so no transcript becomes unreachable. The hub grew a
+routine panel of its own, one row per routine, with freshness from the run log.
+
+Saying it on purpose, as this entry asked: `chunk.py`'s rule is `'wiki' if
+provider == 'wiki' else 'chat'`, so **routine transcripts keep indexing as
+`source='chat'`**, unchanged. `tests/test_schema.py` pins that coupling.
 
 ---
 

@@ -101,7 +101,7 @@ What exists, in one pass:
   write, not after.**
 - **Tests** — `tests/golden.py` pins the REPL's exact output for every command
   that makes no API call; run `check` after touching those modules, `record`
-  to re-baseline an intended change. Plus thirteen unit suites. None need an
+  to re-baseline an intended change. Plus sixteen unit suites. None need an
   API key. Not covered: the chat turn, `:recall`/`:remember`, `:export`, the
   picker, `:routine` — those are verified by hand.
 

@@ -1,45 +1,19 @@
 
-Session #1 | model=glm-5.2 | Golden session one
-Tools are enabled but glm-5.2 is not in TOOLS_MODELS — proceeding without tools.
-Commands:
-  :q            back to the session list
-  :list         show all sessions
-  :new          start a new session
-  :export       export this session to Obsidian
-  :export 5     export session #5 to Obsidian
-  :tokens       show token usage for this session
-  :title        show this session's title
-  :title 5 Name rename session #5 to 'Name'
-  :delete       delete this session (with confirm)
-  :delete 5     delete session #5 (with confirm)
-  :grep word    search all messages for 'word'
-  :recall q     ask your history a question (cited answer)
-  :remember q   pull matching excerpts into this conversation
-  :forget       drop the last injected excerpts
-  :attach path  attach a local text file (persistent)
-  :attached     list attachments in this session
-  :detach 1     remove attachment #1
-  :tag python   add tag 'python' to this session
-  :tag 3 python add tag to session #3
-  :tags         show tags on this session
-  :tags 3       show tags on session #3
-  :untag python remove tag from this session
-  :taglist      show all tags with session counts
-  :prompts      list available system prompt files
-  :prompt       show current system prompt
-  :prompt name  set system prompt from 'name.md'
-  :prompt off   remove system prompt
-  :personas     list available persona files
-  :persona      show current persona
-  :persona name set persona from 'name.md'
-  :persona off  remove persona
-  :model        show current model
-  :model name   switch to model 'name'
-  :models       list configured models
-  :tools        show tool state for this session
-  :tools on     enable tools this session
-  :config       show all settings
-  Alt+Enter     insert a newline (Enter sends)
+Session #1  ·  glm-5.2  ·  Golden session one
+  System prompt   not set — available: alpha, beta
+  Persona         not set — available: delta, gamma
+  Context         8 tokens
+  Tools           glm-5.2 is not in TOOLS_MODELS — off
+
+  :help          every command
+  :q             back to the session list
+  :new           start a new session
+  :prompt name   set the system prompt  (:prompts to list)
+  :persona name  set the persona  (:personas to list)
+  :attach path   attach a local text file
+  :remember q    pull matching excerpts into this conversation
+  :tokens        token usage for this session
+  Alt+Enter      insert a newline  (Enter sends)
 
 --- Previous messages in this session ---
 you> what did we decide about the vector db?
@@ -52,14 +26,79 @@ ai> 500 tokens with 75 overlap.
 
 --- End of history ---
 
-you>                                           Sessions
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
-┃   ID ┃ Updated           ┃ Msgs ┃ Title                            ┃ Prompt   ┃ Persona  ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│    1 │ <TS>  │    4 │ Golden session one               │          │          │
-│    2 │ <TS>  │    2 │ Golden session two               │          │          │
-│    3 │ <TS>  │    0 │ (untitled)                       │          │          │
-└──────┴───────────────────┴──────┴──────────────────────────────────┴──────────┴──────────┘
+you>
+  session
+    :q                      back to the session list
+    :new                    start a new session
+    :list                   show every session, routine runs included
+    :title                  show this session's title
+    :title 5 Name           rename session #5
+    :delete                 delete this session (with confirm)
+    :delete 5               delete session #5 (with confirm)
+    :export                 export this session to Obsidian
+    :export 5               export session #5
+    :tokens                 token usage for this session
+    :config                 show all settings
+
+  prompts & personas
+    :prompts                list available system prompt files
+    :prompt                 show the current system prompt
+    :prompt name            set the system prompt from 'name.md'
+    :prompt off             remove the system prompt
+    :personas               list available persona files
+    :persona                show the current persona
+    :persona name           set the persona from 'name.md'
+    :persona off            remove the persona
+
+  memory
+    :recall q               ask your wiki a question (cited answer)
+    :remember q             pull matching excerpts into this conversation
+    :forget                 drop the last injected excerpts
+    :updatedb               index anything not yet embedded
+
+  files
+    :attach path            attach a local text file (persistent)
+    :attached               list attachments in this session
+    :detach 1               remove attachment #1
+    :outbox                 review filing proposals
+    :file 1                 carry out proposal #1
+
+  wiki & routines
+    :wiki                   wiki repo status
+    :wiki diff [all]        the diff
+    :wiki commit [all] msg  stage and commit in scope
+    :routine                list routines
+    :routine name           run one now
+    :routine new            create one
+
+  models & tools
+    :model                  show the current model
+    :model name             switch to model 'name'
+    :models                 list configured models
+    :tools                  show tool state for this session
+    :tools on|off           toggle tools for this session
+
+  tags & search
+    :grep word              search all messages for 'word'
+    :tag python             add tag 'python' to this session
+    :tag 3 python           add tag to session #3
+    :tags                   show tags on this session
+    :untag python           remove tag from this session
+    :taglist                show all tags with session counts
+
+  editing
+    Alt+Enter               insert a newline (Enter sends)
+    Ctrl-C                  cancel the current line, stay in the session
+    Ctrl-D                  leave the session (on an empty line)
+
+you>                                               Sessions
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
+┃   ID ┃ Updated           ┃ Msgs ┃     Ctx ┃ Title                           ┃ Prompt   ┃ Persona ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━┩
+│    1 │ <TS>  │    4 │       8 │ Golden session one              │          │         │
+│    2 │ <TS>  │    2 │       3 │ Golden session two              │          │         │
+│    3 │ <TS>  │    0 │       — │ (untitled)                      │          │         │
+└──────┴───────────────────┴──────┴─────────┴─────────────────────────────────┴──────────┴─────────┘
 
 you>
 Current configuration:
@@ -70,7 +109,7 @@ Current configuration:
   Auto-export:   on
   Stream usage:  on
   Vault path:    /mnt/c/Users/disse/backup/cfc/cfc_chat_backup
-  Prompts dir:   /mnt/c/Users/disse/cooking for cats/06 metadata/system instructions
+  Prompts dir:   <ROOT>/tests/_fixture_prompts
   Quick models:  zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
 moonshotai/kimi-k2.6:thinking
 
@@ -126,20 +165,18 @@ you>                Available models
 └───────────────────────────────────┴────────┘
 
 you>
-Available prompts (/mnt/c/Users/disse/cooking for cats/06 metadata/system instructions):
+Available prompts (<ROOT>/tests/_fixture_prompts):
 
-  heavy prompt              <main instructions> Continue this conversation bet
-  light prompt              <main instructions> Continue this conversation bet
-  medium prompt             <main instructions> Continue this conversation bet
+  alpha                     alpha
+  beta                      beta
 
 you> No system prompt set. Use ':prompts' to see available prompt files.
 you> System prompt removed.
 you>
-Available personas (/mnt/c/Users/disse/cooking for cats/06 metadata/persona):
+Available personas (<ROOT>/tests/_fixture_personas):
 
-  EVA                       <persona>
-  muse                      <persona>
-  personal_assistant        Personal Assistant
+  delta                     delta
+  gamma                     gamma
 
 you> No persona set. Use ':personas' to see available persona files.
 you> Persona removed.

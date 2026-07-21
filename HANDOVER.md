@@ -101,11 +101,73 @@ split as the palette. The rotation lives in `_choose` rather than at the call
 site, so dropping a new `.raw` into `assets/` joins it with no code change and,
 under `"*"`, no config change either.
 
+### The hub and the chat screen (v0.4)
+
+**The picker shows chats; `:list` shows everything.** A session's `provider` is
+the **session-kind discriminator**, not merely which API answered — `wiki` was
+never an API provider either. `PROVIDER_CHAT`/`PROVIDER_WIKI`/`PROVIDER_ROUTINE`
+live in `db.py`, and `hub.recent_chats` excludes the last two. Seven of twenty
+hub rows were routine transcripts and the wiki (20 sessions and growing every
+import) was about to take the rest.
+
+- **The filter is a deny list, not an allow list, and that is the whole
+  design.** An unrecognised or NULL provider still shows as a chat. Getting an
+  extra row is visible and correctable; a conversation that silently stops
+  appearing in the picker is indistinguishable from one that was deleted.
+- **`hub.recent_chats` is a function so the test can call the code the picker
+  calls.** Its first test rebuilt the query inline and passed against a
+  deliberately broken filter — a test of its own copy proves nothing.
+- **Routine runs are marked at insert** (`runner.py` passes
+  `provider=PROVIDER_ROUTINE`) and a one-shot migration backfills the ones that
+  predate it. The backfill matches the exact generated title shape
+  (`routine: % — ____-__-__ __:__`), not a bare `routine:` prefix — a chat
+  called "routine: ideas" must survive, or the hub hides a real conversation.
+  It is a *migration*, not the mechanism; `test_hub.py` asserts the call site
+  still passes the marker so the backfill can't quietly become the mechanism.
+- **What this does to the memory index, on purpose:** `chunk.py` derives
+  `source` from the provider as `'wiki' if provider == 'wiki' else 'chat'`, so
+  a routine transcript still indexes as `source='chat'`, exactly as before the
+  marker existed. `test_schema.py` pins that coupling, because it is one nobody
+  would think to check when editing either file.
+- **Routine rows are one per *routine*, not per run**, from the run logs rather
+  than from sessions, with a freshness traffic light (green <24h, orange <48h,
+  red beyond). Five rows of the same nightly job would answer nothing; "is each
+  of these still running" is the question. **Never-run is dim, not red** —
+  "never" and "overdue" are different facts, and red would cry wolf the day you
+  write a routine. `_routine_rows` returns `[]` on any failure: the folder is a
+  vault path over the `/mnt/c` bridge, and missing/unmounted is not a reason a
+  session picker shouldn't open.
+
 **The hub's table columns carry fixed widths on purpose.** Rich grants a
 `no_wrap` column whatever its longest row asks for and takes it out of the
 *flexible* columns — one 58-char session title starved #, Msgs, Prompt and
 Persona to zero width and printed a table of empty verticals. `min_width`
 reproduces it from the other side. If you add a column here, give it a width.
+`_widths()` *computes* them from `console.size` but they are still fixed at
+build time, which is the point — a flexible Title reproduces the bug from the
+other direction by claiming all the slack. Past `_TITLE_ENOUGH` the surplus
+goes to Prompt and Persona instead: a title with 70 columns is mostly trailing
+space, while at width 8 every prompt name reads `medium …`.
+
+**The chat screen states, it doesn't warn.** "No system prompt attached" is a
+fact about the session, not a problem, so it prints in the same voice as the
+rows that do have a value — followed by what *is* available, because the only
+reason to mention it is to make attaching one cheap. The forty-line command
+dump is gone: it scrolled the session header off the screen every time you
+opened a conversation, so the thing it existed to tell you was the thing it
+hid. Nine commands on entry, `:help` for the rest.
+
+**Context colours are opinionated; the percentages are not.** `ui.context_style`
+is the single mapping, read by the bar, the hub's Ctx column *and* the
+post-turn nudge — they were three separate literals away from disagreeing.
+Thresholds are `CONTEXT_GREEN_MAX`/`CONTEXT_ORANGE_MAX` in config (15/35),
+far below the old 60/80 because a 1M-token window is a vendor claim, not a
+promise that the last 900k tokens get the same attention as the first. The
+nudge fires at the same threshold the bar turns red: a red bar with nothing
+said about it reads as a rendering bug. A session whose model has no known
+limit shows an **uncoloured** raw count — a colour would be a verdict the code
+can't make — and abbreviates only once the abbreviation is true, since 8 tokens
+rendered as `0k` reads as zero.
 
 A chat turn takes one of **two mutually exclusive paths**, chosen per turn:
 
@@ -511,7 +573,7 @@ same events.
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
-Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot). 538 assertions across 15 suites. None need an API key.
+Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends). 585 assertions across 16 suites. None need an API key.
 
 `test_chunk` exists because the chunker is the one part of the memory layer whose output silently becomes permanent: a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking. The mid-word bug sat in `BACKLOG.md` for six days precisely because nothing failed.
 
@@ -530,7 +592,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `paths.py` | the jail: `path_guard`, containment + deny list |
 | `api.py` | `stream_response` (streaming chat + live reasoning panel, returns `(text, usage, reasoning)`), `call_api` (non-streaming: titles, agent), provider error extraction |
 | `db.py` | connection, schema/migrations, every query, `load_history` + orphan drop |
-| `hub.py` | session browser (`list_sessions`) + picker (`pick_session`), both from one `_session_table()` |
+| `hub.py` | session browser (`list_sessions`, everything) + picker (`recent_chats`/`pick_session`, chats only) + routine freshness, all from one `_session_table()` |
 | `complete.py` | Tab completion for `:attach`, scoped to roots |
 | `export.py` | one Markdown file per session → Obsidian vault (overwrite on re-export) |
 | `backup.py` | rolling snapshots via SQLite online-backup API, integrity-checked, 6h-throttled, keep 10 |
@@ -545,7 +607,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer` |
 | `splash.py` | the launch screen: baked pixel art composited under the title, asset rotation, Enter/Esc gate. Depends on `ui`, not the reverse |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, `SPLASH_ART`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 
@@ -563,7 +625,7 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 - **Before that (v0.2, "retrieval you can trust"):** the floor rebuilt as a lint filter at 1.08 after the 1.024 provenance bug was traced (see Retrieval tuning — the short version is that 1.024 was an Anthropic-corpus number wearing a wiki label, and nothing had regressed); `search()`'s over-fetch window now widens until it is provably deep enough, instead of a flat `k*4` that could return **zero** wiki hits purely because the window filled with chat chunks; `chunk.py` seeks to word boundaries at both edges, with the corpus re-chunked and re-embedded; `tests/test_chunk.py` added. The vault also became a git repo this session — that is infrastructure, not cfc code, and lives at `<vault>/.git` → `~/vaults/wiki.git` via a `gitdir:` pointer.
 - **Before that:** routines, sessions 2 **and 3** of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `:routine` / `:routine new` / `:routine <name>`, the run log, and `test_routines`. Then `mover.py` + `:outbox` / `:file`, verified end to end: a throwaway routine proposes a file into the outbox, `:file` re-validates the destination and moves it. **The routines handover is now fully discharged.** The scheduler is the next piece and is deferred by design, not forgotten — `run_routine` is already the entry point it will call.
 - **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
-- **Cosmetic backlog:** tool-path reasoning prints in full (not tail-limited like the live panel) and once per loop step — can bury the answer on a verbose model. See `BACKLOG.md`.
+- **Tool-path reasoning is middle-elided** (`agent.REASONING_HEAD_LINES`/`REASONING_TAIL_LINES`, 6+10) rather than printed in full. A tool turn prints one panel per loop iteration, so a verbose thinking model could push its own conclusion off the top of the scrollback. Head *and* tail, not just tail: the opening lines are usually "what am I about to do", which is the part worth reading beside the tool call it explains. Nothing is lost that was ever kept — reasoning is presentation-only on both paths.
 - **Unblocked (v0.2):** recall was returning nothing for good queries; the floor is fixed and the discrepancy is explained (see Retrieval tuning). A memory-pass routine is no longer blocked on it. **One caveat survives and is not fixed:** zero hits and "nothing worth reporting" still produce **identical output**, so a nightly digest would look like it was working while doing nothing. A routine built on recall should fail loudly on zero hits rather than assume the floor protects it.
 - **Backlog (parked, DB-flavored):** (a) the dangling `session_id` root cause in `import_anthropic.py` (chunks committed against an uncommitted session id, or a delete without cascade) — moot on the current wiki-only db, but unfixed if the Anthropic export is ever re-imported; `import_wiki.py` deliberately avoids it. (b) ~~`chunk.py` overlap slices mid-word~~ — **fixed in v0.2**, corpus re-chunked and re-embedded. (c) ~~the endpoint-IP instability for the WSL→Windows embedder~~ — fixed 2026-07-20 by `networkingMode=mirrored`.
 - **DB-layer rework is anticipated** — treat the chunk/vector schema as in flux. `TARGET_TOKENS`/`OVERLAP`/`CHARS_PER_TOK` are naive (char-based); the design note "SQLite stays the source of truth, sqlite-vec is an index over it" is the intended shape.

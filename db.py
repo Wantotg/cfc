@@ -89,7 +89,46 @@ def db():
         except sqlite3.OperationalError:
             pass
     _migrate_messages(conn)
+    _migrate_routine_sessions(conn)
     return conn
+
+
+# What a session's `provider` says about where it came from. It is not purely
+# "which API answered" and never has been — wiki pages are not an API provider
+# either. It is the session-kind discriminator, which is why the routine marker
+# lives here rather than in a new column.
+PROVIDER_CHAT = "nano-gpt"
+PROVIDER_WIKI = "wiki"
+PROVIDER_ROUTINE = "routine"
+
+# The title runner.py generates: "routine: <name> — <YYYY-MM-DD HH:MM>".
+# Used *once*, to backfill runs that predate the marker. Deliberately narrow —
+# a hand-written chat called "routine: ideas" must not be swept up, so the
+# timestamp shape has to match too.
+_ROUTINE_TITLE_LIKE = "routine: % — ____-__-__ __:__"
+
+
+def _migrate_routine_sessions(conn):
+    """Mark pre-existing routine runs with provider='routine'.
+
+    Routine sessions were created with provider='nano-gpt' and told apart only
+    by a title prefix, which is not data. This backfills them once; the WHERE
+    clause finds nothing on later starts.
+
+    Note what this does to the memory index, because it is easy to change by
+    accident: `chunk.py` derives a chunk's `source` from the session's
+    provider, and its rule is 'wiki' if provider == 'wiki' else 'chat'. So a
+    routine transcript keeps indexing as source='chat', exactly as it did
+    before this marker existed. That is the intended behaviour, not a
+    coincidence of the rule — a routine's transcript is chat-shaped, and recall
+    filters to the wiki anyway.
+    """
+    n = conn.execute(
+        "UPDATE sessions SET provider=? WHERE provider=? AND title LIKE ?",
+        (PROVIDER_ROUTINE, PROVIDER_CHAT, _ROUTINE_TITLE_LIKE),
+    ).rowcount
+    if n:
+        conn.commit()
 
 
 def _migrate_messages(conn):
@@ -130,13 +169,17 @@ def _migrate_messages(conn):
         conn.commit()
 
 
-def new_session(conn, title="(untitled)", model=None):
+def new_session(conn, title="(untitled)", model=None,
+                provider=PROVIDER_CHAT):
+    """Create a session. `provider` is the session-kind discriminator — pass
+    PROVIDER_ROUTINE for a routine run so the hub can tell it from a chat
+    without parsing its title."""
     model = model or MODEL
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     cur = conn.execute(
         "INSERT INTO sessions(title, model, provider, "
         "created_at, updated_at) VALUES (?,?,?,?,?)",
-        (title, model, "nano-gpt", now, now),
+        (title, model, provider, now, now),
     )
     conn.commit()
     return cur.lastrowid

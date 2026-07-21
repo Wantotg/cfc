@@ -33,9 +33,17 @@ for _cache in ROOT.glob("**/__pycache__"):
         shutil.rmtree(_cache, ignore_errors=True)
 BASELINE = HERE / "golden_baseline.txt"
 FIXTURE = HERE / "_fixture.db"
+# The chat screen lists the prompt and persona files that are *available*, so
+# without this the baseline would depend on the contents of Cas's vault and
+# break every time he adds one. Pinned to a fixture folder for the same reason
+# the database is: a characterization harness must only change when the code
+# changes.
+FIXTURE_PROMPTS = HERE / "_fixture_prompts"
+FIXTURE_PERSONAS = HERE / "_fixture_personas"
 
 # Commands to drive. No API calls: no chat turns, no :recall, no :remember.
 SCRIPT = [
+    ":help",
     ":list",
     ":config",
     ":tokens",
@@ -86,6 +94,23 @@ def assert_not_real(path, what):
     if p == REAL_DB.expanduser().resolve():
         raise AssertionError(f"{what}: refusing to touch the real database "
                              f"at {p}")
+
+
+def build_prompt_fixtures():
+    """Two prompt files and two personas, with fixed names."""
+    for d, names in ((FIXTURE_PROMPTS, ("alpha", "beta")),
+                     (FIXTURE_PERSONAS, ("gamma", "delta"))):
+        d.mkdir(exist_ok=True)
+        for n in names:
+            (d / f"{n}.md").write_text(f"# {n}\nfixture\n", encoding="utf-8")
+
+
+def clean_prompt_fixtures():
+    for d in (FIXTURE_PROMPTS, FIXTURE_PERSONAS):
+        if d.is_dir():
+            for f in d.glob("*.md"):
+                f.unlink()
+            d.rmdir()
 
 
 def build_fixture(path):
@@ -152,6 +177,7 @@ def normalise(text):
 def capture():
     assert_not_real(FIXTURE, "capture")
     build_fixture(FIXTURE)
+    build_prompt_fixtures()
     # Rich reads width at construction, so pin it before importing anything
     # that builds a Console at import time.
     os.environ["COLUMNS"] = "100"
@@ -174,6 +200,12 @@ def capture():
 
     for name in patched:
         assert_not_real(getattr(sys.modules[name], "DB_PATH"), f"{name}.DB_PATH")
+
+    # get_prompts_dir()/get_personas_dir() read these at call time, so patching
+    # the module attribute is enough and no call site needs to know.
+    import commands as _cmds
+    _cmds.PROMPTS_DIR = str(FIXTURE_PROMPTS)
+    _cmds.PERSONAS_DIR = str(FIXTURE_PERSONAS)
 
     # Redirect the shared Console by mutating it, never by rebinding a module
     # attribute: once modules do `from ui import console`, setting chat.console
@@ -204,6 +236,7 @@ def capture():
         for c, f in zip(consoles, saved):
             c.file = f
         FIXTURE.unlink(missing_ok=True)
+        clean_prompt_fixtures()
     return normalise(out.getvalue())
 
 def main():
