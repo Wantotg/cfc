@@ -271,7 +271,13 @@ def list_routines():
 
 
 def load_routine(key):
-    """By id, then by display name (case-insensitive). Raises RoutineError."""
+    """By id, then display name, then the slug of what was typed.
+
+    The third pass is what lets a display name be a sentence and an id be a
+    handle without the two having to agree: 'Wiki Maintainer' finds
+    `wiki-maintainer`. It runs last so an exact id or name always wins over a
+    slugged guess. Raises RoutineError.
+    """
     routines, _ = list_routines()
     for r in routines:
         if r.id == key:
@@ -279,7 +285,15 @@ def load_routine(key):
     for r in routines:
         if r.name.lower() == (key or "").lower():
             return r
-    known = ", ".join(r.id for r in routines) or "(none)"
+    slugged = slugify(key)
+    for r in routines:
+        if slugged and r.id == slugged:
+            return r
+    # The error names both, because the id is what a routine is looked up by
+    # and the name is what it is called in Obsidian. Printing ids alone once
+    # left a routine whose id was not a slug listed as available while being
+    # unrunnable, which reads as the command being typed wrong.
+    known = ", ".join(f"{r.id} ({r.name})" for r in routines) or "(none)"
     raise RoutineError(f"no routine {key!r} — known: {known}")
 
 

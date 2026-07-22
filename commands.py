@@ -1211,6 +1211,13 @@ def show_routines():
         console.print()
         return
 
+    # A routine that parses can still be unrunnable — a non-slug id, a prompt
+    # file that moved, a read root that was renamed. Listing those as
+    # available and only failing at ':routine <name>' makes a broken *routine*
+    # look like a mistyped *command*, which is exactly how one afternoon went.
+    # Validation costs a few stats over /mnt/c and this screen is on demand.
+    problems = {r.id: r.validate() for r in found}
+
     table = Table(show_header=True, header_style="bold", box=None,
                   padding=(0, 2, 0, 0))
     for col in ("id", "name", "trigger", "write", "last run"):
@@ -1218,10 +1225,16 @@ def show_routines():
     for r in found:
         status, ts = last_run(r.id)
         when = f"{status} {ts}" if status else "never"
-        table.add_row(r.id if r.enabled else f"{r.id} (disabled)",
-                      r.name, str(r.trigger),
+        label = r.id if r.enabled else f"{r.id} (disabled)"
+        if problems[r.id]:
+            label = f"! {label}"
+        table.add_row(label, r.name, str(r.trigger),
                       "yes" if r.write_roots else "no", when)
     console.print(table)
+
+    for r in found:
+        for why in problems[r.id]:
+            console.print(f"  ! {r.id}: {why}", style="red")
 
     # Malformed files are listed, not swallowed. A routine that stopped
     # parsing is the one most likely to matter.

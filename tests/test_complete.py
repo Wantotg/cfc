@@ -80,6 +80,39 @@ class Roots:
         (complete.ATTACH_ROOTS, complete.WIKI_DIR) = self._saved
 
 
+class Routines:
+    """A temp ROUTINE_DIR holding one good routine and one broken one.
+
+    `routines.routine_dir` is patched rather than config, so this never reads
+    the real vault — and the broken one is broken the way the real one was
+    (a non-slug id), because "still offered while unrunnable" is the property
+    being pinned.
+    """
+
+    GOOD = ("---\nid: wiki-maintainer\nname: Wiki Maintainer Suggest\n"
+            "prompt: x.md\ntrigger: command\non_failure: retry\n"
+            "enabled: true\n---\n\nbody\n")
+    BROKEN = ("---\nid: zz-broken\nname: zz broken\n"
+              "prompt: nope.md\ntrigger: command\non_failure: retry\n"
+              "enabled: true\n---\n\nbody\n")
+
+    def __init__(self, tmp):
+        self.dir = Path(tmp) / "routines"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        (self.dir / "wiki maintainer.md").write_text(self.GOOD)
+        (self.dir / "zz broken.md").write_text(self.BROKEN)
+
+    def __enter__(self):
+        import routines
+        self.mod = routines
+        self._saved = routines.routine_dir
+        routines.routine_dir = lambda: self.dir
+        return self
+
+    def __exit__(self, *exc):
+        self.mod.routine_dir = self._saved
+
+
 def completions(line):
     """What prompt_toolkit would actually offer for `line`."""
     from prompt_toolkit.document import Document
@@ -146,11 +179,44 @@ def main():
             ok("a directory is offered with a trailing slash",
                got and got[0].endswith("/"), got)
 
+    print("\n--- ':routine' completion ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Routines(tmp):
+            got = completions(":routine ")
+            ok("a bare Tab lists every routine — MIN_CHARS is a path rule",
+               got == ["wiki-maintainer", "Wiki Maintainer Suggest",
+                       "zz-broken", "zz broken"], got)
+
+            got = completions(":routine wiki-")
+            ok("an id prefix completes the id", got == ["wiki-maintainer"], got)
+
+            got = completions(":routine Wiki M")
+            ok("a display name completes too, spaces and all",
+               got == ["Wiki Maintainer Suggest"], got)
+
+            # The id sorts first: it is shorter to type, and the head of the
+            # list is what Tab takes without a second keystroke.
+            got = completions(":routine w")
+            ok("the id is offered before the name",
+               got[:2] == ["wiki-maintainer", "Wiki Maintainer Suggest"], got)
+
+            got = completions(":routine ne")
+            ok("':routine new' is offered", got == ["new"], got)
+
+            # A routine you can't run is the one you're most likely reaching
+            # for — to fix it. Hiding it would read as it having been deleted.
+            ok("a broken routine is still offered",
+               "zz-broken" in completions(":routine zz"),
+               completions(":routine zz"))
+
+    ok("a line that isn't a completable command is inert",
+       completions(":help") == [], completions(":help"))
+
     print("\n--- the readline half still exists for the input() path ---")
     src = (ROOT / "complete.py").read_text()
     ok("install() is still defined", "def install(" in src)
-    ok("both front ends share _candidates",
-       src.count("_candidates(") >= 3, src.count("_candidates("))
+    ok("both front ends share _dispatch",
+       src.count("_dispatch(") >= 3, src.count("_dispatch("))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

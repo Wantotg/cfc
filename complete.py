@@ -1,7 +1,7 @@
-# complete.py — tab completion for ':attach <path>'.
+# complete.py — tab completion for ':attach <path>' and ':routine <name>'.
 #
-# Only active when the line starts with ':attach '. Everything else falls back
-# to no completion, which is what the REPL had before.
+# Only active when the line starts with one of those. Everything else falls
+# back to no completion, which is what the REPL had before.
 #
 # Completions are scoped to ATTACH_ROOTS and never offer a path outside them, or
 # one path_guard would refuse. That's a courtesy, not a control: the guard in
@@ -43,11 +43,17 @@ except ImportError:
     WIKI_DIR = ""
 
 TRIGGER = ":attach "
+ROUTINE_TRIGGER = ":routine "
 
 # Stay silent until at least this many characters of a name have been typed.
 # Tab on an empty or barely-started fragment would otherwise dump a whole
 # directory — and with several roots that have no common parent, "list
 # everything" has no sensible base anyway.
+#
+# This is a rule about *paths*, and deliberately does not apply to routines:
+# there are a handful of them, they live in one folder, and dumping the whole
+# list on a bare Tab is exactly what you want when the thing you can't
+# remember is the name itself.
 MIN_CHARS = 3
 
 
@@ -234,13 +240,69 @@ def _present(p):
         return str(p)
 
 
+# --- routines --------------------------------------------------------------
+#
+# ':routine <key>' resolves by id first, then display name — so both are worth
+# offering, and a routine whose name reads nothing like its id (which is the
+# normal case once a name is a sentence and the id is a handle) is reachable
+# from either end. The id comes first because it is the shorter thing to type
+# and the first candidate is what Tab takes without a second keystroke.
+#
+# Broken routines are still offered. They are exactly what you are reaching
+# for when you are trying to fix one, and ':routine' already reports why each
+# is broken — a completer that silently hides them would make a routine that
+# stopped validating look like a routine that stopped existing.
+
+
+def _routine_candidates(fragment):
+    """(text, display, meta) for every routine id/name matching `fragment`."""
+    try:
+        from routines import list_routines
+    except ImportError:
+        return []
+    try:
+        found, _bad = list_routines()
+    except Exception:                              # noqa: BLE001
+        return []                # unreadable folder is silence, never a crash
+
+    frag = fragment.strip().lower()
+    out, seen = [], set()
+    for r in found:
+        for text, meta in ((r.id, r.name), (r.name, f"id: {r.id}")):
+            if text in seen or not text.lower().startswith(frag):
+                continue
+            seen.add(text)
+            out.append((text, text, meta))
+    if "new".startswith(frag) and frag:
+        out.append(("new", "new", "create a routine"))
+    return out
+
+
+def _dispatch(line):
+    """(fragment, [(text, display, meta), …]) for a line, or None if inert.
+
+    One place decides which command is being completed, so the two front ends
+    below cannot disagree about it — which is the failure this module already
+    had once, in the other direction.
+    """
+    if line.startswith(TRIGGER):
+        fragment = line[len(TRIGGER):].lstrip()
+        return fragment, [(m, Path(m).name + ("/" if m.endswith("/") else ""),
+                           str(Path(m).parent)) for m in _candidates(fragment)]
+    if line.startswith(ROUTINE_TRIGGER):
+        fragment = line[len(ROUTINE_TRIGGER):].lstrip()
+        return fragment, _routine_candidates(fragment)
+    return None
+
+
 def _completer(text, state):
     try:
         line = readline.get_line_buffer()
-        if not line.startswith(TRIGGER):
+        got = _dispatch(line)
+        if got is None:
             return None
-        fragment = line[len(TRIGGER):].lstrip()
-        matches = _candidates(fragment)
+        fragment, items = got
+        matches = [t for t, _d, _m in items]
         # readline replaces only the last word, so hand back the tail
         begin = readline.get_begidx()
         prefix_len = begin - (len(line) - len(fragment))
@@ -268,7 +330,7 @@ def install():
 
 
 def make_completer():
-    """A prompt_toolkit Completer for `:attach`, or None if it isn't installed.
+    """A prompt_toolkit Completer for the REPL, or None if it isn't installed.
 
     Handed to `ui.set_completer()` by main.py rather than imported by ui.py:
     ui sits at the bottom of the dependency graph and must not import a cfc
@@ -279,27 +341,25 @@ def make_completer():
     except ImportError:
         return None
 
-    class AttachCompleter(Completer):
+    class CommandCompleter(Completer):
         def get_completions(self, document, complete_event):
-            line = document.text_before_cursor
-            if not line.startswith(TRIGGER):
-                return
-            fragment = line[len(TRIGGER):].lstrip()
             try:
-                matches = _candidates(fragment)
+                got = _dispatch(document.text_before_cursor)
             except Exception:
                 return      # a broken completer must never break the prompt
+            if got is None:
+                return
+            fragment, items = got
 
             # Replace the whole fragment, not the last word. prompt_toolkit
             # lets us say how far back to overwrite, so unlike readline there
             # is no need to slice the candidate to a word boundary — which is
             # what made the readline version fragile on paths with spaces, and
-            # every path in the vault has a space in it.
+            # every path in the vault has a space in it. Routine names have
+            # spaces for the same reason.
             start = -len(fragment)
-            for m in matches:
-                yield Completion(m, start_position=start,
-                                 display=Path(m).name + ("/" if m.endswith("/")
-                                                         else ""),
-                                 display_meta=str(Path(m).parent))
+            for text, display, meta in items:
+                yield Completion(text, start_position=start,
+                                 display=display, display_meta=meta)
 
-    return AttachCompleter()
+    return CommandCompleter()

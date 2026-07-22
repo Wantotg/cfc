@@ -23,6 +23,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Make a broken routine look broken, and Tab-complete `:routine`
+A hand-written routine file carried `id: wiki maintainer`, which isn't a slug.
+`:routine` listed it as available, `load_routine` *found* it, and `validate()`
+then refused it — so a broken **routine** read as a mistyped **command**, and
+several minutes went into quoting the argument different ways. Three fixes,
+none of which relax the slug rule (identity has to stay typeable).
+- **`:routine` marks what it can't run.** The listing validates each routine and
+  prefixes a `!` on the broken ones, with the reason underneath. A screen that
+  lists something as available and then refuses it is worse than no screen.
+- **The "known:" list names ids *and* display names.** The id is what you type,
+  the name is what it's called in Obsidian; printing one of them is what made
+  the available/unrunnable contradiction invisible.
+- **`load_routine` gained a third pass:** id, then display name, then the *slug*
+  of what was typed — so `:routine Wiki Maintainer` finds `wiki-maintainer` and
+  a name can be a sentence while an id stays a handle. Slugged match runs last,
+  so an exact id or name always wins.
+- **Tab completion for `:routine <name>`**, both ids and display names, sharing
+  `complete.py`'s two front ends through a new `_dispatch()`. `MIN_CHARS` stays
+  a path rule — a bare Tab lists every routine, which is the whole point when
+  the thing you can't remember is the name. Broken routines are still offered:
+  that's the one you're reaching for when you're fixing it.
+- Also fixed in the vault (not this repo): the two hand-written routine files
+  had non-slug ids, and `wiki draft writer` pointed at `/mnt/c/User/…/01 inbox`
+  for a folder that is `/mnt/c/Users/…/00 inbox`.
+- Files: routines.py, commands.py, complete.py, tests/test_routines.py,
+  tests/test_complete.py, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — A routine that runs out of tool calls fails instead of reporting ok
 Found by running the wiki-draft routine in chat: it wrote all five drafts, then
 hit the 8-call ceiling. In chat that's recoverable — you type "continue".

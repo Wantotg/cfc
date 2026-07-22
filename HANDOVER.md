@@ -354,7 +354,11 @@ A routine is a task the model runs on command now and on a schedule later. Two m
 
 **A routine is fully reconstructable from its file.** No hidden DB state, no sidecar index. That is what makes `list` = list the folder, `delete` = remove a file, `edit` = edit it in Obsidian, and it is why management costs nothing to add later. Anything tempting to keep only in the DB belongs in the frontmatter or in the run log. `tests/test_routines.py` pins the round-trip — and it **failed on first run over a single trailing newline**, which is why `Routine.__init__` strips `body` once: the file's trailing whitespace must never be part of identity, or the invariant quietly becomes a nearly-invariant.
 
-Identity is the `id` field, **not the filename** — the same lesson as the wiki importer. Renaming a routine keeps its log history instead of orphaning it. `Routine.__eq__` compares fields and ignores `path`, which is provenance.
+Identity is the `id` field, **not the filename** — the same lesson as the wiki importer. Renaming a routine keeps its log history instead of orphaning it. `Routine.__eq__` compares fields and ignores `path`, which is provenance. The corollary is that changing an `id` *does* orphan the log (`ROUTINE_LOG_DIR/<id>.md`) and changes what the system prompt tells the model it is; changing the `name` or the filename costs nothing.
+
+**The id must be a slug and the name is free text, and those are two different jobs.** The id is the handle you type and the log's filename; the name is what the routine is called in Obsidian, and it is allowed to be a sentence. They need not resemble each other — `load_routine` resolves **id → display name (case-insensitive) → the slug of what was typed**, so `:routine Wiki Maintainer` finds `wiki-maintainer`. The slugged pass runs last so an exact match on either always wins.
+
+**A routine that parses can still be unrunnable, and that has to be visible where you look for it.** These files are hand-edited in Obsidian, which is the whole point of the "fully reconstructable from its file" property — but it also bypasses `save_routine`'s validation, so a non-slug id, a moved prompt file or a renamed read root arrives on disk looking fine. `list_routines` only *parses*; it does not validate. So `show_routines` validates each one and flags it with a `!` plus the reason, and `load_routine`'s "known:" list prints `id (name)` for both. Without that, a routine could be **listed as available, found by the lookup, and refused by `validate()`** — which reads as the *command* being typed wrong, not the routine being broken, and that is where the debugging time goes.
 
 ### Why validation happens twice
 
@@ -554,10 +558,12 @@ line editing and **never consults readline** — so completion stopped happening
 the interactive path. Nothing raised, no test covered it, and `install()` kept
 returning True. It didn't break; it quietly stopped existing.
 
-Now there are two front ends over one `_candidates()`: `AttachCompleter`
+Now there are two front ends over one `_dispatch()`: `CommandCompleter`
 (prompt_toolkit) and `install()` (readline, still live behind the `input()`
 fallback for piped stdin). `tests/test_complete.py` pins the one the REPL
-actually uses.
+actually uses. `_dispatch` is the single place that decides *which* command is
+being completed — with two front ends and now two completable commands, that
+decision made twice is the same failure this module already had once.
 
 - **The completer is injected, not imported.** `ui.set_completer()` takes an
   opaque object from `main.py`; `ui.py` must not import `complete.py`, which

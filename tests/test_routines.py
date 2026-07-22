@@ -117,6 +117,21 @@ def main():
             ok("unknown routine raises", False)
         except routines.RoutineError as e:
             ok("unknown routine raises, and lists what exists", "nightly" in str(e))
+            # The id is what you type; the name is what it's called in
+            # Obsidian. Listing only one of them is how a findable routine
+            # reads as a mistyped command.
+            ok("...by id AND display name", "nightly (Nightly)" in str(e), str(e))
+
+        # A display name may be a sentence while the id stays a handle, so the
+        # two need not agree — 'Wiki Maintainer' must still find
+        # 'wiki-maintainer' without an exact match on either.
+        spaced = make(id="wiki-maintainer", name="Wiki Maintainer Suggest")
+        routines.save_routine(spaced)
+        ok("a slugged guess finds the id",
+           routines.load_routine("Wiki Maintainer").id == "wiki-maintainer")
+        ok("an exact name still wins over a slugged guess",
+           routines.load_routine("Nightly").id == "nightly")
+        (store.rdir / "wiki-maintainer.md").unlink()   # leave the store as found
 
         print("\n--- a write root over the source cannot be SAVED ---")
         bad = make(id="bad", write_roots=[str(ROOT)])
