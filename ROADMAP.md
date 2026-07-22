@@ -188,11 +188,14 @@ a rendering bug.
 Its own version and its own session, because it is the one thing in this stretch
 that isn't cosmetic and it should not share a session with work that is.
 
-- **Private chat.** `p` instead of `n` on the selection screen. Behaves exactly
-  like a normal chat — same model, prompts, personas, tools — but **nothing is
-  written down.** History lives only in the live loop that keeps the
-  conversation going. `:q`, Ctrl-D, or quitting the app ends it; there is no
-  restore, and it never appears in the hub.
+- **Private chat.** `p` instead of `n` on the selection screen. Behaves like a
+  normal chat — same model, prompts, personas, read tools — but **nothing is
+  written down.** It runs against an in-memory database, so `:q`, Ctrl-D, or
+  quitting the app ends it for good; there is no restore, and it never appears
+  in the hub. Two deliberate carve-outs: **model file-writes are blocked** (a
+  private chat leaves zero disk artifacts), and an **explicit `:export` is
+  honoured** (a user-typed command, unlike a model-proposed write). No title is
+  generated — a chat that can't be restored has nothing to label.
 - **Database on/off, one switch — not a private-only flag.** Recall and remember
   *read* the wiki into live history, which is a separate axis from privacy (that
   is the *write* paths below). A single session-level toggle governs the read

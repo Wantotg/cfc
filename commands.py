@@ -419,11 +419,17 @@ def _strip_md(name):
 
 
 def print_session_header(conn, session_id, model, title,
-                         system_prompt_name, persona_name):
+                         system_prompt_name, persona_name, private=False):
     """The chat screen's status block."""
-    heading = Text(f"\nSession #{session_id}", style="bold")
-    heading.append(f"  ·  {model}  ·  ", style="dim")
-    heading.append(title or "(untitled)")
+    if private:
+        # No id and no title: a private session is ephemeral, so #1 is
+        # meaningless and there is no title to show (title-gen is off for it).
+        heading = Text("\nPrivate session", style="bold")
+        heading.append(f"  ·  {model}", style="dim")
+    else:
+        heading = Text(f"\nSession #{session_id}", style="bold")
+        heading.append(f"  ·  {model}  ·  ", style="dim")
+        heading.append(title or "(untitled)")
     console.print(heading)
 
     if system_prompt_name:
@@ -506,6 +512,7 @@ _ALL_COMMANDS = [
         (":remember q", "pull matching excerpts into this conversation"),
         (":forget", "drop the last injected excerpts"),
         (":updatedb", "index anything not yet embedded"),
+        (":database on|off", "enable/disable recall & remember this session"),
     ]),
     ("files", [
         (":attach path", "attach a local text file (persistent)"),

@@ -68,7 +68,7 @@ def main_():
         """
         calls.clear()
         main.stream_response = empty_stream
-        main.chat_context = lambda: context.ToolContext.for_chat(
+        main.chat_context = lambda private=False: context.ToolContext.for_chat(
             read_roots=(tmp,), interactive=interactive)
         out = io.StringIO()
         real_stdin = sys.stdin

@@ -45,8 +45,17 @@ _MARKER_RE = re.compile(
 )
 
 
-def db():
-    conn = sqlite3.connect(DB_PATH)
+def db(path=None):
+    # `path` is the seam private chat uses: db(":memory:") gets an isolated
+    # connection with byte-identical schema and migrations, so every conn-driven
+    # write (save_message, titles, agent_turn's own saves) lands in a throwaway
+    # database that dies when the connection closes.
+    #
+    # Default is None, not DB_PATH: a default argument is captured once at
+    # definition time, so `path=DB_PATH` would freeze the value the module had at
+    # import — and the tests that redirect the database by patching db.DB_PATH
+    # would silently hit the real ~/.cfc/chat.db. Read the global at call time.
+    conn = sqlite3.connect(DB_PATH if path is None else path)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY,

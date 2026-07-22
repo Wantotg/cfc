@@ -150,10 +150,17 @@ def _config_roots():
     return read, write
 
 
-def chat_context():
-    """The default context for an interactive session."""
+def chat_context(private=False):
+    """The default context for an interactive session.
+
+    A private chat gets **no write scope**: model-proposed file writes are
+    refused structurally (empty write_roots → `tools.precheck` returns "writing
+    is not enabled"), the same closed commitment the outbox leans on, rather
+    than a flag the dispatcher has to remember to consult. Read tools are
+    unchanged — private blocks recording, not reading.
+    """
     read, write = _config_roots()
-    return ToolContext.for_chat(read, write)
+    return ToolContext.for_chat(read, () if private else write)
 
 
 def as_context(obj, write_roots=()):

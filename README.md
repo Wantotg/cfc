@@ -11,6 +11,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **Rich terminal UI** — a pixel-art splash at launch, live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
 - **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll when a model returns an empty completion — it asks you if you're there, and retries on its own if you're not. Reasoning shows on the tool path too (rendered per step, not streamed)
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
+- **Private chat** — start one with `p` at the hub: same client, but it runs in-memory and leaves nothing on disk — no transcript, no memory index, no title, invisible to the hub. Model file-writes are blocked; only an `:export` you type yourself reaches disk
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
 - **Per-session models** — switch models mid-project; each message records what generated it
 - **System prompts & personas** — Markdown files injected as system messages, editable in Obsidian
@@ -170,11 +171,23 @@ session there is. From there:
 |-----|--------|
 | number | Open that session |
 | `n` | New session |
+| `p` | New **private** chat (nothing saved) |
 | `q` | Quit |
 
 The hub is home base: `:q` inside a session brings you back here rather than
 quitting, so the program only exits from the hub (`q`, or Ctrl-D/Ctrl-C). The
 splash does **not** reappear on the way back — it's a launch screen, not a menu.
+
+A **private chat** (`p`) behaves like a normal one — same model, prompts,
+personas, and read tools — but **nothing is written down**. It runs against an
+in-memory database, so closing it (`:q`, Ctrl-D, or quitting the app) ends it
+for good: no transcript, no memory index, no auto-export, no title, and it never
+appears in the hub. There is no restore. Two deliberate exceptions: the model's
+own file-writes are blocked (a private chat leaves zero disk artifacts), while
+an explicit `:export` *you* type is honoured — the rule is that nothing reaches
+disk unless you ask for it by name. The wiki database starts sealed in a private
+chat (`:recall`/`:remember` disabled); `:database on` opens it, or set
+`DATABASE_ACTIVE = True` in config to have it on by default.
 
 `python main.py 5` opens session 5 directly, skipping the hub — but its `:q`
 still returns to the hub.
@@ -204,6 +217,7 @@ still returns to the hub.
 | `:remember <query>` | Pull matching excerpts into the live context (ephemeral) |
 | `:forget` | Drop the most recently injected excerpts |
 | `:updatedb` | Index any not-yet-embedded messages into memory now |
+| `:database on` / `:database off` | Enable/disable `:recall` & `:remember` this session (alias `:db`) |
 | `:attach <path>` | Attach a local text file to the session (persistent) |
 | `:attached` | List attachments in this session |
 | `:detach <n>` | Remove an attachment by its `:attached` index |
@@ -367,6 +381,7 @@ python tests/test_preflight.py   # the embedder check: dimension guard, never ha
 python tests/test_complete.py    # :attach completion: vault first, and the jail holds
 python tests/test_splash.py      # the splash compositor: aspect, resampling, the key read
 python tests/test_hub.py         # the screens: chat filter, colours, routine freshness
+python tests/test_private.py     # private chat: real db untouched, writes blocked, db toggle
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

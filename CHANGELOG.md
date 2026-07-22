@@ -23,13 +23,41 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Private chat (v0.41)
+`p` at the hub opens a chat that leaves nothing on disk. The isolation is
+structural, not a scatter of `if private` checks.
+- **The chokepoint is the connection.** A private chat runs against
+  `db(":memory:")`, so every conn-driven write — including the ones `agent_turn`
+  makes on its own — lands in a throwaway db and dies with it. No changes to the
+  persist call sites. It's structurally invisible to the picker too.
+- **`private=True` gates only what escapes the connection:** auto-embed (opens
+  the real db by path), auto-export (writes a file), and model file-writes
+  (`chat_context(private=True)` → empty write roots → `precheck` refuses
+  `write_file`). Title generation is off too — nothing to label.
+- **An explicit `:export` is still honoured** — the contract is "nothing is
+  written down unless you ask for it by name". Model-proposed writes aren't
+  asking.
+- **Database read toggle:** `:database on|off` (alias `:db`), config
+  `DATABASE_ACTIVE` (default off in a private chat). Gates `:recall`/`:remember`,
+  a *read* axis kept separate from privacy (the write paths).
+- **`db()` takes a `path`** (default None → real `DB_PATH`, read at call time so
+  tests that patch `DB_PATH` still redirect it). `run_session` now passes
+  `ctx=chat_ctx` into `agent_turn` so the private (write-less) scope actually
+  reaches the tool path.
+- `tests/test_private.py` pins the negative against a writing control; golden
+  re-baselined for the `:database` help line.
+- Files: db.py, main.py, hub.py, context.py, commands.py, config.example.py,
+  tests/test_private.py, tests/test_empty.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Document that a pushed tag is immutable
 Close the gap the v0.4 note-typo turned up: a correction found after tagging
 lands in a later commit, never a re-tag. Added to `CLAUDE.md`'s release-order
 section and, as a generic suggested standard, to `CLAUDE.example.md`.
 - Files: CLAUDE.md, CLAUDE.example.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: e25a750
 
 ## 2026-07-22 — Add a known-bugs log and a v0.8 roadmap slot
 Project hygiene, no code. New `BUGS.md` for defects (distinct from `BACKLOG.md`,
@@ -39,7 +67,7 @@ cluster, kept orthogonal to the v0.5–v0.7 spine and out of v1.0), a `/database
 on/off bullet on v0.41, and a mouse-scroll item under Beyond v1.0.
 - Files: BUGS.md, ROADMAP.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: e4b7890
 
 ---
 

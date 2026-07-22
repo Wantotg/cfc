@@ -295,7 +295,7 @@ def pick_session(conn):
     if routines:
         _print_routines(routines)
     console.print("Type a number to resume, 'n' for new "
-                  "session, 'q' to quit.")
+                  "session, 'p' for private, 'q' to quit.")
     console.print("':list' inside a session shows every session, "
                   "routine runs included.", style="dim")
 
@@ -305,6 +305,8 @@ def pick_session(conn):
             return "quit"
         if choice in ("n", "new"):
             return None
+        if choice in ("p", "private"):
+            return "private"
         try:
             idx = int(choice)
             if 1 <= idx <= len(rows):
@@ -312,5 +314,5 @@ def pick_session(conn):
             console.print(f"Enter a number between 1 and "
                           f"{len(rows)}.")
         except ValueError:
-            console.print("Type a number, 'n' for new, or "
-                          "'q' to quit.")
+            console.print("Type a number, 'n' for new, 'p' for "
+                          "private, or 'q' to quit.")

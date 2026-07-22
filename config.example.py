@@ -47,6 +47,13 @@ EMBED_KEY   = API_KEY
 # False and running :updatedb manually. A failed embed never breaks a chat turn.
 AUTO_EMBED = True
 
+# The default database state for a PRIVATE chat (started with 'p' at the hub).
+# A private chat never writes anything down; this is the separate *read* axis —
+# whether :recall/:remember may reach the wiki inside one. Default False keeps a
+# private chat fully sealed (no memory in, nothing out); :database on turns it
+# on for that session. A normal chat always starts with the database on.
+DATABASE_ACTIVE = False
+
 # Where the `lms` CLI lives, for launch.sh's preflight check (it starts the
 # LM Studio server and loads EMBED_MODEL if they aren't already up). Leave
 # unset and preflight.py finds it: `lms` on PATH for a native install, or

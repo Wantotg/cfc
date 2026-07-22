@@ -55,6 +55,7 @@ you>
     :remember q             pull matching excerpts into this conversation
     :forget                 drop the last injected excerpts
     :updatedb               index anything not yet embedded
+    :database on|off        enable/disable recall & remember this session
 
   files
     :attach path            attach a local text file (persistent)

@@ -25,8 +25,18 @@ try:
     from config import TOOLS_MODELS
 except ImportError:
     TOOLS_MODELS = []
+try:
+    # The default database state for a *private* chat. A normal chat always
+    # starts with the db on (recall is a core feature); a private chat starts
+    # from this, defaulting off so memory is sealed unless asked for. Absent
+    # from config → off, so an old config keeps a private chat maximally sealed.
+    from config import DATABASE_ACTIVE
+except ImportError:
+    DATABASE_ACTIVE = False
 
 from splash import splash
+from rich.text import Text
+
 from ui import console, human_panel, read_input, set_completer
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
@@ -73,6 +83,10 @@ def _one_line(text, width=60):
     return flat[:width] + ("..." if len(flat) > width else "")
 
 
+_DB_OFF = ("Database is off for this chat — :database on to enable "
+           ":recall and :remember.")
+
+
 def repl(session_id=None):
     """Outer driver: the hub, and the session you return to it from.
 
@@ -97,6 +111,18 @@ def repl(session_id=None):
                 break
             if result == "quit":
                 break
+            if result == "private":
+                # A private chat runs against an isolated in-memory database:
+                # every conn-driven write (messages, titles, agent_turn's own
+                # saves) lands there and is gone the moment we close it. Nothing
+                # touches ~/.cfc/chat.db. See run_session(private=True) for the
+                # two paths that escape the connection (auto-embed, auto-export).
+                priv = db(":memory:")
+                try:
+                    run_session(priv, new_session(priv), private=True)
+                finally:
+                    priv.close()
+                continue        # session_id is still None → back to the hub
             session_id = result if result is not None \
                 else new_session(conn)
         run_session(conn, session_id)
@@ -105,16 +131,30 @@ def repl(session_id=None):
     conn.close()
 
 
-def run_session(conn, session_id):
+def run_session(conn, session_id, private=False):
     """One session's REPL loop. Returns when the user leaves the session
-    (`:q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'."""
+    (`:q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'.
+
+    `private` is not a per-call-site switch — the isolation is structural, in
+    the in-memory `conn` repl() hands us, so every DB write is already a no-op
+    against disk. It gates only the two paths that *escape* the connection:
+    auto-embed (reads the real db by hardcoded path) and auto-export (writes a
+    file). Automatic persistence is off; an explicit `:export` is still honoured
+    — the contract is 'nothing is written down unless you ask for it by name'.
+    """
     history = load_history(conn, session_id)
     # Built once per session: `interactive` reports whether stdin is a
     # terminal, which is what the empty-completion handler consults before it
     # asks anyone anything.
-    chat_ctx = chat_context()
+    chat_ctx = chat_context(private=private)
     injected = []          # blocks added by :remember, newest last
     tools_on = True        # session toggle; the master switch still gates it
+    # Whether :recall/:remember/:updatedb may reach the wiki this session. A
+    # normal chat: on. A private chat: DATABASE_ACTIVE (default off), so memory
+    # is sealed unless you type :database on. This is the *read* axis and is
+    # separate from privacy, which is about the write paths — a private chat
+    # never persists regardless of this flag.
+    db_on = True if not private else DATABASE_ACTIVE
     current_title = get_session_title(conn, session_id)
     current_model = get_session_model(conn, session_id)
     system_prompt = get_system_prompt(conn, session_id)
@@ -125,7 +165,33 @@ def run_session(conn, session_id):
     persona_name = get_persona_name(conn, session_id)
 
     print_session_header(conn, session_id, current_model, current_title,
-                         system_prompt_name, persona_name)
+                         system_prompt_name, persona_name, private=private)
+    if private:
+        # State it, don't warn it — this is a fact about the session, in the
+        # same voice as the header. It is the user's only signal that the usual
+        # persistence is off, so it says exactly what is and isn't kept.
+        # The shared console is markup=False (invariant #4), so a "[bold]…[/]"
+        # string prints literally. Build a styled Text via from_markup instead —
+        # the same discipline the panel helpers use.
+        console.print(Text.from_markup(
+            "[bold]Private chat[/] — nothing here is written down. No "
+            "transcript, no\nmemory index, no auto-export, and it won't "
+            "appear in the hub. Closing it\n(:q, Ctrl-D, or quitting) ends "
+            "it for good; there is no restore. Model file\nwrites are "
+            "blocked; an explicit [bold]:export[/] is the one thing that "
+            "reaches disk,\nand only because you asked for it by name.",
+            style="cyan",
+        ))
+        if db_on:
+            console.print(
+                "The wiki database is on: :recall and :remember work here. "
+                ":database off to seal it.", style="cyan")
+        else:
+            console.print(
+                "The wiki database is off: :recall and :remember are "
+                "disabled. :database on to\nenable them (change the default "
+                "with DATABASE_ACTIVE in config).", style="cyan")
+        console.print()
     print_core_commands()
 
     if history:
@@ -156,14 +222,14 @@ def run_session(conn, session_id):
             # Ctrl-D on an empty line leaves the session. Ctrl-C is handled
             # inside read_input (cancel line, stay) and never reaches here.
             console.print()
-            if AUTO_EXPORT and history:
+            if AUTO_EXPORT and history and not private:
                 safe_export(conn, session_id)
             break
         if not user:
             continue
 
         if user == ":q":
-            if AUTO_EXPORT and history:
+            if AUTO_EXPORT and history and not private:
                 safe_export(conn, session_id)
             break
 
@@ -176,7 +242,7 @@ def run_session(conn, session_id):
             continue
 
         if user == ":new":
-            if AUTO_EXPORT and history:
+            if AUTO_EXPORT and history and not private:
                 safe_export(conn, session_id)
             session_id = new_session(conn)
             history = []
@@ -259,6 +325,9 @@ def run_session(conn, session_id):
         # --- Memory commands ---
 
         if user.startswith(":recall"):
+            if not db_on:
+                console.print(_DB_OFF)
+                continue
             parts = user.split(maxsplit=1)
             if len(parts) < 2 or not parts[1].strip():
                 console.print("Usage: :recall <question>")
@@ -269,6 +338,9 @@ def run_session(conn, session_id):
             continue
 
         if user.startswith(":remember"):
+            if not db_on:
+                console.print(_DB_OFF)
+                continue
             parts = user.split(maxsplit=1)
             if len(parts) < 2 or not parts[1].strip():
                 console.print("Usage: :remember <query>")
@@ -284,6 +356,9 @@ def run_session(conn, session_id):
             continue
 
         if user == ":updatedb":
+            if not db_on:
+                console.print(_DB_OFF)
+                continue
             do_updatedb()
             continue
 
@@ -467,6 +542,27 @@ def run_session(conn, session_id):
 
         # --- Tools ---
 
+        if user.startswith(":database") or user.startswith(":db"):
+            arg = user.split(maxsplit=1)
+            arg = arg[1].strip().lower() if len(arg) > 1 else ""
+            if arg == "on":
+                db_on = True
+                console.print("Database on: :recall and :remember can reach "
+                              "the wiki this session.")
+            elif arg == "off":
+                db_on = False
+                console.print("Database off: :recall and :remember are "
+                              "disabled this session.")
+            elif not arg:
+                state = "on" if db_on else "off"
+                console.print(f"Database is {state} for this session.")
+                if private and not db_on:
+                    console.print("This is a private chat; it stays sealed "
+                                  "unless you turn the database on.")
+            else:
+                console.print("Usage: :database | :database on | :database off")
+            continue
+
         if user.startswith(":tools"):
             arg = user.split(maxsplit=1)
             arg = arg[1].strip() if len(arg) > 1 else ""
@@ -568,7 +664,7 @@ def run_session(conn, session_id):
         if use_tools:
             try:
                 final = agent_turn(prefix, history, current_model,
-                                   conn, session_id)
+                                   conn, session_id, ctx=chat_ctx)
             except KeyboardInterrupt:
                 console.print("\n[tool turn cancelled]\n")
                 continue
@@ -582,13 +678,14 @@ def run_session(conn, session_id):
                 conn, session_id, current_model)
             print_context_bar(current_model, t_in, t_out)
             console.print()
-            if current_title == "(untitled)":
+            if current_title == "(untitled)" and not private:
                 new_title = generate_title(user)
                 if new_title != "(untitled)":
                     set_session_title(conn, session_id, new_title)
                     current_title = new_title
                     console.print(f"[title: {new_title}]\n")
-            auto_embed()   # index this turn's messages (best-effort)
+            if not private:
+                auto_embed()   # index this turn's messages (best-effort)
             continue
 
         api_messages = list(prefix)
@@ -675,7 +772,7 @@ def run_session(conn, session_id):
             {"role": "assistant", "content": assistant}
         )
 
-        if current_title == "(untitled)":
+        if current_title == "(untitled)" and not private:
             new_title = generate_title(user)
             if new_title != "(untitled)":
                 set_session_title(conn, session_id,
@@ -683,7 +780,8 @@ def run_session(conn, session_id):
                 current_title = new_title
                 console.print(f"[title: {new_title}]\n")
 
-        auto_embed()   # index this turn's messages (best-effort)
+        if not private:
+            auto_embed()   # index this turn's messages (best-effort)
 
 if __name__ == "__main__":
     # Snapshot before the session touches anything. Deliberately here and not

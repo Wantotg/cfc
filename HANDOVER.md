@@ -190,6 +190,24 @@ use_tools = TOOLS_ENABLED and tools_on and (current_model in TOOLS_MODELS)
 
 **Empty completions are a thing.** GLM-5.2:thinking occasionally returns a near-empty completion (a handful of tokens, `finish_reason=stop`, no `content`) — a provider-side hiccup, *not* a size limit; the same context answers on a re-roll. `main.py`'s stream path loops on this: it distinguishes reasoning-only (`[the model thought but returned no answer…]`) from genuinely empty (`[empty response]`), then either asks `retry? (y/n)` or re-rolls on its own depending on `ToolContext.interactive` — see "Empty completions, and what `interactive` is actually for". Empty completions are never persisted (the guard predates this, but it's why two dead empty-assistant rows once accumulated in a long thinking-model session and had to be swept).
 
+### Private chat (v0.41)
+
+`p` at the hub starts a private chat: it behaves like any other session — same model, prompts, personas, read tools — but **nothing is written down**, and there is no restore.
+
+**The guarantee is structural, not a pile of `if private` checks — that's the whole design.** A private chat runs against an **isolated in-memory database** (`db(":memory:")`, built by `repl()`, closed the moment the session returns). Every persist path already threads one `conn`: `save_message` in `main.py` *and* the ones `agent_turn` makes on its own, titles, recall markers, attachments. They all land in the throwaway db and vanish with it — with **zero changes to those call sites**. The dangerous path is `agent_turn` persisting independently in another file; the connection swap covers it for free, which is exactly why the guard is the connection and not a flag each writer has to remember. A private session is also structurally invisible to the picker: `hub.recent_chats` reads the real db, which never hears about it.
+
+`private=True` on `run_session` gates only the **three things that escape the connection**:
+
+1. **auto-embed** — `commands.auto_embed` opens the real `chat.db` by hardcoded `DB_PATH`, not `conn`, so it must be skipped explicitly (it's also inert — the private messages never reach the real db — but don't even call it).
+2. **auto-export** — `safe_export` reads `conn` but writes a `.md` to the vault. Skipped on every exit (`:q`, EOF, `:new`). An **explicit `:export` is still honoured**: the contract is "nothing is written down unless you ask for it by name", and typing the command is asking. Model-proposed writes are not asking — see below.
+3. **model file-writes** — `chat_context(private=True)` yields **empty write roots**, so `tools.precheck` refuses `write_file` before it runs ("writing is not enabled"). Same closed-commitment guarantee the outbox leans on: no write scope, structurally, rather than a deny check. Read tools are untouched — private blocks recording, not reading. This is also why `run_session` now passes `ctx=chat_ctx` into `agent_turn` explicitly; before, `agent_turn` built its own default context and the `chat_ctx` in `run_session` was used only for the `interactive` flag.
+
+**Title generation is off in private** — a chat that can't be restored and never appears in the hub has nothing to label, and it saved an API round-trip per first message.
+
+**The database *read* axis is separate from privacy.** `:recall`/`:remember` only *read* the wiki (via `recall`/`search`, which open the real db themselves, not through `conn`), so they leak nothing — but a private chat still seals them by default. `db_on` is the session flag: `True` for a normal chat, `DATABASE_ACTIVE` (config, default `False`) for a private one. `:database on|off` (alias `:db`) flips it; the three memory commands check it and the entry banner states it. Keep the two axes distinct: privacy is about the write paths and holds regardless of `db_on`; `db_on` is only about whether memory may be *reached*.
+
+**Tested, because "private" is a claim whose failure is silent** — `tests/test_private.py` asserts the real db is untouched after a full turn (against a control that proves the assertion can fail), that auto-embed/auto-export don't fire, that an explicit `:export` still does, that write_file is refused, and the whole `db_on` truth table. Miss one write path and the conversation is on disk with nothing to show it; the negative has to be pinned.
+
 ---
 
 ## Data model
@@ -566,6 +584,7 @@ same events.
 7. **`search.py` LEFT JOINs chunks→sessions** — a chunk with a dangling `session_id` surfaces with a `(missing session N)` placeholder rather than being silently dropped by an inner join (which is why k=8 could return 7).
 8. **A routine is reconstructable from its file alone**, keyed by its `id`, and an invalid one cannot be *saved*. The only ungated context in the system comes from `ToolContext.for_routine()`, which forces a declared write scope in the same call; `gated` has no setter and there is no config flag that pre-clears a tool. Don't rebuild one under a new name.
 9. **Wiki recall keys off the frontmatter id and stays wiki-only.** `import_wiki` identifies a page by `source_uuid` (the id), not filename/hash, and on edit drops the page's chunks+vectors so they rebuild — never orphaning a `session_id` (the parked bug). Recall filters `provider='wiki'`; the chat log is indexed (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and must never break a chat turn.
+10. **A private chat's isolation is the connection, not a flag.** It runs against `db(":memory:")`; every `conn`-driven write is already a no-op against disk, including the ones `agent_turn` makes on its own. `private=True` gates only the three paths that *escape* the connection (auto-embed, auto-export, model file-writes via empty write roots). If you add a new disk-writing path, route it through `conn` or it will silently defeat this — and `tests/test_private.py` pins the negative.
 
 ---
 
@@ -573,7 +592,7 @@ same events.
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
-Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker, `:routine` — verified by hand. The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends). 585 assertions across 16 suites. None need an API key.
+Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table). 17 suites. None need an API key.
 
 `test_chunk` exists because the chunker is the one part of the memory layer whose output silently becomes permanent: a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking. The mid-word bug sat in `BACKLOG.md` for six days precisely because nothing failed.
 
@@ -607,13 +626,24 @@ Does **not** cover: the chat turn, `:recall`/`:remember`, `:export`, the picker,
 | `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer` |
 | `splash.py` | the launch screen: baked pixel art composited under the title, asset rotation, Enter/Esc gate. Depends on `ui`, not the reverse |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*`, `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 
 ## Current state & open threads
 
-- **Just landed (v0.3, "the shell"):** the parts around the app rather than in
+- **Just landed (v0.41, "private chat"):** `p` at the hub opens a chat that
+  runs against an in-memory db and leaves nothing on disk — see the Private chat
+  section for why the chokepoint is the connection and not a flag. Auto-embed,
+  auto-export and title generation are off; model file-writes are refused
+  (empty write roots); an explicit `:export` is the one thing that reaches disk.
+  A separate read axis — `:database on|off`, config `DATABASE_ACTIVE` (default
+  off in private) — gates `:recall`/`:remember`. `tests/test_private.py` pins
+  the negative. **Not done here:** the interactive `p` flow and the banner are
+  hand-verified by Cas; the tests cover persistence, not the terminal render.
+- **Before that (v0.4, "the screens"):** the pixel-art splash, the filtered
+  hub/chat screens, and the context-bar colours. See `CHANGELOG.md`.
+- **Before that (v0.3, "the shell"):** the parts around the app rather than in
   it. `:wiki` (status/diff/commit over the vault repo, scoped to the wiki
   corpus); `launch.sh` + `preflight.py` (the embedder is checked, and started,
   before cfc opens); and the `:attach` completion rework — which turned up that
