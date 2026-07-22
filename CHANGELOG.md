@@ -23,6 +23,27 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Stop the golden baseline tripping on an API key rotation
+`golden check` had been failing on `API key: ...64dd` — the last 4 of a key
+that had since been rotated. Not a leak (it's what a provider dashboard shows)
+but it made the baseline a property of *this machine's `config.py`*, and a
+tripwire that fires on something the code cannot cause is one that gets
+rubber-stamped. This harness is the one that has to be trusted after a refactor.
+- **Fixed in `SCRUB`, not by re-recording.** `check` normalises both sides, so
+  the rule repaired the existing baseline with no re-record needed. Re-recorded
+  anyway so the raw tail stops living in a tracked file — a one-line diff.
+- **Scrubs only the `...abcd` form.** With no key set the line reads `not set`,
+  which still diffs against `<KEY>`; a config that lost its key is a real
+  finding. Both directions verified by temporarily rotating and then blanking
+  the key: rotation passes, blanking fails.
+- Handover gains the per-phase timeout reasoning from the previous entry (the
+  two paths' read timeouts are not the same quantity) plus a `SCRUB` note
+  generalising the rule: anything a baseline pins that lives in `config.py`
+  rather than in the source is this same bug.
+- Files: tests/golden.py, tests/golden_baseline.txt, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Give the non-streaming path a read timeout that fits a thinking model
 A routine run died with `[error] The read operation timed out` — client-side,
 not the provider. `call_api` had a flat `timeout=120`, and it is the path every
@@ -45,7 +66,7 @@ wiki pages is silent for minutes and the request was killed mid-thought.
   the version that ships.
 - Files: api.py, .gitignore
 - Status: shipped
-- Commit: pending
+- Commit: 3e7133f
 
 ## 2026-07-22 — Private chat (v0.41)
 `p` at the hub opens a chat that leaves nothing on disk. The isolation is

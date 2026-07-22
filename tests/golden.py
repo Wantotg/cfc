@@ -166,6 +166,17 @@ SCRUB = [
     (re.compile(r"/tmp/[^\s'\"]+"), "<TMP>"),
     (re.compile(re.escape(str(ROOT))), "<ROOT>"),
     (re.compile(re.escape(str(Path.home()))), "<HOME>"),
+    # `:config` prints the last 4 of the API key. Not a secret — it is exactly
+    # what a provider dashboard shows — but it made the baseline a property of
+    # *this machine's config.py*, so rotating the key failed `check` on a line
+    # that says nothing about the code. A tripwire that fires on something the
+    # code can't cause is a tripwire that gets ignored, and this harness is the
+    # one that has to be trusted after a refactor.
+    #
+    # Scrubs only the `...abcd` form on purpose: with no key set the line reads
+    # `not set`, which will still diff against <KEY>. A config that lost its key
+    # is a real finding and must stay visible.
+    (re.compile(r"(API key:\s+)\.\.\.\S+"), r"\1<KEY>"),
 ]
 
 def normalise(text):

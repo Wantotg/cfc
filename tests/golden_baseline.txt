@@ -104,7 +104,7 @@ you>                                               Sessions
 you>
 Current configuration:
   API base:      https://api.nano-gpt.com/v1
-  API key:       ...64dd
+  API key:       <KEY>
   Default model: zai-org/glm-5.2:thinking
   Session model: glm-5.2
   Auto-export:   on
