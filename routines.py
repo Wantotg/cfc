@@ -48,6 +48,7 @@ FIELD_ORDER = ("id", "name", "prompt", "read_roots", "write_roots",
                "trigger", "on_failure", "enabled")
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_WIKILINK_RE = re.compile(r"^\[\[(.+)\]\]$")
 _TRIGGER_RE = re.compile(r"^(command|\d{4})$")
 
 
@@ -58,6 +59,55 @@ class RoutineError(Exception):
 def slugify(name):
     """A stable id from a display name. Lowercase, hyphen-separated."""
     return _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-")
+
+
+# --- naming the task prompt ------------------------------------------------
+#
+# These files are authored and linked in Obsidian, so `prompt:` arrives in
+# whatever form Obsidian wrote: a wikilink `[[wiki draft writer prompt]]`, a
+# link with an alias or a heading, a vault-relative path when "shortest path
+# when possible" is off, or a plain filename typed by hand. All of them name
+# the same file; only the last one used to work, and the failure was a
+# `prompt file not found: …/[[wiki draft writer prompt]]` that reads like the
+# file is missing when it is sitting right there.
+#
+# **The stored string is never rewritten.** `prompt_candidates` is a read-time
+# interpretation, so `to_markdown()` still emits exactly what the file said and
+# the round-trip stays byte-identical. Obsidian owns that field's syntax; if it
+# is normalised on save, Obsidian's own link-update-on-rename stops finding it.
+#
+# Ambiguity is resolved by *existence*, not by guessing: every plausible form
+# is tried in order and the first file that is actually there wins. A `.md` is
+# appended only as a candidate, never assumed, so a prompt genuinely named
+# `x.txt` still resolves.
+
+
+def prompt_candidates(prompt):
+    """Every filename `prompt:` might mean, best guess first.
+
+    Pure and prompt_dir-free so it can be tested against a string.
+    """
+    text = (prompt or "").strip()
+    m = _WIKILINK_RE.match(text)
+    if m:
+        text = m.group(1).strip()
+        text = text.split("|", 1)[0].strip()       # [[note|alias]]
+        text = text.split("#", 1)[0].strip()       # [[note#heading]]
+        text = text.split("^", 1)[0].strip()       # [[note^block]]
+    if not text:
+        return []
+
+    forms = [text] if text.lower().endswith(".md") else [text + ".md", text]
+    # A vault-relative link ('06 metadata/routine prompts/x') names the same
+    # file as its basename does, since ROUTINE_PROMPT_DIR is where prompts
+    # live. Tried last: an actual subfolder under the prompt dir must win.
+    forms += [Path(f).name for f in forms if "/" in f or "\\" in f]
+
+    out = []
+    for f in forms:
+        if f and f not in out:
+            out.append(f)
+    return out
 
 
 def _cfg(key, default=None):
@@ -148,8 +198,12 @@ class Routine:
             problems.append("name is empty")
         if not self.prompt:
             problems.append("prompt is empty")
-        elif not (prompt_dir() / self.prompt).exists():
-            problems.append(f"prompt file not found: {prompt_dir() / self.prompt}")
+        elif self.prompt_path() is None:
+            # Name the forms that were tried, not just the one that failed —
+            # with wikilinks in play "not found" alone leaves you unsure
+            # whether the file is missing or the link syntax went unread.
+            tried = " | ".join(prompt_candidates(self.prompt)) or self.prompt
+            problems.append(f"prompt file not found in {prompt_dir()}: {tried}")
         if not _TRIGGER_RE.match(str(self.trigger)):
             problems.append(f"trigger {self.trigger!r} is not 'command' or HHMM")
         elif str(self.trigger) != "command":
@@ -186,8 +240,39 @@ class Routine:
             interactive=interactive,
         )
 
+    def prompt_path(self):
+        """Where the task prompt actually is, or None if nothing matches.
+
+        Resolution is by existence over `prompt_candidates`. Containment in
+        ROUTINE_PROMPT_DIR is checked rather than assumed: `prompt:` is a
+        string in a hand-edited file, so `[[../../.ssh/id_rsa]]` is a thing
+        somebody can write, and this feeds a read. It is not the file jail —
+        `paths.path_guard` is, for anything the model reaches — but a routine's
+        own task prompt never comes from outside its folder, and a closed
+        commitment beats a check somewhere else remembering to run.
+        """
+        base = prompt_dir()
+        try:
+            base_r = base.resolve()
+        except OSError:
+            return None
+        for name in prompt_candidates(self.prompt):
+            p = base / name
+            try:
+                if not p.is_file():
+                    continue
+                r = p.resolve()
+            except OSError:
+                continue
+            if r == base_r or base_r in r.parents:
+                return p
+        return None
+
     def prompt_text(self):
-        p = prompt_dir() / self.prompt
+        p = self.prompt_path()
+        if p is None:
+            raise RoutineError(f"cannot read prompt {self.prompt!r}: "
+                               f"no such file under {prompt_dir()}")
         try:
             return p.read_text(encoding="utf-8")
         except OSError as e:

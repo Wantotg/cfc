@@ -171,6 +171,55 @@ def main():
         ok("non-slug id",
            any("is not a slug" in p for p in make(id="Not A Slug").validate()))
 
+        # These files are linked in Obsidian, so `prompt:` arrives as a
+        # wikilink as often as a filename. Both name the same file; only the
+        # filename used to resolve, and the error read as "file missing" while
+        # the file was sitting right there.
+        print("\n--- `prompt:` in Obsidian's forms ---")
+        cands = routines.prompt_candidates
+        ok("a wikilink unwraps, .md appended as a candidate",
+           cands("[[wiki draft writer prompt]]")[0] ==
+           "wiki draft writer prompt.md", cands("[[wiki draft writer prompt]]"))
+        ok("an alias is dropped", cands("[[task|the task]]")[0] == "task.md")
+        ok("a heading is dropped", cands("[[task#Step one]]")[0] == "task.md")
+        ok("a plain filename is unchanged", cands("task.md") == ["task.md"])
+        ok("a vault-relative link also offers its basename",
+           "task.md" in cands("[[06 metadata/routine prompts/task]]"),
+           cands("[[06 metadata/routine prompts/task]]"))
+        ok("an empty prompt yields nothing", cands("") == [])
+
+        (store.pdir / "linked task.md").write_text("Do it.", encoding="utf-8")
+        linked = make(prompt="[[linked task]]")
+        ok("a wikilink resolves to the file", not linked.validate(),
+           linked.validate())
+        ok("...and reads it", linked.prompt_text() == "Do it.")
+        ok("a plain filename still resolves", not make().validate())
+
+        # `.md` is a candidate, never an assumption — existence decides, so a
+        # prompt genuinely named .txt is not renamed out from under itself.
+        (store.pdir / "odd.txt").write_text("txt", encoding="utf-8")
+        ok("a non-.md prompt still resolves",
+           make(prompt="odd.txt").prompt_text() == "txt")
+
+        # `prompt:` is a string in a hand-edited file, so this is writable.
+        # Not the file jail — that is paths.path_guard — but a routine's own
+        # task prompt never legitimately lives outside its folder.
+        escape = make(prompt="[[../../../etc/passwd]]")
+        ok("a link escaping the prompt dir does not resolve",
+           escape.prompt_path() is None)
+        ok("...and is a validation problem, naming what was tried",
+           any("prompt file not found" in p and "passwd" in p
+               for p in escape.validate()), escape.validate())
+
+        # The stored string is Obsidian's to own: normalising it on save would
+        # break Obsidian's own link-update-on-rename.
+        ok("the wikilink is not rewritten on the way out",
+           "[[linked task]]" in linked.to_markdown(), linked.to_markdown())
+        routines.save_routine(make(id="linked", prompt="[[linked task]]"))
+        ok("...and survives the round-trip verbatim",
+           routines.load_routine("linked").prompt == "[[linked task]]")
+        (store.rdir / "linked.md").unlink()       # leave the store as found
+
         print("\n--- context ---")
         ctx = make(read_roots=[str(store.pdir)],
                    write_roots=[str(store.ldir)]).context()

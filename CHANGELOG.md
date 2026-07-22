@@ -23,6 +23,30 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Read `prompt:` as an Obsidian link, not just a filename
+Routine files are authored *and linked* in Obsidian, so `prompt:` arrives as
+`[[wiki draft writer prompt]]` as readily as `heartbeat.md`. Only the filename
+resolved, and the error — `prompt file not found: …/[[wiki draft writer
+prompt]]` — read as a missing file while the file was sitting right there.
+- **`prompt_candidates()`** unwraps the wikilink, drops an `|alias` and a
+  `#heading`, and offers a vault-relative link's basename too. `Routine
+  .prompt_path()` resolves **by existence**, first hit wins.
+- **`.md` is a candidate, never an assumption** — the suffixed form is tried
+  first (Obsidian links carry no extension), the bare form second, so a prompt
+  genuinely named `.txt` still resolves.
+- **The stored string is not rewritten.** Resolution is read-time only, so
+  `to_markdown()` still emits what the file said. Normalising `[[…]]` on save
+  would round-trip fine and then break the first time Obsidian renamed the
+  prompt — its link-update pass would have no link left to update.
+- **Containment in `ROUTINE_PROMPT_DIR` is checked**, since `prompt:` is a
+  string in a hand-edited file and `[[../../.ssh/id_rsa]]` is writable. Not the
+  file jail (`paths.path_guard` is that) — a closed commitment next to it.
+- `validate()` now names every form it tried, so "the file is gone" and "the
+  link syntax went unread" stay distinguishable.
+- Files: routines.py, tests/test_routines.py, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Make a broken routine look broken, and Tab-complete `:routine`
 A hand-written routine file carried `id: wiki maintainer`, which isn't a slug.
 `:routine` listed it as available, `load_routine` *found* it, and `validate()`
@@ -50,7 +74,7 @@ none of which relax the slug rule (identity has to stay typeable).
 - Files: routines.py, commands.py, complete.py, tests/test_routines.py,
   tests/test_complete.py, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 03b0e19
 
 ## 2026-07-22 — A routine that runs out of tool calls fails instead of reporting ok
 Found by running the wiki-draft routine in chat: it wrote all five drafts, then
@@ -81,7 +105,7 @@ Unattended it was worse than it looked.
 - Files: agent.py, runner.py, config.py, config.example.py,
   tests/test_routines.py, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 5d8e29c
 
 ## 2026-07-22 — Stop the golden baseline tripping on an API key rotation
 `golden check` had been failing on `API key: ...64dd` — the last 4 of a key
@@ -154,7 +178,7 @@ structural, not a scatter of `if private` checks.
 - Files: db.py, main.py, hub.py, context.py, commands.py, config.example.py,
   tests/test_private.py, tests/test_empty.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: c9460ba
 
 ## 2026-07-22 — Document that a pushed tag is immutable
 Close the gap the v0.4 note-typo turned up: a correction found after tagging
