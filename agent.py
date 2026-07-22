@@ -34,7 +34,12 @@ except ImportError:
     TOOLS_MAX_CALLS_PER_TURN = 8
 from context import chat_context
 
-LIMIT_MESSAGE = "[tool call limit reached — TOOLS_MAX_CALLS_PER_TURN]"
+# The exact string a turn ends with when it runs out of calls. It is a
+# **constant, compared by identity** — `runner._turn_with_retry` tests for it to
+# turn a truncated routine into a logged failure, and an f-string carrying the
+# call count would break that check the moment the two paths used different
+# ceilings (which they now do). Don't interpolate anything into it.
+LIMIT_MESSAGE = "[tool call limit reached]"
 
 
 def _render_call(call):
@@ -107,7 +112,8 @@ def _render_result(result):
         console.print(f"    ({len(lines):,} lines)", style="dim")
 
 
-def agent_turn(prefix, history, model, conn, session_id, ctx=None):
+def agent_turn(prefix, history, model, conn, session_id, ctx=None,
+               max_calls=None):
     """Run a turn that may use tools. Returns the final assistant message.
 
     Takes the system `prefix` and `history` separately, and appends every
@@ -132,7 +138,16 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None):
     ctx = ctx or chat_context()
     approval = TurnApproval()
 
-    for _ in range(TOOLS_MAX_CALLS_PER_TURN):
+    # A parameter, for the same reason `ctx` is one: the budget belongs to the
+    # caller, not to whoever imported the module last. It is deliberately NOT on
+    # ToolContext — that object is the permission boundary ("who is asking and
+    # what may they touch"), and a call count is capacity, not permission.
+    # Reading the module global at call time (not as a default argument) is what
+    # keeps `test_agent`'s monkeypatch of TOOLS_MAX_CALLS_PER_TURN working.
+    if max_calls is None:
+        max_calls = TOOLS_MAX_CALLS_PER_TURN
+
+    for _ in range(max_calls):
         messages = list(prefix) + history
         # call_api blocks with nothing on screen — the streaming path shows a
         # spinner here, so the tool path does too. Not streaming: the spinner

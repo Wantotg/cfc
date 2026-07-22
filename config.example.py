@@ -107,8 +107,13 @@ WRITE_ROOTS = ()
 # There is no TOOLS_AUTO_APPROVE. It was removed deliberately: it made
 # "pre-clear these tools for everything, forever" a one-line config change.
 # Interactive chat gates every call ('A' allows the rest of one turn only).
-TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker
+TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker, chat
 TOOLS_MAX_RESULT_CHARS = 30_000   # truncate tool output
+
+# Routines get a bigger budget: in chat, hitting the ceiling is recoverable
+# (the turn ends, you type "continue"), and unattended there is nobody to type
+# it. Hitting this is a *failed* run, not a silently truncated ok one.
+ROUTINE_MAX_CALLS_PER_TURN = 15
 
 # --- routines --------------------------------------------------------------
 # A routine is a task the model runs on demand (":routine <name>") and, later,

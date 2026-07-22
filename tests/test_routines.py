@@ -305,6 +305,45 @@ def main():
             ok7, _, _ = runner.run_routine("empty", conn, model="m")
             ok("whitespace-only counts as empty", ok7 is False)
 
+            print("\n--- hitting the tool ceiling is a failed run, not an ok one ---")
+            # LIMIT_MESSAGE is non-empty, so it used to sail past the empty
+            # check, summarise into a perfectly respectable log line, and get
+            # recorded ok — a task that stopped halfway looking like a success.
+            # Same shape as the empty-completion bug, a different door.
+            import agent
+            tries = []
+
+            def hits_the_ceiling(*a, **kw):
+                tries.append(kw.get("max_calls"))
+                return {"role": "assistant", "content": agent.LIMIT_MESSAGE}
+
+            runner.agent_turn = hits_the_ceiling
+            ok8, summary, _ = runner.run_routine("empty", conn, model="m")
+            ok("the call limit fails the run", ok8 is False, summary)
+            ok("...and is logged as failed",
+               routines.last_run("empty")[0] == "failed")
+            ok("...naming the ceiling it hit",
+               str(runner.ROUTINE_MAX_CALLS_PER_TURN) in summary, summary)
+            # Not retried: a turn that exhausted its budget exhausts it again
+            # the same way, so a re-roll buys nothing and costs a full ceiling.
+            ok("...on the first try, not after re-rolling", len(tries) == 1,
+               len(tries))
+
+            print("\n--- a routine's ceiling is its own, not the chat one ---")
+            ok("the runner passes the routine budget",
+               tries == [runner.ROUTINE_MAX_CALLS_PER_TURN], tries)
+            ok("...which is larger than the chat budget",
+               runner.ROUTINE_MAX_CALLS_PER_TURN > agent.TOOLS_MAX_CALLS_PER_TURN,
+               (runner.ROUTINE_MAX_CALLS_PER_TURN,
+                agent.TOOLS_MAX_CALLS_PER_TURN))
+            # The check is identity against the constant. An f-string carrying
+            # the count into LIMIT_MESSAGE would break it silently, and the run
+            # would go back to being logged ok — pin the constant's shape.
+            ok("LIMIT_MESSAGE interpolates nothing",
+               "{" not in agent.LIMIT_MESSAGE and not any(
+                   c.isdigit() for c in agent.LIMIT_MESSAGE),
+               agent.LIMIT_MESSAGE)
+
             print("\n--- the retry does not consult ctx.interactive ---")
             # Gating on `interactive` would make an on-command run give up on
             # the first hiccup while an unattended one re-rolled — backwards.

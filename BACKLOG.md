@@ -8,6 +8,77 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
+## The run log sits inside the model's write scope
+
+**Found:** 2026-07-22, when a routine spent its last tool call reading its own
+run log in order to update it.
+
+`ROUTINE_LOG_DIR` is `<vault>/99 outbox/routine logs/`, and `WRITE_ROOTS` is
+`<vault>/99 outbox`. Containment is checked, so the log directory is **inside
+the writable universe** — verified, not assumed:
+
+```
+log dir   : …/99 outbox/routine logs
+write root: …/99 outbox          -> log inside? True
+```
+
+So `write_file` will happily let a model overwrite the append-only log that
+`runner.append_log` owns. That log is the audit trail *and* what the next run
+reads via `last_run()` to honour `on_failure`, so a clobber destroys the record
+of the failure it exists to preserve — and does it silently, since nothing
+compares the file against what the runner wrote.
+
+The trigger this time was a prompt asking the model to log its actions, which
+is fixable by deleting the instruction (the runner logs every run
+unconditionally, so the rule was redundant anyway). But the prompt is not the
+boundary anywhere else in this system and shouldn't be here: a model can decide
+to tidy its log without being asked.
+
+Fix: refuse writes under `ROUTINE_LOG_DIR` in `tools.precheck`, the same shape
+as `mover._reject_wiki` — which exists for the identical reason, a write whose
+damage is silent and arrives later. Note the deny list is the *weaker* tool here
+(name-based, open-ended) and this wants the containment form: a path check
+against the one directory, not a filename pattern.
+
+Related: **`mover.py` already special-cases this folder** — only top-level
+`*.md` in the outbox count as proposals, so the logs are excluded from filing.
+The precedent for "the log subfolder is not ordinary outbox content" exists;
+the write path just never got it.
+
+---
+
+## `append_log`'s `touched=()` is never passed — the run log can't say what a run wrote
+
+**Found:** 2026-07-22, reading the logging path after a routine hit the tool
+ceiling mid-task.
+
+`routines.append_log(routine_id, status, detail="", touched=())` renders the
+fourth argument as `— wrote a.md, b.md` in the log line. **No caller passes
+it.** All five `append_log` call sites in `runner.py` supply a status and a
+detail and nothing else, so the slot is dead and every line reads as though the
+run touched nothing.
+
+It matters more than a cosmetic gap because of what the log is *for*. The two
+consumers are a human asking "did the nightly thing work" and the next run
+reading `last_run()`. When a run fails halfway — which is now a real, logged
+outcome rather than a silent `ok` — the first question is **which files it got
+to before it stopped**, and the log is the only place that could answer it
+without reading the whole transcript back. Right now you diff the outbox by eye.
+
+Fix: `agent_turn` already sees every dispatched call, so the write targets are
+knowable at the point they succeed. Thread the successful `write_file` paths
+back out of the tool loop and hand them to `append_log`. The seam is real but
+not free — `agent_turn` currently returns just the final message, so it needs a
+second return value or a small mutable collector passed in, and the chat path
+must not start paying for something only the runner reads. Prefer the collector:
+a routine passes one, chat passes nothing, and the signature stays honest about
+who cares.
+
+Not urgent. The transcript has the full truth today; this is about making the
+one-line summary answer the question you actually ask it.
+
+---
+
 ## `golden.py check` writes a file into VAULT_PATH
 
 **Found:** 2026-07-21, driving `:wiki` through the real dispatch for v0.3.

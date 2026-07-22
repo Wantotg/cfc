@@ -25,7 +25,7 @@
 import datetime
 import traceback
 
-from agent import agent_turn
+from agent import LIMIT_MESSAGE, agent_turn
 from api import EMPTY_COMPLETION_RETRIES
 from db import PROVIDER_ROUTINE, new_session, save_message
 from routines import RoutineError, append_log, last_run, load_routine
@@ -34,6 +34,17 @@ try:
     from config import MODEL
 except ImportError:
     MODEL = None
+
+# A routine gets a bigger tool budget than a chat turn, because the number was
+# never really about cost — it is about how long a runaway loop may go before a
+# human interrupts it, and a routine has no human. In chat, hitting the ceiling
+# is recoverable: the turn ends and you type "continue". Unattended, there is
+# nobody to type it, so the same ceiling turns a real task into a truncated one.
+# A drafting routine writing five pages spends five calls on the writes alone.
+try:
+    from config import ROUTINE_MAX_CALLS_PER_TURN
+except ImportError:
+    ROUTINE_MAX_CALLS_PER_TURN = 15
 
 # The routine's own prompt is the task. This says who is asking and what is
 # absent — a model that assumes a human is watching will end a turn with a
@@ -75,6 +86,23 @@ class EmptyCompletion(Exception):
     """The model returned nothing, repeatedly. Treated as a failed run."""
 
 
+class CallLimitReached(Exception):
+    """The tool loop ran out of calls. Treated as a failed run.
+
+    `LIMIT_MESSAGE` is non-empty content, so without this it sails through the
+    empty-completion check, `_summarise` renders it as a perfectly good summary
+    and the run is logged **ok** — a task that stopped halfway recorded as a
+    success. Identical shape to the empty-completion bug, arriving through yet
+    another door: the log answers "did the nightly thing work" with yes.
+
+    Not retried, and that is the difference from `EmptyCompletion`. An empty
+    completion is a provider hiccup that the same request usually survives; a
+    turn that exhausted its budget will exhaust it again in exactly the same
+    way, so a re-roll buys nothing and costs another full ceiling of calls.
+    Fail on the first one and let the log say so.
+    """
+
+
 def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event):
     """Run the turn, re-rolling an empty completion rather than accepting it.
 
@@ -107,8 +135,18 @@ def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event):
     attempts = EMPTY_COMPLETION_RETRIES + 1
     for attempt in range(1, attempts + 1):
         history = [{"role": "user", "content": task}]
-        final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx)
-        if (final.get("content") or "").strip():
+        final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx,
+                           max_calls=ROUTINE_MAX_CALLS_PER_TURN)
+        content = (final.get("content") or "").strip()
+        # Checked before the truthiness test, because LIMIT_MESSAGE *is* truthy
+        # — that is precisely how it used to pass for a successful answer.
+        if content == LIMIT_MESSAGE:
+            raise CallLimitReached(
+                f"tool loop hit its ceiling of {ROUTINE_MAX_CALLS_PER_TURN} "
+                f"calls without finishing — the task is unfinished, and any "
+                f"files it wrote are partial"
+            )
+        if content:
             return final
         if attempt < attempts:
             event(f"empty completion — re-rolling {attempt}/{attempts - 1}")

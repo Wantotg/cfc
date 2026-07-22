@@ -23,6 +23,37 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — A routine that runs out of tool calls fails instead of reporting ok
+Found by running the wiki-draft routine in chat: it wrote all five drafts, then
+hit the 8-call ceiling. In chat that's recoverable — you type "continue".
+Unattended it was worse than it looked.
+- **The silent-success bug.** `LIMIT_MESSAGE` is non-empty content, so it sailed
+  past `_turn_with_retry`'s empty check, `_summarise` rendered it as a
+  respectable log line, and the run was logged **`ok`**. A task that stopped
+  halfway was indistinguishable from one that finished — the same shape as the
+  empty-completion bug, through a third door. Now raises `CallLimitReached`,
+  checked *before* the truthiness test that it used to pass.
+- **Not retried, unlike an empty completion.** An empty completion is a hiccup
+  the same request survives; an exhausted budget exhausts again identically, so
+  a re-roll buys nothing and costs another full ceiling.
+- **Routines get their own ceiling:** `ROUTINE_MAX_CALLS_PER_TURN = 15` vs 8 for
+  chat, via a new `agent_turn(max_calls=…)`. The number bounds how long a
+  runaway loop runs before a human interrupts it — and a routine has no human.
+  A parameter, not a field on `ToolContext`: that object is the permission
+  boundary, and a call count is capacity, not permission.
+- **`LIMIT_MESSAGE` interpolates nothing now** (was naming the config constant).
+  It's compared by identity, so embedding the count would break the check
+  silently the moment the two paths diverged — which is exactly what they just
+  did. Tests pin the constant's shape as well as the behaviour, verified by
+  disabling the guard and watching the assertions fail.
+- Backlog gains two entries found while reading the logging path: `append_log`'s
+  `touched=()` is never passed by any caller, and the run log directory sits
+  inside `WRITE_ROOTS` so a model can clobber the audit trail.
+- Files: agent.py, runner.py, config.py, config.example.py,
+  tests/test_routines.py, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Stop the golden baseline tripping on an API key rotation
 `golden check` had been failing on `API key: ...64dd` — the last 4 of a key
 that had since been rotated. Not a leak (it's what a provider dashboard shows)
@@ -42,7 +73,7 @@ rubber-stamped. This harness is the one that has to be trusted after a refactor.
   rather than in the source is this same bug.
 - Files: tests/golden.py, tests/golden_baseline.txt, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: a035198
 
 ## 2026-07-22 — Give the non-streaming path a read timeout that fits a thinking model
 A routine run died with `[error] The read operation timed out` — client-side,
