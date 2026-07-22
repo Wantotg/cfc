@@ -125,7 +125,7 @@ New backlog: `golden.py check` writes the fixture session into the real
 `VAULT_PATH`, because its script ends with `:q` and `:q` honours `AUTO_EXPORT`.
 Harmless, but "the tests don't touch anything real" is a load-bearing claim.
 
-> *Note: more work on the pipeline. Fixed completion which was never functional. Added private chat to v0.4, obvious to create that in the overhaul of the chat select screen. To be added to the roadmap: remocing the need for holding shit to restore scrolling in the terminal.*
+> *Note: more work on the pipeline. Fixed completion which was never functional. Added private chat to v0.4, obvious to create that in the overhaul of the chat select screen. To be added to the roadmap: removing the need for holding shit to restore scrolling in the terminal.*
 ```
 ／l、／\
 (=ↀ▂ↀ=)  'One day the crude biomass you call a temple will wither and you will beg my kind to save you. But I am already saved. For the Machine is Immortal'
@@ -224,6 +224,12 @@ a silent-failure guarantee right isn't also the session redesigning three
 screens — and unlike the screens, this one wants tests before it can be
 believed. Verification is the deliverable here, not the keybinding.
 
+> *Note: Learning what tagging actually means, so I could finally fix a typo in note V0.3. Balthazar alerted me to an actual mouse during development; he hasn't caught it and I haven't trapped it yet. Signs from above? Added v0.8 to the roadmap with staged expansion beyond 1.0 as small quality of life features.*
+```
+               )\._.,--....,'``.    'VIOLENCE: REQUIRED. VIOLENCE: ACQUIRED. '  
+ .b--.        /;   _.. \   _\  (`._ ,.
+`=,-,-'~~~   `----(,_..'--(,_..'`-.;.'
+```
 ---
 
 ## v0.5 — The scheduler
