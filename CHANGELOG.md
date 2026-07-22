@@ -23,6 +23,14 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Document that a pushed tag is immutable
+Close the gap the v0.4 note-typo turned up: a correction found after tagging
+lands in a later commit, never a re-tag. Added to `CLAUDE.md`'s release-order
+section and, as a generic suggested standard, to `CLAUDE.example.md`.
+- Files: CLAUDE.md, CLAUDE.example.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Add a known-bugs log and a v0.8 roadmap slot
 Project hygiene, no code. New `BUGS.md` for defects (distinct from `BACKLOG.md`,
 which is deferred-but-working debt), opened with the desktop-shortcut splash

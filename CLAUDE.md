@@ -148,6 +148,13 @@ move a tag once pushed (someone may have it), and don't tag on Cas's behalf —
 a tag is a public claim that a version is done, and that's his call to make.
 Offering the three commands at the end of a version is the right hand-off.
 
+**A pushed tag is immutable — corrections land in later commits, never a
+re-tag.** The tag is the snapshot of that version, typos and all. A mistake
+found in a note *after* tagging is fixed in the next ordinary commit; you do not
+delete-and-recreate the tag to correct it. `git checkout vX.Y` is *supposed* to
+show exactly what shipped, warts included — moving the tag to tidy it is what
+breaks that guarantee, and someone may already have the old one.
+
 ### The retrieval floor — settled at v0.2, and worth knowing why
 
 There is no live blocker. `MAX_DISTANCE` was the one, and v0.2 resolved it:

@@ -56,6 +56,23 @@ findings.
 - Unit suites (`test_paths`, `test_gate`, `test_agent`, `test_schema`,
   `test_litter`, …) need no API key.
 
+## Versions and tags (a suggested standard)
+
+If you tag releases, a small amount of discipline keeps the tags trustworthy:
+
+- **Tags are annotated and named `vX.Y`.** A version that only exists in
+  markdown can't be checked out.
+- **Write the version's note into the tracked docs (e.g. `ROADMAP.md`) *before*
+  you tag**, then tag. Tag first and the tag points at a commit that doesn't
+  contain its own note — `git checkout vX.Y` then shows a roadmap that doesn't
+  mention that version.
+- **A pushed tag is immutable.** It's the snapshot of that version, typos and
+  all. A mistake found *after* tagging is fixed in the next ordinary commit —
+  never by deleting and recreating the tag. `git checkout vX.Y` is supposed to
+  show exactly what shipped; moving the tag to tidy it breaks that, and someone
+  may already have the old one.
+- Tags don't ride a normal `git push` — `git push --tags` sends them.
+
 ## Things to remember
 
 - Don't reformat working code you weren't asked to touch.
