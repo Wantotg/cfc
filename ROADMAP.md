@@ -183,7 +183,7 @@ a rendering bug.
 
 ---
 
-## v0.41 — Private chat
+## v0.41 — Private chat — **complete, 2026-07-22**
 
 Its own version and its own session, because it is the one thing in this stretch
 that isn't cosmetic and it should not share a session with work that is.
