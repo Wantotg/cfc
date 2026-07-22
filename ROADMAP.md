@@ -377,3 +377,4 @@ Not scheduled, not ordered — the pile of things worth wanting.
 - Agentic reach: email, Discord, Telegram. Think through the use case for giving
   it keyboard and mouse control.
 - Let the model search the internet, then use a browser.
+- Private chat: with write tools enabled: this requires a writing location and it's not up to me to decide if "99 outbox" is the write location for a private chat. p -> new private chat -> :tools on -> cfc ask for the write path -> enter it and press **enter** -> cfc presents this location, does a check if it can actually write to it -> terminal displays 'Press **enter** to confirm write location at **path**' and user presses **enter** -> terminal displays 'Write tools have been activated and will write to **path**, this location has to be set again in a new private chat.'
