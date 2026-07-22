@@ -193,6 +193,15 @@ that isn't cosmetic and it should not share a session with work that is.
   written down.** History lives only in the live loop that keeps the
   conversation going. `:q`, Ctrl-D, or quitting the app ends it; there is no
   restore, and it never appears in the hub.
+- **Database on/off, one switch — not a private-only flag.** Recall and remember
+  *read* the wiki into live history, which is a separate axis from privacy (that
+  is the *write* paths below). A single session-level toggle governs the read
+  direction — `/database on|off`, mirroring `:tools`. A normal chat has it on and
+  can mute it for the session; a **private** chat defaults it **off**
+  (`database_active=false` in config) and announces it in the chat screen's
+  stating voice, not a warning: *"Database is off — this chat can't query the
+  wiki or pull excerpts in. Change the default in config."* Same mechanism both
+  places; only the default differs.
 
 **It needs a chokepoint rather than care.** "Private" is a claim whose failure
 is *silent*: miss one write path and the conversation is on disk with nothing to
@@ -261,6 +270,48 @@ actually working), v0.5 (it's a nightly job) and v0.6 (the same draft → approv
 
 ---
 
+## v0.8 — Prompts, personas, traits, and one way to add them
+
+A self-contained rework of the prompt system and the command surface.
+**Orthogonal to the v0.5–v0.7 spine** — it needs none of the scheduler, wiki
+automation or tiered memory, and none of them need it — so it sits *after* that
+chain rather than interrupting its momentum, and stays *out* of v1.0, which is a
+hardening gate with no new features.
+
+- **Traits.** Named blocks of prewritten instruction that compose *alongside* a
+  system prompt and a persona — `PG-16` (moderate output for a younger
+  audience), `Relaxed` (this is a chill chat, no work), and so on. They almost
+  write themselves. Bodies live as `.md` files in a `TRAITS_DIR`, exactly like
+  prompts and personas; a session carries the *names* of its active traits, the
+  same way it already carries `system_prompt_name` and `persona_name`.
+- **One assembler.** The load-bearing piece is a single function that builds the
+  system message from `(system_prompt, persona, traits[])` in a defined order.
+  Everything else is snippets. It's cheap to write the next time prompt/persona
+  composition is touched, and doing it early means traits slot in without a
+  rewrite — so it should land whenever that code is next opened, not wait for
+  here.
+- **Chat-scoped first.** Active traits attach to the session and clear when you
+  leave it — the one persistence mode that maps cleanly onto how prompts and
+  personas already work. The wider modes (survive-until-app-close,
+  survive-restart) are a config knob (`traits_persistence`) that can come later
+  *if wanted*: they're three different storage scopes wearing one name, and
+  building the 3× matrix on spec is how one of them rots untested.
+- **`/add`.** One forgiving command replaces `:prompt` / `:persona` and adds
+  trait attachment. It completes over all three pools with the kind shown, is
+  case-insensitive, and works out what you meant; the confirmation names the
+  kind (`added Relaxed — Trait`) and keeps the existing "here's what's now
+  attached" summary. The script owns the injection order, not the user.
+- **`/` instead of `:`.** The command prefix switches, purely for the look.
+  Trivial in logic, but it re-baselines every golden fixture and touches every
+  doc — so it rides *here*, with the command rewrite, for one re-baseline and
+  one docs pass rather than a version of its own.
+
+**Private-chat interaction:** in a private chat, active traits live in memory
+only and die with the loop — the same write chokepoint as v0.41, no special
+case.
+
+---
+
 ## v1.0 — Hardening, and a decision
 
 No new features.
@@ -302,6 +353,11 @@ Not scheduled, not ordered — the pile of things worth wanting.
 - Vision for the model.
 - Drag documents and files into the terminal to share them.
 - Select text in chat, right-click to copy.
+- Mouse scrolling without holding shift — click-to-position in the editor, text
+  selection, and scrollback scroll all working at once. Runs straight into the
+  xterm mouse-mode tradeoff `MOUSE_INPUT` already hit in v0.3: capturing the
+  mouse for click-to-position costs the terminal's native selection and scroll.
+  May not have a clean answer at all; parked here rather than promised.
 - A custom spinner.
 - More borders and divisions in the chat. Treat reasoning that follows a tool
   call differently from ordinary reasoning — tool reasoning is the useful kind.

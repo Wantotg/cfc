@@ -23,6 +23,18 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Add a known-bugs log and a v0.8 roadmap slot
+Project hygiene, no code. New `BUGS.md` for defects (distinct from `BACKLOG.md`,
+which is deferred-but-working debt), opened with the desktop-shortcut splash
+background bug. Roadmap gains v0.8 (traits, `/add`, `:`→`/` — the prompt/command
+cluster, kept orthogonal to the v0.5–v0.7 spine and out of v1.0), a `/database`
+on/off bullet on v0.41, and a mouse-scroll item under Beyond v1.0.
+- Files: BUGS.md, ROADMAP.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-21 — The screens: filtered hub, chat status, context colours
 Rest of v0.4. The picker, the session header, and what the token bar's colours
 actually mean.
