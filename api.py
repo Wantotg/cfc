@@ -25,8 +25,52 @@ except ImportError:
 
 from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
 
+# Read timeout for the non-streaming path, in seconds.
+#
+# This is the one number that has to be generous, and a bare `timeout=N` is the
+# wrong shape for it: httpx applies a scalar to connect, read, write AND pool
+# alike, so tuning for a slow *model* also means waiting that long for a dead
+# *socket*. They are opposite requirements — a connect that hasn't landed in ten
+# seconds never will, while a read is legitimately silent for as long as the
+# model thinks.
+#
+# The non-streaming path is where that bites. `stream_response` sees a chunk
+# every few hundred ms and resets its read clock on each one; `call_api` sees
+# nothing at all until the model has finished reasoning and emitted the whole
+# completion. A thinking model working through several wiki pages inside the
+# agent loop is silent for minutes, and the old flat 120 killed the request
+# mid-thought — surfacing as a bare `[error] The read operation timed out`,
+# which reads like a provider fault and isn't one.
+#
+# 600 is "long enough that tripping it means something is actually wrong",
+# not an estimate of how long a turn takes.
+try:
+    from config import API_READ_TIMEOUT
+except ImportError:
+    API_READ_TIMEOUT = 600.0
 
-def call_api(messages, model=None, tools=None):
+# Title generation runs on the same function but is a throwaway 3-5 word call
+# on a fast model. It must not inherit the agent path's patience: a hung title
+# request would block the REPL for ten minutes with nothing on screen, and
+# generate_title swallows the exception anyway, so the failure would be a long
+# silence followed by "(untitled)".
+_TITLE_READ_TIMEOUT = 60.0
+
+_CONNECT_TIMEOUT = 10.0
+_WRITE_TIMEOUT = 60.0
+
+
+def _timeout(read):
+    """Per-phase timeouts: short on connect/pool, long on read."""
+    return httpx.Timeout(
+        connect=_CONNECT_TIMEOUT,
+        read=read,
+        write=_WRITE_TIMEOUT,
+        pool=_CONNECT_TIMEOUT,
+    )
+
+
+def call_api(messages, model=None, tools=None, read_timeout=None):
     """Non-streaming API call. Used for title generation and the agent loop.
 
     Streaming is off whenever tools are in play: tool-call deltas arrive
@@ -41,7 +85,9 @@ def call_api(messages, model=None, tools=None):
     }
     if tools:
         payload["tools"] = tools
-    with httpx.Client(timeout=120) as client:
+    if read_timeout is None:
+        read_timeout = API_READ_TIMEOUT
+    with httpx.Client(timeout=_timeout(read_timeout)) as client:
         r = client.post(
             f"{API_BASE}/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -116,7 +162,12 @@ def stream_response(messages, model=None):
     if STREAM_USAGE:
         payload["stream_options"] = {"include_usage": True}
 
-    with httpx.Client(timeout=300) as client:
+    # Read stays at 300 here and is a different quantity from the one above:
+    # httpx resets the read clock on every chunk, so this is the gap *between*
+    # deltas, not the length of the turn. 300s of dead air on an open stream is
+    # a hung connection, not a slow model. Connect/write get the same short
+    # bounds as everywhere else.
+    with httpx.Client(timeout=_timeout(300.0)) as client:
         with Live(
             Spinner(
                 "dots",
@@ -206,7 +257,7 @@ def generate_title(first_user_message):
         {"role": "user", "content": first_user_message},
     ]
     try:
-        resp = call_api(title_request)
+        resp = call_api(title_request, read_timeout=_TITLE_READ_TIMEOUT)
         title = resp["choices"][0]["message"]["content"].strip()
         title = title.strip("\"'").replace("\n", " ").strip()
         title = title.rstrip(".?!")

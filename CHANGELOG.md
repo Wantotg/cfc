@@ -23,6 +23,30 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-22 — Give the non-streaming path a read timeout that fits a thinking model
+A routine run died with `[error] The read operation timed out` — client-side,
+not the provider. `call_api` had a flat `timeout=120`, and it is the path every
+tools-on turn and every routine takes. Non-streaming means no bytes arrive until
+the model has finished reasoning, so a thinking model working through several
+wiki pages is silent for minutes and the request was killed mid-thought.
+- **A scalar timeout was the wrong shape.** httpx applies it to connect, read,
+  write and pool alike, so tuning for a slow model also means waiting that long
+  on a dead socket — opposite requirements. Now per-phase: connect/pool 10s,
+  write 60s, read long.
+- **Read is 600s on the agent path** (`API_READ_TIMEOUT`, overridable in
+  `config.py`), 60s for title generation — a throwaway 3-5 word call must not
+  inherit the agent path's patience, especially since `generate_title` swallows
+  the exception and would just go quiet for ten minutes.
+- **The streaming path keeps read=300 and that number means something else:**
+  httpx resets the read clock per chunk, so it's the gap between deltas, not the
+  length of the turn. It got the same short connect/write bounds.
+- Also untracked `CLAUDE.md` (`git rm --cached`) — it was in `.gitignore` but
+  already in the index, so the ignore rule never applied. `CLAUDE.example.md` is
+  the version that ships.
+- Files: api.py, .gitignore
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Private chat (v0.41)
 `p` at the hub opens a chat that leaves nothing on disk. The isolation is
 structural, not a scatter of `if private` checks.
