@@ -896,6 +896,53 @@ Two rules, both already applied above:
 
 If you add a fifth, add it to this table.
 
+---
+
+## Standing decision: the command taxonomy (v0.8, recorded early)
+
+Recorded **ahead of** the work that implements it, on purpose. v0.8 flips the
+command prefix from `:` to `/` and reworks prompt/persona/trait attachment behind
+one `/add`. The *verb spine* it settles on is a decision every command added
+between now and then has to respect — otherwise the flip stops being a pure
+prefix change and turns into a rename of the ones that guessed a different verb.
+
+Today the surface is `:`-prefixed and this taxonomy is **not yet built** —
+`:prompt`, `:persona`, `:attach`, `:forget`, `:export` are the live names. What
+is settled is which verb each *kind* of command gets once the flip lands:
+
+- **`/add`** — attach something cfc already owns: a prompt, a persona, a trait.
+  Internal. (Replaces `:prompt` / `:persona`.)
+- **`/attach`** — bring in something external: a picture, a document, a file.
+  Today's `:attach`. The split from `/add` is the point — internal vs external.
+- **`/connect`** — reserved for connections (external services). Nothing uses it
+  yet; it is held so nothing else claims it.
+- **`/remove`** — the universal detach. Every attachable feature sheds through
+  this one verb, not a per-feature `:unpersona`.
+- **`/delete`** — memory removal, sibling of `/remember` and `/recall`. Today's
+  `:forget` becomes this.
+- **`/import` / `/export`** — cfc sessions in and out. Today's `:export`.
+
+**The rule that makes it load-bearing: a command added before v0.8 ships is named
+by the verb it will carry *after* the flip** (still `:`-prefixed for now). A
+command added as `:unfoo` is one the flip can't mechanically rewrite; a command
+added under the right verb becomes `/`-prefixed for free.
+
+Two design points settled with it — detail in `ROADMAP_PRIVATE.md` and the
+`99 outbox/v0.8 build draft.md`:
+
+- **`/add` and `/remove` take a bare form and an explicit form.** Bare
+  (`/add relax`) resolves a name across the three pools by priority
+  (System > Persona > Trait); explicit (`/add trait relax`) names the kind. The
+  bare-name priority and the *assembly* order of the final system message are the
+  **same sequence but two independent decisions** — one governs which pool a name
+  collision fills, the other where each layer lands in the prompt. They only
+  happen to agree; don't collapse them into one.
+- **No `/swap` in v0.8.** `/add` overwrites the singular layers (system prompt,
+  persona) and appends to the plural one (traits); `/remove` peels. Swap is
+  redundant where unambiguous and ambiguous where it isn't (which trait?), and
+  earns a version later only if "replace A with B in one keystroke" proves to be
+  a daily move.
+
 ## Load-bearing invariants (don't break these)
 
 1. **Any DB write checks its path *before* the write, not after.** A test guard that ran its assertion *after* a destructive `unlink()` once deleted the real database. `backup.py` and `tests/golden.py` both assert-not-real before touching anything.

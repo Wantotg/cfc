@@ -48,6 +48,25 @@ layer, the tool-calling jail, or the DB schema. It records the invariants and
 the reasons behind non-obvious choices. `BACKLOG.md` holds smaller parked
 findings.
 
+## A command taxonomy (a suggested practice)
+
+If the app grows a command surface, decide the *verb* each kind of command gets
+once, up front, and hold every new command to it — otherwise the surface
+accretes synonyms for the same action (`:unpersona`, `:dropfile`, `:forget`)
+that all have to be reconciled later. The spine this project settled on:
+
+- **`/add`** — attach something the app already owns (a prompt, a persona, a trait).
+- **`/attach`** — bring in something external (a file, an image, a document).
+- **`/connect`** — reserved for external-service connections.
+- **`/remove`** — the universal detach; every attachable feature sheds through it.
+- **`/delete`** — memory removal.
+- **`/import` / `/export`** — sessions in and out.
+
+The payoff is that a later cosmetic change — here, switching the command prefix
+from `:` to `/` — stays mechanical instead of becoming a rename of every command.
+Recording the spine *before* you need it is what keeps a command added today from
+guessing a verb the convention will have to rewrite.
+
 ## Testing
 
 - `tests/golden.py` pins the REPL's exact stdout for every no-API command.

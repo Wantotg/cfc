@@ -23,6 +23,17 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Record the v0.8 command taxonomy as a standing decision
+Settled the verb spine ahead of the work that implements it, so a command added
+before v0.8's `:` → `/` flip is named by the verb it will carry after — keeping
+the flip a pure prefix change instead of a rename. `/add` (internal attach),
+`/attach` (external files), `/connect` (reserved), `/remove` (universal detach),
+`/delete` (memory, replacing `:forget`), `/import`·`/export` (sessions). `/swap`
+deliberately deferred. Docs only, no code — the build itself is v0.8.
+- Files: HANDOVER.md, CLAUDE.example.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — File proposed pages into the wiki, id stamped at approval
 The mover refused wiki destinations outright, because a page landing in the
 corpus while the recall index is unaware makes recall answer from a stale copy
