@@ -339,6 +339,13 @@ model only ever proposes.
 **Not done here:** the routine task-prompts are still being finished, and the
 full loop against the live embedder is verified in use rather than in tests.
 
+> *(the entry's there, note-shaped hole at the end where the cat goes) Ahh found it! 0.6 completes the first version of the wiki db. The models write, the human (dis)approves and the script timestamps and moves the files.*
+```
+ /\_/\   'PLUS ULTRA'
+( o.o ) 
+ > ^ <
+```
+
 ## v0.7 — Tiered memory
 
 ## v0.8 — Prompts, personas, traits, and one way to add them
