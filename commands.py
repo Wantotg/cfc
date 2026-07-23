@@ -1089,7 +1089,15 @@ def gate_and_dispatch(call, approval, ctx=None):
     # outside roots) rather than "user denied", which it can act on.
     blocked = tools.precheck(name, args, ctx)
     if blocked:
-        console.print(f"auto-denied {name}: outside the jail", style="dim")
+        # Print the real reason rather than a fixed "outside the jail": not
+        # every pre-filter refusal is a containment one now (a write into the
+        # run log is refused by its own rule), and a line that names the wrong
+        # boundary is worse than no line for anyone auditing this.
+        try:
+            why = json.loads(blocked).get("error", "refused")
+        except (ValueError, AttributeError):
+            why = "refused"
+        console.print(f"auto-denied {name}: {why}", style="dim")
         return blocked
 
     verdict = gate(call, approval, ctx)

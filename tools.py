@@ -51,6 +51,50 @@ WRITE_TOOLS = {"write_file"}
 # a silently half-written note is worse than a failed call.
 WRITE_MAX_CHARS = 200_000
 
+
+def reserved_write_reason(p):
+    """Why this resolved path is off-limits to a write tool, or None.
+
+    ROUTINE_LOG_DIR lives *inside* WRITE_ROOTS (`<vault>/99 outbox/routine
+    logs/` under `<vault>/99 outbox`), so containment alone lets a model
+    overwrite the append-only run log that runner.append_log owns. That log is
+    the audit trail AND what the next run reads via last_run() to honour
+    on_failure, so a clobber destroys the record of the failure it exists to
+    preserve — silently, since nothing compares the file against what the
+    runner wrote. A model does not have to be asked to tidy its own log.
+
+    Containment, not a name pattern. The deny list is the weaker tool here:
+    it matches filenames, so it is an open-ended commitment (every config.py.bak
+    shape escaped it once), while "this one directory" is a closed one. Same
+    shape and same reason as mover._reject_wiki — a write whose damage is
+    silent and arrives later.
+
+    Writes only. Reading a run log is legitimate and stays allowed.
+    """
+    log_dir = _log_dir()
+    if log_dir is None:
+        return None
+    if p == log_dir or log_dir in p.parents:
+        return (f"{log_dir.name}/ is the routines' run log and is not "
+                f"writable — runner.py appends to it, and a write here would "
+                f"destroy the record of a run")
+    return None
+
+
+def _log_dir():
+    """The resolved ROUTINE_LOG_DIR, or None if there isn't one.
+
+    Imported lazily so the jail carries no import-time dependency on a feature
+    module, and so patching routines.log_dir in a test is seen here. None on
+    failure restricts nothing extra — the write roots still bound every write,
+    so this can only ever narrow that scope, never widen it.
+    """
+    try:
+        import routines
+        return routines.log_dir().expanduser().resolve()
+    except Exception:
+        return None
+
 # Directories that are never worth walking: huge, generated, or not source.
 # Skipped by grep so a search doesn't spend a minute in .venv and return
 # matches from third-party code the user didn't write.
@@ -358,6 +402,13 @@ def write_file(path, content, roots, overwrite=False):
     if err:
         return err
 
+    # The boundary for the reserved directories, not the pre-filter in
+    # precheck(). dispatch() is reachable without a gate at all, so a check
+    # that only ran there would be advice.
+    why = reserved_write_reason(p)
+    if why:
+        return _err(why)
+
     if content is None:
         return _err("write_file requires 'content'")
     if not isinstance(content, str):
@@ -492,9 +543,17 @@ def precheck(name, arguments, ctx=None):
     if not path or name not in ("list_dir", "read_file", "grep", "write_file"):
         return None
     try:
-        path_guard(path, roots)
+        p = path_guard(path, roots)
     except PathError as e:
         return _err(str(e))
+
+    # Mirrors the refusal write_file makes, for the same reason precheck
+    # mirrors path_guard: prompting for a call that cannot succeed teaches
+    # the habit of rubber-stamping the gate.
+    if name in WRITE_TOOLS:
+        why = reserved_write_reason(p)
+        if why:
+            return _err(why)
     return None
 
 

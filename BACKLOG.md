@@ -8,7 +8,23 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
-## The run log sits inside the model's write scope
+## ~~The run log sits inside the model's write scope~~ — FIXED (2026-07-23)
+
+**Fixed:** `tools.reserved_write_reason()` refuses any write resolving inside
+`ROUTINE_LOG_DIR`. Containment against the one directory, as this entry asked,
+not a filename pattern. Enforced in `write_file` — **the boundary, because
+`dispatch()` is reachable with no gate at all** — and mirrored in `precheck` so
+the gate never prompts for a call that cannot succeed. Writes only; reading a
+log is still allowed. Resolution happens before the check, so a symlink out of
+the outbox into the log dir is judged as its target. Verified against the real
+config (the live `heartbeat.md` is refused and unchanged), and the new
+assertions were confirmed to fail with the guard disabled.
+
+One thing this deliberately does *not* do: it makes no attempt to be a general
+"reserved paths" mechanism. There is one such directory, so there is one check.
+A second one is the point at which it should become a list.
+
+Original report below.
 
 **Found:** 2026-07-22, when a routine spent its last tool call reading its own
 run log in order to update it.

@@ -23,6 +23,34 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Close the run log to `write_file`
+`ROUTINE_LOG_DIR` sits *inside* `WRITE_ROOTS` (`<vault>/99 outbox/routine logs/`
+under `<vault>/99 outbox`), so containment alone let a model overwrite the
+append-only log `runner.append_log` owns — the audit trail *and* what the next
+run reads via `last_run()` to honour `on_failure`. A clobber destroys the record
+of the failure the log exists to preserve, silently, since nothing compares the
+file against what the runner wrote.
+- **`tools.reserved_write_reason()`** refuses a write resolving inside the log
+  dir. **Containment, not a name pattern** — the deny list is the weaker tool
+  (filename-based, open-ended: every `config.py.bak` shape escaped it once)
+  and this wants the closed form. Same shape and reason as
+  `mover._reject_wiki`.
+- **Enforced in `write_file`, mirrored in `precheck`.** `dispatch()` is
+  reachable with no gate at all, so a check that lived only in the pre-filter
+  would be advice; the pre-filter copy exists so the gate never prompts for a
+  call that cannot succeed.
+- **Writes only.** Reading a run log stays allowed — this blocks recording, not
+  looking. Resolution happens first, so a symlink out of the outbox into the
+  log dir is judged as its target.
+- `gate_and_dispatch` now prints the *real* refusal reason instead of a fixed
+  "outside the jail", which is no longer true of every pre-filter denial.
+- Verified against the real config as well as the fixture: the live
+  `heartbeat.md` is refused and unchanged. Assertions confirmed to fail with
+  the guard disabled.
+- Files: tools.py, commands.py, tests/test_tools.py, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-22 — Read `prompt:` as an Obsidian link, not just a filename
 Routine files are authored *and linked* in Obsidian, so `prompt:` arrives as
 `[[wiki draft writer prompt]]` as readily as `heartbeat.md`. Only the filename

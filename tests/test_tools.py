@@ -21,6 +21,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+import routines
 import tools
 from context import ToolContext
 
@@ -249,6 +250,92 @@ def main():
     ok("bare read roots grant no write access",
        is_err(r, "writing is not enabled"), r)
     ok("...nothing created", not (box / "d.md").exists())
+
+    # --- the run log is inside the write root and must still be unwritable ---
+    #
+    # ROUTINE_LOG_DIR lives under WRITE_ROOTS in the real config, so
+    # containment cannot express this: it takes its own refusal. The log is
+    # the audit trail and what the next run reads to honour on_failure, so a
+    # clobber destroys the record of the failure it exists to preserve — and
+    # nothing would notice, since nobody diffs the log against what the runner
+    # wrote. Tested against a control, because this is a negative.
+    print("\n--- the routine run log is not writable ---")
+    logs = box / "routine logs"
+    logs.mkdir()
+    (logs / "heartbeat.md").write_text("- 2026-07-22 03:00 ok\n")
+    real_log_dir = routines.log_dir
+    routines.log_dir = lambda: logs
+    try:
+        # This goes through dispatch, not the gate: dispatch is reachable with
+        # no gate at all, so it has to be the layer that refuses.
+        r = tools.dispatch("write_file",
+                           json.dumps({"path": str(logs / "heartbeat.md"),
+                                       "content": "clobbered",
+                                       "overwrite": True}), W)
+        ok("dispatch refuses a write into the log dir",
+           is_err(r, "run log"), r)
+        ok("...the log is untouched",
+           (logs / "heartbeat.md").read_text() == "- 2026-07-22 03:00 ok\n")
+
+        r = tools.dispatch("write_file",
+                           json.dumps({"path": str(logs / "sub" / "new.md"),
+                                       "content": "x"}), W)
+        ok("...and so is a write below it", is_err(r, "run log"), r)
+        ok("...nothing created", not (logs / "sub").exists())
+
+        # Resolution happens before the check, so a link out of the ordinary
+        # outbox into the log dir is judged as its target. Same property that
+        # defeats ../ traversal in path_guard.
+        link = box / "shortcut.md"
+        try:
+            link.symlink_to(logs / "heartbeat.md")
+        except OSError:
+            link = None
+        if link is not None:
+            r = tools.dispatch("write_file",
+                               json.dumps({"path": str(link),
+                                           "content": "via a symlink",
+                                           "overwrite": True}), W)
+            ok("a symlink into the log dir is refused too", is_err(r, "run log"), r)
+            ok("...the log is still untouched",
+               (logs / "heartbeat.md").read_text() == "- 2026-07-22 03:00 ok\n")
+
+        # Reads are untouched: this blocks recording, not looking.
+        r = tools.dispatch("read_file",
+                           json.dumps({"path": str(logs / "heartbeat.md")}),
+                           ToolContext.for_chat(read_roots=(jail, box),
+                                                write_roots=(box,)))
+        ok("reading the run log is still allowed", "03:00 ok" in r, r)
+
+        # The pre-filter mirrors the boundary, so the gate never prompts for a
+        # call that cannot succeed.
+        blocked = tools.precheck("write_file",
+                                 json.dumps({"path": str(logs / "x.md"),
+                                             "content": "x"}), W)
+        ok("precheck refuses it before the gate",
+           blocked is not None and is_err(blocked, "run log"), blocked)
+        ok("precheck still passes an ordinary outbox write",
+           tools.precheck("write_file",
+                          json.dumps({"path": str(box / "fine.md"),
+                                      "content": "x"}), W) is None)
+
+        # The control: the refusal is this one directory, not writes in general.
+        r = tools.dispatch("write_file",
+                           json.dumps({"path": str(box / "proposal.md"),
+                                       "content": "x"}), W)
+        ok("an ordinary outbox write still works", "wrote" in r, r)
+    finally:
+        routines.log_dir = real_log_dir
+
+    # With no routines config reachable, the extra rule simply doesn't apply —
+    # it can only ever narrow the write scope, never widen it, so failing open
+    # here still leaves every write bounded by the roots.
+    routines.log_dir = lambda: (_ for _ in ()).throw(RuntimeError("no config"))
+    try:
+        ok("a broken log-dir lookup narrows nothing",
+           tools.reserved_write_reason(box / "a.md") is None)
+    finally:
+        routines.log_dir = real_log_dir
 
     print("\n--- the dispatcher never raises ---")
     junk = [("read_file", '{"path": null}'), ("read_file", '{"path": 42}'),

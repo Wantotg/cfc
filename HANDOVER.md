@@ -305,6 +305,35 @@ The deny list itself covers `config.py`, its **backup shapes** (`config.py.bak/.
 
 **Known weakness, and how writes dodge it:** denial is name-based, so the read protection lives in a list that must keep pace with what secrets get called. That is acceptable for reads and a much weaker basis for writes — so writes don't lean on it. **Write safety is containment first, deny list second:** a deny list is an open-ended commitment (every `config.py.bak` shape escaped it once), while a single narrow root you may write to is a closed one. `WRITE_ROOTS` is the vault outbox and nothing else, is never derived from `TOOLS_ROOTS`, and `context.py` refuses any write root overlapping the source — so it cannot be widened into the code by editing config. `~/projects/cfc` is readable and structurally unwritable.
 
+**One directory inside the write root is still closed: the run log.**
+`ROUTINE_LOG_DIR` is `<vault>/99 outbox/routine logs/` and `WRITE_ROOTS` is
+`<vault>/99 outbox`, so containment — which is normally the whole write-safety
+story — *admits* it. `tools.reserved_write_reason()` refuses it separately.
+The log is the audit trail **and** what the next run reads via `last_run()` to
+honour `on_failure`, so a clobber destroys the record of the failure it exists
+to preserve, and does it silently: nothing compares the file against what
+`runner.append_log` wrote. The trigger was a prompt asking the model to log its
+own actions, which was redundant anyway — but the prompt is not the boundary
+anywhere else here and isn't allowed to be the boundary here either. A model
+can decide to tidy its log without being asked.
+
+- **Containment against the one directory, not a filename pattern.** The deny
+  list is the weaker tool for this — name-based and open-ended, which is the
+  same reason writes don't lean on it in general.
+- **`write_file` is where it is enforced; `precheck` only mirrors it.** Same
+  split as `path_guard` itself: `dispatch` is reachable with no gate, so a
+  check living only in the pre-filter would be advice. The two share one
+  function so they cannot drift.
+- **Writes only.** Reading a run log is legitimate and stays allowed — this
+  blocks recording, not looking. Resolution runs first, so a symlink from the
+  ordinary outbox into the log dir is judged as its target.
+- If `routines.log_dir()` can't be determined the extra rule simply doesn't
+  apply. That fails open on a *sub*-restriction only: `WRITE_ROOTS` still
+  bounds every write, so this can narrow the scope and never widen it.
+- `mover.py` already treats this folder as not-ordinary-outbox content (only
+  top-level `*.md` are proposals, so the logs are excluded from filing). The
+  precedent existed; the write path just never got it.
+
 Guard invariants:
 - **The guard runs inside the dispatcher, not at the gate and never on the model's say-so.** Approval decides *whether* a call runs; the guard decides whether it's *allowed to at all*. You can approve a call that then fails the guard — that's correct. (`tests/test_gate.py` asserts approval doesn't bypass it, and that the pre-filter never swallows a call the human should see.)
 - **Denial is data.** Every failure returns `{"error": …}` as the tool result; nothing raises into the loop. The model reads it and adapts. Asked to fetch the key with everything auto-approved, it gets "config.py is on the deny list" and moves on.
