@@ -23,6 +23,21 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Add ROADMAP_BEYOND.md, a third planning tier
+`WISHLIST.md`'s raw capture now has a step between it and `ROADMAP_PRIVATE.md`:
+a gitignored `ROADMAP_BEYOND.md` groups related wishlist ideas into clusters
+(what actually depends on or shares a mechanism with what) and orders within
+a cluster, deliberately without version numbers — that's still a decision for
+after v1.0. Ideas that were ready moved out of `WISHLIST.md` and got struck
+there, including the file's whole former "Beyond v1.0" section, which is now
+fully represented in the new file. A couple of wishlist ideas that actually
+read as v0.8 scope (pre-1.0) were flagged rather than migrated, so they don't
+get lost in the shuffle.
+- Files: `.gitignore`; `WISHLIST.md` and `ROADMAP_BEYOND.md` are both
+  gitignored, so they don't appear in this commit.
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Split ROADMAP.md into public and private
 `ROADMAP.md` now carries full detail (title, completion date, what shipped,
 Cas's note) only for versions that have shipped; anything still ahead is a
