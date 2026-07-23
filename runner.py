@@ -25,7 +25,7 @@
 import datetime
 import traceback
 
-from agent import LIMIT_MESSAGE, agent_turn
+from agent import LIMIT_MESSAGE, TURN_RESULT_CHARS, agent_turn
 from api import EMPTY_COMPLETION_RETRIES
 from db import PROVIDER_ROUTINE, new_session, save_message
 from routines import RoutineError, append_log, last_run, load_routine
@@ -71,6 +71,11 @@ something you can predict on a scheduled run — it will simply be refused.
 
 A tool that returns an error is telling you a real boundary — adapt, don't
 retry the same call.
+
+This run is bounded by {max_calls} tool calls and {max_chars} characters of
+total tool output, shared across everything you open. Reading a whole file
+where a grep or a line range would answer the question is what spends them,
+and a run that exhausts either one is recorded as a failure. Read narrowly.
 
 When the task is done, reply with a short plain-text summary of what you did.
 That summary is what gets recorded in the run log."""
@@ -220,6 +225,8 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     system = SYSTEM.format(
         name=routine.name, id=routine.id,
         now=started.strftime("%Y-%m-%d %H:%M (%A)"),
+        max_calls=ROUTINE_MAX_CALLS_PER_TURN,
+        max_chars=f"{TURN_RESULT_CHARS:,}",
         read_roots=", ".join(str(r) for r in ctx.read_roots) or "(none)",
         write_roots=", ".join(str(r) for r in ctx.write_roots)
                     or "(none — you cannot write)",

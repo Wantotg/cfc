@@ -51,7 +51,7 @@ from db import (
     get_persona, get_persona_name, set_persona, clear_persona,
     delete_session,
 )
-from agent import agent_turn, render_answer
+from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
 from api import stream_response, generate_title, EMPTY_COMPLETION_RETRIES
 from backup import safe_backup
@@ -662,6 +662,10 @@ def run_session(conn, session_id, private=False):
                      and current_model in TOOLS_MODELS)
 
         if use_tools:
+            # Only on the turn that actually offers tools, and only in the
+            # prefix — so a tools-off turn is byte-for-byte the request it
+            # always was, and nothing about our budgets reaches the transcript.
+            prefix = prefix + tools_guidance()
             try:
                 final = agent_turn(prefix, history, current_model,
                                    conn, session_id, ctx=chat_ctx)

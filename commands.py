@@ -84,7 +84,11 @@ except ImportError:
 try:
     from config import TOOLS_MAX_CALLS_PER_TURN
 except ImportError:
-    TOOLS_MAX_CALLS_PER_TURN = 8
+    TOOLS_MAX_CALLS_PER_TURN = 25
+try:
+    from config import TOOLS_MAX_TURN_RESULT_CHARS
+except ImportError:
+    TOOLS_MAX_TURN_RESULT_CHARS = 120_000
 
 from ui import (console, context_style, context_thresholds, make_bar,
                 make_snippet)
@@ -1159,6 +1163,8 @@ def show_tools_state(current_model, session_on):
                   f"{', '.join(str(r) for r in WRITE_ROOTS) or '(none — read-only)'}")
     console.print(f"  approval: every call is gated (no auto-approve exists)")
     console.print(f"  max calls per turn: {TOOLS_MAX_CALLS_PER_TURN}")
+    console.print(f"  max tool output per turn: "
+                  f"{TOOLS_MAX_TURN_RESULT_CHARS:,} chars")
     console.print(f"  available: list_dir, read_file, grep (read), "
                   f"write_file (write)")
     console.print()

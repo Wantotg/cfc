@@ -107,13 +107,22 @@ WRITE_ROOTS = ()
 # There is no TOOLS_AUTO_APPROVE. It was removed deliberately: it made
 # "pre-clear these tools for everything, forever" a one-line config change.
 # Interactive chat gates every call ('A' allows the rest of one turn only).
-TOOLS_MAX_CALLS_PER_TURN = 8      # loop breaker, chat
-TOOLS_MAX_RESULT_CHARS = 30_000   # truncate tool output
+#
+# A turn runs under TWO budgets and they do different jobs. The call count
+# bounds round trips; the character count bounds how large the request grows,
+# because every call re-sends the whole conversation with all its tool results
+# in it. Until v0.5 only the first existed, and it counted loop iterations
+# rather than calls — so a model asking for four reads per message spent one
+# of its eight, and a browsing turn could quietly build a 200k-token request
+# that the provider rejected with a 400 about max_tokens.
+TOOLS_MAX_CALLS_PER_TURN = 25         # tool calls, chat
+TOOLS_MAX_RESULT_CHARS = 30_000       # truncate one tool result
+TOOLS_MAX_TURN_RESULT_CHARS = 120_000  # all tool output in one turn (~30k tok)
 
 # Routines get a bigger budget: in chat, hitting the ceiling is recoverable
 # (the turn ends, you type "continue"), and unattended there is nobody to type
 # it. Hitting this is a *failed* run, not a silently truncated ok one.
-ROUTINE_MAX_CALLS_PER_TURN = 15
+ROUTINE_MAX_CALLS_PER_TURN = 30
 
 # --- routines --------------------------------------------------------------
 # A routine is a task the model runs on demand (":routine <name>") and, later,

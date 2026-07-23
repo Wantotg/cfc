@@ -21,6 +21,8 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+import httpx
+
 import agent
 import commands
 import db as dbmod
@@ -249,6 +251,135 @@ def main():
        sum(1 for m in hist if m["role"] == "tool") == 3,
        [m["role"] for m in hist])
     agent.TOOLS_MAX_CALLS_PER_TURN = 8
+
+    print("\n--- the budget counts calls, not loop iterations ---")
+    # The bug: `for _ in range(max_calls)` bounded trips round the loop, so a
+    # model asking for four reads in one message spent one of eight. Eight
+    # iterations could be thirty calls, and the number a user tunes bounded
+    # neither the work nor the size of the request.
+    agent.TOOLS_MAX_CALLS_PER_TURN = 3
+    agent.call_api = FakeAPI([
+        reply(None, [("list_dir", {"path": str(jail)}),
+                     ("list_dir", {"path": str(jail)}),
+                     ("list_dir", {"path": str(jail)}),
+                     ("list_dir", {"path": str(jail)})]),
+        reply("should never be reached"),
+    ])
+    hist = [{"role": "user", "content": "read everything"}]
+    final, out = drive(agent.agent_turn, [], hist, "m", conn, 1, keys="A\n")
+    results = [m for m in hist if m["role"] == "tool"]
+    ok("four calls in one message spend four of the budget",
+       final["content"] == agent.LIMIT_MESSAGE, final)
+    ok("...every one of them still gets a result", len(results) == 4,
+       len(results))
+    ok("...but only the budgeted three actually ran",
+       sum(1 for m in results if "notes.md" in m["content"]) == 3,
+       [m["content"][:40] for m in results])
+    ok("the over-budget call says why it didn't run",
+       "budget" in results[3]["content"], results[3]["content"])
+    agent.TOOLS_MAX_CALLS_PER_TURN = 25
+
+    print("\n--- an interrupt leaves no unanswered call in LIVE history ---")
+    # The one that poisoned sessions in place. load_history repairs orphans on
+    # replay, so reopening a session fixed it and it looked intermittent — but
+    # the live `history` the REPL replays from was never repaired, so every
+    # later message in that session 400ed.
+    boom = {"n": 0}
+
+    def explode(call, approval, ctx=None):
+        boom["n"] += 1
+        if boom["n"] == 2:
+            raise KeyboardInterrupt          # Ctrl-C at the approval prompt
+        return json.dumps({"ok": True})
+
+    real_gate = agent.gate_and_dispatch
+    agent.gate_and_dispatch = explode
+    agent.call_api = FakeAPI([
+        reply(None, [("list_dir", {"path": str(jail)}),
+                     ("list_dir", {"path": str(jail)}),
+                     ("list_dir", {"path": str(jail)})]),
+    ])
+    hist = [{"role": "user", "content": "go"}]
+    try:
+        drive(agent.agent_turn, [], hist, "m", conn, 1)
+        interrupted = False
+    except KeyboardInterrupt:
+        interrupted = True
+    agent.gate_and_dispatch = real_gate
+
+    ok("the interrupt still reaches the caller", interrupted)
+    asked = [c["id"] for m in hist if m.get("tool_calls")
+             for c in m["tool_calls"]]
+    got = [m.get("tool_call_id") for m in hist if m["role"] == "tool"]
+    ok("every requested call has a result in live history",
+       sorted(asked) == sorted(got), (asked, got))
+    ok("...and the filler says it was interrupted",
+       any("interrupted" in m["content"] for m in hist
+           if m["role"] == "tool"), [m for m in hist if m["role"] == "tool"])
+    ok("the same is true of what was persisted",
+       dbmod._drop_orphan_tool_calls(list(hist)) == hist,
+       "orphan drop changed the history, so something was unanswered")
+
+    print("\n--- the turn's total tool output is bounded ---")
+    # The call ceiling bounds round trips; it does not bound how large the
+    # request grows, and every call re-sends every result. This is the budget
+    # that does. Spending it withdraws the tools for one final call rather than
+    # truncating the turn, so the model answers in its own words.
+    big = jail / "big.md"
+    big.write_text("x" * 5000 + "\n")
+    agent.TURN_RESULT_CHARS = 4000
+    agent.call_api = FakeAPI([
+        reply(None, [("read_file", {"path": str(big)})]),
+        reply(None, [("read_file", {"path": str(big)})]),
+        reply("I read the first one and ran out of room."),
+    ])
+    fake = agent.call_api
+    hist = [{"role": "user", "content": "read it"}]
+    final, out = drive(agent.agent_turn, [], hist, "m", conn, 1, keys="A\n")
+    ok("the turn ends with the model's own answer, not a stub",
+       final["content"] == "I read the first one and ran out of room.", final)
+    ok("the second read was refused for budget",
+       "budget" in [m for m in hist if m["role"] == "tool"][1]["content"],
+       hist)
+    ok("tools were withdrawn for the final call",
+       fake.seen[-1]["tools"] is None,
+       [bool(s["tools"]) for s in fake.seen])
+    ok("...and the model was told why",
+       any("output budget" in (m.get("content") or "")
+           for m in fake.seen[-1]["messages"]),
+       fake.seen[-1]["messages"][-1])
+    agent.TURN_RESULT_CHARS = 120_000
+
+    print("\n--- a failed request says what was in flight ---")
+    # Every provider 400 arrived as one indistinguishable line. These numbers
+    # are what separate a context overflow from a malformed conversation from
+    # a content filter.
+    def refuse(messages, model=None, tools=None):
+        raise httpx.HTTPError("HTTP 400 from provider: max_tokens too small")
+
+    agent.call_api = refuse
+    try:
+        drive(agent.agent_turn, [], [{"role": "user", "content": "go"}],
+              "m", conn, 1)
+        raised = ""
+    except httpx.HTTPError as e:
+        raised = str(e)
+    ok("the provider's own words survive", "max_tokens too small" in raised,
+       raised)
+    ok("...with our side of the request appended",
+       "cfc:" in raised and "tokens" in raised and "messages" in raised,
+       raised)
+    ok("still an httpx.HTTPError, so every existing catch matches",
+       raised != "")
+
+    print("\n--- the model is told the budgets up front ---")
+    guidance = agent.tools_guidance(max_calls=9)
+    ok("guidance is one system message",
+       len(guidance) == 1 and guidance[0]["role"] == "system", guidance)
+    ok("...naming both budgets",
+       "9 tool calls" in guidance[0]["content"]
+       and f"{agent.TURN_RESULT_CHARS:,}" in guidance[0]["content"],
+       guidance[0]["content"])
 
     print("\n--- replay: tool rows rebuild with their fields ---")
     conn.execute("DELETE FROM messages")

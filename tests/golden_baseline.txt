@@ -203,7 +203,8 @@ moonshotai/kimi-k2.6:thinking
   read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
   write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
   approval: every call is gated (no auto-approve exists)
-  max calls per turn: 8
+  max calls per turn: 25
+  max tool output per turn: 120,000 chars
   available: list_dir, read_file, grep (read), write_file (write)
 
 you>
