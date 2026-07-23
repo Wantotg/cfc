@@ -23,6 +23,28 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Say when a refused path was relative
+`write_file` refuses a relative path — it resolves against the process working
+directory, which is not a write root and is not predictable on a scheduled run.
+Correct, but the message named a path the caller never typed
+(`…/cfc/heartbeat.md is outside the allowed roots`), which reads as the jail
+being misconfigured rather than the path being relative, and cost a full API
+round trip per routine run to recover from.
+- **The refusal is unchanged.** Resolving a relative path against the write root
+  would make the tool's behaviour depend on how many roots are configured, and
+  "the path you passed is not the path that was written" is the worst property
+  the one mutating tool could have. The backlog entry asked for a better error
+  over a reinterpretation; this is that.
+- **The note is added only when the input was relative**, so an absolute path
+  that misses the roots is not told it is relative.
+- **A blanket refusal of relative paths would have broken working behaviour** —
+  checked, not assumed: the cwd is inside a *read* root, so relative reads
+  resolve and succeed today. It is not inside a write root, which is why this
+  only ever bit `write_file`.
+- Files: paths.py, tests/test_paths.py, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Make deleting a session delete what indexes it
 `delete_session`/`delete_message` removed messages and left `chunks` and
 `vec_chunks` behind. No foreign keys enforce that link (`PRAGMA foreign_keys`
@@ -53,7 +75,7 @@ is 0), so nothing caught it. The reported symptom — a chunk with a dangling
   without rebuilding the table.
 - Files: db.py, commands.py, main.py, tests/test_schema.py, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 8c69ef5
 
 ## 2026-07-23 — Make the run log say what a run wrote
 `append_log(…, touched=())` rendered its fourth argument and no caller passed

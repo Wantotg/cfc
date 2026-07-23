@@ -67,6 +67,30 @@ def main():
     refuses("absolute path outside root", outside / "secret.txt", jail)
     refuses("/etc/passwd", "/etc/passwd", jail)
 
+    # A relative path is still refused — resolving it against a root instead
+    # would make the tool's behaviour depend on how many roots are configured,
+    # and for write_file "the path you passed is not the path written" is the
+    # worst property the one mutating tool could have. What changed is the
+    # explanation: the bare message names a resolved path the caller never
+    # typed, which reads as the jail being wrong rather than the path being
+    # relative, and cost a full round trip per routine run to recover from.
+    refuses("a relative path is still refused", "heartbeat.md", jail,
+            expect="outside")
+    refuses("...and the error says it was relative", "heartbeat.md", jail,
+            expect="relative path")
+    refuses("...and names the working directory it resolved against",
+            "heartbeat.md", jail, expect=str(Path.cwd()))
+    refuses("...and says what to do instead", "heartbeat.md", jail,
+            expect="Pass an absolute path")
+    # The note is specific to relative input: an absolute path that misses the
+    # roots must not be told it is relative.
+    try:
+        path_guard(outside / "secret.txt", jail)
+        ok("an absolute refusal says nothing about relative paths", False)
+    except PathError as e:
+        ok("an absolute refusal says nothing about relative paths",
+           "relative" not in str(e))
+
     # ~ expansion: the root itself given as a tilde string must resolve
     home_jail = Path.home()
     allows("~ expansion resolves", "~", home_jail)

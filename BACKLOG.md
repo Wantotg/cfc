@@ -486,7 +486,42 @@ provider == 'wiki' else 'chat'`, so **routine transcripts keep indexing as
 
 ---
 
-## `write_file` refuses relative paths, and only the prompt prevents it
+## ~~`write_file` refuses relative paths, and only the prompt prevents it~~ — CLOSED (2026-07-23)
+
+**Closed the way this entry asked to close it: a better error, not a
+reinterpretation.** The refusal is unchanged — resolving a relative path
+against the write root would make the tool's behaviour depend on how many
+roots are configured, and "the path you passed is not the path that was
+written" remains the worst property the one mutating tool could have.
+
+What changed is the explanation. The old message named a path the caller never
+typed:
+
+```
+/home/disse/projects/cfc/heartbeat.md is outside the allowed roots (…/99 outbox)
+```
+
+which reads as the jail being misconfigured rather than the path being
+relative. Now:
+
+```
+… is outside the allowed roots (…/99 outbox) — 'heartbeat.md' is a relative
+path, resolved against the working directory /home/disse/projects/cfc. Pass an
+absolute path.
+```
+
+**The note is added only when the input was relative**, so an absolute path
+that misses the roots is not told it is relative. `runner.SYSTEM` keeps saying
+"always pass absolute paths" — the prompt avoids the error, the message
+recovers from it, and neither is the boundary.
+
+**What a blanket refusal of relative paths would have broken, checked rather
+than assumed:** the process cwd (`~/projects/cfc`) *is* inside a read root, so
+relative **reads** currently resolve and succeed. Refusing them outright would
+have removed working behaviour to fix a message. It is not inside a write root,
+which is why every relative *write* fails and this only ever bit `write_file`.
+
+Original report below.
 
 **Found:** 2026-07-20, first end-to-end routine run.
 

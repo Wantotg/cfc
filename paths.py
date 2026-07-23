@@ -126,13 +126,28 @@ def path_guard(path, roots):
     Existence is NOT checked here: a non-existent path inside a root passes,
     and callers report "no such file" themselves, so that "outside the jail"
     and "not there" stay distinguishable in the error the user sees.
+
+    **A relative path that fails containment says so.** It is still refused —
+    resolving it against a write root instead would make the tool's behaviour
+    depend on how many roots are configured, and "the path you passed is not
+    the path that was written" is a bad property for the one tool that mutates
+    the filesystem. But a bare "…/cfc/heartbeat.md is outside the allowed
+    roots" describes a path the caller never typed, which reads as the jail
+    being wrong rather than the path being relative. The refusal is the same;
+    only the explanation is added.
     """
     roots = _as_roots(roots)
-    p = Path(path).expanduser().resolve()
+    given = Path(path).expanduser()
+    p = given.resolve()
 
     if not any(p == r or r in p.parents for r in roots):
         joined = ", ".join(str(r) for r in roots)
-        raise PathError(f"{p} is outside the allowed roots ({joined})")
+        msg = f"{p} is outside the allowed roots ({joined})"
+        if not given.is_absolute():
+            msg += (f" — {str(path)!r} is a relative path, resolved against "
+                    f"the working directory {Path.cwd()}. Pass an absolute "
+                    f"path.")
+        raise PathError(msg)
 
     why = _denied(p)
     if why:
