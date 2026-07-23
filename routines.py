@@ -162,7 +162,16 @@ class Routine:
     def __init__(self, id, name, prompt, read_roots=(), write_roots=(),
                  trigger="command", on_failure="retry", enabled=True,
                  body="", path=None):
-        self.id = id
+        # The id is normalised to a slug here, at the one construction
+        # chokepoint, rather than validated and rejected. These files are
+        # hand-authored in Obsidian, where `id: note reader` is what you
+        # naturally type, so a strict slug check turned every hand-made routine
+        # into a validation failure. Normalising instead means the id is a clean
+        # handle everywhere it's used — the log filename, the session lookup,
+        # `:routine <id>` — while the *file* keeps whatever was written until
+        # cfc itself next saves it (to_markdown emits the slug, load does not
+        # rewrite disk). The name stays free text; only the id is coerced.
+        self.id = slugify(id)
         self.name = name
         self.prompt = prompt
         self.read_roots = tuple(str(r) for r in read_roots)
@@ -190,10 +199,10 @@ class Routine:
         """
         problems = []
         if not self.id:
+            # Can only happen if the source id slugified to nothing (empty, or
+            # all punctuation). The slug coercion in __init__ means a non-slug
+            # id is normalised rather than reported — see there.
             problems.append("id is empty")
-        elif self.id != slugify(self.id):
-            problems.append(f"id {self.id!r} is not a slug "
-                            f"(expected {slugify(self.id)!r})")
         if not self.name:
             problems.append("name is empty")
         if not self.prompt:

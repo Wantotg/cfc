@@ -23,6 +23,59 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — File proposed pages into the wiki, id stamped at approval
+The mover refused wiki destinations outright, because a page landing in the
+corpus while the recall index is unaware makes recall answer from a stale copy
+with **no signal it is stale** — a silent failure that arrives weeks later.
+v0.6 resolves that rather than deleting the guard: the move is allowed, and the
+staleness is made *loud* with a one-command fix.
+- **`99 outbox/wiki/` is a second proposal source.** A draft dropped there is
+  wiki-bound by location and needs no `destination:` key — the folder is the
+  signal. The top-level "*.md only" rule (which keeps run logs out) is intact;
+  the wiki subfolder is an explicit addition, not a recursion.
+- **The id is stamped at approval, by code, never by the model.** A wiki page
+  is keyed by a frontmatter id and named `<id>.md`; import_wiki silently skips
+  one that has none — the same silent staleness by another door. Rather than
+  refuse a draft without an id (a dead end), `:file` stamps
+  `id: YYYYMMDDhhmmss`, monotonic so a `:file all` batch in one second can't
+  collide (which would make import_wiki treat two pages as one). A draft that
+  already carries an id keeps it; a page whose id already exists is refused as
+  an edit, not clobbered.
+- **Loud staleness replaces the refusal.** Filing into the wiki sets a marker
+  (`~/.cfc/wiki_reindex_needed`, a file so it survives the session with no
+  schema change); `:file`, `:outbox` and `:wiki` all say "recall index stale —
+  run `:updatedb`". `:updatedb` now re-imports the wiki (idempotent, keyed by
+  id) before embedding, then clears the marker — the explicit reindex step,
+  kept out of per-turn auto-embed on purpose.
+- **`:wiki commit` discoverability.** The `<message>` placeholder read as if it
+  wanted special syntax; the empty-message case and the diff/updatedb hints now
+  show a worked example (`:wiki commit tidied the aquarium pages`).
+- `import_wiki.run_import()` extracted from `main()` so `:updatedb` can call it
+  without shelling out.
+- Verified against the real config: a draft in the actual `99 outbox/wiki/`
+  plans as wiki-bound needing an id; `run_import` pulls the real 21 pages and
+  is idempotent on a second pass; the marker round-trips under a redirected db.
+- Files: `mover.py`, `import_wiki.py`, `backfill.py`, `commands.py`,
+  `tests/test_mover.py`, `HANDOVER.md`
+- Status: shipped
+- Commit: pending
+
+## 2026-07-23 — Normalise routine ids to slugs at load, not reject them
+Routines are hand-authored in Obsidian, where `id: note reader` is what you
+naturally type — and the strict slug check turned every hand-made routine into
+a validation failure it could not run past. The id is now coerced to a slug at
+the one construction chokepoint (`Routine.__init__`), the same place `body` is
+stripped, so it is a clean handle everywhere it is used (log filename, session
+lookup, `:routine <id>`) while the *file* keeps whatever was written until cfc
+itself next saves it. The name stays free text; only the id coerces.
+- The only cost: a routine that had been logging under a spaced id starts a
+  fresh log under the slug. All current routines are fresh, so this is moot now.
+- `validate()` no longer reports "not a slug" (unreachable after coercion); it
+  still catches an id that slugifies to nothing as "id is empty".
+- Files: `routines.py`, `tests/test_routines.py`
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Run routines on a schedule, from one OS entry
 `main.py --run-due` is the headless entry point an OS scheduler calls on a
 fixed tick; cfc works out what is actually due from each routine's own

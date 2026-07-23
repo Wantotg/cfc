@@ -823,6 +823,36 @@ def do_updatedb(arg=""):
     except Exception as e:
         console.print(f"\n[stale-chunk check failed: {e}]")
 
+    # Re-import the wiki corpus first, so a page just filed into it becomes a
+    # message the embed step below can pick up. import_wiki is idempotent and
+    # keyed by frontmatter id; it only touches provider='wiki' rows. This is the
+    # explicit half of the v0.6 filing loop — the mover moves a page in, this
+    # brings the recall index back in sync, and clears the stale marker. A page
+    # with no id is skipped by import_wiki (it can't be keyed), so that count is
+    # surfaced loudly rather than swallowed.
+    try:
+        from import_wiki import run_import
+        from backfill import clear_wiki_stale
+        from config import WIKI_DIR
+        stats = run_import(WIKI_DIR, str(DB_PATH))
+        new = stats.get("pages_new", 0)
+        upd = stats.get("messages_updated", 0)
+        skipped = stats.get("skipped_no_id", 0)
+        if new or upd:
+            console.print(f"\nWiki re-imported: +{new} new page(s), "
+                          f"{upd} updated.")
+            # Close the loop: a filed page is now in the recall index and is an
+            # untracked/changed file in the vault repo. Point at the last step.
+            console.print("  new pages are uncommitted in the vault — review "
+                          "with :wiki diff, save with :wiki commit <message>",
+                          style="dim")
+        if skipped:
+            console.print(f"[{skipped} wiki file(s) had no id and were NOT "
+                          f"indexed — add a frontmatter id]", style="yellow")
+        clear_wiki_stale()
+    except Exception as e:
+        console.print(f"\n[wiki re-import skipped: {e}]", style="dim")
+
     try:
         with Live(
             Spinner("dots", text="Updating memory index...", style="magenta"),
@@ -1408,6 +1438,7 @@ def show_outbox():
     console.print()
     roots = ", ".join(str(r) for r in outbox_roots()) or "(none configured)"
     console.print(f"Outbox ({roots})")
+    _print_wiki_stale()
     if not proposals:
         console.print("  (nothing pending)", style="dim")
         console.print()
@@ -1453,12 +1484,16 @@ def do_file(arg):
         if not filable:
             console.print("Nothing filable — see :outbox for why.", style="dim")
             return
+        filed_wiki = False
         for p in filable:
             try:
                 target = commit(p)
                 console.print(f"  filed {p.name} → {target}", style="green")
+                filed_wiki = filed_wiki or p.into_wiki
             except (MoveError, OSError) as e:
                 console.print(f"  FAILED {p.name}: {e}", style="red")
+        if filed_wiki:
+            _wiki_filed_note()
         return
 
     try:
@@ -1479,8 +1514,37 @@ def do_file(arg):
     try:
         target = commit(proposal)
         console.print(f"  filed {proposal.name} → {target}", style="green")
+        if proposal.into_wiki:
+            _wiki_filed_note()
     except (MoveError, OSError) as e:
         console.print(f"  cannot file {proposal.name}: {e}", style="red")
+
+
+def _print_wiki_stale():
+    """One line if a page was filed into the wiki but not yet re-imported.
+    Shown by :outbox and :wiki so the stale state survives leaving the session,
+    not only the moment of filing."""
+    try:
+        from backfill import wiki_stale
+        if wiki_stale():
+            console.print("  recall index stale — a page was filed into the "
+                          "wiki; run :updatedb to re-import.", style="yellow")
+    except Exception:
+        pass
+
+
+def _wiki_filed_note():
+    """Mark the recall index stale and say so — loudly, with the one-command
+    fix. This is what replaces the mover's old outright refusal of wiki
+    destinations: a page in the corpus that the index doesn't know about is
+    fine *as long as the staleness is visible*, which silent was not."""
+    try:
+        from backfill import mark_wiki_stale
+        mark_wiki_stale()
+    except Exception:
+        pass
+    console.print("  → filed into the wiki. Recall index is now stale — "
+                  "run :updatedb to re-import.", style="yellow")
 
 
 # --- the vault repo -------------------------------------------------------
@@ -1543,6 +1607,8 @@ def show_wiki_status():
     else:
         console.print("  vault:   clean", style="dim")
 
+    _print_wiki_stale()
+
     for short, when, subject in wikigit.log(3, scope=wikigit.ALL):
         console.print(f"  {short}  {when}  {subject}", style="dim")
 
@@ -1591,8 +1657,11 @@ def show_wiki_diff(arg=""):
         _print_changes(new, indent="    ")
 
     console.print()
-    console.print(f"  :wiki commit {'all ' if scope == wikigit.ALL else ''}"
-                  "<message>", style="dim")
+    # A worked example rather than "<message>" — see do_wiki_commit for why.
+    example = "tidied the aquarium pages"
+    console.print(f"  commit it:  :wiki commit "
+                  f"{'all ' if scope == wikigit.ALL else ''}{example}",
+                  style="dim")
     console.print()
 
 
@@ -1612,7 +1681,15 @@ def do_wiki_commit(arg=""):
         scope, message = wikigit.WIKI, (arg or "")
 
     if not message.strip():
-        console.print("Usage: :wiki commit [all] <message>", style="red")
+        # A concrete example, not a "<message>" placeholder — the placeholder
+        # reads as if it wants special syntax (quotes, a flag), when the message
+        # is just plain words typed on the line. That ambiguity is what stalled
+        # a real first commit.
+        console.print("The message is just plain text after the command:",
+                      style="yellow")
+        console.print("  :wiki commit tidied the aquarium pages", style="dim")
+        console.print("  :wiki commit all  (adds the rest of the vault too)",
+                      style="dim")
         return
 
     where = "the vault" if scope == wikigit.ALL else "wiki db"

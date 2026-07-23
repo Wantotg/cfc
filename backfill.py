@@ -112,6 +112,42 @@ def update_index(db_path, limit=None):
         db.close()
     return made, added
 
+# --- wiki reindex marker ---------------------------------------------------
+#
+# Filing a page into the wiki corpus changes what recall reads, but the index
+# does not know until import_wiki runs. The old mover refused wiki destinations
+# outright to stop that happening silently; v0.6 allows the move and makes the
+# staleness LOUD instead — this marker is the signal. Set when a page is filed
+# into the wiki, shown by :outbox and :wiki, cleared when :updatedb re-imports.
+#
+# A file rather than a DB row: it needs no schema change, survives across
+# sessions, and lives next to chat.db where cfc's runtime state already sits.
+# The path is derived from db.DB_PATH so a test that redirects the db redirects
+# the marker with it.
+
+def _wiki_marker_path():
+    import db as _db
+    return os.path.join(os.path.dirname(str(_db.DB_PATH)), "wiki_reindex_needed")
+
+def mark_wiki_stale():
+    """Record that the wiki corpus is ahead of the index. Best-effort."""
+    try:
+        p = _wiki_marker_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("run :updatedb to re-import the wiki\n")
+    except OSError:
+        pass
+
+def wiki_stale():
+    return os.path.exists(_wiki_marker_path())
+
+def clear_wiki_stale():
+    try:
+        os.remove(_wiki_marker_path())
+    except OSError:
+        pass
+
 def main():
     limit = None
     argv = sys.argv[1:]

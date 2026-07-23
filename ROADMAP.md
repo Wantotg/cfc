@@ -307,7 +307,37 @@ command — and until then a tick correctly finds nothing due.
 ```
 ᓚᘏᗢ 'Small update'
 ```
-## v0.6 — Wiki automation
+## v0.6 — Wiki automation — **complete, 2026-07-23**
+
+The drafting pipeline's last mile: a page the model proposes can now be filed
+into the wiki corpus, with the recall index kept honest.
+
+- **The mover files into the wiki now, where it refused outright before.** The
+  refusal existed for a real reason — a page landing in the corpus while the
+  index is unaware makes recall answer from a stale copy with no signal it's
+  stale — so it was *replaced*, not deleted. `99 outbox/wiki/` is a proposal
+  folder: a draft there is wiki-bound by location, no `destination:` needed.
+  Filing stamps a `YYYYMMDDhhmmss` id (by code, at approval — never the model's
+  job), names the page `<id>.md` to match the vault, and refuses a page whose
+  id already exists rather than clobbering it.
+- **The staleness is loud, with a one-command fix.** Filing sets a marker that
+  `:file`, `:outbox` and `:wiki` all surface; `:updatedb` re-imports the wiki
+  and clears it. "Move, then explicit `:updatedb`" — the reindex is a visible
+  step, not something hidden inside the move.
+- **Routines are hand-authorable again.** An id is coerced to a slug at load
+  instead of failing validation, so `id: note reader` typed in Obsidian just
+  works — the file is left as written, the runtime handle is the slug.
+- **`:wiki commit` says how.** The `<message>` placeholder read as if it wanted
+  special syntax; the empty-message case and the loop's hints now show a worked
+  example.
+
+The full approve-at-each-stage loop: the writer drafts atomic notes, you
+approve them into the reader's inbox, the reader suggests wiki pages, you
+`:file` them in and `:updatedb`. The mover does the deterministic half; the
+model only ever proposes.
+
+**Not done here:** the routine task-prompts are still being finished, and the
+full loop against the live embedder is verified in use rather than in tests.
 
 ## v0.7 — Tiered memory
 

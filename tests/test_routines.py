@@ -168,8 +168,13 @@ def main():
         ok("HHMM trigger is fine", not make(trigger="0300").validate())
         ok("bad on_failure",
            any("retry|skip" in p for p in make(on_failure="explode").validate()))
-        ok("non-slug id",
-           any("is not a slug" in p for p in make(id="Not A Slug").validate()))
+        # A non-slug id is normalised at construction, not rejected — these
+        # files are hand-authored in Obsidian, where 'id: note reader' is the
+        # natural thing to type. The name stays free text; only the id coerces.
+        ok("a non-slug id is normalised, not rejected",
+           make(id="Not A Slug").id == "not-a-slug")
+        ok("...and an id that slugifies to nothing is still caught empty",
+           any("id is empty" in p for p in make(id="!!!").validate()))
 
         # These files are linked in Obsidian, so `prompt:` arrives as a
         # wikilink as often as a filename. Both name the same file; only the

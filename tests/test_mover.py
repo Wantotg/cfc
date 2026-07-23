@@ -43,10 +43,12 @@ class Vault:
     def __init__(self, tmp):
         self.root = Path(tmp) / "vault"
         self.outbox = self.root / "99 outbox"
+        self.wiki_out = self.outbox / "wiki"          # the wiki proposal folder
         self.areas = self.root / "02 areas" / "daily"
         self.wiki = self.root / "03 resources" / "wiki db"
         self.outside = Path(tmp) / "elsewhere"
-        for d in (self.outbox, self.areas, self.wiki, self.outside):
+        for d in (self.outbox, self.wiki_out, self.areas, self.wiki,
+                  self.outside):
             d.mkdir(parents=True, exist_ok=True)
 
     def __enter__(self):
@@ -59,8 +61,13 @@ class Vault:
     def __exit__(self, *exc):
         (mover.move_roots, mover.outbox_roots, mover.wiki_dir) = self._saved
 
-    def propose(self, name, destination=None, body="Some content.", extra=""):
-        """Write a file into the outbox, optionally with a destination."""
+    def propose(self, name, destination=None, body="Some content.", extra="",
+                folder=None):
+        """Write a file into the outbox, optionally with a destination.
+
+        `folder` overrides where it lands — used to drop a draft straight into
+        the wiki proposal subfolder.
+        """
         fm = ""
         if destination is not None or extra:
             lines = []
@@ -69,7 +76,7 @@ class Vault:
             if extra:
                 lines.append(extra)
             fm = "---\n" + "\n".join(lines) + "\n---\n\n"
-        p = self.outbox / name
+        p = (folder or self.outbox) / name
         p.write_text(fm + body, encoding="utf-8")
         return p
 
@@ -110,15 +117,65 @@ def main():
             ok("symlinked destination is refused (skipped: no symlink support)",
                True)
 
-        print("\n--- the wiki is refused outright ---")
-        for label, dest in (("the wiki folder", "03 resources/wiki db/"),
-                            ("a file in the wiki", "03 resources/wiki db/cats.md"),
-                            ("a subfolder of the wiki",
-                             "03 resources/wiki db/sources/")):
-            pp = mover.plan(v.propose(f"wiki-{abs(hash(label))}.md", dest))
-            ok(f"refused: {label}", not pp.ok, pp.reason)
-            ok(f"...and says why: {label}",
-               "import_wiki" in pp.reason, pp.reason)
+        print("\n--- the wiki is now filable, id stamped at approval time ---")
+        # A draft in the outbox wiki/ subfolder is wiki-bound by location and
+        # needs no destination key. With no id yet, it is filable — the id is
+        # stamped on commit, so the target isn't known until then.
+        draft = v.propose("new page.md", body="# Cats\n\nA fact.",
+                          folder=v.wiki_out)
+        pp = mover.plan(draft)
+        ok("a wiki draft with no id is filable", pp.ok, pp.reason)
+        ok("...flagged as wiki-bound", pp.into_wiki)
+        ok("...and marked as needing an id", pp.needs_id and pp.wiki_id is None)
+
+        target = mover.commit(pp)
+        ok("...it lands in the wiki corpus", target.parent == v.wiki.resolve(),
+           target)
+        ok("...named <id>.md (14-digit timestamp)",
+           target.stem.isdigit() and len(target.stem) == 14, target.name)
+        ok("...and leaves the outbox", not draft.exists())
+        stamped = target.read_text(encoding="utf-8")
+        ok("...with the id stamped into the frontmatter",
+           f"id: {target.stem}" in stamped, stamped)
+        ok("...the body preserved", "A fact." in stamped, stamped)
+
+        # A draft that already carries an id keeps it, and is named for it.
+        keep = v.propose("with id.md", extra="id: 20260101120000",
+                         body="Body.", folder=v.wiki_out)
+        pp = mover.plan(keep)
+        ok("an existing id is honoured, not restamped",
+           pp.ok and pp.wiki_id == "20260101120000" and not pp.needs_id,
+           (pp.wiki_id, pp.needs_id))
+        target = mover.commit(pp)
+        ok("...and names the file for it", target.name == "20260101120000.md",
+           target.name)
+
+        # Re-filing a page whose id already exists is an edit, not a new file —
+        # refused rather than clobbered.
+        dup = v.propose("dup.md", extra="id: 20260101120000", body="Other.",
+                        folder=v.wiki_out)
+        pp = mover.plan(dup)
+        ok("a page whose id already exists is refused",
+           not pp.ok and "already exists" in pp.reason, pp.reason)
+        ok("...and the existing wiki page is untouched",
+           "Body." in (v.wiki / "20260101120000.md").read_text()
+           and "Other." not in (v.wiki / "20260101120000.md").read_text())
+
+        # A same-second batch must get distinct ids, or import_wiki would treat
+        # two pages as one.
+        b1 = v.propose("batch one.md", body="One.", folder=v.wiki_out)
+        b2 = v.propose("batch two.md", body="Two.", folder=v.wiki_out)
+        t1 = mover.commit(mover.plan(b1))
+        t2 = mover.commit(mover.plan(b2))
+        ok("a same-second batch gets distinct ids", t1.name != t2.name,
+           (t1.name, t2.name))
+
+        # A top-level file may still target the wiki via destination:, and is
+        # handled the same way.
+        topdest = v.propose("via dest.md", "03 resources/wiki db/", body="Z.")
+        pp = mover.plan(topdest)
+        ok("a top-level destination into the wiki is filable too",
+           pp.ok and pp.into_wiki, (pp.ok, pp.into_wiki, pp.reason))
 
         print("\n--- other things that are not filable ---")
         pp = mover.plan(v.propose("nodest.md", None))
@@ -189,7 +246,7 @@ def main():
            (v.areas / "stale.md").read_text() == "appeared later")
 
         print("\n--- listing ---")
-        for f in list(v.outbox.glob("*.md")):
+        for f in list(v.outbox.glob("*.md")) + list(v.wiki_out.glob("*.md")):
             f.unlink()
         v.propose("a-good.md", "02 areas/daily/")
         v.propose("b-bad.md", "/etc/")
@@ -203,6 +260,17 @@ def main():
         ok("verdicts are computed at list time",
            [p.ok for p in listed] == [True, False, False],
            [(p.name, p.ok) for p in listed])
+
+        # The wiki proposal subfolder is a second source; a draft there lists
+        # alongside the top-level ones and is wiki-bound.
+        v.propose("wiki draft.md", body="Fact.", folder=v.wiki_out)
+        listed = mover.list_proposals()
+        names = [p.name for p in listed]
+        ok("a wiki-subfolder draft is listed too", "wiki draft.md" in names, names)
+        wp = next(p for p in listed if p.name == "wiki draft.md")
+        ok("...and is flagged wiki-bound", wp.into_wiki and wp.ok, wp.reason)
+        for f in v.wiki_out.glob("*.md"):
+            f.unlink()
 
         print("\n--- dropping ---")
         p = mover.plan(v.outbox / "b-bad.md")

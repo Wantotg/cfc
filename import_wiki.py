@@ -105,21 +105,31 @@ def wipe_wiki(db):
     print(f"wiped {len(sids)} existing wiki pages")
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    wipe = "--wipe" in sys.argv
-    if len(args) != 2:
-        print("usage: python3 import_wiki.py /path/to/wiki_db /path/to/chat.db [--wipe]")
-        sys.exit(1)
-    wiki_dir, db_path = os.path.expanduser(args[0]), os.path.expanduser(args[1])
+def run_import(wiki_dir, db_path, wipe=False):
+    """Import the wiki corpus into the db and return the stats Counter.
+
+    The importable core of main(): opens its own connection, migrates, imports
+    every top-level page idempotently by frontmatter id, commits, and closes.
+    Callable from `:updatedb` so a page just filed into the wiki can be picked
+    up without shelling out. Does NOT embed — that is backfill's job, run after.
+    """
+    wiki_dir, db_path = os.path.expanduser(str(wiki_dir)), os.path.expanduser(str(db_path))
     if not os.path.isdir(wiki_dir):
-        print(f"not a directory: {wiki_dir}"); sys.exit(1)
+        raise NotADirectoryError(wiki_dir)
 
     db = sqlite3.connect(db_path)
-    migrate(db)
-    if wipe:
-        wipe_wiki(db)
+    try:
+        migrate(db)
+        if wipe:
+            wipe_wiki(db)
+        stats = _import_pages(db, wiki_dir)
+        db.commit()
+    finally:
+        db.close()
+    return stats
 
+
+def _import_pages(db, wiki_dir):
     stats = Counter()
     # Top-level *.md only — sources/ is one level deeper and stays out.
     for path in sorted(glob.glob(os.path.join(wiki_dir, "*.md"))):
@@ -166,11 +176,25 @@ def main():
             stats["messages_updated"] += 1
         else:
             stats["messages_unchanged"] += 1
-    db.commit()
+    return stats
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    wipe = "--wipe" in sys.argv
+    if len(args) != 2:
+        print("usage: python3 import_wiki.py /path/to/wiki_db /path/to/chat.db [--wipe]")
+        sys.exit(1)
+    wiki_dir, db_path = os.path.expanduser(args[0]), os.path.expanduser(args[1])
+    if not os.path.isdir(wiki_dir):
+        print(f"not a directory: {wiki_dir}"); sys.exit(1)
+
+    stats = run_import(wiki_dir, db_path, wipe=wipe)
 
     print("\n=== wiki import summary ===")
     for k, v in sorted(stats.items()):
         print(f"  {k}: {v}")
+    db = sqlite3.connect(db_path)
     print(f"\n  db totals: "
           f"{db.execute('SELECT COUNT(*) FROM sessions WHERE provider=?', (PROVIDER,)).fetchone()[0]} wiki sessions, "
           f"{db.execute('SELECT COUNT(*) FROM messages m JOIN sessions s ON s.id=m.session_id WHERE s.provider=?', (PROVIDER,)).fetchone()[0]} wiki messages")
