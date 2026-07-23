@@ -22,40 +22,58 @@ now; migrate them if it ever matters which list they're on.
 
 ---
 
-## A provider 400 that looks like a content filter, on ordinary files
+## A provider 400 on tool turns, cause not yet established
 
-**Found:** 2026-07-23, reported by Cas. Two of the three 400s he was seeing are
-fixed (see `CHANGELOG.md`); this is the third and it is **not** ours.
+**Found:** 2026-07-23, reported by Cas. Two candidate causes were fixed in v0.5
+(see `CHANGELOG.md`). Whether either was *the* one is unproven, and this entry
+exists so the next occurrence settles it instead of restarting the argument.
 
-While letting the model roam a tree, a turn occasionally comes back as an HTTP
-400 whose body reads like a content-filter refusal rather than a size or shape
-complaint — while it was doing nothing more exotic than reading README files.
+**Symptom:** while letting the model roam a tree of files, a turn comes back as
+an HTTP 400. Reported variously as complaining about `max_tokens`, as a
+tool-handling error, and as something that read like a content filter — while
+the model was doing nothing more exotic than reading README files.
 
-Nothing in cfc causes this. What changed is that it is now *distinguishable*:
-every failed request appends its own shape to the provider's words, so the
-three causes that were wearing one symptom can be told apart at a glance.
+**Two theories are already weak, and one of them was mine:**
+
+- **Context overflow is unlikely.** Cas's files were small. The turn's total
+  tool output is bounded now regardless, which is worth having on its own
+  merits, but it probably was not the cause.
+- **A content filter is unlikely.** Ordinary README files, repeatedly.
+
+**The theory that survives, and it is size-independent.** The trigger condition
+Cas reports — *only* when the model opens several files in one turn — is
+literally the multi-tool-call batch, and the orphaned-call bug fixed in v0.5 is
+a batch-only phenomenon. With one call per assistant message you either get the
+result or you don't; with a batch, anything that exits mid-batch leaves some
+calls answered and some not, which the API rejects for the rest of the session.
+The thing that exits mid-batch is **Ctrl-C at the approval prompt** — precisely
+what a human does when the model starts opening files they did not ask for. So:
+roam, interrupt, and every subsequent message 400s until the session is
+reopened, which repairs it silently. That matches "*keep* getting 400s" better
+than anything about size.
+
+**It needs an interrupt somewhere to be the answer.** If it recurs on turns
+where nothing was cancelled, it is not this.
+
+**The suspect nothing has addressed yet.** `agent.py` normalises a missing
+`content` to `""` on the assistant message carrying `tool_calls`. Some
+OpenAI-compatible providers want that field null or absent rather than an empty
+string, and reject the replay on the next call. Also size-independent, also
+tool-turns-only, and cheap to test: send `None` instead and see if it stops.
+
+**What to capture when it next fires.** The whole error line — the provider's
+message is verbatim in it, and cfc's own request shape is appended:
 
 ```
 [error] HTTP 400 from …: <provider's message> [cfc: call 3/25, 14 messages,
         ~9,100 tokens, 41,200 chars of tool output this turn, model …]
 ```
 
-- **Large token estimate, many messages** → context overflow. Should now be
-  prevented by the turn's output budget; if it still happens, the budget is
-  set too high for that model.
-- **Small estimate, low call number** → a malformed conversation. Should now be
-  impossible (every call is answered), so this one would be a real regression.
-- **Neither** → provider-side, and this entry.
-
-What to do when it next fires: **keep the whole error line**, including the
-provider's message verbatim, and note which file the model was reading. Two or
-three of those and the pattern will be obvious — a specific file, a specific
-model, or a rate/abuse heuristic misfiring. Until then there is nothing to fix
-and guessing would mean building a workaround for a fault that may not exist in
-the shape we imagine.
-
-Worth knowing: `api._error_detail` truncates the body at 800 characters. If a
-future one arrives cut off mid-sentence, that is where to look.
+plus **whether anything was interrupted in that session**, and which model. A
+low call number with a small token estimate means the conversation's *shape* is
+being rejected, which after v0.5 would be a real finding rather than the known
+bug. Note `api._error_detail` truncates the body at 800 characters; a message
+cut off mid-sentence is that, not the provider being terse.
 
 ---
 
