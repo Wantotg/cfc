@@ -303,8 +303,10 @@ Scheduler.
 setting a trigger on a routine. Both are Cas's to do — the README has the
 command — and until then a tick correctly finds nothing due.
 
-> *Note: [Cas writes this]*
-
+> *Note: 0.5 is a small update, but came with bug fixes and small improvements, tool calling in chat is now more generous. More documentation and planning, the road to 1.0 is clear and most routine templates are functinoal and low on tokens.*
+```
+ᓚᘏᗢ 'Small update'
+```
 ## v0.6 — Wiki automation
 
 ## v0.7 — Tiered memory
