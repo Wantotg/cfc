@@ -337,6 +337,41 @@ def main():
     finally:
         routines.log_dir = real_log_dir
 
+    print("\n--- written_path reads write_file's own result ---")
+    # Pinned by round-trip, never against a hand-written string: the whole
+    # hazard is that rewording write_file's success line silently turns this
+    # into None forever, which reads in the run log as "the run wrote nothing".
+    # A literal here would keep passing while the real pair drifted apart.
+    spacey = box / "a note with spaces.md"
+    r = tools.dispatch("write_file",
+                       json.dumps({"path": str(spacey), "content": "x\ny\n"}), W)
+    ok("a real write result parses back to its path",
+       tools.written_path("write_file", r) == spacey,
+       (r, tools.written_path("write_file", r)))
+
+    r2 = tools.dispatch("write_file",
+                        json.dumps({"path": str(spacey), "content": "z",
+                                    "overwrite": True}), W)
+    ok("...and so does an overwrite ('replaced', not 'wrote')",
+       tools.written_path("write_file", r2) == spacey, (r2,))
+
+    r3 = tools.dispatch("write_file",
+                        json.dumps({"path": str(jail / "no.md"),
+                                    "content": "x"}), W)
+    ok("a refused write yields no path",
+       tools.written_path("write_file", r3) is None, r3)
+    ok("a read result yields no path",
+       tools.written_path("read_file",
+                          tools.dispatch("read_file",
+                                         json.dumps({"path": str(jail / "readme.md")}),
+                                         W)) is None)
+    ok("a non-write tool name is never credited with a write",
+       tools.written_path("read_file", r) is None, r)
+    ok("junk in, None out",
+       tools.written_path("write_file", None) is None and
+       tools.written_path("write_file", "") is None and
+       tools.written_path("write_file", "wrote something") is None)
+
     print("\n--- the dispatcher never raises ---")
     junk = [("read_file", '{"path": null}'), ("read_file", '{"path": 42}'),
             ("list_dir", '{"path": ""}'), ("grep", '{"pattern": 5}'),

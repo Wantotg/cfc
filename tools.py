@@ -23,6 +23,7 @@
 #      empty write set, so write_file fails closed.
 import json
 import os
+import re
 from pathlib import Path
 
 from context import ToolContext, as_context
@@ -445,6 +446,39 @@ def write_file(path, content, roots, overwrite=False):
     lines = content.count("\n") + (1 if content and not
                                    content.endswith("\n") else 0)
     return f"{verb} {p} ({len(content):,} chars, {lines:,} lines)"
+
+
+# The shape write_file's success line takes, and the only place that knows it.
+# Anchored at both ends because every path in the vault contains spaces, so
+# "the path" is everything between the verb and the trailing size clause — a
+# split on whitespace would truncate `99 outbox/note.md` to `99`.
+_WROTE_RE = re.compile(r"^(?:wrote|replaced) (?P<path>.+) "
+                       r"\([\d,]+ chars, [\d,]+ lines\)$")
+
+
+def written_path(name, result):
+    """The file a successful write_file call landed on, or None.
+
+    Lets a caller learn what a turn wrote without the tool loop having to
+    understand tools. The run log is the consumer: when a routine fails
+    halfway, "which files did it get to" is the first question, and the
+    transcript is the only thing that could answer it today.
+
+    **The producer and the parse live together on purpose.** This is the same
+    coupling as commands.py's markers and db._MARKER_RE, and it carries the
+    same hazard: reword write_file's success line and this silently returns
+    None forever, which reads as "the run wrote nothing" — the exact false
+    negative the log exists to avoid. tests/test_tools.py pins it by
+    round-trip, running a real write and parsing its real result, so a reworded
+    message fails a test instead of emptying a log field.
+
+    An error result is a dict-shaped JSON string and cannot match the anchor,
+    so a refused write is never counted as one that happened.
+    """
+    if name not in WRITE_TOOLS or not isinstance(result, str):
+        return None
+    m = _WROTE_RE.match(result.strip())
+    return Path(m.group("path")) if m else None
 
 
 def _roots_for(name, ctx):

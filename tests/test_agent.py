@@ -173,6 +173,69 @@ def main():
     ok("one result per call", len(tool_msgs) == 2, len(tool_msgs))
     ok("ids line up", {m["tool_call_id"] for m in tool_msgs} == {"call_0", "call_1"})
 
+    print("\n--- the touched collector ---")
+    # The run log's fourth field. Only the runner reads it, so chat passes
+    # nothing and this is the only place that exercises it.
+    box = tmp / "outbox"
+    box.mkdir()
+    W = ToolContext.for_chat(read_roots=(jail,), write_roots=(box,))
+
+    agent.call_api = FakeAPI([
+        reply(None, [("write_file", {"path": str(box / "a.md"),
+                                     "content": "one\n"}),
+                     ("read_file", {"path": str(jail / "notes.md")})]),
+        reply("wrote it"),
+    ])
+    touched = []
+    drive(agent.agent_turn, [], [{"role": "user", "content": "go"}], "m",
+          conn, 1, keys="a\na\n", ctx=W, touched=touched)
+    ok("a successful write is collected", touched == [box / "a.md"], touched)
+    ok("...and a read is not", len(touched) == 1, touched)
+
+    # The negative that matters: a refused write must not be reported as one
+    # that happened. A log naming a file the run never produced sends you
+    # looking for it.
+    agent.call_api = FakeAPI([
+        reply(None, [("write_file", {"path": str(jail / "nope.md"),
+                                     "content": "x"})]),
+        reply("refused"),
+    ])
+    touched = []
+    drive(agent.agent_turn, [], [{"role": "user", "content": "go"}], "m",
+          conn, 1, keys="a\n", ctx=W, touched=touched)
+    ok("a refused write is not collected", touched == [], touched)
+    ok("...and really wasn't written", not (jail / "nope.md").exists())
+
+    # Same file twice is one entry: the log answers "which files", not "how
+    # many calls" — the transcript already answers that.
+    agent.call_api = FakeAPI([
+        reply(None, [("write_file", {"path": str(box / "b.md"),
+                                     "content": "1"})]),
+        reply(None, [("write_file", {"path": str(box / "b.md"),
+                                     "content": "2", "overwrite": True})]),
+        reply("done"),
+    ])
+    touched = []
+    drive(agent.agent_turn, [], [{"role": "user", "content": "go"}], "m",
+          conn, 1, keys="a\na\n", ctx=W, touched=touched)
+    ok("the same file written twice is listed once",
+       touched == [box / "b.md"], touched)
+
+    # The case the backlog entry is actually about: the run stops halfway, so
+    # the return value is the ceiling message and the only record of what got
+    # written is this list.
+    agent.TOOLS_MAX_CALLS_PER_TURN = 2
+    agent.call_api = FakeAPI([
+        reply(None, [("write_file", {"path": str(box / f"c{i}.md"),
+                                     "content": "x"})]) for i in range(5)])
+    touched = []
+    final, out = drive(agent.agent_turn, [], [{"role": "user", "content": "go"}],
+                       "m", conn, 1, keys="a\na\n", ctx=W, touched=touched)
+    ok("writes survive the call-ceiling exit",
+       final["content"] == agent.LIMIT_MESSAGE and
+       touched == [box / "c0.md", box / "c1.md"], (final, touched))
+    agent.TOOLS_MAX_CALLS_PER_TURN = 8
+
     print("\n--- the loop breaker ---")
     agent.TOOLS_MAX_CALLS_PER_TURN = 3
     agent.call_api = FakeAPI([reply(None, [("list_dir", {"path": str(jail)})])

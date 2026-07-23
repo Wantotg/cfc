@@ -23,6 +23,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Make the run log say what a run wrote
+`append_log(…, touched=())` rendered its fourth argument and no caller passed
+one, so every line read as though the run touched nothing. When a run fails
+halfway — a real, logged outcome since the ceiling fix — the first question is
+which files it got to, and only the transcript could answer it.
+- **A collector, not a second return value.** `agent_turn` takes an optional
+  `touched` list; a routine passes one, chat passes nothing. Both of the turn's
+  failure exits leave by *raising*, so a returned value couldn't carry the
+  answer out of the case this is for. `run_routine` owns the list, which is
+  also what lets it span a re-roll: history is rebuilt per attempt, files
+  already written are not.
+- **`tools.written_path()`** reads `write_file`'s own success line, so the tool
+  loop needs no knowledge of tools and a refused write is never counted as one
+  that happened. Producer and parse live together — same coupling hazard as
+  `db._MARKER_RE` — and are pinned by round-trip rather than a literal, so
+  rewording the message fails a test instead of silently emptying the field.
+- **Rendering reworked after looking at a real line.** Names rather than full
+  paths (every write shares the same 47-char root) and the list moved **last**:
+  fields are separated by ` — ` and this vault's filenames contain that exact
+  string, so a mid-line list had no findable end. `last_run()` is unaffected;
+  `_LOG_RE` anchors at the head.
+- Verified by breaking each link in turn — reworded result, disabled collector,
+  runner not threading it, runner not logging it — each fails its own
+  assertions.
+- Files: agent.py, runner.py, routines.py, tools.py, tests/test_agent.py,
+  tests/test_tools.py, tests/test_routines.py, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Stop `golden.py` exporting into the real vault
 The script ends with `:q`, `:q` honours `AUTO_EXPORT`, so every `check` wrote
 the fixture session into Cas's actual export folder. Nothing was corrupted, but
@@ -47,7 +76,7 @@ gets run, and it was false.
 - Verified: two consecutive runs leave the real folder's mtimes unchanged.
 - Files: tests/golden.py, tests/golden_baseline.txt, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 08a9641
 
 ## 2026-07-23 — Close the run log to `write_file`
 `ROUTINE_LOG_DIR` sits *inside* `WRITE_ROOTS` (`<vault>/99 outbox/routine logs/`

@@ -427,7 +427,36 @@ The system prompt also tells the model no human is present and not to end its tu
 
 ### The run log
 
-Append-only, one file per routine, written through a temp file + `os.replace` like every other write here. A plain append interrupted mid-write leaves a torn final line, and a log that corrupts itself on the failure it exists to record is worse than no log.
+Append-only, one file per routine, written through a temp file + `os.replace` like every other write here. **Not writable by the model** — see the run-log paragraph in the tool-jail section.
+
+**A line names the files the run wrote**, via a collector: `agent_turn` takes an
+optional `touched` list and appends each successful write to it. Three things
+about that seam:
+
+- **`run_routine` owns the list, not the turn.** Both of the turn's failure
+  exits leave by raising (`CallLimitReached`, `EmptyCompletion`), so a second
+  return value could not carry the answer out of the exact case this exists for
+   — a run that stopped halfway. The caller holds the list, so the `except`
+  branch logs it. It also survives a re-roll: `history` is rebuilt per attempt,
+  but files an earlier attempt wrote are on disk and stay there.
+- **A collector rather than a return value** so the chat path pays nothing for
+  something only the runner reads. `touched=None` is chat, and the signature
+  says who cares.
+- **`tools.written_path()` parses `write_file`'s own success line**, which
+  keeps the tool loop from having to understand tools and means a *refused*
+  write is never reported as one that happened. It carries the standing
+  producer/parse hazard (`db._MARKER_RE`, `commands.py`'s markers): reword the
+  success message and this returns `None` forever, which reads in the log as
+  "the run wrote nothing". `tests/test_tools.py` pins it **by round-trip** — a
+  real write, parsed from its real result — so a reword fails a test rather
+  than emptying a field.
+
+The line renders **names, not paths**, and the list goes **last**. Both were
+learned from the first real line: full paths repeat the write root's 47
+characters per file, and the ` — ` field separator collides with the em-dashes
+inside this vault's own filenames (`wiki draft — chunking.md`), so a mid-line
+list had no findable end. `last_run()` is unaffected — `_LOG_RE` anchors at the
+head of the line. A plain append interrupted mid-write leaves a torn final line, and a log that corrupts itself on the failure it exists to record is worse than no log.
 
 Two consumers, and the second is why it is a log and not a `print`: a human asking "did the nightly thing work", and **the next run**, which reads `last_run()` off the file to honour `on_failure`. A scheduled run is a fresh process — it has no memory to consult. `on_failure` is currently stored and surfaced; the scheduler is what will act on it.
 

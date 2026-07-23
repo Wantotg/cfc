@@ -25,7 +25,7 @@ from rich.text import Text
 from api import call_api
 from commands import TurnApproval, gate_and_dispatch
 from db import save_message
-from tools import TOOL_SCHEMAS
+from tools import TOOL_SCHEMAS, written_path
 from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
 
 try:
@@ -113,7 +113,7 @@ def _render_result(result):
 
 
 def agent_turn(prefix, history, model, conn, session_id, ctx=None,
-               max_calls=None):
+               max_calls=None, touched=None):
     """Run a turn that may use tools. Returns the final assistant message.
 
     Takes the system `prefix` and `history` separately, and appends every
@@ -125,6 +125,14 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
     prompts, so the calls and results would be saved to the database and then
     vanish from live context until the session was reopened: the model would
     forget it had just read a file.
+
+    `touched`, if given, is a list this appends every successfully written file
+    to. **A collector rather than a second return value**, because only the
+    runner reads it: a routine passes one, chat passes nothing, and the
+    signature stays honest about who cares. It also survives the paths where
+    there is no useful return value to carry it — the call-ceiling exit, and a
+    caller that re-rolls and throws its history away — which is exactly when
+    "what did it manage to write" is worth asking.
     """
     # An interactive chat turn: gated, always. ToolContext.for_chat cannot
     # produce an ungated context, so there is no config or argument that turns
@@ -192,6 +200,14 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
             _render_result(result)
 
             fn = call.get("function", {})
+            # Recorded at the point it succeeded, from the result rather than
+            # from the arguments: the model's requested path is what it asked
+            # for, and this wants what actually landed.
+            if touched is not None:
+                wrote = written_path(fn.get("name"), result)
+                if wrote is not None and wrote not in touched:
+                    touched.append(wrote)
+
             tool_msg = {"role": "tool",
                         "tool_call_id": call.get("id"),
                         "content": result}

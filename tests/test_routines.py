@@ -307,6 +307,50 @@ def main():
             ok("...and can then succeed", ok3 is True, summary)
             ok("the log now ends ok", routines.last_run("crash")[0] == "ok")
 
+            print("\n--- the log names what the run wrote ---")
+            # append_log has always rendered `touched`; nothing passed it, so
+            # every line read as though the run touched nothing. The seam is
+            # a collector agent_turn fills as each write succeeds.
+            def wrote_then_died(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/draft one.md"))
+                touched.append(Path("/vault/99 outbox/draft two.md"))
+                raise TimeoutError("provider went away mid-task")
+
+            runner.agent_turn = wrote_then_died
+            half = make(id="halfway", read_roots=[str(store.pdir)])
+            routines.save_routine(half)
+            okh, _, _ = runner.run_routine("halfway", conn, model="m")
+            text = routines.log_path("halfway").read_text(encoding="utf-8")
+            ok("a half-finished run is still a failure", okh is False)
+            # This is the whole point of the entry: when a run stops partway,
+            # the first question is which files it got to, and the log was the
+            # one place that could answer without reading the transcript back.
+            ok("...and the log names the files it managed to write",
+               "draft one.md" in text and "draft two.md" in text, text)
+            ok("...alongside the reason it stopped",
+               "provider went away mid-task" in text, text)
+
+            def wrote_and_finished(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/digest.md"))
+                return {"role": "assistant", "content": "filed the digest"}
+
+            runner.agent_turn = wrote_and_finished
+            oks, _, _ = runner.run_routine("halfway", conn, model="m")
+            text = routines.log_path("halfway").read_text(encoding="utf-8")
+            ok("a successful run reports its writes too", oks is True)
+            ok("...naming them", "digest.md" in text, text)
+
+            # A run that wrote nothing must not grow an empty "wrote" clause —
+            # "wrote " followed by the detail would read as a file called by
+            # the reason it failed.
+            runner.agent_turn = lambda *a, **kw: {"role": "assistant",
+                                                  "content": "nothing to do"}
+            runner.run_routine("halfway", conn, model="m")
+            last = [l for l in routines.log_path("halfway").read_text(
+                encoding="utf-8").splitlines() if l.startswith("- **")][-1]
+            ok("a run that wrote nothing says nothing about writes",
+               "wrote" not in last, last)
+
             print("\n--- a routine that cannot run is refused before the API ---")
             invalid = routines.Routine(id="broken", name="Broken",
                                        prompt="gone.md")

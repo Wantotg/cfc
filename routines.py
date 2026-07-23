@@ -423,16 +423,32 @@ def log_path(routine_id):
 
 
 def append_log(routine_id, status, detail="", touched=()):
-    """Record one run. `status` is 'ok' or 'failed'."""
+    """Record one run. `status` is 'ok' or 'failed'.
+
+    `touched` is the files the run wrote — filled by the collector
+    `runner.run_routine` hands to `agent_turn`. Two things about how it renders,
+    both learned by looking at a real line:
+
+    * **Names, not full paths.** Every write lands under the one write root, so
+      full paths repeat 47 identical characters per file and bury the line in
+      the prefix they share. The transcript holds the absolute truth; this
+      field answers "which files", which a name answers.
+    * **It goes last.** Fields here are separated by ` — `, and this vault's
+      filenames contain that exact string (`wiki draft — chunking.md`), so a
+      list in the middle of the line is a list you cannot find the end of.
+      Last, everything after the colon is the list, to end of line.
+    """
     d = log_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = log_path(routine_id)
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"- **{ts}** — {status}"
-    if touched:
-        line += f" — wrote {', '.join(str(t) for t in touched)}"
     if detail:
         line += f" — {detail.strip()}"
+    if touched:
+        names = ", ".join(Path(t).name for t in touched)
+        plural = "" if len(touched) == 1 else "s"
+        line += f" — wrote {len(touched)} file{plural}: {names}"
 
     head = f"# Run log — {routine_id}\n\n" if not path.exists() else ""
     existing = path.read_text(encoding="utf-8") if path.exists() else ""

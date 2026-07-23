@@ -63,7 +63,43 @@ the write path just never got it.
 
 ---
 
-## `append_log`'s `touched=()` is never passed — the run log can't say what a run wrote
+## ~~`append_log`'s `touched=()` is never passed~~ — FIXED (2026-07-23)
+
+**Fixed:** the collector, as this entry preferred — `agent_turn` takes an
+optional `touched` list and appends each successful write to it. A routine
+passes one, chat passes nothing, and the signature stays honest about who
+cares.
+
+- **The collector is owned by `run_routine`, not by the turn.** Both of the
+  turn's failure exits leave by raising (`CallLimitReached`, `EmptyCompletion`),
+  so a value returned *from* the turn cannot carry the answer out of exactly
+  the case the entry is about. The caller holds the list, so the `except`
+  branch logs it. It also spans re-rolls: `history` is rebuilt per attempt,
+  but files an earlier attempt wrote are on disk and stay there.
+- **`tools.written_path()` reads `write_file`'s own result**, so the tool loop
+  never has to understand tools and a *refused* write is never reported as one
+  that happened. The producer and the parse live together, with the same hazard
+  as `commands.py`'s markers and `db._MARKER_RE`: reword the success line and
+  this returns None forever, which reads as "the run wrote nothing". Pinned by
+  round-trip — a real write, parsed from its real result — so a reworded
+  message fails a test instead of silently emptying a log field. Verified by
+  rewording it: 4 assertions fail.
+- **The rendering changed too, which the entry didn't foresee.** The first real
+  line was unreadable: full paths repeat the 47-char write root per file, and
+  the ` — ` field separator collides with the em-dashes *inside* this vault's
+  filenames (`wiki draft — chunking.md`), so the list had no findable end. Now
+  names rather than paths, and the list goes **last**, where everything after
+  the colon is the list:
+
+```
+- **2026-07-23 07:09** — failed — TimeoutError: provider went away — wrote 2 files: wiki draft — sqlite-vec.md, wiki draft — chunking.md
+- **2026-07-23 07:09** — ok — Nothing to do. (8s, session 392)
+```
+
+`last_run()` is unaffected — `_LOG_RE` is anchored at the head of the line.
+A run that wrote nothing grows no `wrote` clause at all.
+
+Original report below.
 
 **Found:** 2026-07-22, reading the logging path after a routine hit the tool
 ceiling mid-task.

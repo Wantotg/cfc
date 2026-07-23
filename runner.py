@@ -103,7 +103,8 @@ class CallLimitReached(Exception):
     """
 
 
-def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event):
+def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event,
+                     touched=None):
     """Run the turn, re-rolling an empty completion rather than accepting it.
 
     Thinking models return the occasional empty completion — a provider
@@ -131,12 +132,19 @@ def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event):
     assistant rows `agent_turn` persists are left in the transcript on purpose:
     the routine's session is the audit trail, and "it returned nothing twice"
     is exactly what you want to see there.
+
+    `touched` is NOT rebuilt per attempt, unlike `history`. A re-roll discards
+    the conversation, but the files an earlier attempt wrote are on disk and
+    stay there — the log has to name them or it under-reports what the run
+    did. This is also why the collector is created by the caller: the raise
+    paths below leave through an exception, and the caller still holds the list.
     """
     attempts = EMPTY_COMPLETION_RETRIES + 1
     for attempt in range(1, attempts + 1):
         history = [{"role": "user", "content": task}]
         final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx,
-                           max_calls=ROUTINE_MAX_CALLS_PER_TURN)
+                           max_calls=ROUTINE_MAX_CALLS_PER_TURN,
+                           touched=touched)
         content = (final.get("content") or "").strip()
         # Checked before the truthiness test, because LIMIT_MESSAGE *is* truthy
         # — that is precisely how it used to pass for a successful answer.
@@ -225,9 +233,16 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     prefix = [{"role": "system", "content": system}]
     save_message(conn, session_id, "user", task, model=model)
 
+    # Owned here, not inside the turn, because every path out of the turn has
+    # to be able to report it — including the two that leave by raising. When a
+    # run fails halfway, "which files did it get to before it stopped" is the
+    # first question asked of the log, and the transcript was the only thing
+    # that could answer it.
+    touched = []
+
     try:
         final = _turn_with_retry(prefix, task, model, conn, session_id, ctx,
-                                 event)
+                                 event, touched=touched)
     except Exception as e:                      # noqa: BLE001 — see below
         # Deliberately broad. Anything from an HTTP timeout to a provider
         # returning a shape we don't expect has to reach the log, because an
@@ -239,11 +254,12 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
                      model=model)
         conn.commit()
         detail = f"{type(e).__name__}: {e}"
-        append_log(routine.id, "failed", detail)
+        append_log(routine.id, "failed", detail, touched=touched)
         return False, detail, session_id
 
     conn.commit()
     summary = _summarise(final.get("content", ""))
     elapsed = (datetime.datetime.now() - started).total_seconds()
-    append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s, session {session_id})")
+    append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s, session {session_id})",
+               touched=touched)
     return True, summary, session_id
