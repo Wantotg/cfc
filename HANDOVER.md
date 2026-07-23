@@ -228,6 +228,50 @@ One SQLite DB. Schema is created and migrated **on every `db()` connect** — `C
 - **`chunks`** (built by `chunk.py`) — id, message_id, session_id, kind (`message`|`thinking`), ordinal, text, token_est, **`source`** (`chat`|`wiki`, derived from the session's provider). `UNIQUE(message_id, kind, ordinal)`.
 - **`vec_chunks`** (built by `backfill.py`) — `vec0` virtual table (sqlite-vec): `chunk_id PRIMARY KEY, embedding float[1024]`. Vectors stored as raw float32 bytes (`struct.pack`).
 
+### The index is downstream of `messages`, and nothing but code enforces it
+
+`chunks` and `vec_chunks` index `messages`. There are **no foreign keys** —
+`PRAGMA foreign_keys` is 0 and neither table was declared with one — so a
+delete does not cascade on its own. Until 2026-07-23 it didn't cascade at all,
+and that was three bugs wearing one bug's clothes:
+
+1. **A deleted conversation stayed in the retrieval index.** Its vectors were
+   still there and `search` still returned them. A delete that leaves the text
+   answering questions is not a delete. (143 such vectors on the live db.)
+2. **Orphaned rows** — a chunk pointing at a session that no longer exists.
+   This is the symptom that got reported, and it is the least of it.
+3. **Mis-attribution, which is the one to understand.** SQLite reuses rowids
+   at the top of a table, so a later message takes a deleted message's id and
+   the stale chunk *joins cleanly* to it. `search` then reports that chunk
+   under the live message's session, title and date — a citation pointing at a
+   conversation the text never came from. Silent, and indistinguishable from a
+   correct hit. 55 rows.
+
+`delete_session`/`delete_message` now drop index rows **first**, while the
+messages that identify them still exist; `delete_session` additionally sweeps
+chunks by `session_id`, for ones whose message was deleted separately. Inside
+`drop_chunks`, **vectors go before chunks and a failure there raises rather
+than continuing**: a chunk without its vector is merely stale, but a vector
+without its chunk is text in the index that nothing can inspect or attribute.
+
+**The repair rule is exact, not a heuristic**, and that is what made it safe to
+run against real data: a chunk is stale if its message row is gone, *or* if
+`chunks.session_id != messages.session_id`. The second cannot arise in normal
+operation — `chunk_new` copies the session id straight off the message row it
+is chunking, and `messages.session_id` is never reassigned anywhere in the
+codebase. A disagreement is therefore proof of a reused rowid, not a guess.
+`find_stale_chunks`/`prune_stale_chunks`, surfaced as `:updatedb prune`; plain
+`:updatedb` reports and removes nothing, because a command people run casually
+should not quietly drop rows.
+
+Real `ON DELETE CASCADE` is the better answer and is **not** done: SQLite can't
+add one to an existing table without rebuilding it, and this schema is already
+flagged as in flux. It belongs to the DB-layer rework; the code cascade is the
+smaller, reversible half. Note also that `import_wiki.clear_chunks_for_message`
+performs the same vector-then-chunk dance for the same reason and is still a
+second implementation of it — two copies of a delete is how one gets fixed and
+the other doesn't.
+
 ### `messages.kind` — a discriminated union
 
 `chat` (default, covers all pre-column rows) · `attachment` · `recall_marker` · `tool_call` (assistant msg carrying `tool_calls` in meta) · `tool_result` (role=`tool`, meta carries `tool`, `tool_call_id`). `meta` is NULL for `chat`.
@@ -659,6 +703,40 @@ same events.
 
 ---
 
+## A recurring hazard: a format written in one place and parsed in another
+
+Not one bug — a **shape** this codebase keeps producing, now in four places.
+Worth naming, because every instance fails the same way and none of them fails
+loudly:
+
+| written by | parsed by | what breaks if they drift |
+|---|---|---|
+| `commands.py`'s `:remember` marker | `db._MARKER_RE` | recall markers stop parsing |
+| `commands.py` / `import_anthropic.py` markers | `backfill.is_litter` | markers get embedded as content |
+| `routines.append_log`'s line | `routines.last_run` | `on_failure` reads the wrong status |
+| `tools.write_file`'s success line | `tools.written_path` | the run log says a run wrote nothing |
+
+The failure is always a **silent false negative**: nothing raises, a regex
+simply stops matching, and the feature quietly returns "there is nothing here"
+— which is indistinguishable from the truthful answer. `is_litter` shipped with
+exactly this bug once (matching one marker against a whole concatenated string
+instead of per line).
+
+Two rules, both already applied above:
+
+- **Keep the producer and the parser in the same module** where the dependency
+  graph allows it, so a reword is visible from where it is made.
+  `written_path` sits directly under `write_file`; `_MARKER_RE` does not sit
+  under its producer, which is why that pair is the most fragile of the four.
+- **Pin them by round-trip, never against a literal.** A test asserting
+  `written_path("wrote /x (1 chars, 1 lines)")` keeps passing forever while the
+  real pair drifts apart. `tests/test_tools.py` runs a *real* write and parses
+  its *real* result; `tests/test_schema.py` and `test_litter.py` do the same
+  for the markers. Verified by rewording `write_file`'s message: four
+  assertions fail.
+
+If you add a fifth, add it to this table.
+
 ## Load-bearing invariants (don't break these)
 
 1. **Any DB write checks its path *before* the write, not after.** A test guard that ran its assertion *after* a destructive `unlink()` once deleted the real database. `backup.py` and `tests/golden.py` both assert-not-real before touching anything.
@@ -671,6 +749,7 @@ same events.
 8. **A routine is reconstructable from its file alone**, keyed by its `id`, and an invalid one cannot be *saved*. The only ungated context in the system comes from `ToolContext.for_routine()`, which forces a declared write scope in the same call; `gated` has no setter and there is no config flag that pre-clears a tool. Don't rebuild one under a new name.
 9. **Wiki recall keys off the frontmatter id and stays wiki-only.** `import_wiki` identifies a page by `source_uuid` (the id), not filename/hash, and on edit drops the page's chunks+vectors so they rebuild — never orphaning a `session_id` (the parked bug). Recall filters `provider='wiki'`; the chat log is indexed (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and must never break a chat turn.
 10. **A private chat's isolation is the connection, not a flag.** It runs against `db(":memory:")`; every `conn`-driven write is already a no-op against disk, including the ones `agent_turn` makes on its own. `private=True` gates only the three paths that *escape* the connection (auto-embed, auto-export, model file-writes via empty write roots). If you add a new disk-writing path, route it through `conn` or it will silently defeat this — and `tests/test_private.py` pins the negative.
+11. **A delete reaches the index that points at what was deleted.** `chunks`/`vec_chunks` have no foreign keys, so `delete_session`/`delete_message` cascade in code — index rows first, vectors before chunks, a vector-delete failure raising rather than half-completing. Leaving them behind is not one bug but three: deleted content still searchable, orphaned rows, and — because SQLite reuses rowids — stale chunks silently re-attaching to unrelated live messages. `tests/test_schema.py` pins all three.
 
 ---
 
@@ -680,7 +759,7 @@ same events.
 
 **`SCRUB` is what keeps the baseline a property of the code and nothing else.** Timestamps, addresses, `$HOME` and the repo root are normalised on *both* sides at compare time — so adding a rule fixes an existing baseline without re-recording, and `record` is only needed to stop the raw value living in the tracked file. The rule that earned this paragraph: `:config` prints the last 4 of the API key, so **rotating the key failed `check` on a line that says nothing about the code**. Not a leak — it is exactly what a provider dashboard shows — but a tripwire that fires on something the code cannot cause is a tripwire that gets rubber-stamped, and this harness is the one that has to be trusted after a refactor. It scrubs only the `...abcd` form: with no key configured the line reads `not set`, which still diffs against `<KEY>`, because a config that lost its key is a real finding. Generalise it — anything a baseline pins that lives in `config.py` rather than in the source is the same bug.
 
-Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope), `test_tools`, `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety), `test_attach`, `test_schema` (migration idempotency + marker parse), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table). 17 suites. None need an API key.
+Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table). 17 suites. None need an API key.
 
 `test_chunk` exists because the chunker is the one part of the memory layer whose output silently becomes permanent: a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking. The mid-word bug sat in `BACKLOG.md` for six days precisely because nothing failed.
 
@@ -720,6 +799,20 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 
 ## Current state & open threads
 
+- **Just landed (2026-07-23, backlog session — unversioned):** five entries
+  cleared from `BACKLOG.md`, all with tests confirmed to fail against the old
+  behaviour. (1) The **routines run log is closed to `write_file`** — it lived
+  inside `WRITE_ROOTS`, so a model could overwrite the audit trail of the
+  failure it exists to record. (2) **`golden.py` no longer exports into the real
+  vault**, and its baseline no longer pins a config-derived path. (3) **The run
+  log names what a run wrote**, via a collector `run_routine` owns. (4) **A
+  delete now reaches the index that points at what was deleted** — the big one;
+  the reported dangling `session_id` turned out to be the mildest of three
+  bugs, and the live db was repaired (207 stale chunks, 195 vectors, zero wiki
+  rows touched). (5) **A relative path that is refused now says it was
+  relative** — same refusal, better explanation. Each has a `CHANGELOG.md`
+  entry with the reasoning.
+
 - **Just landed (v0.41, "private chat"):** `p` at the hub opens a chat that
   runs against an in-memory db and leaves nothing on disk — see the Private chat
   section for why the chokepoint is the connection and not a flag. Auto-embed,
@@ -745,6 +838,6 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 - **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
 - **Tool-path reasoning is middle-elided** (`agent.REASONING_HEAD_LINES`/`REASONING_TAIL_LINES`, 6+10) rather than printed in full. A tool turn prints one panel per loop iteration, so a verbose thinking model could push its own conclusion off the top of the scrollback. Head *and* tail, not just tail: the opening lines are usually "what am I about to do", which is the part worth reading beside the tool call it explains. Nothing is lost that was ever kept — reasoning is presentation-only on both paths.
 - **Unblocked (v0.2):** recall was returning nothing for good queries; the floor is fixed and the discrepancy is explained (see Retrieval tuning). A memory-pass routine is no longer blocked on it. **One caveat survives and is not fixed:** zero hits and "nothing worth reporting" still produce **identical output**, so a nightly digest would look like it was working while doing nothing. A routine built on recall should fail loudly on zero hits rather than assume the floor protects it.
-- **Backlog (parked, DB-flavored):** (a) the dangling `session_id` root cause in `import_anthropic.py` (chunks committed against an uncommitted session id, or a delete without cascade) — moot on the current wiki-only db, but unfixed if the Anthropic export is ever re-imported; `import_wiki.py` deliberately avoids it. (b) ~~`chunk.py` overlap slices mid-word~~ — **fixed in v0.2**, corpus re-chunked and re-embedded. (c) ~~the endpoint-IP instability for the WSL→Windows embedder~~ — fixed 2026-07-20 by `networkingMode=mirrored`.
+- **Backlog (parked, DB-flavored):** the dangling `session_id` is **solved and repaired** (2026-07-23) — it was never `import_anthropic.py` and was never moot on the wiki db; see the index-is-downstream section. What remains parked is the *structural* fix: real `ON DELETE CASCADE`, which SQLite cannot add without rebuilding the table, and the duplicated vector-delete in `import_wiki.clear_chunks_for_message`. Both belong to the DB-layer rework.
 - **DB-layer rework is anticipated** — treat the chunk/vector schema as in flux. `TARGET_TOKENS`/`OVERLAP`/`CHARS_PER_TOK` are naive (char-based); the design note "SQLite stays the source of truth, sqlite-vec is an index over it" is the intended shape.
 - **Constraints that are choices, not bugs:** streaming off under tools; tool calling needs a model in `TOOLS_MODELS` (verified against nano-gpt, not assumed); `:grep` and history search are substring (`LIKE`), FTS5 a possible upgrade; sessions are linear (no branching).

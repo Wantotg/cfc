@@ -23,6 +23,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Bring the docs up to the code after the backlog session
+`BACKLOG.md` has no open entries left for the first time. Docs updated to match
+rather than rewritten — the architecture didn't change, five specific things did.
+- **`HANDOVER.md`**: a new section on the index being downstream of `messages`
+  with nothing but code enforcing it; a new invariant (#11, deletes reach the
+  index); the run-log collector; and **a new standing-hazard section** naming the
+  format-written-here-parsed-there shape, which now has four instances and one
+  failure mode — a silent false negative. Table included; add to it if you make a
+  fifth.
+- **`CLAUDE.md`**: the run log sits inside the write root and is refused
+  separately; deletes cascade in code; `:updatedb prune`; suite count.
+- **`README.md`**: `:updatedb prune` in the command table, and a paragraph in
+  Memory on why deleting a session has to reach the index.
+- Files: HANDOVER.md, CLAUDE.md, README.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Say when a refused path was relative
 `write_file` refuses a relative path — it resolves against the process working
 directory, which is not a write root and is not predictable on a scheduled run.
@@ -43,7 +60,7 @@ round trip per routine run to recover from.
   only ever bit `write_file`.
 - Files: paths.py, tests/test_paths.py, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 9afb646
 
 ## 2026-07-23 — Make deleting a session delete what indexes it
 `delete_session`/`delete_message` removed messages and left `chunks` and

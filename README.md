@@ -217,6 +217,7 @@ still returns to the hub.
 | `:remember <query>` | Pull matching excerpts into the live context (ephemeral) |
 | `:forget` | Drop the most recently injected excerpts |
 | `:updatedb` | Index any not-yet-embedded messages into memory now |
+| `:updatedb prune` | Also remove index rows left behind by an old delete (see below) |
 | `:database on` / `:database off` | Enable/disable `:recall` & `:remember` this session (alias `:db`) |
 | `:attach <path>` | Attach a local text file to the session (persistent) |
 | `:attached` | List attachments in this session |
@@ -292,6 +293,8 @@ python backfill.py ~/.cfc/chat.db                  # embed
 ```
 
 Editing a page and re-importing re-chunks and re-embeds it under the same id, so a page's identity survives edits. New in-app chats are indexed automatically after each turn (`AUTO_EMBED`), or on demand with `:updatedb`; they're tagged `source='chat'` and accumulate for a future wiki+chat hybrid, while recall stays wiki-only for now.
+
+Deleting a session deletes what indexes it. `chunks` and `vec_chunks` are an index over `messages` with no foreign key enforcing the link, so this is code rather than a database constraint — and until 2026-07-23 it wasn't there at all: a deleted conversation stayed searchable, and, because SQLite reuses row ids, a stale chunk could later attach itself to an unrelated message and be cited under it. `:updatedb` reports any such rows left in an older database and `:updatedb prune` removes them.
 
 `:recall` synthesises an answer cited by page title and id, and leaves the session untouched. `:remember` injects the raw excerpts into the live context and is ephemeral — only a marker row persists, so an export can still tell a grounded claim from an invented one. `:forget` drops the last injection.
 
@@ -370,7 +373,7 @@ python tests/test_tools.py       # tools and dispatcher
 python tests/test_gate.py        # the approval gate
 python tests/test_agent.py       # the agent loop and tool replay
 python tests/test_attach.py      # :attach / :attached / :detach
-python tests/test_schema.py      # the kind/meta migration
+python tests/test_schema.py      # the kind/meta migration, and the delete cascade
 python tests/test_litter.py      # the litter filter's marker coupling
 python tests/test_routines.py    # the routine file round-trip, scope refusal, run log
 python tests/test_mover.py       # filing: destination re-validation, refusals, atomicity
