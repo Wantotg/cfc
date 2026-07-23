@@ -30,3 +30,6 @@ tests/_fixture.db
 
 # personal idea capture, not project history
 WISHLIST.md
+
+# roadmap planning detail for versions not yet shipped — see ROADMAP.md
+ROADMAP_PRIVATE.md

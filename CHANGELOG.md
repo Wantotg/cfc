@@ -23,6 +23,19 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Split ROADMAP.md into public and private
+`ROADMAP.md` now carries full detail (title, completion date, what shipped,
+Cas's note) only for versions that have shipped; anything still ahead is a
+bare title-only stub. The planning detail for v0.5–v1.0 moved to a new
+`ROADMAP_PRIVATE.md`, gitignored — so a session no longer has to load design
+reasoning for versions nobody's started yet just to get oriented, and the
+repo's public copy is ready for the day it goes public. `CLAUDE.md`'s release
+order now folds the private→public backfill into step 1 (commit and push).
+- Files: `ROADMAP.md`, `.gitignore`; `ROADMAP_PRIVATE.md` and `CLAUDE.md`
+  updated too but both are gitignored, so they don't appear in this commit.
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Write down that "chat" means both chats
 Cas's standing decision, recorded properly in `CLAUDE.md` and stated again at
 the head of `HANDOVER.md`'s Private chat section so it reaches an LLM reading

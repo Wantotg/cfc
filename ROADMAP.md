@@ -10,6 +10,12 @@ adjacent to the version's work gets swept in it.
 Each version gets a short note from Cas, in his own words, about what landed and
 what it opened up. That note is the point of numbering this at all.
 
+**This file is public — it ships with the repo.** A shipped version gets its
+full entry here: what landed, the completion date, Cas's note. A version still
+ahead gets only its number and title, as a placeholder — the actual planning
+(design reasoning, ordering, dependencies) lives in `ROADMAP_PRIVATE.md`,
+gitignored, and moves over here in full the day the version ships.
+
 ---
 
 ## v0.1 — 2026-07-21
@@ -234,147 +240,12 @@ believed. Verification is the deliverable here, not the keybinding.
 
 ## v0.5 — The scheduler
 
-Wire an OS scheduler to a `--run-routine <name>` flag on `main.py`.
-`run_routine()` is already the entry point it calls. `trigger` (HHMM) and
-`on_failure` are already stored and parsed, waiting to be honoured.
-
-**No in-process timer thread** — see `HANDOVER.md`. Needs the routine-session
-marker from v0.4, because this is when the volume arrives. Blocks both remaining
-feature versions, which is why it sits ahead of them.
-
----
-
 ## v0.6 — Wiki automation
-
-Tested automation for writing and moving wiki pages.
-
-- A drafter writes new pages from notes in atomic template style.
-- It **suggests**: which pages to add in full, which to split, which in part,
-  what needs relinking, what needs a different title.
-- Human approves or declines. The mover carries it out, from tags and proposed
-  location.
-
-**The design problem this version has to solve properly:** `mover.py` refuses
-wiki destinations outright today, and for a good reason — writing a page there
-changes the corpus while the index doesn't know, so recall keeps answering from
-a stale copy with no signal that it's stale. v0.6 is the version that resolves
-that (most likely: a move into the wiki triggers a re-import). It is not the
-version that quietly deletes the refusal.
-
-Builds on `:wiki diff` from v0.3 — reviewing a proposed page as a diff before
-accepting it is the whole approval step, and by here it should already work on
-pages Cas edited by hand.
-
----
 
 ## v0.7 — Tiered memory
 
-Same mechanics, but editing a rolling journal, diary style: days 1–5 short term,
-6–25 medium term, >25 long term. The LLM drafts suggestions, the human approves,
-a script moves.
-
-Last of the feature work because it depends on all three of v0.2 (recall
-actually working), v0.5 (it's a nightly job) and v0.6 (the same draft → approve
-→ move shape, proven once already).
-
----
-
 ## v0.8 — Prompts, personas, traits, and one way to add them
-
-A self-contained rework of the prompt system and the command surface.
-**Orthogonal to the v0.5–v0.7 spine** — it needs none of the scheduler, wiki
-automation or tiered memory, and none of them need it — so it sits *after* that
-chain rather than interrupting its momentum, and stays *out* of v1.0, which is a
-hardening gate with no new features.
-
-- **Traits.** Named blocks of prewritten instruction that compose *alongside* a
-  system prompt and a persona — `PG-16` (moderate output for a younger
-  audience), `Relaxed` (this is a chill chat, no work), and so on. They almost
-  write themselves. Bodies live as `.md` files in a `TRAITS_DIR`, exactly like
-  prompts and personas; a session carries the *names* of its active traits, the
-  same way it already carries `system_prompt_name` and `persona_name`.
-- **One assembler.** The load-bearing piece is a single function that builds the
-  system message from `(system_prompt, persona, traits[])` in a defined order.
-  Everything else is snippets. It's cheap to write the next time prompt/persona
-  composition is touched, and doing it early means traits slot in without a
-  rewrite — so it should land whenever that code is next opened, not wait for
-  here.
-- **Chat-scoped first.** Active traits attach to the session and clear when you
-  leave it — the one persistence mode that maps cleanly onto how prompts and
-  personas already work. The wider modes (survive-until-app-close,
-  survive-restart) are a config knob (`traits_persistence`) that can come later
-  *if wanted*: they're three different storage scopes wearing one name, and
-  building the 3× matrix on spec is how one of them rots untested.
-- **`/add`.** One forgiving command replaces `:prompt` / `:persona` and adds
-  trait attachment. It completes over all three pools with the kind shown, is
-  case-insensitive, and works out what you meant; the confirmation names the
-  kind (`added Relaxed — Trait`) and keeps the existing "here's what's now
-  attached" summary. The script owns the injection order, not the user.
-- **`/` instead of `:`.** The command prefix switches, purely for the look.
-  Trivial in logic, but it re-baselines every golden fixture and touches every
-  doc — so it rides *here*, with the command rewrite, for one re-baseline and
-  one docs pass rather than a version of its own.
-
-**Private-chat interaction:** in a private chat, active traits live in memory
-only and die with the loop — the same write chokepoint as v0.41, no special
-case.
-
----
 
 ## v1.0 — Hardening, and a decision
 
-No new features.
-
-- The remaining backlog: the dangling `session_id` root cause in
-  `import_anthropic.py`, and the `write_file` relative-path question.
-- **Document the skeleton around cfc**, not just the app: the vault and its
-  repo, the inbox/outbox convention, where the embedder lives, what backs up
-  what and what doesn't. The README's vault-git section is the first piece of
-  this. The gap it closes: cfc is understandable from its own source, but the
-  system it sits in — three storage locations, two machines' worth of paths, a
-  backup that covers files and not history — is currently only in Cas's head and
-  in `HANDOVER.md`'s asides.
-- **A remote for the vault repo.** `~/vaults/wiki.git` sits on ext4, outside the
-  Windows daily backup, so a WSL reinstall keeps every note and loses every
-  commit. Wants a decision on whether the `02 areas` medical material is going
-  to someone else's server, private repo or not.
-- The DB-layer rework `HANDOVER.md` has been anticipating. The intended shape is
-  recorded there: SQLite stays the source of truth, sqlite-vec is an index over
-  it.
-- Test coverage for the paths currently verified by hand — the chat turn,
-  `:recall`/`:remember`, `:export`, the picker, `:routine`.
-- **Embedding server:** local, every backlog issue closed, updating the SQL and
-  wiki db frequently. Smooth rather than smart — the pipeline correct, tweaked
-  later. A system that absorbs a small daily stream of information, recalibrates,
-  and keeps working.
-
-**And the decision, parked here on purpose:** whether the repo goes public. Two
-questions, both answered at v1.0 and not before — is it solid enough, and is it
-sanitized enough (`config.py` is gitignored, but that's a claim to verify, not
-assume). Deliberately deferred so it stops taking up room in the meantime.
-
 ---
-
-## Beyond v1.0
-
-Not scheduled, not ordered — the pile of things worth wanting.
-
-- Vision for the model.
-- Drag documents and files into the terminal to share them.
-- Select text in chat, right-click to copy.
-- Mouse scrolling without holding shift — click-to-position in the editor, text
-  selection, and scrollback scroll all working at once. Runs straight into the
-  xterm mouse-mode tradeoff `MOUSE_INPUT` already hit in v0.3: capturing the
-  mouse for click-to-position costs the terminal's native selection and scroll.
-  May not have a clean answer at all; parked here rather than promised.
-- A custom spinner.
-- More borders and divisions in the chat. Treat reasoning that follows a tool
-  call differently from ordinary reasoning — tool reasoning is the useful kind.
-- After an AI turn completes (all tool calls, full message), refresh and stack
-  the AI messages in borders, with the tool calls and reasoning shown alongside
-  but smaller.
-- STT and TTS.
-- Agentic reach: email, Discord, Telegram. Think through the use case for giving
-  it keyboard and mouse control.
-- Let the model search the internet, then use a browser.
-- Private chat: with write tools enabled: this requires a writing location and it's not up to me to decide if "99 outbox" is the write location for a private chat. p -> new private chat -> :tools on -> cfc ask for the write path -> enter it and press **enter** -> cfc presents this location, does a check if it can actually write to it -> terminal displays 'Press **enter** to confirm write location at **path**' and user presses **enter** -> terminal displays 'Write tools have been activated and will write to **path**, this location has to be set again in a new private chat.'
