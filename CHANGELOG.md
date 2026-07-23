@@ -58,7 +58,7 @@ it. A new routine now needs no change to the OS scheduler at all.
 - Files: `schedule.py` (new), `run-due.sh` (new), `main.py`,
   `tests/test_schedule.py` (new, 43 assertions), `README.md`, `HANDOVER.md`
 - Status: shipped
-- Commit: pending
+- Commit: 7dfc4de
 
 ## 2026-07-23 — Bound a tool turn by calls and by output, and never leave a call unanswered
 Three faults were wearing one symptom: a provider 400, mid-turn, whenever the
