@@ -23,6 +23,32 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Stop `golden.py` exporting into the real vault
+The script ends with `:q`, `:q` honours `AUTO_EXPORT`, so every `check` wrote
+the fixture session into Cas's actual export folder. Nothing was corrupted, but
+"the tests don't touch anything real" is load-bearing for how freely the suite
+gets run, and it was false.
+- **`VAULT_PATH` redirected on every module that holds one**, the same loop as
+  `DB_PATH` — `export.py` and `commands.py` each have a copy, so patching one
+  leaves the other on the real folder. Redirected rather than disabled: turning
+  `AUTO_EXPORT` off would fix the side effect by making the export path
+  untested.
+- **`AUTO_EXPORT` is pinned on** instead of read from config, so the baseline
+  covers the same code on every machine.
+- **The baseline was pinning the real vault path** on `:config`'s output —
+  the same class of bug as the API-key line that earned the `SCRUB` paragraph.
+  Now `<ROOT>/tests/_fixture_vault`. One line changed; re-recorded.
+- **`assert_not_real_vault`**, checked before the write like every other guard
+  here. Written first to re-read config *after* the patch loop, which compared
+  the fixture against itself — the guard caught its own bug; `REAL_VAULT` is
+  now frozen at import.
+- The harness now asserts a document actually landed, not just that the
+  `[auto-exported: …]` line printed — `safe_export` swallows its own errors.
+- Verified: two consecutive runs leave the real folder's mtimes unchanged.
+- Files: tests/golden.py, tests/golden_baseline.txt, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Close the run log to `write_file`
 `ROUTINE_LOG_DIR` sits *inside* `WRITE_ROOTS` (`<vault>/99 outbox/routine logs/`
 under `<vault>/99 outbox`), so containment alone let a model overwrite the
@@ -49,7 +75,7 @@ file against what the runner wrote.
   the guard disabled.
 - Files: tools.py, commands.py, tests/test_tools.py, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 1d1f7da
 
 ## 2026-07-22 — Read `prompt:` as an Obsidian link, not just a filename
 Routine files are authored *and linked* in Obsidian, so `prompt:` arrives as
@@ -73,7 +99,7 @@ prompt]]` — read as a missing file while the file was sitting right there.
   link syntax went unread" stay distinguishable.
 - Files: routines.py, tests/test_routines.py, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 952ca64
 
 ## 2026-07-22 — Make a broken routine look broken, and Tab-complete `:routine`
 A hand-written routine file carried `id: wiki maintainer`, which isn't a slug.

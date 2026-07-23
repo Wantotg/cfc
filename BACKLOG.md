@@ -95,7 +95,39 @@ one-line summary answer the question you actually ask it.
 
 ---
 
-## `golden.py check` writes a file into VAULT_PATH
+## ~~`golden.py check` writes a file into VAULT_PATH~~ — FIXED (2026-07-23)
+
+**Fixed:** redirected, not disabled, as this entry asked — `VAULT_PATH` is now
+patched on every cfc module that holds one (the same loop shape as `DB_PATH`,
+and for the same reason: `export.py` and `commands.py` each hold a copy, so
+patching one leaves the other pointing at the real folder). Exports land in
+`tests/_fixture_vault` and are removed at the end of the run.
+
+Three things came out of it that the entry didn't anticipate:
+
+- **The baseline was pinning Cas's real vault path** on the `:config` line —
+  the same class of bug as the API-key line that earned the `SCRUB` paragraph
+  in `HANDOVER.md`. It now reads `<ROOT>/tests/_fixture_vault`, exactly like
+  the `Prompts dir` line above it. That was the only line that changed;
+  re-recorded.
+- **`AUTO_EXPORT` is pinned on** rather than read from config. The script's
+  `:q` only takes the export path when it's true, so leaving it to config
+  meant the baseline covered a different amount of code on different machines.
+- **The new guard caught the fix's own bug.** `assert_not_real_vault` first
+  re-read `config.VAULT_PATH` at call time — after the loop had patched
+  config's own copy — so it compared the fixture against itself. `REAL_VAULT`
+  is now frozen at import, before anything is rewritten.
+
+Verified: two consecutive `check` runs leave the real folder's mtimes
+unchanged, and the guard was confirmed to fire when pointed at the real vault.
+The harness also now asserts a document actually landed — the baseline pins
+the `[auto-exported: …]` *message*, and `safe_export` swallows its own errors,
+so those are not the same claim.
+
+Left alone: the two stale `…_Renamed By Golden.md` files this bug already
+wrote into the export folder. They are Cas's to delete.
+
+Original report below.
 
 **Found:** 2026-07-21, driving `:wiki` through the real dispatch for v0.3.
 

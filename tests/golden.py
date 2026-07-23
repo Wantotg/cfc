@@ -40,6 +40,16 @@ FIXTURE = HERE / "_fixture.db"
 # changes.
 FIXTURE_PROMPTS = HERE / "_fixture_prompts"
 FIXTURE_PERSONAS = HERE / "_fixture_personas"
+# The script ends with :q, and :q honours AUTO_EXPORT — so every `check` used
+# to write the fixture session into Cas's real VAULT_PATH. Nothing was
+# corrupted (the files overwrite each other) but "the tests don't touch
+# anything real" is a load-bearing claim about how freely this suite gets run,
+# and it was false.
+#
+# Redirected rather than disabled: switching AUTO_EXPORT off would fix the
+# side effect by making the export path untested, and this harness's whole job
+# is to notice when output changes. Now it runs for real, into here.
+FIXTURE_VAULT = HERE / "_fixture_vault"
 
 # Commands to drive. No API calls: no chat turns, no :recall, no :remember.
 SCRIPT = [
@@ -81,6 +91,41 @@ SCRIPT = [
 REAL_DB = Path.home() / ".cfc" / "chat.db"
 
 
+def _real_vault():
+    """The configured export folder, or None if there is no readable config.
+
+    Read **once**, at import, into REAL_VAULT — before capture() rewrites
+    VAULT_PATH on every module that holds one, including config's own. Asking
+    config for the real path *after* that would compare the fixture against
+    itself and pass whatever it was handed, which is precisely the guard being
+    unable to fail. (Written the other way first; the guard caught it.)
+
+    None on a checkout with no config.py: this file must still run there.
+    """
+    try:
+        from config import VAULT_PATH
+        return Path(VAULT_PATH).expanduser().resolve()
+    except Exception:
+        return None
+
+
+REAL_VAULT = _real_vault()
+
+
+def assert_not_real_vault(path, what):
+    """Refuse to let the harness export into the user's real vault.
+
+    Same discipline as assert_not_real, and called for the same reason: before
+    the write, never after. A redirect that silently didn't take is the exact
+    failure this guard exists to catch, and it is invisible in the output —
+    the export announces the filename, not the folder.
+    """
+    real = REAL_VAULT
+    if real is not None and Path(path).expanduser().resolve() == real:
+        raise AssertionError(f"{what}: refusing to export into the real "
+                             f"vault at {real}")
+
+
 def assert_not_real(path, what):
     """Refuse to touch the user's actual database. Called before anything
     destructive, never after.
@@ -103,6 +148,16 @@ def build_prompt_fixtures():
         d.mkdir(exist_ok=True)
         for n in names:
             (d / f"{n}.md").write_text(f"# {n}\nfixture\n", encoding="utf-8")
+
+
+def clean_fixture_vault():
+    """Remove the fixture export folder. Guarded like everything else that
+    deletes here: the path is checked before the unlink, not after."""
+    assert_not_real_vault(FIXTURE_VAULT, "clean_fixture_vault")
+    if FIXTURE_VAULT.is_dir():
+        for f in FIXTURE_VAULT.glob("*.md"):
+            f.unlink()
+        FIXTURE_VAULT.rmdir()
 
 
 def clean_prompt_fixtures():
@@ -212,6 +267,34 @@ def capture():
     for name in patched:
         assert_not_real(getattr(sys.modules[name], "DB_PATH"), f"{name}.DB_PATH")
 
+    # Same treatment for VAULT_PATH, and for the same reason: export.py reads
+    # its module global at call time, and commands.py holds a second copy that
+    # :config prints. Patching one would leave the other pointing at the real
+    # folder — either a live write or a baseline line that depends on Cas's
+    # config.py rather than on the code. Both are the bug this loop exists for.
+    assert_not_real_vault(FIXTURE_VAULT, "capture")
+    FIXTURE_VAULT.mkdir(exist_ok=True)
+    vaulted = []
+    for name, mod in list(sys.modules.items()):
+        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
+            if hasattr(mod, "VAULT_PATH"):
+                setattr(mod, "VAULT_PATH", str(FIXTURE_VAULT))
+                vaulted.append(name)
+    if not vaulted:
+        raise SystemExit("refusing to run: found no VAULT_PATH to redirect")
+    for name in vaulted:
+        assert_not_real_vault(getattr(sys.modules[name], "VAULT_PATH"),
+                              f"{name}.VAULT_PATH")
+
+    # Pin AUTO_EXPORT on rather than reading it from config. The script's :q
+    # takes the export path only when it's true, so leaving it to config would
+    # mean the baseline covers a different amount of code on different
+    # machines — and `Auto-export: on` is a line :config prints into it.
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
+            if hasattr(mod, "AUTO_EXPORT"):
+                setattr(mod, "AUTO_EXPORT", True)
+
     # get_prompts_dir()/get_personas_dir() read these at call time, so patching
     # the module attribute is enough and no call site needs to know.
     import commands as _cmds
@@ -248,6 +331,17 @@ def capture():
             c.file = f
         FIXTURE.unlink(missing_ok=True)
         clean_prompt_fixtures()
+
+    # The baseline pins the `[auto-exported: …]` line, which proves the message
+    # printed. This proves a document landed: safe_export swallows its own
+    # errors, so the two are not the same claim.
+    exported = sorted(FIXTURE_VAULT.glob("*.md"))
+    if not exported:
+        raise AssertionError("auto-export wrote nothing into the fixture vault")
+    if "session_id: 1" not in exported[0].read_text(encoding="utf-8"):
+        raise AssertionError(f"exported {exported[0].name} is not the fixture "
+                             f"session")
+    clean_fixture_vault()
     return normalise(out.getvalue())
 
 def main():

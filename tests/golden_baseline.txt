@@ -109,7 +109,7 @@ Current configuration:
   Session model: glm-5.2
   Auto-export:   on
   Stream usage:  on
-  Vault path:    /mnt/c/Users/disse/backup/cfc/cfc_chat_backup
+  Vault path:    <ROOT>/tests/_fixture_vault
   Prompts dir:   <ROOT>/tests/_fixture_prompts
   Quick models:  zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
 moonshotai/kimi-k2.6:thinking
