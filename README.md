@@ -21,6 +21,7 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **File attachments** — inject a local text file into a session; it persists and comes back on reopen
 - **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, behind an approval gate. It can also `write_file`, but only into one narrow write root that cannot reach your code
 - **Token tracking** — live context-usage bar with warnings as the window fills
+- **Routines, on command or on a schedule** — a task the model runs against its own declared roots, `:routine <name>` now or on a trigger time. One OS scheduler entry covers every routine; cfc decides what's due from each routine's own file and its run log
 - **Vault git from the REPL** — review and commit hand-edited wiki pages with `:wiki diff` / `:wiki commit`, scoped to the wiki corpus unless you widen it
 - **Rolling backups** — the database is snapshotted on startup, automatically
 - **A launcher that checks its dependencies** — `launch.sh` confirms the embedder is up (starting LM Studio and loading the model if not) before opening the app, so memory failing silently stops being a thing
@@ -143,6 +144,55 @@ wt.exe -p Ubuntu wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
 If the window closes instantly on a crash, that's the console exiting with the
 process — `launch.sh` already holds it open on a non-zero exit, so anything that
 vanishes silently exited cleanly.
+
+### Running routines on a schedule
+
+A routine's `trigger:` field is either `command` (the default — it runs only
+when you type `:routine <name>`) or a time of day as `HHMM`. Something on the
+OS side has to call cfc on a tick; cfc works out the rest:
+
+```bash
+python main.py --due                  # what's due right now, run nothing
+python main.py --run-due              # run everything that's due
+python main.py --run-routine <name>   # run one now, due or not
+```
+
+**One scheduler entry covers every routine, forever.** `--run-due` reads each
+routine's own `trigger:` and its run log and decides what to run, so adding a
+routine never means touching the OS scheduler. The alternative — one entry per
+routine — makes `trigger:` decorative and puts the real schedule somewhere
+other than the file that claims to hold it.
+
+On Windows, use **Task Scheduler**, not cron inside WSL. Windows shuts idle WSL
+instances down and cron dies with them, so a 03:00 job would only run if you
+happened to leave a terminal open — silently. In an **admin** PowerShell:
+
+```powershell
+schtasks /Create /TN "cfc routines" /SC MINUTE /MO 15 /RU $env:USERNAME `
+  /TR "wsl.exe -d Ubuntu -- /home/<you>/projects/cfc/run-due.sh"
+```
+
+Adjust the path and the distro name. Then set a routine's `trigger:` to a time
+in its file, and check it's seen:
+
+```bash
+python main.py --due
+```
+
+Behaviour worth knowing before you rely on it:
+
+- **A job runs once a day, not once a tick.** Whether it already ran is read
+  from its run log — there's no separate state file to get out of step.
+- **Catch-up is same-day only.** Machine off at 03:00 and back at 10:00: it
+  runs, late, once. Off for three days: it runs once, not three times.
+- **`on_failure: retry`** tries again on the next tick; **`skip`** waits for
+  tomorrow. A retry gives up after 3 failures in a day — otherwise a routine
+  failing for a permanent reason would run every 15 minutes until midnight, at
+  full API cost, with nobody watching.
+- **An idle tick is silent and exits 0.** It runs ~90 times a day; a log full
+  of "nothing due" is a log nobody reads. Failures exit 1.
+- Two ticks can't overlap — a lock in `~/.cfc/` sees to that, and a run that is
+  killed doesn't leave a stale one behind.
 
 ---
 
@@ -325,7 +375,7 @@ The tests that back this up are worth keeping green: `tests/test_paths.py` cover
 
 ## Known limitations
 
-- **Routines run on command, not on a schedule** — `:routine <name>` runs one now. There's no scheduler yet; the run path is built so an OS scheduler can call the same entry point unchanged, and deliberately isn't an in-process timer thread.
+- **The scheduler needs one entry on the OS side, and it's yours to create** — cfc decides *what* is due, but something has to call it on a tick. See “Running routines on a schedule”. Nothing is scheduled until you set a routine's `trigger:` to a time and add that entry.
 - **Recall is wiki-only** — the semantic index answers from the distilled wiki, which states each decision once. Raw chat logs are indexed (`source='chat'`) but not yet folded into recall; that hybrid is a future additive step. This sidesteps the old "resolution staleness" problem, where searching raw transcripts surfaced the messages where a decision was being *argued* over the one where it was settled.
 - **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams. (Reasoning still shows on the tool path — it just arrives all at once per step rather than streaming in.)
 - **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `:tools` tells you whether the active model qualifies.
@@ -348,6 +398,7 @@ Known rough edges live in `BACKLOG.md`.
 | `paths.py` | the jail: containment and the deny list |
 | `routines.py` | the routine object, its file store, and the run log |
 | `runner.py` | running one routine — the headless entry point in all but name |
+| `schedule.py` | which routines are due, and the `--run-due` entry point |
 | `mover.py` | filing a proposal out of the outbox: re-validates the destination, or refuses |
 | `wikigit.py` | the vault repo: status, diff and commit, scoped to the wiki by default |
 | `preflight.py` | the launcher's embedder check — is LM Studio up with bge-m3 loaded? |
@@ -361,6 +412,7 @@ Known rough edges live in `BACKLOG.md`.
 | `splash.py` | the launch screen — pixel art, composited with the title |
 | `config.py` | settings — gitignored |
 | `launch.sh` | preflight, then cfc — what the desktop shortcut runs |
+| `run-due.sh` | preflight, then `--run-due` — what the OS scheduler runs |
 
 The memory layer is separate: `import_wiki.py` (and `import_anthropic.py`), `chunk.py`, `embed.py`, `backfill.py`, `search.py`, `recall.py`.
 
@@ -385,6 +437,7 @@ python tests/test_complete.py    # :attach completion: vault first, and the jail
 python tests/test_splash.py      # the splash compositor: aspect, resampling, the key read
 python tests/test_hub.py         # the screens: chat filter, colours, routine freshness
 python tests/test_private.py     # private chat: real db untouched, writes blocked, db toggle
+python tests/test_schedule.py    # what's due and what isn't: catch-up, on_failure, the lock
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

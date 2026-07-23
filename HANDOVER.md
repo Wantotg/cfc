@@ -176,7 +176,67 @@ use_tools = TOOLS_ENABLED and tools_on and (current_model in TOOLS_MODELS)
 ```
 
 - **`api.stream_response`** (no tools) — streams SSE, renders Markdown live into a `rich.Live` panel, returns `(full_text, usage, reasoning)`. Shows the `Thinking…` spinner until the first delta, then the reasoning panel while `delta.reasoning` streams (tail-limited to `_REASONING_TAIL_LINES` so the live region doesn't jump) with the answer panel below it once `content` starts.
-- **`agent.agent_turn`** (tools) — **non-streaming** loop. Streaming is off deliberately: tool-call deltas arrive fragmented and `arguments` must be reassembled by index across chunks, not worth it for fast responses. Loops up to `TOOLS_MAX_CALLS_PER_TURN`: call → **render this step's reasoning** (`_render_reasoning`, full text — no live region to keep still) → maybe tool_calls → gate+dispatch each → feed results back → repeat until the model answers with prose or the limit fires (which returns a real assistant message, not silent truncation).
+- **`agent.agent_turn`** (tools) — **non-streaming** loop. Streaming is off deliberately: tool-call deltas arrive fragmented and `arguments` must be reassembled by index across chunks, not worth it for fast responses. Loops under two budgets (below): call → **render this step's reasoning** (`_render_reasoning`, full text — no live region to keep still) → maybe tool_calls → gate+dispatch each → feed results back → repeat until the model answers with prose or a budget fires (which returns a real assistant message, not silent truncation).
+
+### A tool turn's two budgets, and the 400s they explain (v0.5)
+
+Three separate faults were producing one symptom — a provider 400 mid-turn,
+only ever when the model was let loose on a tree of files. Two were ours.
+
+**1. The call ceiling counted loop iterations, not calls.** `for _ in
+range(max_calls)` bounded trips round the loop, and a model that asks for four
+reads in one assistant message spends *one*. Eight iterations could be thirty
+reads at up to `TOOLS_MAX_RESULT_CHARS` (30,000) each — roughly 225k tokens,
+**re-sent in full on every subsequent call**, because each iteration replays the
+whole conversation. The provider then computes a completion budget of
+(context − prompt), finds it negative, and says so in the vocabulary of
+`max_tokens` — a parameter cfc does not send, which is why the error read as a
+setting nobody could find. `calls_used` now counts calls.
+
+**2. Nothing bounded a turn's *total* tool output**, which is the quantity that
+actually grows the request. `TURN_RESULT_CHARS`
+(`TOOLS_MAX_TURN_RESULT_CHARS`, 120,000) does.
+
+**These two had to land together.** Raising the ceiling — which is what the
+symptom asks for — makes the context problem strictly worse on its own. The
+ceiling is now generous (25 chat, 30 routine) precisely *because* the second
+budget makes the generosity affordable: roam widely, read narrowly.
+
+**The two budgets exit differently, and that asymmetry is load-bearing:**
+
+- **Calls exhausted** → `LIMIT_MESSAGE`, exactly as before. It is a stub *we*
+  insert because the model produced nothing, and `runner._turn_with_retry`
+  compares it **by identity** to log a truncated run as failed.
+- **Output exhausted** → the tools come off the request (`tools=None`) for one
+  more call, and the model answers in prose having been told why. That is a
+  real answer about a real partial job, not silence dressed up as one — so it
+  is *not* routed through the LIMIT_MESSAGE path and does not fail a routine.
+  Termination is still guaranteed: it costs exactly one more round trip.
+
+**A refused-for-budget call still consumes a call slot.** It cost a round trip;
+counting it is also what guarantees the loop terminates, since a call that is
+refused without consuming budget would be refused forever.
+
+**Both budgets are told to the model rather than merely enforced.**
+`agent.tools_guidance()` states them in the chat prefix (`runner.SYSTEM` does
+the same for routines) and `_budget_note` nudges at 75% of the calls. Both ride
+on **the request only** — spliced into `messages`, never appended to `history`
+— so nothing about cfc's budgets is persisted, exported or replayed. Same
+discipline as reasoning. This is the "tell it to slow down" half of the fix;
+the budgets are the half that doesn't depend on the model listening.
+
+**`_oversize_reason` is an honest backstop, not a guard.** It compares the
+estimated request against `MODEL_LIMITS`, which holds **vendor claims** (two
+entries say 1,000,000), so on these models it will rarely fire before the
+provider's real limit does. It costs nothing and turns one class of opaque 400
+into a sentence naming the number. The load-bearing bound is
+`TURN_RESULT_CHARS`, which does not require trusting a published context window.
+
+**3. The third fault is provider-side** and unresolved — see `BUGS.md`. What
+changed is that it is now *distinguishable*: `_request_shape` appends call n/m,
+message count, estimated tokens and chars of tool output to the provider's own
+words, re-raised as the same `httpx.HTTPError` so every existing catch still
+matches. Before, all three arrived as one indistinguishable `[error] HTTP 400`.
 
 **All rendered panels go through `ui.py`'s helpers** — `human_panel`, `ai_reasoning_panel`, `ai_answer_panel`, sharing `_speaker_panel` (dark frame, brighter label; `box.SQUARE`). The palette lives in `ui.py` (not `config.py` — it's the app's look, not a deployment knob). Both turn paths build their answer/reasoning panels from the same helpers so they render identically; the human turn is echoed in its own panel from `main.py` right after submission. Colours are tuned for a black background — the slate-grey reasoning border and navy human border are the likeliest to want nudging on real hardware.
 
@@ -300,6 +360,7 @@ the other doesn't.
 This is the spine of several behaviors:
 - **Replay** (`load_history`) rebuilds the exact API message list: a `tool_call` row re-attaches its `tool_calls`; a `tool_result` re-attaches its `tool_call_id`. `ORDER BY id` keeps each result immediately after its call.
 - **`_drop_orphan_tool_calls`** runs on every replay. **Invariant:** an assistant message requesting a call that was never answered makes the whole conversation 400 forever. Interrupted tool turns (Ctrl-C, crash between saving call and result) produce exactly that. Orphans are dropped from the *replay* (DB rows stay); prose said alongside dropped calls is kept. Without this, one interrupted turn permanently bricks a session the user can't see or edit.
+- **The live half of that invariant was missing until v0.5, and the gap is worth understanding.** `agent_turn` appends the assistant message carrying `tool_calls` to `history` *before* dispatching them, and `history` is what the REPL replays from for the rest of the session. Ctrl-C at the approval prompt therefore poisoned the session **in place**: every later message re-sent the orphan and 400ed. Reopening the session repaired it — via the drop above — which is precisely what made the failure look intermittent and provider-shaped rather than local and deterministic. `agent_turn` now answers every requested call on every path out of the loop, exceptions included, so the orphan is never created; the replay-time drop stays as the older, blunter half of the same guarantee. **Repair-on-read and never-write-it are not substitutes**: the first only helps a reader that re-reads.
 - **Attachments** export/replay as a one-line reference (meta holds path/size), not the file body dumped inline.
 - **`recall_marker`** — the only persisted trace of a `:remember` injection; see Memory.
 
@@ -436,7 +497,7 @@ WSL's fast direction (`/mnt/c`, Linux→Windows) rather than the slow, flakier
 
 ## Routines
 
-A routine is a task the model runs on command now and on a schedule later. Two modules: `routines.py` (the object and its file store — light, imports only `context`/`paths`/`yaml`) and `runner.py` (execution — reaches for the API, the DB and the tool loop).
+A routine is a task the model runs on command (`:routine`) or on a schedule (`--run-due`; see The scheduler). Two modules: `routines.py` (the object and its file store — light, imports only `context`/`paths`/`yaml`) and `runner.py` (execution — reaches for the API, the DB and the tool loop).
 
 ```
 <vault>/06 metadata/routines/<id>.md        ROUTINE_DIR        the routine
@@ -473,7 +534,7 @@ Identity is the `id` field, **not the filename** — the same lesson as the wiki
 
 `runner.run_routine(key, conn, ...)` returns `(ok, summary, session_id)` and **never raises for an expected failure** — the `except Exception` around `agent_turn` is deliberately broad because every path out of here must reach the log. An unattended run that dies silently is indistinguishable from one that had nothing to do.
 
-**This is the headless entry point in everything but name.** `:routine <name>` calls it with nothing in between, and a future `--run-routine` will too — that is the whole reason the scheduler was deferred rather than designed around. Keep REPL state, prompting and terminal assumptions out of `runner.py`; the on-command path has a human and the scheduled path does not, and they must not diverge. Progress is reported through an optional `on_event` callback so the module owns no console.
+**This is the headless entry point in everything but name.** `:routine <name>` calls it with nothing in between, and `main.py --run-routine` / `--run-due` do too (v0.5) — which is why the scheduler, when it arrived, changed nothing in this module. Keep REPL state, prompting and terminal assumptions out of `runner.py`; the on-command path has a human and the scheduled path does not, and they must not diverge. Progress is reported through an optional `on_event` callback so the module owns no console.
 
 **Do not build an in-process timer thread.** Invariant #4 (prompt_toolkit and rich must never drive the terminal at once) makes a background thread rendering panels mid-input a real bug, and a heartbeat has to fire when the REPL is closed. The OS scheduler calls the entry point.
 
@@ -523,7 +584,7 @@ inside this vault's own filenames (`wiki draft — chunking.md`), so a mid-line
 list had no findable end. `last_run()` is unaffected — `_LOG_RE` anchors at the
 head of the line. A plain append interrupted mid-write leaves a torn final line, and a log that corrupts itself on the failure it exists to record is worse than no log.
 
-Two consumers, and the second is why it is a log and not a `print`: a human asking "did the nightly thing work", and **the next run**, which reads `last_run()` off the file to honour `on_failure`. A scheduled run is a fresh process — it has no memory to consult. `on_failure` is currently stored and surfaced; the scheduler is what will act on it.
+Two consumers, and the second is why it is a log and not a `print`: a human asking "did the nightly thing work", and **the next run**, which reads `last_run()` off the file to honour `on_failure`. A scheduled run is a fresh process — it has no memory to consult. `on_failure` is acted on by `schedule.why_not_due` — see The scheduler.
 
 ---
 
@@ -573,8 +634,77 @@ Its one real consumer is `main.py`'s empty-completion handler. With a human: ask
 
 **That retry is unconditional and deliberately does NOT consult `interactive`.** A routine is a batch job whether or not someone is watching; gating it on the flag would make an on-command run give up on the first hiccup while an unattended one re-rolled twice — exactly backwards. `interactive` has no meaning in `runner.py`, which owns no console and asks nobody anything. `history` is rebuilt per attempt so a re-roll re-sends the identical request; the empty assistant rows `agent_turn` persists are left in the routine's transcript on purpose, since "it returned nothing twice" is what you want the audit trail to say.
 
-### Still open
-- **The scheduler.** `run_routine()` is the entry point; wire an OS scheduler (cron/Task Scheduler) to a `--run-routine <name>` flag on `main.py`. Do not build an in-process timer thread — see the Routines section. `trigger` (HHMM) and `on_failure` are already stored and parsed, waiting to be honoured.
+---
+
+## The scheduler (v0.5)
+
+`schedule.py` + `main.py --run-due`. The OS scheduler owns **one entry,
+forever**, on a fixed tick; cfc decides what that means.
+
+```
+Windows Task Scheduler  →  wsl.exe -d Ubuntu -- <repo>/run-due.sh   every 15 min
+run-due.sh              →  main.py --run-due
+schedule.cli            →  lock → due_routines() → runner.run_routine() per hit
+```
+
+**The rejected design was one OS entry per routine**, firing
+`--run-routine <name>` at its own time. It is simpler here — no due-detection,
+no catch-up rule, no lock — and it breaks the invariant the whole routines
+design rests on: `trigger:` in the routine file becomes decorative, the real
+schedule lives outside the vault in a second place, and the two are free to
+drift with nothing to notice. Under the tick design a new routine needs **no
+change to the OS scheduler at all**.
+
+**Windows Task Scheduler, not cron in WSL, and that is not a preference.**
+Windows shuts idle WSL instances down and cron dies with them, so a 03:00 job
+would run only if a WSL terminal happened to be open — silently, which is the
+failure shape this project keeps flagging. `run-due.sh` is host-agnostic, so
+cron still works for anyone on native Linux; the supported path is the one that
+fires when nobody is logged in.
+
+Three properties are load-bearing:
+
+1. **The run log is the only state.** No "last tick" file, no DB table.
+   "Did this already run today" is answered by reading the log the routine
+   already writes, because a scheduled run is a fresh process with nothing to
+   remember and a second source of truth is a second thing to get out of step.
+   Same reasoning as `last_run()` existing at all.
+2. **Catch-up is same-day only.** Machine off at 03:00, back at 10:00 → the job
+   runs once, late. Off for three days → it runs once, not three times. A
+   backlog that fires all at once is not the schedule anyone wrote down.
+3. **The idle tick is silent, cheap, and exits 0.** It reads a few files and
+   returns; it opens no database and writes no backup (`_run` imports those
+   lazily, at the point something is actually going to run). This path executes
+   ninety-odd times a day and a scheduler log full of "nothing due" is a log
+   nobody reads.
+
+**`on_failure` is finally honoured, and it needed a bound nobody had specified.**
+`retry` means "again on the next tick" — fifteen minutes away — so a routine
+failing for a *permanent* reason (provider outage, a prompt file someone
+renamed) would run every quarter hour until midnight at full API cost with
+nobody watching. `MAX_RETRIES_PER_DAY` (3) stops it, counted from today's log
+lines rather than from memory. **This is the one failure the scheduler could
+cause that is worse than not running at all**, and it is exactly the kind that
+only shows up on the bill.
+
+- **`why_not_due` returns a reason string, not a bool.** Every one of the six
+  rules is worth reading when a job you expected didn't fire; "not due" alone
+  sends you to the source to find out which applied. `--due` prints them.
+- **An unreadable log timestamp refuses to run.** Reading it as "never run"
+  would fire on every tick for the rest of the day — the safe direction for an
+  unparseable value is the one that does less.
+- **`flock`, not a lock file's existence.** The kernel releases it when the
+  process dies, so a run killed mid-turn leaves no stale lock. A stale lock
+  would look exactly like the scheduler having been switched off, and would
+  stay that way indefinitely.
+- **A busy tick exits 0, not 1.** A routine that takes longer than the interval
+  is normal, and the scheduler's log should not fill with alarm about it.
+- **The flags branch before `safe_backup()` and the splash** in `main.py`'s
+  `__main__`, on `sys.argv[1].startswith("-")`. `python main.py 5` is untouched.
+
+Still deliberately absent: an in-process timer thread. See the Routines
+section — invariant #4 makes a background thread rendering panels mid-input a
+real bug, and a heartbeat has to fire when the REPL is closed.
 
 ---
 
@@ -761,7 +891,7 @@ If you add a fifth, add it to this table.
 ## Load-bearing invariants (don't break these)
 
 1. **Any DB write checks its path *before* the write, not after.** A test guard that ran its assertion *after* a destructive `unlink()` once deleted the real database. `backup.py` and `tests/golden.py` both assert-not-real before touching anything.
-2. **Orphan tool_call drop on replay** — see above; interrupted turns must stay reopenable.
+2. **Every tool call gets exactly one result, in live history and on replay.** An assistant message requesting a call that is never answered makes the whole conversation 400 forever after. `agent_turn` answers every call on every path out of its loop, exceptions included (the `finally`), so the orphan is never written; `db._drop_orphan_tool_calls` still repairs one on replay, for rows that predate the fix or arrive some other way. Both halves are needed — repair-on-read did nothing for the live `history` the REPL keeps replaying from, which is how one Ctrl-C used to brick a session in place while looking like a provider fault.
 3. **`path_guard` resolves before checking; the deny list is add-only.**
 4. **Single shared `rich.Console`** (`ui.py`). Rich tracks terminal/live state per Console; two writing to one terminal interleave badly during streaming. `markup=False` so literal `[...]` in content isn't parsed (the panel helpers wrap human/reasoning text in `Text`, which is markup-safe regardless). `ui.py` imports no other cfc module (bottom of the dependency graph). It owns `read_input` (the prompt_toolkit editor — see below), the turn palette, and the `_speaker_panel` helpers everything else renders through. **prompt_toolkit and rich must never drive the terminal at the same time.** They don't: input is read at the top of the loop and returns before any `rich.Live` starts. Keep it that way.
 5. **Marker formats are pinned by tests** (`test_litter.py`, `test_schema.py`) — changing a marker string in `commands.py`/`import_anthropic.py` fails a test instead of silently re-embedding markers or breaking recall_marker parsing.
@@ -780,7 +910,9 @@ If you add a fifth, add it to this table.
 
 **`SCRUB` is what keeps the baseline a property of the code and nothing else.** Timestamps, addresses, `$HOME` and the repo root are normalised on *both* sides at compare time — so adding a rule fixes an existing baseline without re-recording, and `record` is only needed to stop the raw value living in the tracked file. The rule that earned this paragraph: `:config` prints the last 4 of the API key, so **rotating the key failed `check` on a line that says nothing about the code**. Not a leak — it is exactly what a provider dashboard shows — but a tripwire that fires on something the code cannot cause is a tripwire that gets rubber-stamped, and this harness is the one that has to be trusted after a refactor. It scrubs only the `...abcd` form: with no key configured the line reads `not set`, which still diffs against `<KEY>`, because a config that lost its key is a real finding. Generalise it — anything a baseline pins that lives in `config.py` rather than in the source is the same bug.
 
-Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table). 17 suites. None need an API key.
+Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the two budgets, every call answered on an interrupt, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table), `test_schedule` (the six not-due rules, same-day catch-up, `on_failure` both ways, the retry bound, a corrupt log causes no run storm, the tick lock). 18 suites. None need an API key.
+
+`test_schedule` passes `now` in and writes the run log by hand, on purpose: the scheduler's decisions are pure functions of (routine file, run log, now), and a scheduler you can only test by waiting until 03:00 is a scheduler nobody tests. Its assertions are mostly negatives — a job that fires twice, or retries a permanent failure ninety times a day, costs real money while nobody is watching.
 
 `test_chunk` exists because the chunker is the one part of the memory layer whose output silently becomes permanent: a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking. The mid-word bug sat in `BACKLOG.md` for six days precisely because nothing failed.
 
@@ -806,21 +938,40 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 | `context.py` | `ToolContext`: read roots, write roots, gated/interactive. `for_chat` / `for_routine` |
 | `routines.py` | the `Routine` object, its markdown file store, and the append-only run log |
 | `runner.py` | `run_routine` — one routine's execution; the headless entry point in all but name |
+| `schedule.py` | which routines are due (`why_not_due`, `due_routines`), the tick lock, and `cli` — the `--run-due` / `--run-routine` / `--due` entry point |
 | `mover.py` | filing a proposal out of the outbox: `plan`/`commit`/`drop`, destination re-validation |
 | `wikigit.py` | the vault repo: `status`/`diff`/`commit`, scoped to `WIKI_DIR` unless widened. Owns no console |
 | `preflight.py` | the launcher's embedder check — real POST, dimension guard, never blocks the launch |
 | `launch.sh` | what the desktop shortcut runs: repo + venv + preflight, then `main.py` |
+| `run-due.sh` | what the OS scheduler runs: repo + venv + preflight, then `main.py --run-due`. Nothing interactive |
 | `dev/bake_splash.py` | image → `assets/splash_<name>.raw`. Dev-time only; the one thing needing Pillow |
 | `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer` |
 | `splash.py` | the launch screen: baked pixel art composited under the title, asset rotation, Enter/Esc gate. Depends on `ui`, not the reverse |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*`, `ROUTINE_*` (incl. `ROUTINE_MAX_CALLS_PER_TURN`), `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `API_READ_TIMEOUT`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*` (incl. `TOOLS_MAX_CALLS_PER_TURN` and `TOOLS_MAX_TURN_RESULT_CHARS`, the turn's two budgets), `ROUTINE_*` (incl. `ROUTINE_MAX_CALLS_PER_TURN`), `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `API_READ_TIMEOUT`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 
 ## Current state & open threads
 
-- **Just landed (2026-07-23, backlog session — unversioned):** five entries
+- **Just landed (v0.5, "the scheduler"):** two things, in this order and for a
+  reason. First the **tool turn's two budgets** — the call ceiling was counting
+  loop iterations rather than calls, nothing bounded a turn's total tool
+  output, and an interrupted turn left an unanswered call in the live
+  `history`, which 400ed every later message in that session until it was
+  reopened. Three faults, one symptom, and the third of them is provider-side
+  and still open (`BUGS.md`). Then the **scheduler**: `main.py --run-due` on a
+  fixed tick from Windows Task Scheduler, with cfc deciding what is due from
+  each routine's own `trigger:` and its run log. The 400 work went first
+  because routines run through the same `agent_turn` with a *larger* budget,
+  and a tool loop that intermittently 400s is not a thing to put under a job
+  that fires at 03:00 with nobody watching. **Not done here:** nothing is
+  wired on the Windows side yet — the Task Scheduler entry is Cas's to create
+  (README has the command), and every existing routine is still
+  `trigger: command`, so a tick currently finds nothing due. That is correct
+  and is the last step, not a gap.
+
+- **Before that (2026-07-23, backlog session — unversioned):** five entries
   cleared from `BACKLOG.md`, all with tests confirmed to fail against the old
   behaviour. (1) The **routines run log is closed to `write_file`** — it lived
   inside `WRITE_ROOTS`, so a model could overwrite the audit trail of the

@@ -238,7 +238,72 @@ believed. Verification is the deliverable here, not the keybinding.
 ```
 ---
 
-## v0.5 — The scheduler
+## v0.5 — The scheduler — **complete, 2026-07-23**
+
+Routines can now run without anyone typing anything. Plus the fix for the 400s
+that were making tool turns unreliable — which went **first**, because routines
+run through the same tool loop with a larger budget, and a loop that
+intermittently 400s is not a thing to put under a job that fires at 03:00 with
+nobody watching.
+
+**The tool turn's two budgets.** Three separate faults were wearing one
+symptom: a provider 400 mid-turn, only ever when the model was let loose on a
+tree of files.
+
+- **An interrupted tool turn poisoned the session in place.** The assistant
+  message carrying the tool calls goes into the live history *before* they're
+  dispatched, so Ctrl-C at the approval prompt left calls with no results — a
+  conversation the API rejects forever after. Reopening the session repaired
+  it, which is exactly what made this look intermittent and provider-shaped
+  rather than local and deterministic. Every call now gets exactly one result
+  on every path out of the loop, exceptions included.
+- **The call ceiling counted loop iterations, not calls.** A model asking for
+  four reads in one message spent one of eight, so eight iterations could be
+  thirty reads at 30,000 characters each — around 225k tokens, re-sent on every
+  subsequent call. That is where the 400s complaining about `max_tokens` (a
+  setting cfc doesn't send) came from.
+- **Nothing bounded a turn's total tool output**, which is the thing that
+  actually grows the request. Now 120,000 characters. Spending it withdraws the
+  tools for one final call rather than cutting the turn off, so the model
+  answers in its own words.
+
+Raising the ceiling *alone* — the obvious fix — would have made it worse. The
+two budgets had to land together, and the ceiling is generous (25, up from 8)
+precisely because the second one makes it affordable. Roam widely, read
+narrowly. The model is now told both budgets up front and nudged when its calls
+run low, as riders on the request rather than lines in the conversation.
+
+The third fault is provider-side and still open — see `BUGS.md`. What changed
+is that it's now *distinguishable*: a failed request reports what was in flight
+beside the provider's own words, where before all three arrived as one
+indistinguishable `HTTP 400`.
+
+**The scheduler.** `main.py --run-due` on a fixed tick, from Windows Task
+Scheduler.
+
+- **One OS entry covers every routine, forever.** cfc decides what's due from
+  each routine's own `trigger:` field and its run log. One entry per routine
+  was the rejected alternative: it makes `trigger:` decorative and puts the
+  real schedule outside the vault, free to drift from the file that claims to
+  hold it.
+- **The run log is the only state** — no "last tick" file, no table. A
+  scheduled run is a fresh process with nothing to remember, and a second
+  source of truth is a second thing to get out of step.
+- **Catch-up is same-day only.** Off at 03:00, back at 10:00: runs once, late.
+  Off for three days: runs once, not three times.
+- **`on_failure` is honoured at last**, bounded at 3 retries a day. Without the
+  bound, a routine failing for a permanent reason retries every 15 minutes
+  until midnight at full API cost, unattended — the one failure a scheduler can
+  cause that's worse than not running.
+- **The idle tick is silent, cheap and exits 0.** It runs ~90 times a day.
+- Not cron in WSL: Windows shuts idle WSL instances down and cron dies with
+  them, so a 03:00 job would run only if a terminal happened to be open.
+
+**Not done here, and deliberately:** the Task Scheduler entry itself, and
+setting a trigger on a routine. Both are Cas's to do — the README has the
+command — and until then a tick correctly finds nothing due.
+
+> *Note: [Cas writes this]*
 
 ## v0.6 — Wiki automation
 

@@ -23,6 +23,81 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Run routines on a schedule, from one OS entry
+`main.py --run-due` is the headless entry point an OS scheduler calls on a
+fixed tick; cfc works out what is actually due from each routine's own
+`trigger:` field and its run log. The rejected alternative was one scheduler
+entry per routine — that makes `trigger:` decorative and puts the real
+schedule outside the vault, free to drift from the file that claims to hold
+it. A new routine now needs no change to the OS scheduler at all.
+- **The run log is the only state.** No "last tick" file, no DB table: whether
+  something already ran today is answered by reading the log it already
+  writes. A scheduled run is a fresh process with nothing to remember, and a
+  second source of truth is a second thing to get out of step.
+- **Catch-up is same-day only.** A machine that was off at 03:00 runs the job
+  when it comes back, if it is still that day; three days off does not queue
+  three runs.
+- **`on_failure` is honoured at last** — `retry` means "again on the next
+  tick", `skip` means "wait for tomorrow" — and bounded by
+  `MAX_RETRIES_PER_DAY` (3). Without the bound, a routine failing for a
+  permanent reason retries every 15 minutes until midnight at full API cost,
+  unattended. That is the one failure this module could cause that is worse
+  than not running.
+- **The idle tick is silent, cheap and exits 0**: it reads a few files, opens
+  no database and writes no backup. It runs ninety-odd times a day, and a
+  scheduler log full of "nothing due" is a log nobody reads.
+- `flock` on `~/.cfc/scheduler.lock` so two ticks can't overlap; the kernel
+  releases it if a run is killed, so there is no stale lock to look exactly
+  like the scheduler having been switched off.
+- Also `--run-routine <name>` (force one now) and `--due` (report, run
+  nothing). `python main.py 5` is unchanged; the flags branch before the
+  backup and the splash.
+- Verified end to end against the real config: an idle tick is silent and
+  exits 0; a routine with a past trigger runs, writes its file, logs `ok` with
+  the `touched` field, and is not due again on the next tick.
+- Files: `schedule.py` (new), `run-due.sh` (new), `main.py`,
+  `tests/test_schedule.py` (new, 43 assertions), `README.md`, `HANDOVER.md`
+- Status: shipped
+- Commit: pending
+
+## 2026-07-23 — Bound a tool turn by calls and by output, and never leave a call unanswered
+Three faults were wearing one symptom: a provider 400, mid-turn, whenever the
+model was let loose on a tree of files.
+- **An interrupted tool turn poisoned the session in place.** `agent_turn`
+  appends the assistant message carrying `tool_calls` to `history` *before*
+  dispatching them, so Ctrl-C at the approval prompt left calls with no
+  results — a conversation the API rejects forever after. `db.load_history`
+  drops such orphans on *replay*, so `:q` and reopen silently repaired it,
+  which is exactly what made this look intermittent and provider-shaped. Every
+  call now gets exactly one result on every path out of the loop, exceptions
+  included, in live history and the DB together.
+- **The call ceiling counted loop iterations, not calls.** A model asking for
+  four reads in one message spent one of eight, so eight iterations could be
+  thirty reads at up to 30,000 chars each — a ~225k-token request, re-sent on
+  every subsequent call. That is where the 400s about `max_tokens` (a
+  parameter cfc does not even send) came from. It counts calls now, and the
+  ceiling is 25 for chat, 30 for routines.
+- **Nothing bounded a turn's total tool output**, which is what actually grows
+  the request. `TOOLS_MAX_TURN_RESULT_CHARS` (120,000) does. Spending it
+  withdraws the tools for one final call rather than truncating the turn, so
+  the model answers in its own words — deliberately *not* the `LIMIT_MESSAGE`
+  exit, which `runner.py` reads by identity to log a truncated run as failed.
+- Raising the ceiling alone would have made the 400s **worse**; the two
+  budgets had to land together. Roam widely, read narrowly.
+- The model is told both budgets up front and nudged at 75% of its calls, as
+  riders on the request rather than lines in the conversation — so nothing
+  about cfc's budgets is persisted, exported or replayed.
+- A failed request now reports what was in flight (call n/m, message count,
+  estimated tokens, chars of tool output) beside the provider's own words. The
+  three causes above were indistinguishable without it, and the third —
+  content-filter refusals — is provider-side and still open; see `BUGS.md`.
+- Applies to **both chats**: the fix is in the shared turn path, so private
+  chat inherits it with no flag.
+- Files: `agent.py`, `main.py`, `runner.py`, `commands.py`,
+  `config.example.py`, `tests/test_agent.py`, `tests/golden_baseline.txt`
+- Status: shipped
+- Commit: 2a9661c
+
 ## 2026-07-23 — Add ROADMAP_BEYOND.md, a third planning tier
 `WISHLIST.md`'s raw capture now has a step between it and `ROADMAP_PRIVATE.md`:
 a gitignored `ROADMAP_BEYOND.md` groups related wishlist ideas into clusters
@@ -36,7 +111,7 @@ get lost in the shuffle.
 - Files: `.gitignore`; `WISHLIST.md` and `ROADMAP_BEYOND.md` are both
   gitignored, so they don't appear in this commit.
 - Status: shipped
-- Commit: pending
+- Commit: ce75730
 
 ## 2026-07-23 — Split ROADMAP.md into public and private
 `ROADMAP.md` now carries full detail (title, completion date, what shipped,
@@ -49,7 +124,7 @@ order now folds the private→public backfill into step 1 (commit and push).
 - Files: `ROADMAP.md`, `.gitignore`; `ROADMAP_PRIVATE.md` and `CLAUDE.md`
   updated too but both are gitignored, so they don't appear in this commit.
 - Status: shipped
-- Commit: pending
+- Commit: d085678
 
 ## 2026-07-23 — Write down that "chat" means both chats
 Cas's standing decision, recorded properly in `CLAUDE.md` and stated again at
@@ -68,7 +143,7 @@ the handover outside the repo.
   network directly is the one to stop on — not to add an `if private` branch to.
 - Files: CLAUDE.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 947dbf0
 
 ## 2026-07-23 — Bring the docs up to the code after the backlog session
 `BACKLOG.md` has no open entries left for the first time. Docs updated to match

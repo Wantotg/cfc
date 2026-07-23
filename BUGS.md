@@ -22,6 +22,43 @@ now; migrate them if it ever matters which list they're on.
 
 ---
 
+## A provider 400 that looks like a content filter, on ordinary files
+
+**Found:** 2026-07-23, reported by Cas. Two of the three 400s he was seeing are
+fixed (see `CHANGELOG.md`); this is the third and it is **not** ours.
+
+While letting the model roam a tree, a turn occasionally comes back as an HTTP
+400 whose body reads like a content-filter refusal rather than a size or shape
+complaint — while it was doing nothing more exotic than reading README files.
+
+Nothing in cfc causes this. What changed is that it is now *distinguishable*:
+every failed request appends its own shape to the provider's words, so the
+three causes that were wearing one symptom can be told apart at a glance.
+
+```
+[error] HTTP 400 from …: <provider's message> [cfc: call 3/25, 14 messages,
+        ~9,100 tokens, 41,200 chars of tool output this turn, model …]
+```
+
+- **Large token estimate, many messages** → context overflow. Should now be
+  prevented by the turn's output budget; if it still happens, the budget is
+  set too high for that model.
+- **Small estimate, low call number** → a malformed conversation. Should now be
+  impossible (every call is answered), so this one would be a real regression.
+- **Neither** → provider-side, and this entry.
+
+What to do when it next fires: **keep the whole error line**, including the
+provider's message verbatim, and note which file the model was reading. Two or
+three of those and the pattern will be obvious — a specific file, a specific
+model, or a rate/abuse heuristic misfiring. Until then there is nothing to fix
+and guessing would mean building a workaround for a fault that may not exist in
+the shape we imagine.
+
+Worth knowing: `api._error_detail` truncates the body at 800 characters. If a
+future one arrives cut off mid-sentence, that is where to look.
+
+---
+
 ## The desktop shortcut renders a low-quality splash background
 
 **Found:** 2026-07-22, flagged by Cas.

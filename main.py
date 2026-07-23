@@ -788,6 +788,14 @@ def run_session(conn, session_id, private=False):
             auto_embed()   # index this turn's messages (best-effort)
 
 if __name__ == "__main__":
+    # The headless flags branch before anything that assumes a terminal — no
+    # backup on an idle tick, no splash, no REPL. `schedule.cli` returns an
+    # exit code because the OS scheduler reads one; the interactive path below
+    # is unchanged and `python main.py 5` still means session 5.
+    if len(sys.argv) > 1 and sys.argv[1].startswith("-"):
+        import schedule
+        sys.exit(schedule.cli(sys.argv[1:]))
+
     # Snapshot before the session touches anything. Deliberately here and not
     # in repl(): repl() is called directly by tests/golden.py, which must not
     # write snapshots of its fixture into the real backup directory.
