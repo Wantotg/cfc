@@ -355,11 +355,11 @@ def run_session(conn, session_id, private=False):
             do_forget(history, injected)
             continue
 
-        if user == ":updatedb":
+        if user == ":updatedb" or user.startswith(":updatedb "):
             if not db_on:
                 console.print(_DB_OFF)
                 continue
-            do_updatedb()
+            do_updatedb(user[len(":updatedb"):].strip())
             continue
 
         # --- Attachments ---

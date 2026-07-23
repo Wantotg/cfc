@@ -191,7 +191,75 @@ that claim is load-bearing for how freely the suite gets run.
 
 ---
 
-## A chunk with a dangling `session_id` — where does it come from?
+## ~~A chunk with a dangling `session_id` — where does it come from?~~ — ROOT CAUSE FOUND, FIXED (2026-07-23)
+
+**It was not `import_anthropic.py`, and it was not moot on the wiki db.** Both
+guesses in the original report were wrong, and the second one is why this sat
+here: the entry said the current corpus was unaffected, so nobody looked.
+
+**Root cause: `db.delete_session` and `db.delete_message` never cascaded to
+`chunks` or `vec_chunks`.** There are no foreign keys (`PRAGMA foreign_keys`
+is 0 and the tables were never declared with any), so nothing enforced it.
+Measured on the live db before the fix:
+
+```
+chunks 1011 · 152 whose message row is gone · 143 of those still had vectors
+             ·  55 whose session_id disagrees with their message's
+sessions 41 and 49 — deleted, their chunks still present
+```
+
+That is **three** bugs, and the reported one is the least of them:
+
+1. **A deleted conversation stays in the retrieval index.** 143 vectors of
+   deleted content were still searchable. A delete that leaves the text
+   answering questions is not a delete. (Recall filters `provider='wiki'`, so
+   they weren't reaching `:recall` today — but `search()` returns them, and
+   the planned wiki+chat hybrid is precisely the thing that would surface
+   them.)
+2. **Orphaned rows** — the dangling `session_id` that was reported.
+3. **Mis-attribution, the dangerous one.** SQLite reuses rowids at the top of
+   a table, so a later message takes a deleted message's id and the stale
+   chunk *joins cleanly* to it. Chunk 885's text is a routine log path; the
+   message it now joins to reads `:wik commit all`. `search` reports such a
+   chunk under that message's session, date and title — a citation pointing at
+   a conversation the text never came from, silently.
+
+**Fixed:** `delete_session`/`delete_message` now drop the index rows first,
+while the messages that identify them still exist; `delete_session` also
+sweeps chunks by `session_id` directly, for ones whose message was already
+deleted separately. Vectors go before chunks and a failure there raises rather
+than continuing — a chunk without its vector is stale, but a vector without
+its chunk is text in the index that nothing can inspect or attribute.
+
+**Repair for databases already damaged:** `db.find_stale_chunks()` /
+`prune_stale_chunks()`, surfaced as `:updatedb prune`. Plain `:updatedb`
+*reports* a stale count and removes nothing — this is the one maintenance path
+that deletes, and a command run casually should not quietly drop rows. Both
+detection rules are exact, not heuristic:
+
+- the message row is gone; or
+- `chunks.session_id != messages.session_id`, which **cannot happen in normal
+  operation** — `chunk_new` copies the session id straight off the message row
+  it is chunking, and `messages.session_id` is never reassigned anywhere in
+  the codebase. A disagreement is proof of a reused rowid.
+
+Verified on a **copy** of the live db: 207 stale chunks and 195 vectors
+removed, idempotent on a second run, zero `source='wiki'` rows touched (every
+stale row was `source='chat'`), messages and sessions untouched, no vector
+left without a chunk. Six assertions confirmed to fail with the cascade
+removed.
+
+**Still open, deliberately:** real foreign keys with `ON DELETE CASCADE`.
+SQLite cannot add one to an existing table without rebuilding it, and the
+chunk/vector schema is already flagged as in flux — this belongs to the
+DB-layer rework. The code cascade is the smaller, reversible half.
+
+Also noted: `import_wiki.clear_chunks_for_message` does the same
+vector-then-chunk dance for the same reason, and is still a second copy of it.
+Left alone rather than merged mid-fix, but two implementations of a delete are
+how one gets fixed and the other doesn't.
+
+Original report below.
 
 **Found:** 2026-07-15, while verifying the distance threshold.
 **Retrieval side fixed:** 2026-07-17.

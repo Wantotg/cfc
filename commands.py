@@ -784,15 +784,41 @@ def do_forget(history, injected):
                   f"{len(injected)} still in context.\n")
 
 
-def do_updatedb():
+def do_updatedb(arg=""):
     """Chunk + embed anything in the db not yet indexed. Manual counterpart to
     the per-turn auto-embed — useful when AUTO_EMBED is off, after a bulk import,
-    or to catch up if the embedder was down."""
+    or to catch up if the embedder was down.
+
+    `:updatedb prune` additionally removes index rows left behind by a delete
+    that predates the cascade in db.py. Reported by default and removed only on
+    request: this is the one maintenance path that *deletes*, and a command
+    people run casually should not quietly drop rows.
+    """
     try:
         from backfill import update_index
     except Exception as e:
         memory_unavailable(e)
         return
+
+    # Stale rows are surfaced whatever the argument. Silence would leave a
+    # database mis-attributing chunks with nothing to say so.
+    try:
+        from db import db, find_stale_chunks, prune_stale_chunks
+        conn = db()
+        gone, mis = find_stale_chunks(conn)
+        if arg.strip() == "prune":
+            n, v = prune_stale_chunks(conn)
+            console.print(f"\nPruned {n} stale chunks and {v} vectors.\n"
+                          if n else "\nNothing stale to prune.\n")
+        elif gone or mis:
+            console.print(
+                f"\n[stale index rows: {len(gone)} orphaned, "
+                f"{len(mis)} mis-attributed — run ':updatedb prune' to "
+                f"remove them]")
+        conn.close()
+    except Exception as e:
+        console.print(f"\n[stale-chunk check failed: {e}]")
+
     try:
         with Live(
             Spinner("dots", text="Updating memory index...", style="magenta"),

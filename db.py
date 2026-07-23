@@ -303,9 +303,129 @@ def list_attachments(conn, session_id):
     return out
 
 
+# --- the memory index is downstream of messages, and deletes must reach it ---
+#
+# `chunks` and `vec_chunks` are an index over `messages`, but nothing enforces
+# that: there are no foreign keys (`PRAGMA foreign_keys` is 0 and the tables
+# were never declared with them), so a delete here does not cascade on its own.
+# Deleting a session used to leave both behind, which is three bugs, not one:
+#
+#   1. **The deleted conversation stays in the retrieval index.** Its vectors
+#      are still there, so `search` can still return its text. A delete that
+#      leaves the content answering questions is not a delete.
+#   2. **Orphaned rows** — a chunk pointing at a session that no longer exists.
+#      This is the symptom that got reported; it is the least of it.
+#   3. **Mis-attribution, which is the dangerous one.** SQLite reuses rowids
+#      at the top of a table, so a later message can take a deleted message's
+#      id — and the stale chunk then *joins* cleanly to an unrelated live
+#      message. `search` reports it under that message's session and title, so
+#      a citation points at a conversation the text never came from. Silent,
+#      and indistinguishable from a correct hit.
+#
+# Explicit cascade rather than real foreign keys: SQLite cannot add one to an
+# existing table without rebuilding it, and the chunk/vector schema is already
+# flagged as in flux. Revisit at the DB-layer rework — this is the smaller,
+# reversible half.
+
+
+def _has_table(conn, name):
+    return bool(conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (name,)).fetchone())
+
+
+def drop_chunks(conn, chunk_ids):
+    """Delete these chunks and their vectors. Returns (chunks, vectors).
+
+    Does NOT commit — the caller owns the transaction, so the index and the
+    messages it indexes go away together or not at all.
+
+    **Vectors first, and a failure here raises rather than continuing.** A
+    chunk row without its vector is merely stale; a vector without its chunk
+    row is text still in the index that nothing can inspect or attribute. If
+    sqlite-vec can't be loaded, the honest outcome is a loud failure, not a
+    half-delete of the exact kind this function exists to prevent.
+
+    (import_wiki.clear_chunks_for_message does the same dance for the same
+    reason. Kept separate deliberately: that one is part of a bulk importer
+    and reports through its own progress output. If you change the deletion
+    rules, change both.)
+    """
+    cids = [(c,) for c in chunk_ids]
+    if not cids:
+        return 0, 0
+
+    vectors = 0
+    if _has_table(conn, "vec_chunks"):
+        import sqlite_vec
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        vectors = sum(
+            conn.execute("SELECT COUNT(*) FROM vec_chunks WHERE chunk_id=?",
+                         c).fetchone()[0] for c in cids)
+        conn.executemany("DELETE FROM vec_chunks WHERE chunk_id=?", cids)
+
+    conn.executemany("DELETE FROM chunks WHERE id=?", cids)
+    return len(cids), vectors
+
+
+def drop_chunks_for_messages(conn, message_ids):
+    """Drop the index rows for these messages. Returns (chunks, vectors)."""
+    if not _has_table(conn, "chunks") or not message_ids:
+        return 0, 0
+    ids = []
+    for mid in message_ids:
+        ids += [r[0] for r in conn.execute(
+            "SELECT id FROM chunks WHERE message_id=?", (mid,))]
+    return drop_chunks(conn, ids)
+
+
 def delete_message(conn, message_id):
+    drop_chunks_for_messages(conn, [message_id])
     conn.execute("DELETE FROM messages WHERE id=?", (message_id,))
     conn.commit()
+
+
+def find_stale_chunks(conn):
+    """Chunk ids left behind by a delete that didn't cascade. Read-only.
+
+    Two rules, both exact rather than heuristic:
+
+    * **The message is gone.** Nothing can attribute this chunk to anything.
+    * **`chunks.session_id` disagrees with `messages.session_id`.** `chunk_new`
+      copies the session id straight off the message row it is chunking, and
+      `messages.session_id` is never reassigned anywhere in the codebase — so a
+      disagreement cannot be produced by normal operation. It is proof that
+      this chunk was written for a *different* message that has since been
+      deleted and had its rowid reused. These are the mis-attributed ones, and
+      they are the reason a count of orphans understates the damage.
+
+    Returns (gone, misattributed) as two lists of chunk ids.
+    """
+    if not _has_table(conn, "chunks"):
+        return [], []
+    gone = [r[0] for r in conn.execute(
+        "SELECT c.id FROM chunks c LEFT JOIN messages m ON m.id = c.message_id "
+        "WHERE m.id IS NULL ORDER BY c.id")]
+    mis = [r[0] for r in conn.execute(
+        "SELECT c.id FROM chunks c JOIN messages m ON m.id = c.message_id "
+        "WHERE m.session_id != c.session_id ORDER BY c.id")]
+    return gone, mis
+
+
+def prune_stale_chunks(conn):
+    """Delete what find_stale_chunks finds. Returns (chunks, vectors).
+
+    The repair half of the missing cascade. Safe to run repeatedly; on a clean
+    database it finds nothing. Deleting is the right move rather than
+    re-pointing: the text belongs to a conversation that was deleted on
+    purpose, so there is nothing to re-point it *at*.
+    """
+    gone, mis = find_stale_chunks(conn)
+    n, v = drop_chunks(conn, sorted(set(gone) | set(mis)))
+    conn.commit()
+    return n, v
 
 
 def get_session_title(conn, session_id):
@@ -481,8 +601,24 @@ def clear_persona(conn, session_id):
 
 
 def delete_session(conn, session_id):
-    """Delete a session and all its messages from the
-    database."""
+    """Delete a session, its messages, and everything indexing them.
+
+    The index rows go first, while the messages that identify them still
+    exist. Chunks are also swept by `session_id` directly: a chunk whose
+    message was already deleted separately has no other way back to this
+    session, and leaving it is how the orphans in the first place happened.
+    """
+    if _has_table(conn, "chunks"):
+        mids = [r[0] for r in conn.execute(
+            "SELECT id FROM messages WHERE session_id=?", (session_id,))]
+        ids = []
+        for mid in mids:
+            ids += [r[0] for r in conn.execute(
+                "SELECT id FROM chunks WHERE message_id=?", (mid,))]
+        ids += [r[0] for r in conn.execute(
+            "SELECT id FROM chunks WHERE session_id=?", (session_id,))]
+        drop_chunks(conn, sorted(set(ids)))
+
     conn.execute(
         "DELETE FROM session_tags WHERE session_id=?",
         (session_id,),

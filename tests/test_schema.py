@@ -194,6 +194,120 @@ def main():
     ok("fresh db has meta", "meta" in cols)
     c.close()
 
+    print("\n--- deleting reaches the index that points at what was deleted ---")
+    # chunks/vec_chunks are an index over messages with no foreign key to
+    # enforce it, so the cascade is code. Three failures, and only the first
+    # was ever reported: deleted content left in the retrieval index, orphaned
+    # rows, and — the dangerous one — SQLite reusing a deleted rowid so a stale
+    # chunk joins cleanly to an unrelated live message.
+    import sqlite_vec
+
+    def seeded(path):
+        """A db with two sessions, messages, chunks and vectors for both."""
+        dbmod.DB_PATH = path
+        c = dbmod.db()
+        # chunks is built by chunk.py, not by db()'s migration — the index is
+        # deliberately not part of the core schema.
+        import chunk as chunkmod
+        chunkmod.ensure_table(c, rebuild=False)
+        c.enable_load_extension(True)
+        sqlite_vec.load(c)
+        c.enable_load_extension(False)
+        c.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0("
+                  "chunk_id integer primary key, embedding float[4])")
+        c.execute("INSERT INTO sessions (id,title) VALUES (1,'keep')")
+        c.execute("INSERT INTO sessions (id,title) VALUES (2,'doomed')")
+        for sid, body in ((1, "kept text"), (2, "doomed text")):
+            for i in range(2):
+                cur = c.execute(
+                    "INSERT INTO messages (session_id,role,content) "
+                    "VALUES (?,?,?)", (sid, "user", f"{body} {i}"))
+                mid = cur.lastrowid
+                c.execute("INSERT INTO chunks (message_id,session_id,kind,"
+                          "ordinal,text,token_est,source) "
+                          "VALUES (?,?,'message',0,?,3,'chat')",
+                          (mid, sid, f"{body} {i}"))
+                cid = c.execute("SELECT id FROM chunks WHERE message_id=?",
+                                (mid,)).fetchone()[0]
+                c.execute("INSERT INTO vec_chunks (chunk_id,embedding) "
+                          "VALUES (?,?)", (cid, sqlite_vec.serialize_float32(
+                              [0.1, 0.2, 0.3, 0.4])))
+        c.commit()
+        return c
+
+    c = seeded(tmp / "cascade.db")
+    dbmod.delete_session(c, 2)
+    ok("the deleted session's chunks are gone",
+       c.execute("SELECT COUNT(*) FROM chunks WHERE session_id=2"
+                 ).fetchone()[0] == 0)
+    ok("...and so are its vectors — a delete that leaves the content "
+       "answering queries is not a delete",
+       c.execute("SELECT COUNT(*) FROM vec_chunks v LEFT JOIN chunks c "
+                 "ON c.id=v.chunk_id WHERE c.id IS NULL").fetchone()[0] == 0)
+    ok("the other session is untouched",
+       c.execute("SELECT COUNT(*) FROM chunks WHERE session_id=1"
+                 ).fetchone()[0] == 2)
+    ok("...with its vectors",
+       c.execute("SELECT COUNT(*) FROM vec_chunks").fetchone()[0] == 2)
+
+    # The mis-attribution regression, end to end: delete the top session, then
+    # write a new message that takes a freed rowid. Before the cascade, the
+    # stale chunk followed that id into a live session.
+    fresh_mid = c.execute(
+        "INSERT INTO messages (session_id,role,content) VALUES (1,'user','new')"
+    ).lastrowid
+    c.commit()
+    ok("a reused rowid inherits no stale chunk",
+       c.execute("SELECT COUNT(*) FROM chunks WHERE message_id=?",
+                 (fresh_mid,)).fetchone()[0] == 0)
+    ok("no chunk disagrees with its message about the session",
+       c.execute("SELECT COUNT(*) FROM chunks c JOIN messages m "
+                 "ON m.id=c.message_id WHERE m.session_id != c.session_id"
+                 ).fetchone()[0] == 0)
+    c.close()
+
+    print("\n--- delete_message drops its index rows too ---")
+    c = seeded(tmp / "delmsg.db")
+    mid = c.execute("SELECT id FROM messages WHERE session_id=2").fetchone()[0]
+    dbmod.delete_message(c, mid)
+    ok("its chunks are gone",
+       c.execute("SELECT COUNT(*) FROM chunks WHERE message_id=?",
+                 (mid,)).fetchone()[0] == 0)
+    ok("its vectors are gone",
+       c.execute("SELECT COUNT(*) FROM vec_chunks").fetchone()[0] == 3)
+    c.close()
+
+    print("\n--- the repair pass for databases already damaged ---")
+    c = seeded(tmp / "repair.db")
+    ok("a healthy db has nothing stale", dbmod.find_stale_chunks(c) == ([], []))
+
+    # Reproduce both shapes of damage the way the old code produced them:
+    # delete rows from messages/sessions directly, leaving the index behind.
+    c.execute("DELETE FROM messages WHERE session_id=2")
+    c.execute("DELETE FROM sessions WHERE id=2")
+    # ...and one mis-attributed chunk: its message exists, but says otherwise.
+    live = c.execute("SELECT id FROM messages WHERE session_id=1").fetchone()[0]
+    c.execute("INSERT INTO chunks (message_id,session_id,kind,ordinal,text,"
+              "token_est,source) VALUES (?,?,'message',9,'stale',1,'chat')",
+              (live, 99))
+    c.commit()
+
+    gone, mis = dbmod.find_stale_chunks(c)
+    ok("orphaned chunks are found", len(gone) == 2, gone)
+    ok("mis-attributed chunks are found too — a count of orphans understates "
+       "the damage", len(mis) == 1, mis)
+
+    n, v = dbmod.prune_stale_chunks(c)
+    ok("the prune removes exactly those", (n, v) == (3, 2), (n, v))
+    ok("...and is idempotent", dbmod.prune_stale_chunks(c) == (0, 0))
+    ok("healthy chunks survived",
+       c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 2)
+    ok("healthy vectors survived",
+       c.execute("SELECT COUNT(*) FROM vec_chunks").fetchone()[0] == 2)
+    ok("messages were not touched by a repair of the index",
+       c.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2)
+    c.close()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

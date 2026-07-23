@@ -23,6 +23,38 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Make deleting a session delete what indexes it
+`delete_session`/`delete_message` removed messages and left `chunks` and
+`vec_chunks` behind. No foreign keys enforce that link (`PRAGMA foreign_keys`
+is 0), so nothing caught it. The reported symptom — a chunk with a dangling
+`session_id` — was the least of three bugs.
+- **A deleted conversation stayed in the retrieval index.** 143 vectors of
+  deleted content were still searchable on the live db. A delete that leaves
+  the text answering questions is not a delete.
+- **Mis-attribution, the dangerous one.** SQLite reuses rowids at the top of a
+  table, so a later message takes a deleted message's id and the stale chunk
+  joins cleanly to it — `search` then cites it under a conversation the text
+  never came from. 55 such rows, silent and indistinguishable from a real hit.
+- **The backlog's two guesses were both wrong**: not `import_anthropic.py`, and
+  not moot on the wiki db. The second is why it sat for eight days.
+- **Fixed:** index rows dropped first, while the messages identifying them still
+  exist; `delete_session` also sweeps chunks by `session_id` for ones whose
+  message went separately. Vectors before chunks, and a failure there raises —
+  a vector without its chunk is text in the index nothing can attribute.
+- **Repair:** `find_stale_chunks`/`prune_stale_chunks`, surfaced as
+  `:updatedb prune`. Plain `:updatedb` reports and removes nothing. Detection is
+  exact, not heuristic: the message is gone, or `chunks.session_id` disagrees
+  with `messages.session_id` — impossible in normal operation, since `chunk_new`
+  copies it off the message and nothing ever reassigns it.
+- Verified on a **copy** of the live db: 207 chunks and 195 vectors removed,
+  idempotent, zero wiki rows touched, messages and sessions untouched. Six
+  assertions confirmed to fail with the cascade removed.
+- Real `ON DELETE CASCADE` is left to the DB-layer rework — SQLite can't add one
+  without rebuilding the table.
+- Files: db.py, commands.py, main.py, tests/test_schema.py, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Make the run log say what a run wrote
 `append_log(…, touched=())` rendered its fourth argument and no caller passed
 one, so every line read as though the run touched nothing. When a run fails
@@ -50,7 +82,7 @@ which files it got to, and only the transcript could answer it.
 - Files: agent.py, runner.py, routines.py, tools.py, tests/test_agent.py,
   tests/test_tools.py, tests/test_routines.py, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: e194450
 
 ## 2026-07-23 — Stop `golden.py` exporting into the real vault
 The script ends with `:q`, `:q` honours `AUTO_EXPORT`, so every `check` wrote
