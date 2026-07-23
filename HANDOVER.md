@@ -200,6 +200,27 @@ use_tools = TOOLS_ENABLED and tools_on and (current_model in TOOLS_MODELS)
 
 ### Private chat (v0.41)
 
+**Standing decision — "chat" means both chats.** A feature specified for chat
+is specified for private chat too, unless it is explicitly scoped to one.
+Design and build for both from the start. This is not about symmetry: the
+alternative is two pipelines that diverge a little with every feature and cost
+more to reconcile the longer they run apart. Private chat is the same session
+with a different connection underneath, not a reduced mode beside it.
+
+**The single exception is privacy itself, and it is a refusal, not a
+compromise.** If a feature can only work by persisting something, exporting
+something, or otherwise defeating what a private chat is for, say so and leave
+the private half unbuilt — a "mostly private" implementation is the worst
+outcome available, because its failure is invisible from the inside. Name the
+conflict and let the human decide.
+
+That exception is rarer than it sounds, because the isolation is structural: a
+feature that writes through the session's `conn` inherits it for nothing. If a
+feature *doesn't* — if it reaches for `DB_PATH`, a vault path, or the network
+directly — that is the signal to stop, not to add an `if private` branch. The
+three paths that already escape the connection are enumerated below, and that
+list is the complete set on purpose.
+
 `p` at the hub starts a private chat: it behaves like any other session — same model, prompts, personas, read tools — but **nothing is written down**, and there is no restore.
 
 **The guarantee is structural, not a pile of `if private` checks — that's the whole design.** A private chat runs against an **isolated in-memory database** (`db(":memory:")`, built by `repl()`, closed the moment the session returns). Every persist path already threads one `conn`: `save_message` in `main.py` *and* the ones `agent_turn` makes on its own, titles, recall markers, attachments. They all land in the throwaway db and vanish with it — with **zero changes to those call sites**. The dangerous path is `agent_turn` persisting independently in another file; the connection swap covers it for free, which is exactly why the guard is the connection and not a flag each writer has to remember. A private session is also structurally invisible to the picker: `hub.recent_chats` reads the real db, which never hears about it.

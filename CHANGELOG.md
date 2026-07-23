@@ -23,6 +23,25 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-23 — Write down that "chat" means both chats
+Cas's standing decision, recorded properly in `CLAUDE.md` and stated again at
+the head of `HANDOVER.md`'s Private chat section so it reaches an LLM reading
+the handover outside the repo.
+- **A feature specified for chat is specified for private chat**, unless scoped
+  to one explicitly. The point is not symmetry: it's that the alternative is two
+  pipelines that diverge a little per feature and cost more to reconcile the
+  longer they run apart.
+- **The exception is privacy itself, and it is a refusal rather than a
+  compromise.** A "mostly private" implementation is the worst available
+  outcome, because its failure is invisible from the inside. Name the conflict,
+  leave the private half unbuilt, let Cas decide.
+- **The tell:** a feature that writes through the session's `conn` inherits the
+  isolation for free. One that reaches for `DB_PATH`, a vault path or the
+  network directly is the one to stop on — not to add an `if private` branch to.
+- Files: CLAUDE.md, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Bring the docs up to the code after the backlog session
 `BACKLOG.md` has no open entries left for the first time. Docs updated to match
 rather than rewritten — the architecture didn't change, five specific things did.
@@ -38,7 +57,7 @@ rather than rewritten — the architecture didn't change, five specific things d
   Memory on why deleting a session has to reach the index.
 - Files: HANDOVER.md, CLAUDE.md, README.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: a11fe7f
 
 ## 2026-07-23 — Say when a refused path was relative
 `write_file` refuses a relative path — it resolves against the process working
