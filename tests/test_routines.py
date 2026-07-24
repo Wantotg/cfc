@@ -556,6 +556,32 @@ def main():
             logtext = routines.log_path("crashlog").read_text(encoding="utf-8")
             ok("a failed run records its session id in the log",
                okc is False and f"session {scid}" in logtext, logtext)
+
+            print("\n--- {{date}} in a prompt body ---")
+            # The hand-written prompts said "injected by script" while nothing
+            # injected, so the model read the literal braces and was free to
+            # invent a date — the exact failure SYSTEM's date exists to stop.
+            import datetime as _dt
+            when = _dt.datetime(2026, 7, 24, 3, 0)
+            filled, unfilled = runner.fill_placeholders(
+                "Today is {{date}} (DD-MM-YYYY).", when)
+            ok("{{date}} is substituted",
+               filled == "Today is 24-07-2026 (DD-MM-YYYY).", filled)
+            ok("...and reports nothing unfilled", unfilled == [], unfilled)
+            # A misspelled placeholder must be visible. Left in the text it is
+            # a silent false negative: braces reach the model as prose.
+            _, unf = runner.fill_placeholders("a {{typo}} and {{date}}", when)
+            ok("an unknown placeholder is reported", unf == ["{{typo}}"], unf)
+            # str.replace, not str.format — a prompt is hand-written markdown
+            # and may hold JSON or a code fence. .format would raise here and
+            # the run would never start.
+            braces = 'json {"a": {"b": 1}} then {{date}}'
+            filled, unf = runner.fill_placeholders(braces, when)
+            ok("literal braces survive untouched",
+               filled == 'json {"a": {"b": 1}} then 24-07-2026' and unf == [],
+               (filled, unf))
+            ok("a prompt with no placeholders is unchanged",
+               runner.fill_placeholders("plain task", when) == ("plain task", []))
         finally:
             runner.agent_turn = real_turn
             conn.close()

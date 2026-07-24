@@ -23,6 +23,7 @@
 #      exception. A failed run that leaves no trace is the failure mode the
 #      log exists to prevent.
 import datetime
+import re
 import traceback
 
 from agent import LIMIT_MESSAGE, TURN_RESULT_CHARS, agent_turn
@@ -113,6 +114,34 @@ and a run that exhausts either one is recorded as a failure. Read narrowly.
 
 When the task is done, reply with a short plain-text summary of what you did.
 That summary is what gets recorded in the run log."""
+
+
+# The prompts already said "injected by script" and nothing was injecting.
+# `{{date}}` in a routine prompt body is substituted here, where the run's
+# timestamp is already known and formatted for SYSTEM.
+#
+# Three choices worth keeping:
+#   - `str.replace`, never `str.format`. A prompt is markdown written by hand:
+#     a JSON example, a code fence or a literal brace would make `.format`
+#     raise, turning a formatting nicety into a run that never starts.
+#   - The date is redundant with SYSTEM's `{now}` and that is fine. This exists
+#     so the *task* can state it in the task's own words and format, which is
+#     what the hand-written prompts do — not as the authority on the date.
+#   - DD-MM-YYYY because that is what the vault's journal headers use. One
+#     placeholder, one format; add more only when a prompt actually wants one.
+PLACEHOLDERS = {
+    "{{date}}": lambda now: now.strftime("%d-%m-%Y"),
+}
+
+_UNFILLED_RE = re.compile(r"\{\{[^}\n]{0,40}\}\}")
+
+
+def fill_placeholders(text, now):
+    """Substitute the known `{{…}}` placeholders. Returns (text, unfilled)."""
+    for token, render in PLACEHOLDERS.items():
+        if token in text:
+            text = text.replace(token, render(now))
+    return text, sorted(set(_UNFILLED_RE.findall(text)))
 
 
 def _summarise(text, limit=200):
@@ -311,6 +340,15 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     except RoutineError as e:
         append_log(routine.id, "failed", f"{e} (session {session_id})")
         return False, str(e), session_id
+
+    task, unfilled = fill_placeholders(task, started)
+    if unfilled:
+        # Fail loud rather than let braces reach the model. An unrecognised
+        # placeholder is a typo in a hand-edited prompt, and its silent form —
+        # the model reading "{{ date }}" as literal text and inventing a date
+        # instead — is the same failure the date in SYSTEM exists to prevent.
+        event(f"warning: unfilled placeholder(s) in the prompt: "
+              f"{', '.join(unfilled)}")
 
     prefix = [{"role": "system", "content": system}]
     save_message(conn, session_id, "user", task, model=model)

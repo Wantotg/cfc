@@ -23,6 +23,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Inject `{{date}}` into routine prompts, and repoint them at the journal
+The three memory prompts all said "Today's date is **{{date}}**, injected by
+script" and nothing was injecting — the model read the literal braces and was
+free to guess, which is the exact failure `SYSTEM`'s date line exists to
+prevent. `runner.fill_placeholders` substitutes it from the run's own
+timestamp, and *reports* any `{{…}}` it doesn't recognise through `on_event`,
+because a misspelled placeholder left in the text is a silent false negative.
+`str.replace`, never `str.format`: a prompt is hand-written markdown and a JSON
+example or code fence would make `.format` raise, turning a nicety into a run
+that never starts. Vault side (not in this repo): `03 resources/tiered memory`
+had already been renamed to `journal` and `99 outbox/tiered memory` follows it,
+so all three routines' roots and all three prompts' paths were pointing at a
+folder that no longer exists — the failure already recorded in `BACKLOG.md` as
+the one that motivated the `review` flag. Verified through `tools.dispatch`
+under each routine's real context: the live journal is readable and *not*
+writable, the outbox is writable, the dead path is refused.
+- Files: runner.py, tests/test_routines.py (+ vault routines and prompts)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Configure the journal corpus, and stop the baseline pinning config
 v0.7 groundwork, plus two faults it turned up. `JOURNAL_DIR` is now a real
 config key, so `:wiki … journal` — reserved but unusable since v0.6.2 — resolves;
@@ -40,7 +60,7 @@ layout is config-derived too. Re-recorded; the diff also lit up the
 - Files: config.py, config.example.py, tests/golden.py,
   tests/golden_baseline.txt, tests/test_wikigit.py
 - Status: shipped
-- Commit: pending
+- Commit: 032dc66
 
 ## 2026-07-24 — Stop `:routine` taking the app down on a typo
 `:routines` (or any `:routineX`) matched the bare `startswith(":routine")`
@@ -51,7 +71,7 @@ a near-miss falls through to the unknown-command message. Found in Cas's 0.6.2
 testing pass.
 - Files: main.py
 - Status: shipped
-- Commit: pending
+- Commit: 032dc66
 
 ## 2026-07-24 — Fix a missing comma that silently disabled two models' tools
 `TOOLS_MODELS` had `"minimax/minimax-m3:thinking"` and `"minimax/minimax-m3"` on
@@ -62,7 +82,7 @@ duly reported "NOT in TOOLS_MODELS" with nothing to suggest why. Config-only
 in a list — is silent and will happen again.
 - Files: config.py
 - Status: shipped
-- Commit: pending
+- Commit: 032dc66
 
 ## 2026-07-24 — Split a routine's outcome into two signals
 A run's log status was one ok/failed bit, but it was carrying two facts: did the
