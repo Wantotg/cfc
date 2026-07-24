@@ -23,6 +23,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Say what an unrecognised placeholder means
+The unfilled-placeholder warning fired on its first real run — `{{content}}`
+and `{{path}}` in the note-writer prompt — and the reasonable reading of it was
+"something wants filling in by hand". It doesn't: an unrecognised `{{…}}`
+reaches the model as literal characters in the middle of its instructions. The
+warning now says so and names the set cfc *does* know, which turns "what is
+this" into "ah, dead text" without opening the source.
+
+Vault side: the `<note path="{{path}}">{{content}}</note>` block is deleted
+from the note-writer prompt. It was a stub from a design where note content
+would be injected inline; the routine reads the notes itself through the tool
+loop, so nothing ever substituted it and the model had been reading the braces
+verbatim every run. Found by the warning, which is what it is for.
+- Files: runner.py (+ vault prompt)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — `:file <n> decline [why]` — reject a draft and record why
 The other half of the review step, and the `BACKLOG` entry that asked for a
 losers' folder. Declining moves a draft to `LOSER_DIR/<corpus>` — declined is

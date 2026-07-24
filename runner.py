@@ -395,12 +395,16 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
 
     task, unfilled = fill_placeholders(task, started, routine.id)
     if unfilled:
-        # Fail loud rather than let braces reach the model. An unrecognised
-        # placeholder is a typo in a hand-edited prompt, and its silent form —
-        # the model reading "{{ date }}" as literal text and inventing a date
-        # instead — is the same failure the date in SYSTEM exists to prevent.
-        event(f"warning: unfilled placeholder(s) in the prompt: "
-              f"{', '.join(unfilled)}")
+        # Say what it *means*, not just what was found: the first time this
+        # fired, the reasonable reading was "something wants filling in by
+        # hand". It doesn't — these reach the model as literal characters in
+        # the middle of its instructions. Naming the known set in the same
+        # breath turns "what is this" into "ah, a typo" or "ah, dead text".
+        known = ", ".join(placeholder_values(routine.id, started))
+        event(f"warning: cfc does not recognise "
+              f"{', '.join(unfilled)} — the model will read "
+              f"{'them' if len(unfilled) > 1 else 'it'} literally. "
+              f"Known: {known}")
 
     prefix = [{"role": "system", "content": system}]
     save_message(conn, session_id, "user", task, model=model)
