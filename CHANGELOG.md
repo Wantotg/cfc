@@ -23,6 +23,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Auto-revert off a model the provider rejects
+`:model X` for an unlisted X sets it anyway (MODELS isn't exhaustive) but used to
+*persist* it, so a nonsense name 400ed every turn and survived reopening the
+session — you only noticed via `:models`. Switching to a model not in
+`known_models()` now arms a revert: the first turn that errors on it backs out to
+the model you were on, printing `provider rejected 'X' — switched back to Y`
+instead of the raw error. Scoped to a just-set unverified model, so no provider-
+wording match is needed and a turn that succeeds disarms it — a valid unlisted
+model is never reverted on a later hiccup, a known model is never armed. Both turn
+paths call the one `revert_bad_model` helper. Inherited by private chat.
+- Files: main.py, tests/test_model_revert.py, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Let a routine pin its own model
 Routines gained an optional `model:` frontmatter field, so a routine can declare
 the model it runs on instead of every scheduled run inheriting the single vetted
@@ -35,7 +49,7 @@ and is omitted from the file when unset. `:routine new` offers a model pick
 - Files: routines.py, runner.py, commands.py, tests/test_routines.py,
   HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 1d50e45
 
 ## 2026-07-24 — Per-corpus, per-file `:wiki` — and a guard on the vault sweep
 `:wiki diff`/`:wiki commit` grew a grammar: `:wiki <action> <scope> <granularity>`.

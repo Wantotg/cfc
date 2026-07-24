@@ -44,14 +44,22 @@ and `run_routine` use it). `:routine new` prompts for one, `:routine` shows a
 model column, and it round-trips through the file (omitted when unset). Before,
 every scheduled routine could only run on `ROUTINE_MODELS[0]`.
 
-**Still open — `:model` is deliberately generous** (the first half of this
-entry). `select_model` sets an unrecognised id anyway, with a dim note, because
-`MODELS` is not meant to be exhaustive and a wrong name fails loud at the first
-turn with a provider 400 (see the closed longcat entry). `'deepseek pro'` /
-`'shanhaig'` below are that behaviour, not a bug — they're typos that also missed
-the fuzzy-match cutoff. Tightening this (reject unless in `MODELS`, or a
-stricter fuzzy cutoff) is a real option but a **design decision for Cas**, not a
-clear defect. Parked until he calls it.
+**The blind-error symptom — FIXED (2026-07-24) with auto-revert.** The real
+damage wasn't that `:model shanhaig` set a bad id; it's that it *persisted* it, so
+every turn 400ed and it survived reopening the session — you found out only via
+`:models`. Switching to a model not in `known_models()` now arms a revert: the
+first turn that errors on it backs out to the model you were on, with
+`provider rejected 'X' — switched back to Y`. A working turn disarms it, so a
+valid unlisted model is untouched. See `main.py:revert_bad_model` /
+`tests/test_model_revert.py`.
+
+**Still open, and now genuinely optional — should `:model` be stricter?**
+`select_model` still *sets* an unrecognised id (with a dim note); the auto-revert
+just means you're no longer stranded on it. Tightening selection itself (reject
+unless in `MODELS`, or a stricter fuzzy cutoff) is a **design decision for Cas**,
+not a defect — and the pressure to make it is lower now that the failure
+self-corrects. Parked until he calls it. `'deepseek pro'` / `'shanhaig'` below
+are typos that also missed the fuzzy cutoff.
 
 Original report below.
 

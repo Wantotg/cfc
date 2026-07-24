@@ -61,8 +61,8 @@ from hub import list_sessions, pick_session
 from commands import (
     show_tags, list_all_tags,
     list_prompts, load_prompt_file, list_personas, load_persona_file,
-    list_models, select_model, show_config, show_token_stats, context_bar,
-    print_context_bar,
+    list_models, select_model, known_models, show_config, show_token_stats,
+    context_bar, print_context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
     do_updatedb, auto_embed,
@@ -157,6 +157,15 @@ def run_session(conn, session_id, private=False):
     db_on = True if not private else DATABASE_ACTIVE
     current_title = get_session_title(conn, session_id)
     current_model = get_session_model(conn, session_id)
+    # Auto-revert arming. Non-None ⇒ the current model was set via the
+    # "not in your configured models" path and has not yet completed a turn, so
+    # the first turn that errors on it is almost certainly "no such model": we
+    # back out to this remembered model rather than stranding the session on a
+    # dead id. A turn that returns without an HTTP error disarms it (the model
+    # is real). Known models are never armed. This holds for both chats — it's
+    # the same dispatch, and a private chat's throwaway db takes the revert the
+    # same way, persisting nothing real either way.
+    revert_model = None
     system_prompt = get_system_prompt(conn, session_id)
     system_prompt_name = get_system_prompt_name(
         conn, session_id
@@ -214,6 +223,20 @@ def run_session(conn, session_id, private=False):
             label = "you" if m["role"] == "user" else "ai"
             console.print(f"{label}> {m['content']}\n")
         console.print("--- End of history ---\n")
+
+    def revert_bad_model():
+        """If an unverified model's first turn just failed, back out to the
+        model we were on and say so, instead of printing the raw provider error
+        and leaving the session stranded on a dead id. Returns True if it acted.
+        Idempotent: disarms itself, so a later transient error prints normally."""
+        nonlocal current_model, revert_model
+        if not revert_model:
+            return False
+        bad, current_model, revert_model = current_model, revert_model, None
+        set_session_model(conn, session_id, current_model)
+        console.print(f"\n[error] provider rejected '{bad}' — switched back to "
+                      f"{current_model}\n")
+        return True
 
     while True:
         try:
@@ -399,11 +422,18 @@ def run_session(conn, session_id, private=False):
                 parts = user.split(maxsplit=1)
                 new_model = select_model(parts[1].strip())
                 if new_model:
+                    prev_model = current_model
                     set_session_model(conn, session_id,
                                       new_model)
                     current_model = new_model
                     console.print(f"Switched to model: "
                                   f"{new_model}")
+                    # Arm auto-revert if we can't vouch for this model: the
+                    # first turn that errors on it backs out to prev_model.
+                    # A known model, or re-selecting the same one, disarms.
+                    revert_model = (prev_model
+                                    if new_model not in known_models()
+                                    and new_model != prev_model else None)
                 else:
                     console.print("model unchanged", style="dim")
             continue
@@ -679,8 +709,10 @@ def run_session(conn, session_id, private=False):
                 console.print("\n[tool turn cancelled]\n")
                 continue
             except httpx.HTTPError as e:
-                console.print(f"\n[error] {e}\n")
+                if not revert_bad_model():
+                    console.print(f"\n[error] {e}\n")
                 continue
+            revert_model = None   # the model answered — it's real; disarm
             render_answer(final.get("content"))
             # Same context bar as the streaming path — agent_turn persisted the
             # final turn's usage, so read it back from the row it just wrote.
@@ -716,9 +748,11 @@ def run_session(conn, session_id, private=False):
                 assistant = ""
                 break
             except httpx.HTTPError as e:
-                console.print(f"\n[error] {e}\n")
+                if not revert_bad_model():
+                    console.print(f"\n[error] {e}\n")
                 assistant = ""
                 break
+            revert_model = None   # a response came back — the model is real
 
             if assistant.strip():
                 break
