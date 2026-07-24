@@ -37,7 +37,7 @@ returns `(status, ts, review)`; the hub panel and `:routine` show a yellow
 - Files: runner.py, routines.py, hub.py, commands.py, schedule.py,
   tests/test_routines.py, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 2688e47
 
 ## 2026-07-24 — Log the scheduler tick, and default its window hidden
 `run-due.sh` now redirects its own stdout/stderr to `~/.cfc/schedule.log`
@@ -51,7 +51,7 @@ per-routine trigger times. Hidden is safe because the output now has somewhere
 to go.
 - Files: run-due.sh, README.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 2688e47
 
 ## 2026-07-24 — Auto-revert off a model the provider rejects
 `:model X` for an unlisted X sets it anyway (MODELS isn't exhaustive) but used to

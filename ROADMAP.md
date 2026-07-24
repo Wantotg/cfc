@@ -387,6 +387,36 @@ than bolted on here.
 ( ◍•⩊•◍)
 / ⊃🍓⊂\
 ```
+## v0.6.2 — Groundwork for tiered memory — **complete, 2026-07-24**
+
+A patch release that clears the ground v0.7 builds on: tiered memory reuses the
+wiki review-and-move pipeline and runs as an unattended routine, so the edges of
+both got sharpened first. Most of it came out of using v0.6.1 in anger.
+
+- **`:wiki` grew a `<scope> <granularity>` grammar.** Scope picks the corpus
+  (`wiki` default, `journal` reserved for v0.7, `vault` replacing `all`);
+  granularity `file` diffs or commits a single picked file, not the whole set —
+  the per-file review v0.7's approve step needs. `:wiki commit vault` now asks
+  before the whole-repo sweep. Filing (`:file`) stays separate from committing,
+  so the `:updatedb` re-import still sits between them.
+- **A routine can pin its own model** (`model:` frontmatter) — the tidier shape
+  that v0.6.1 deferred. Resolves routine pin › session model › vetted default, so
+  a scheduled job no longer has to run on the single global default.
+- **`:model` backs out of a model the provider rejects.** Switching to an
+  unlisted id that then errors on its first turn reverts to the model you were
+  on, instead of stranding the session on a dead id that 400s every turn.
+- **The scheduler tick is logged and the window defaults hidden.** `run-due.sh`
+  writes to `~/.cfc/schedule.log` (rotated, one heartbeat per tick), so a failure
+  before cfc even starts isn't lost with the console; the README now defaults the
+  Task Scheduler entry to run with no window, which the log makes safe.
+- **A routine reports two outcomes, not one.** `ok`/`failed` is loop health; a
+  separate `review` flag marks a run that finished but whose own words say it hit
+  a wall ("outside my allowed roots"). The hub and `:routine` show a yellow
+  *review* — a job that logged a clean `ok` while doing nothing is no longer
+  invisible.
+
+> *(note-shaped hole for Cas)*
+
 ## v0.7 — Tiered memory
 
 ## v0.8 — Prompts, personas, traits, and one way to add them
