@@ -415,8 +415,13 @@ both got sharpened first. Most of it came out of using v0.6.1 in anger.
   *review* — a job that logged a clean `ok` while doing nothing is no longer
   invisible.
 
-> *(note-shaped hole for Cas)*
-
+> *(note-shaped hole for Cas) some quality of life improvements to help with routines, and the management of the flow of information in a established vault. Keeping it running shouldn't be a chore.*
+```
+  |\__/,|   (`\ "More notes on catnip! Grow the wiki db!"
+  |_ _  |.--.) )
+  ( T   )     /
+ (((^_(((/(((_>
+```
 ## v0.7 — Tiered memory
 
 ## v0.8 — Prompts, personas, traits, and one way to add them
