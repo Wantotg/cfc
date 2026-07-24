@@ -168,9 +168,27 @@ instances down and cron dies with them, so a 03:00 job would only run if you
 happened to leave a terminal open — silently. In an **admin** PowerShell:
 
 ```powershell
-schtasks /Create /TN "cfc routines" /SC MINUTE /MO 15 /RU $env:USERNAME `
+schtasks /Create /TN "cfc routines" /SC MINUTE /MO 15 /RU $env:USERNAME /RP * `
   /TR "wsl.exe -d Ubuntu -- /home/<you>/projects/cfc/run-due.sh"
 ```
+
+The **`/RP *`** is the part that matters: it makes the task **run whether or not
+you're logged on**, which prompts once for your Windows account password and,
+crucially, runs it **in the background with no console window**. (The same
+setting is the *"Run whether user is logged on or not"* radio button on the
+task's **General** tab if you'd rather use the GUI.) This is the recommended
+default, on purpose:
+
+- **A window popping up every 15 minutes is intolerable, and people fix it the
+  wrong way.** Left visible, you'll either disable the task outright or stretch
+  the interval to hours — and a long interval defeats the whole design: every
+  routine due since the last tick then fires *at once*, in a batch, instead of
+  each near its own `trigger:` time. A short, invisible tick is what lets
+  per-routine trigger times mean anything.
+- **Hidden is not blind.** Everything the tick does — every run, every failure,
+  and failures *before* cfc even starts (a bad path, a missing venv) — is
+  appended to **`~/.cfc/schedule.log`** (rotated by size). That log is the
+  window you gave up; check it there instead of watching a console.
 
 Adjust the path and the distro name. Then set a routine's `trigger:` to a time
 in its file, and check it's seen:
@@ -189,8 +207,11 @@ Behaviour worth knowing before you rely on it:
   tomorrow. A retry gives up after 3 failures in a day — otherwise a routine
   failing for a permanent reason would run every 15 minutes until midnight, at
   full API cost, with nobody watching.
-- **An idle tick is silent and exits 0.** It runs ~90 times a day; a log full
-  of "nothing due" is a log nobody reads. Failures exit 1.
+- **An idle tick is silent and exits 0.** It runs ~90 times a day; cfc's own
+  stdout stays quiet because a log full of "nothing due" is a log nobody reads.
+  Failures exit 1. The scheduler wrapper still writes a dated heartbeat line per
+  tick to `~/.cfc/schedule.log`, so "did it fire at all?" has an answer even
+  when nothing was due.
 - Two ticks can't overlap — a lock in `~/.cfc/` sees to that, and a run that is
   killed doesn't leave a stale one behind.
 

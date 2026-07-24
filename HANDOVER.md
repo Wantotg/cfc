@@ -590,6 +590,11 @@ head of the line. A plain append interrupted mid-write leaves a torn final line,
 
 Two consumers, and the second is why it is a log and not a `print`: a human asking "did the nightly thing work", and **the next run**, which reads `last_run()` off the file to honour `on_failure`. A scheduled run is a fresh process — it has no memory to consult. `on_failure` is acted on by `schedule.why_not_due` — see The scheduler.
 
+**A run has two independent outcomes, and one `ok`/`failed` word cannot carry both.** `status` is *loop health* — did the mechanical run complete (a crash, timeout, empty-completion or call-limit is `failed`). But a loop can finish cleanly while the model's own answer reports it couldn't do the task ("I cannot perform this task, those files are outside my allowed roots") — a real case that logged a clean `ok` and had a nightly job doing nothing for weeks before anyone noticed. So `append_log` carries a **second, orthogonal `review` flag**, rendered as ` (review)` right after the status (reading `ok (review)`), and `last_run()` now returns `(status, ts, review)`. `runner.looks_unclear()` computes it from the final message by phrase match — first-person and jail-specific ("i cannot", "outside my allowed roots") so a summary of external content rarely trips it, and **biased to over-flag**: a false flag costs one glance, a missed one is the silent failure this exists to surface. Same brittleness/fail-safe class as `LIMIT_MESSAGE` — reword the refusals and it degrades to a plain `ok`, never a false `failed`.
+
+- **`review` is kept out of `status` on purpose.** The run did not fail, so `on_failure` must not retry it — folding "needs a glance" into "failed" would make the scheduler re-run a working routine at full API cost. The two signals stay two fields end to end: log line, `last_run`, and the displays.
+- **Surfaced everywhere the outcome is read:** the hub routine panel and `:routine` show a yellow `review` (distinct from red `failed` and dim `ok`; in the narrow hub cell `review` shadows `ok`, but the log keeps both facts), and `do_routine` prints the flag live so an on-command run says so without opening the log. `tests/test_routines.py` pins the phrase heuristic and that a flagged run reads back `status='ok'` with `review=True`.
+
 ---
 
 ## Filing: propose / approve / move
@@ -711,6 +716,17 @@ Three properties are load-bearing:
    lazily, at the point something is actually going to run). This path executes
    ninety-odd times a day and a scheduler log full of "nothing due" is a log
    nobody reads.
+4. **The *wrapper* logs even though cfc stays quiet — `run-due.sh` → `~/.cfc/schedule.log`.**
+   `run_routine`'s logging only covers runs that *reach* a routine; a failure
+   before that (a vanished venv, a bad cd, a Python traceback, the embedder
+   down) printed to a stdout that the recommended hidden task — "run whether the
+   user is logged on or not", so no console window pops up every 15 minutes —
+   simply discards. The wrapper redirects its own stdout/stderr to the log
+   before anything that can fail, writes a dated heartbeat per tick (so "did the
+   scheduler even fire" has an answer that a silent idle tick can't give), and
+   rotates by size in plain bash (no logrotate on stock WSL). This is the layer
+   *beneath* the routine log, and the README's Task-Scheduler default depends on
+   it: hiding the window is only safe because the window's output went somewhere.
 
 **`on_failure` is finally honoured, and it needed a bound nobody had specified.**
 `retry` means "again on the next tick" — fifteen minutes away — so a routine

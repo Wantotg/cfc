@@ -31,7 +31,23 @@ Problem: user is viewing a single view, a commit there implies a commit on for t
 Suggestion: inspecting individual diff -> commit -> commits only that diff. Confirms the timestamp, and accapted changes.
 Also: :wiki commit all should give a (y/n) warning 'are you sure'. (may be implemented, was no diff to test this yet.)
 
-## chat selection screen shows routines that failed at their task, but performed their routine:: "ok - timestamp."
+## ~~chat selection screen shows routines that failed at their task, but performed their routine:: "ok - timestamp."~~ — FIXED (2026-07-24)
+
+**Fixed:** the realisation underneath it — one ok/failed bit can't carry two
+facts (did the loop run + did the model actually do the task) — is now two
+signals. `status` stays loop-health (ok/failed); a second, orthogonal `review`
+flag rides alongside it in the run log (`ok (review)`), computed by
+`runner.looks_unclear` from the model's final message (first-person / jail-block
+phrases like "I cannot", "outside my allowed roots", biased to over-flag).
+`last_run` returns `(status, ts, review)`; the hub panel and `:routine` show a
+yellow **review** distinct from red **failed** and dim **ok**, and `do_routine`
+says so live. Kept out of `status` on purpose: the run didn't fail, so
+`on_failure` must not retry it. Heuristic and fail-safe — reword the refusals and
+it degrades to a plain `ok`, never a false `failed`. Pinned in
+`tests/test_routines.py`.
+
+Original report below.
+
 Transcript: **2026-07-24 12:20:36** — ok — I cannot perform this task. The `mt memory.md` and `lt memory.md` files live in `/mnt/c/Users/disse/cooking for cats/03 resources/tiered memory/`, which is outside my allowed readable roots (`99 outbo… (42s, session 87)
 That is good and bad, report of the model came through, so that's ok. But the script needs to read the models message and flag certain keywords/phrases. Routine overview should show that the routine worked (the ok) but also flag the user that the log shows something irregular, to be inspected. "last routine performed at *timestamp*, result unclear?" 
 

@@ -262,15 +262,16 @@ def main():
            all(why for _, why in bad_files), bad_files)
 
         print("\n--- the run log survives failure, and the next run reads it ---")
-        ok("no log yet", routines.last_run("nightly") == (None, None))
+        ok("no log yet", routines.last_run("nightly") == (None, None, False))
         routines.append_log("nightly", "failed", "provider timed out")
-        status, ts = routines.last_run("nightly")
+        status, ts, review = routines.last_run("nightly")
         ok("a failed run is recorded", status == "failed", status)
         ok("...with a timestamp", bool(ts), ts)
+        ok("...and is not flagged for review", review is False, review)
 
         routines.append_log("nightly", "ok", "wrote the digest",
                             touched=["digest.md"])
-        status, _ = routines.last_run("nightly")
+        status, _, _ = routines.last_run("nightly")
         ok("the latest run wins", status == "ok", status)
 
         text = routines.log_path("nightly").read_text(encoding="utf-8")
@@ -279,6 +280,18 @@ def main():
         ok("...and both runs are present", text.count("- **") == 2, text)
         ok("what was touched is recorded", "digest.md" in text, text)
         ok("the header is written once", text.count("# Run log") == 1, text)
+
+        # The second, orthogonal signal: a run whose loop completed ('ok') but
+        # whose output looked off. It must NOT read back as 'failed' — the
+        # scheduler's on_failure keys off status and must not retry it — while
+        # still being visible as needing a glance.
+        routines.append_log("nightly", "ok", "I cannot reach those files",
+                            review=True)
+        status, _, review = routines.last_run("nightly")
+        ok("a flagged run stays status 'ok', not 'failed'", status == "ok", status)
+        ok("...and carries the review flag", review is True, review)
+        ok("...rendered as 'ok (review)' in the log",
+           "— ok (review) —" in routines.log_path("nightly").read_text("utf-8"))
 
         print("\n--- disabled routines ---")
         off = make(id="off", enabled=False, read_roots=[str(store.pdir)])
@@ -313,7 +326,7 @@ def main():
             ok("a crashing run returns False, not an exception", ok2 is False)
             ok("...names the failure", "provider went away" in summary, summary)
             ok("...still opened a session to read afterwards", sid is not None)
-            status, _ = routines.last_run("crash")
+            status, _, _ = routines.last_run("crash")
             ok("...and is recorded as failed", status == "failed", status)
 
             # The next run is a fresh process with no memory — it must learn
@@ -515,6 +528,23 @@ def main():
                    runner.effective_model(bare, None) == "vetted-a")
             finally:
                 runner.ROUTINE_MODELS, runner.MODEL = saved_rm, saved_default
+
+            print("\n--- the second signal: 'ok' loop, unclear result ---")
+            # One ok/failed bit can't say both "the loop ran" and "the model
+            # actually did the task". looks_unclear is the heuristic for the
+            # second: a completed run whose output reports it hit a wall.
+            ok("a plain result is not flagged",
+               not runner.looks_unclear("Wrote the digest to the outbox."))
+            ok("a first-person refusal is flagged",
+               runner.looks_unclear(
+                   "I cannot perform this task — the files are outside my "
+                   "allowed roots."))
+            ok("a jail-block phrasing is flagged",
+               runner.looks_unclear("Those notes are outside my readable roots."))
+            ok("case doesn't matter",
+               runner.looks_unclear("I CANNOT COMPLETE this."))
+            ok("empty output isn't flagged (it's a different failure)",
+               not runner.looks_unclear(""))
 
             print("\n--- a failed run's log names its session ---")
             # The session id used to live only on the terminal line, so a

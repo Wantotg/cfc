@@ -121,6 +121,45 @@ def _summarise(text, limit=200):
     return flat[:limit] + ("…" if len(flat) > limit else "")
 
 
+# A run has two independent outcomes, and one ok/failed bit cannot carry both:
+# whether the *loop* mechanically completed (that's `status`), and whether the
+# model actually *did the task* or merely reported that it couldn't. The second
+# one used to vanish — a model that finished the loop saying "I cannot perform
+# this task, those files are outside my allowed roots" logged a clean `ok`, and
+# you found out weeks later that a nightly job had been doing nothing.
+#
+# These phrases are how a model reports being blocked or refusing, about ITS OWN
+# run. First-person and jail-specific on purpose: "i cannot", "outside my
+# allowed roots" are things a stuck model says about itself, which a summary of
+# external content rarely is — so this catches the real case (a routine walled
+# off by its read roots) without flagging every article that quotes "unable".
+_REVIEW_PHRASES = (
+    "i cannot", "i can't", "i could not", "i couldn't",
+    "i am unable", "i'm unable", "i was unable", "i am not able", "i'm not able",
+    "unable to", "not able to",
+    "do not have access", "don't have access", "no access to",
+    "outside my allowed", "outside the allowed", "outside my readable",
+    "not in my allowed", "not allowed to", "not permitted",
+    "permission denied", "access denied",
+    "cannot perform", "can't perform", "cannot complete", "can't complete",
+)
+
+
+def looks_unclear(text):
+    """True if the final message reads like a *reported* failure — the loop ran
+    to completion but the model said it couldn't do the task.
+
+    A heuristic, biased to over-flag on purpose. A false flag costs one glance
+    at the transcript; a missed one is a routine silently doing nothing, logged
+    `ok`, discovered weeks later. Same asymmetry as the recall floor and the
+    mover: under ambiguity, err toward the failure a human can see. Same
+    brittleness class, too — reword the model's refusals and this stops matching
+    and falls back to a plain `ok`, never a false `failed`.
+    """
+    low = " ".join((text or "").lower().split())
+    return any(p in low for p in _REVIEW_PHRASES)
+
+
 class EmptyCompletion(Exception):
     """The model returned nothing, repeatedly. Treated as a failed run."""
 
@@ -234,7 +273,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     # The previous outcome is read from the log, not from memory — a scheduled
     # run is a fresh process and has no memory to read. on_failure is stored
     # and surfaced now; the scheduler is what will act on it.
-    prev_status, prev_ts = last_run(routine.id)
+    prev_status, prev_ts, _ = last_run(routine.id)
     if prev_status == "failed":
         event(f"last run failed at {prev_ts} (on_failure: {routine.on_failure})")
 
@@ -308,8 +347,14 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         return False, detail, session_id
 
     conn.commit()
-    summary = _summarise(final.get("content", ""))
+    content = final.get("content", "")
+    summary = _summarise(content)
+    review = looks_unclear(content)
     elapsed = (datetime.datetime.now() - started).total_seconds()
+    # `review` is the second, orthogonal signal: the loop is `ok` AND the output
+    # looks like the model hit a wall it merely reported. The run did not fail —
+    # on_failure must not treat this as a retry — so it rides alongside the
+    # status, not inside it.
     append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s, session {session_id})",
-               touched=touched)
+               touched=touched, review=review)
     return True, summary, session_id

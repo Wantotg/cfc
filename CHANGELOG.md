@@ -23,6 +23,36 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Split a routine's outcome into two signals
+A run's log status was one ok/failed bit, but it was carrying two facts: did the
+loop mechanically complete, and did the model actually do the task. A run that
+finished saying "I cannot perform this task, those files are outside my allowed
+roots" logged a clean `ok` — a nightly job doing nothing, invisibly. `status`
+now stays loop-health only; a second, orthogonal `review` flag rides alongside
+it (`ok (review)` in the log), set by `runner.looks_unclear` from the model's
+final message (first-person / jail-block phrases, biased to over-flag). `last_run`
+returns `(status, ts, review)`; the hub panel and `:routine` show a yellow
+`review` distinct from red `failed`, and `do_routine` flags it live. Kept out of
+`status` so `on_failure` never retries a run that didn't fail.
+- Files: runner.py, routines.py, hub.py, commands.py, schedule.py,
+  tests/test_routines.py, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
+## 2026-07-24 — Log the scheduler tick, and default its window hidden
+`run-due.sh` now redirects its own stdout/stderr to `~/.cfc/schedule.log`
+(rotated by size) with a dated heartbeat per tick, so a failure *before* cfc's
+per-routine logging — a vanished venv, a bad cd, a traceback, the embedder down —
+is no longer discarded along with a hidden console window. The README's Task
+Scheduler recipe now defaults to "run whether logged on or not" (`/RP *`, no
+window), with the reasoning: a window popping up every 15 minutes gets the task
+disabled or the interval stretched until routines batch-fire, defeating
+per-routine trigger times. Hidden is safe because the output now has somewhere
+to go.
+- Files: run-due.sh, README.md, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Auto-revert off a model the provider rejects
 `:model X` for an unlisted X sets it anyway (MODELS isn't exhaustive) but used to
 *persist* it, so a nonsense name 400ed every turn and survived reopening the
@@ -35,7 +65,7 @@ model is never reverted on a later hiccup, a known model is never armed. Both tu
 paths call the one `revert_bad_model` helper. Inherited by private chat.
 - Files: main.py, tests/test_model_revert.py, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: bd4a887
 
 ## 2026-07-24 — Let a routine pin its own model
 Routines gained an optional `model:` frontmatter field, so a routine can declare

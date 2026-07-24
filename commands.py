@@ -1404,8 +1404,12 @@ def show_routines():
     for col in ("id", "name", "model", "trigger", "write", "last run"):
         table.add_column(col)
     for r in found:
-        status, ts = last_run(r.id)
+        status, ts, review = last_run(r.id)
         when = f"{status} {ts}" if status else "never"
+        # A flagged run finished (status 'ok') but its output looked off — say
+        # so and colour it yellow, distinct from a red failure and a plain ok.
+        if review:
+            when = Text(f"{status} (review) {ts}", style="yellow")
         label = r.id if r.enabled else f"{r.id} (disabled)"
         if problems[r.id]:
             label = f"! {label}"
@@ -1525,7 +1529,7 @@ def create_routine():
 def do_routine(conn, arg, model=None):
     """:routine <name> — run one now, narrating as it goes."""
     from routines import RoutineError, load_routine
-    from runner import effective_model, run_routine
+    from runner import effective_model, looks_unclear, run_routine
 
     console.print()
     # Resolve the routine up front so the warning below can name the model that
@@ -1562,6 +1566,12 @@ def do_routine(conn, arg, model=None):
     )
     if ok:
         console.print(f"  done — {summary}", style="green")
+        # The loop worked, but if the model's own words read like it hit a wall,
+        # say so — the same 'ok (review)' the hub shows, surfaced live so you
+        # don't have to open the log to notice a run that did nothing.
+        if looks_unclear(summary):
+            console.print("  result looks unclear — flagged for review; "
+                          "open the transcript", style="yellow")
     else:
         console.print(f"  FAILED — {summary}", style="red")
     if session_id:

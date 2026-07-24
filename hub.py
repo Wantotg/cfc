@@ -233,14 +233,14 @@ def _routine_rows(limit=HUB_ROUTINES):
     out = []
     for r in good:
         try:
-            status, ts = last_run(r.id)
+            status, ts, review = last_run(r.id)
         except Exception:
-            status, ts = None, None
+            status, ts, review = None, None, False
         label, style = _freshness(ts)
-        out.append((r.name, label, style, status or "", ts or ""))
+        out.append((r.name, label, style, status or "", ts or "", bool(review)))
     # Never-run routines sort last; among the rest, most recent first.
     out.sort(key=lambda row: row[4], reverse=True)
-    return [(n, l, s, st) for n, l, s, st, _ in out[:limit]]
+    return [(n, l, s, st, rv) for n, l, s, st, _, rv in out[:limit]]
 
 
 def _print_routines(rows):
@@ -249,12 +249,18 @@ def _print_routines(rows):
     table.add_column("Last run", width=17)
     table.add_column("Status", width=8)
     from rich.text import Text
-    for name, label, style, status in rows:
-        table.add_row(
-            name,
-            Text(label, style=style),
-            Text(status, style="red" if status == "failed" else "dim"),
-        )
+    for name, label, style, status, review in rows:
+        # Two signals, one cell: a failed loop is red, a loop that finished but
+        # whose output looks off is a yellow 'review' (the run WORKED — it just
+        # wants a glance), everything else the dim status. 'review' shadows 'ok'
+        # here only because the cell is narrow; the log keeps both facts.
+        if status == "failed":
+            st_text, st_style = "failed", "red"
+        elif review:
+            st_text, st_style = "review", "yellow"
+        else:
+            st_text, st_style = status, "dim"
+        table.add_row(name, Text(label, style=style), Text(st_text, style=st_style))
     console.print(table)
     console.print()
 

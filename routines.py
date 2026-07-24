@@ -438,15 +438,25 @@ def save_routine(routine, overwrite=False):
 # that can corrupt itself on the failure it exists to record is worse than no
 # log.
 
-_LOG_RE = re.compile(r"^- \*\*(?P<ts>[^*]+)\*\* — (?P<status>\w+)")
+_LOG_RE = re.compile(
+    r"^- \*\*(?P<ts>[^*]+)\*\* — (?P<status>\w+)(?P<review> \(review\))?")
 
 
 def log_path(routine_id):
     return log_dir() / f"{routine_id}.md"
 
 
-def append_log(routine_id, status, detail="", touched=()):
+def append_log(routine_id, status, detail="", touched=(), review=False):
     """Record one run. `status` is 'ok' or 'failed'.
+
+    `review` is a **second, orthogonal signal**, and the reason it isn't folded
+    into `status`: a run's loop can complete cleanly (`status='ok'`) while the
+    model's own output reports it couldn't do the task ("I cannot …", "outside
+    my allowed roots"). One ok/failed bit cannot say both "the loop worked" and
+    "the result needs a human glance". It renders as ' (review)' right after the
+    status — reading as `ok (review)` — so a person scanning the log sees it and
+    `last_run` can parse it back, while `status` stays exactly 'ok' for the
+    scheduler's on_failure logic, which must not retry a run that didn't fail.
 
     `touched` is the files the run wrote — filled by the collector
     `runner.run_routine` hands to `agent_turn`. Two things about how it renders,
@@ -466,6 +476,8 @@ def append_log(routine_id, status, detail="", touched=()):
     path = log_path(routine_id)
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"- **{ts}** — {status}"
+    if review:
+        line += " (review)"
     if detail:
         line += f" — {detail.strip()}"
     if touched:
@@ -482,19 +494,22 @@ def append_log(routine_id, status, detail="", touched=()):
 
 
 def last_run(routine_id):
-    """(status, timestamp) of the most recent run, or (None, None).
+    """(status, timestamp, review) of the most recent run, or (None, None, False).
 
-    This is what on_failure is decided against, so it reads the file rather
-    than any in-memory state — a scheduled run is a fresh process.
+    `status` is what on_failure is decided against, so it reads the file rather
+    than any in-memory state — a scheduled run is a fresh process. `review` is
+    the orthogonal 'loop ok but the output looks off' flag (see append_log); it
+    is deliberately separate from `status` so a flagged run is not mistaken for
+    a failed one.
     """
     path = log_path(routine_id)
     if not path.exists():
-        return None, None
+        return None, None, False
     match = None
     for line in path.read_text(encoding="utf-8").splitlines():
         m = _LOG_RE.match(line.strip())
         if m:
             match = m
     if not match:
-        return None, None
-    return match.group("status"), match.group("ts")
+        return None, None, False
+    return match.group("status"), match.group("ts"), bool(match.group("review"))

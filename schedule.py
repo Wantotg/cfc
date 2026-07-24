@@ -124,7 +124,7 @@ def why_not_due(routine, now):
     if now < today_at:
         return f"not yet — due at {at.strftime('%H:%M')}"
 
-    status, ts = last_run(routine.id)
+    status, ts, _ = last_run(routine.id)
     if status is None:
         return None                       # never run: due
 
