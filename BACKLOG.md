@@ -8,6 +8,13 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
+## ":wiki commit <message>" commits all changes, even when inspecting a specific diff. 0.6 24-07-2026
+Description: The command :wiki diff "file" allows user to inspect the diff on file level vs wiki db level, but the commit is wiki db level, not file.
+Problem: user is viewing a single view, a commit there implies a commit on for the diff that is being inspected, not the entire wiki db. Start with file #1 and commiting that, means that now rest of the diff is NOT inspected, and commited -> script timestamps and moves the files.
+Suggestion: inspecting individual diff -> commit -> commits only that diff. Confirms the timestamp, and accapted changes.
+Also: :wiki commit all should give a (y/n) warning 'are you sure'. (may be implemented, was no diff to test this yet.)
+
+
 ## ~~The run log sits inside the model's write scope~~ — FIXED (2026-07-23)
 
 **Fixed:** `tools.reserved_write_reason()` refuses any write resolving inside
