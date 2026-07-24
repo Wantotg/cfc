@@ -423,7 +423,23 @@ both got sharpened first. Most of it came out of using v0.6.1 in anger.
  (((^_(((/(((_>
 ```
 ## v0.7 — Tiered memory
+Same mechanics, but editing a rolling journal, diary style: short term,
+medium term, long term. The LLM drafts suggestions, the human approves,
+a script moves. 
+Keeping a journal that references the days correctly, rotates correctly,
+and corrects for pauses in activity was quit a logig puzzle. 
+Further testing will demonstrate where it fails, so we can improve it.
 
+Last of the feature work because it depends on all three of v0.2 (recall
+actually working), v0.5 (it's a nightly job) and v0.6 (the same draft → approve
+→ move shape, proven once already).
+
+> *New Opus right at the start of the session was nice, considering we ended up redesigning, discussing, tweaking and testing before shipping, good start.*
+```
+  /\_/\
+ ( o_o ) 'OPUS POCUS PILATUS PAS'
+  (>x<)
+```
 ## v0.8 — Prompts, personas, traits, and one way to add them
 
 ## v1.0 — Hardening, and a decision
