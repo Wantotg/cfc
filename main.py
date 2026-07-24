@@ -61,7 +61,7 @@ from hub import list_sessions, pick_session
 from commands import (
     show_tags, list_all_tags,
     list_prompts, load_prompt_file, list_personas, load_persona_file,
-    list_models, show_config, show_token_stats, context_bar,
+    list_models, select_model, show_config, show_token_stats, context_bar,
     print_context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
@@ -397,12 +397,15 @@ def run_session(conn, session_id, private=False):
                               f"{current_model}")
             else:
                 parts = user.split(maxsplit=1)
-                new_model = parts[1].strip()
-                set_session_model(conn, session_id,
-                                  new_model)
-                current_model = new_model
-                console.print(f"Switched to model: "
-                              f"{new_model}")
+                new_model = select_model(parts[1].strip())
+                if new_model:
+                    set_session_model(conn, session_id,
+                                      new_model)
+                    current_model = new_model
+                    console.print(f"Switched to model: "
+                                  f"{new_model}")
+                else:
+                    console.print("model unchanged", style="dim")
             continue
 
         # --- Tag commands ---

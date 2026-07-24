@@ -9,6 +9,7 @@
 # embedding API. It's imported lazily inside each command so that a missing or
 # broken memory layer degrades :recall / :remember only, rather than stopping
 # cfc from starting at all.
+import difflib
 import hashlib
 import json
 from pathlib import Path
@@ -254,6 +255,112 @@ def load_persona_file(name):
             return content, path.name
 
     return None, None
+
+
+def known_models():
+    """The pool the selector matches a loose `:model` query against: every
+    model cfc knows from config, MODELS first, then any ROUTINE_MODELS not
+    already there. Order preserved, deduped. It is not a live catalogue — a
+    model you never listed can't be matched, only typed in full, which is why
+    `resolve_model` still passes an unrecognised full id straight through."""
+    seen = {}
+    for m in list(MODELS) + list(ROUTINE_MODELS):
+        seen.setdefault(m, None)
+    return list(seen)
+
+
+def _norm(s):
+    """Fold a model id or a loose query to its comparable core: lowercase,
+    alphanumerics only. 'minimax m3', 'minimax/minimax-m3' and 'MiniMax_M3'
+    all collapse together, so punctuation and spacing stop mattering."""
+    return "".join(c for c in s.lower() if c.isalnum())
+
+
+def resolve_model(query, pool=None):
+    """Map a possibly-loose model query to config ids. Pure — no I/O, so the
+    interactive shell in `select_model` stays a thin wrapper over it and the
+    matching is testable without a terminal.
+
+    Returns (kind, data):
+      ('exact', id)     query already is a known id (case-insensitive)
+      ('one',   id)     one strong candidate — confirm before switching
+      ('many',  [ids])  several candidates — let the user pick
+      ('none',  None)   nothing recognisable; caller may use the raw query
+
+    Tiers: exact id wins outright; else substring matches on the folded form;
+    else a fuzzy nearest, which is what turns a one-character slip like
+    'moonshotai/kimi-2.6:thinking' into 'did you mean …kimi-k2.6…' instead of
+    an opaque provider 400."""
+    pool = known_models() if pool is None else pool
+    q = query.strip()
+    for m in pool:
+        if m.lower() == q.lower():
+            return ("exact", m)
+    nq = _norm(q)
+    if not nq:
+        return ("none", None)
+    subs = [m for m in pool if nq in _norm(m)]
+    if len(subs) == 1:
+        return ("one", subs[0])
+    if len(subs) > 1:
+        return ("many", subs)
+    # No substring hit — fold each id and look for a near-miss (typo).
+    norms = {_norm(m): m for m in pool}
+    close = difflib.get_close_matches(nq, list(norms), n=3, cutoff=0.7)
+    if len(close) == 1:
+        return ("one", norms[close[0]])
+    if len(close) > 1:
+        return ("many", [norms[c] for c in close])
+    return ("none", None)
+
+
+def _confirm_model(model):
+    """Enter (empty) or y confirms; anything else cancels."""
+    ans = input(f"  did you mean {model}? "
+                f"[Enter] yes / [n] no: ").strip().lower()
+    return ans in ("", "y", "yes")
+
+
+def _pick_model(query, options):
+    """Numbered pick, matching the hub picker's idiom. Enter cancels."""
+    console.print(f"  \"{query}\" matches {len(options)} models:")
+    for i, m in enumerate(options, 1):
+        console.print(f"    {i}) {m}")
+    raw = input("  pick a number (Enter to cancel): ").strip()
+    if not raw:
+        return None
+    try:
+        idx = int(raw)
+    except ValueError:
+        console.print("  not a number — cancelled", style="dim")
+        return None
+    if 1 <= idx <= len(options):
+        return options[idx - 1]
+    console.print("  out of range — cancelled", style="dim")
+    return None
+
+
+def select_model(query):
+    """Resolve `query` to a model id, prompting when it's ambiguous or a
+    near-miss. Returns the chosen id, or None if the user cancelled.
+
+    A 'none' result returns the raw query: MODELS is not exhaustive, so
+    switching to an unlisted model stays possible — with a dim note, so a
+    silent typo doesn't masquerade as a deliberate choice. When no models are
+    configured at all there is nothing to match against, so the query passes
+    through untouched and unremarked."""
+    if not known_models():
+        return query
+    kind, data = resolve_model(query)
+    if kind == "exact":
+        return data
+    if kind == "one":
+        return data if _confirm_model(data) else None
+    if kind == "many":
+        return _pick_model(query, data)
+    console.print(f"  '{query}' isn't in your configured models — "
+                  f"setting it anyway", style="dim")
+    return query
 
 
 def list_models(current_model):

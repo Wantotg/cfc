@@ -23,6 +23,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Forgive loose `:model` queries
+`:model` used to set whatever string you typed, so a one-character slip
+(`kimi-2.6` for `kimi-k2.6`) went through and came back as an opaque provider
+400 a turn later. It now resolves the query against the models you've configured
+(MODELS ∪ ROUTINE_MODELS): an exact id switches silently; a single strong match
+asks "did you mean X?"; several matches offer a numbered pick (the hub picker's
+idiom, not a new arrow-key mode); a near-miss is caught by a fuzzy nearest;
+only a genuinely unrecognised id is set raw, with a note so a typo can't pass
+as intent. `resolve_model` is a pure, tested core; `select_model` is the I/O
+shell. Inherited by private chat for free — it's the same `:model` dispatch.
+- Files: commands.py, main.py, tests/test_model.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Guard routines against models that stall
 Add a `ROUTINE_MODELS` config list of models vetted for unattended runs. Its
 first entry is the default a scheduled `--run-due` uses when no model is passed
@@ -34,7 +48,7 @@ session model but nudges (y/n) when it isn't in the list. Membership, not a
 run routines fine. Unset/empty ⇒ fall back to `MODEL`, no nudge.
 - Files: runner.py, commands.py, config.py, config.example.py, tests/test_routines.py
 - Status: shipped
-- Commit: pending
+- Commit: 6826e92
 
 ## 2026-07-24 — Record the session id in a failed routine's log line
 A failed run's session id lived only on the ephemeral terminal line; the durable
@@ -44,7 +58,7 @@ failure paths in `run_routine` now append `(elapsed, session N)` to the log,
 matching the `ok` line.
 - Files: runner.py
 - Status: shipped
-- Commit: pending
+- Commit: 6826e92
 
 ## 2026-07-24 — Re-roll the empty-completion 400 on the tool path
 A thinking model's occasional empty completion arrives as an HTTP 400 (`The
