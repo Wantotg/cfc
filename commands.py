@@ -35,6 +35,10 @@ try:
 except ImportError:
     MODELS = []
 try:
+    from config import ROUTINE_MODELS
+except ImportError:
+    ROUTINE_MODELS = []
+try:
     from config import MODEL_LIMITS
 except ImportError:
     MODEL_LIMITS = {}
@@ -1401,6 +1405,19 @@ def do_routine(conn, arg, model=None):
     from runner import run_routine
 
     console.print()
+    # A routine is unattended-shaped even on command: if it stalls on empty
+    # completions there's no turn to salvage. Nudge — don't block — when the
+    # model isn't one vetted for routines. Membership, not a thinking-model
+    # guess: ROUTINE_MODELS is the judgement. Empty list ⇒ nothing to compare
+    # against, so no nag.
+    if model and ROUTINE_MODELS and model not in ROUTINE_MODELS:
+        console.print(
+            f"{arg} will run on {model}, which isn't in ROUTINE_MODELS. "
+            f"It may stall on empty completions.", style="yellow")
+        if input("Run anyway? (y/n) ").strip().lower() != "y":
+            console.print("  cancelled", style="dim")
+            console.print()
+            return
     console.print(f"Running routine: {arg}")
     ok, summary, session_id = run_routine(
         arg, conn, model=model,

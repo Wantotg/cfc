@@ -23,6 +23,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Guard routines against models that stall
+Add a `ROUTINE_MODELS` config list of models vetted for unattended runs. Its
+first entry is the default a scheduled `--run-due` uses when no model is passed
+— closing the hole where a scheduled routine silently inherited the interactive
+chat default (`MODEL`), which may be a model that stalls on empty completions
+(GLM-5.2:thinking did, repeatedly). An on-command `:routine` still uses the
+session model but nudges (y/n) when it isn't in the list. Membership, not a
+"thinking-model" guess — the list is the judgement, since some thinking models
+run routines fine. Unset/empty ⇒ fall back to `MODEL`, no nudge.
+- Files: runner.py, commands.py, config.py, config.example.py, tests/test_routines.py
+- Status: shipped
+- Commit: pending
+
+## 2026-07-24 — Record the session id in a failed routine's log line
+A failed run's session id lived only on the ephemeral terminal line; the durable
+log recorded it for `ok` runs but not failures — so on the scheduled path (no
+terminal) the transcript of the run you most want to open was unfindable. Both
+failure paths in `run_routine` now append `(elapsed, session N)` to the log,
+matching the `ok` line.
+- Files: runner.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Re-roll the empty-completion 400 on the tool path
 A thinking model's occasional empty completion arrives as an HTTP 400 (`The
 model returned an empty response`) on the non-streaming tool path, not as a 200
@@ -36,7 +59,7 @@ caught — every other 400, oversize above all, still raises. Inherited by priva
 chat for free.
 - Files: agent.py, tests/test_agent.py, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 7c14235
 
 ## 2026-07-23 — Record the v0.8 command taxonomy as a standing decision
 Settled the verb spine ahead of the work that implements it, so a command added

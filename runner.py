@@ -35,6 +35,23 @@ try:
 except ImportError:
     MODEL = None
 
+try:
+    from config import ROUTINE_MODELS
+except ImportError:
+    ROUTINE_MODELS = []
+
+
+def default_routine_model():
+    """The model an unattended run uses when the caller passes none.
+
+    First vetted routine model, falling back to the global default when the
+    list is unset — so an old config still runs. This is the load-bearing half
+    of the routine-model guard: a scheduled --run-due passes model=None, and
+    without this it would inherit whatever `MODEL` happens to be — which is the
+    interactive chat default, and may be a model that stalls a routine.
+    """
+    return ROUTINE_MODELS[0] if ROUTINE_MODELS else MODEL
+
 # A routine gets a bigger tool budget than a chat turn, because the number was
 # never really about cost — it is about how long a runaway loop may go before a
 # human interrupts it, and a routine has no human. In chat, hitting the ceiling
@@ -205,7 +222,9 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         event(f"last run failed at {prev_ts} (on_failure: {routine.on_failure})")
 
     ctx = routine.context(interactive=interactive)
-    model = model or MODEL
+    # An explicit model (the on-command path passes the session's) wins; only
+    # an unattended run with none given falls to the vetted default.
+    model = model or default_routine_model()
     started = datetime.datetime.now()
 
     # provider marks this as a routine run so the hub can filter it out
@@ -234,7 +253,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     try:
         task = routine.prompt_text()
     except RoutineError as e:
-        append_log(routine.id, "failed", str(e))
+        append_log(routine.id, "failed", f"{e} (session {session_id})")
         return False, str(e), session_id
 
     prefix = [{"role": "system", "content": system}]
@@ -261,7 +280,14 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
                      model=model)
         conn.commit()
         detail = f"{type(e).__name__}: {e}"
-        append_log(routine.id, "failed", detail, touched=touched)
+        elapsed = (datetime.datetime.now() - started).total_seconds()
+        # The session id goes in the *log*, not just the terminal — a failed
+        # run is the one you most want to open, and on the scheduled path the
+        # terminal line never existed. Return the bare detail so do_routine's
+        # own `transcript: session #N` line stays the single on-screen source.
+        append_log(routine.id, "failed",
+                   f"{detail} ({elapsed:.0f}s, session {session_id})",
+                   touched=touched)
         return False, detail, session_id
 
     conn.commit()

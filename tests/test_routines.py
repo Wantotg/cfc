@@ -467,6 +467,33 @@ def main():
                 runner.run_routine("empty", conn, model="m", interactive=flag)
                 ok(f"{label} runs re-roll the same number of times",
                    len(seen) == runner.EMPTY_COMPLETION_RETRIES + 1, len(seen))
+
+            print("\n--- the guard: unattended runs default to a vetted model ---")
+            # A scheduled run passes model=None; without a default it inherited
+            # MODEL, which may be the very model that stalls. First vetted model
+            # wins; empty list falls back to MODEL so an old config still runs.
+            saved_rm, saved_default = runner.ROUTINE_MODELS, runner.MODEL
+            try:
+                runner.ROUTINE_MODELS = ["vetted-a", "vetted-b"]
+                ok("default routine model is the first vetted one",
+                   runner.default_routine_model() == "vetted-a")
+                runner.ROUTINE_MODELS = []
+                runner.MODEL = "fallback"
+                ok("...falling back to MODEL when the list is empty",
+                   runner.default_routine_model() == "fallback")
+            finally:
+                runner.ROUTINE_MODELS, runner.MODEL = saved_rm, saved_default
+
+            print("\n--- a failed run's log names its session ---")
+            # The session id used to live only on the terminal line, so a
+            # scheduled failure left no durable pointer to the transcript.
+            runner.agent_turn = explode
+            routines.save_routine(make(id="crashlog",
+                                       read_roots=[str(store.pdir)]))
+            okc, _, scid = runner.run_routine("crashlog", conn, model="m")
+            logtext = routines.log_path("crashlog").read_text(encoding="utf-8")
+            ok("a failed run records its session id in the log",
+               okc is False and f"session {scid}" in logtext, logtext)
         finally:
             runner.agent_turn = real_turn
             conn.close()

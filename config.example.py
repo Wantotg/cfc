@@ -23,6 +23,17 @@ MODELS = [
     "moonshotai/kimi-k2.6:thinking",
 ]
 
+# Models vetted for routines (unattended runs). The FIRST entry is the default
+# a scheduled --run-due uses when no model is passed; an on-command :routine on
+# a model that isn't in this list nudges (y/n) before running. The code trusts
+# the list — it does NOT detect "thinking" models, because that judgement is
+# yours: some thinking models run routines fine, others stall on empty
+# completions. Leave unset/empty to fall back to MODEL and skip the nudge.
+ROUTINE_MODELS = [
+    "deepseek/deepseek-v4-pro",
+    "minimax/minimax-m3",
+]
+
 # Context window size in tokens for each model
 # Used by :tokens to show how full the context is
 MODEL_LIMITS = {

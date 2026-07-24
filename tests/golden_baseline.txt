@@ -111,8 +111,8 @@ Current configuration:
   Stream usage:  on
   Vault path:    <ROOT>/tests/_fixture_vault
   Prompts dir:   <ROOT>/tests/_fixture_prompts
-  Quick models:  zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
-moonshotai/kimi-k2.6:thinking
+  Quick models:  zai-org/glm-5.2:thinking, zai-org/glm-5.2, deepseek/deepseek-v4-pro:thinking,
+deepseek/deepseek-v4-pro, moonshotai/kimi-k2.6:thinking, moonshotai/kimi-k2.6, minimax/minimax-m3
 
 you>
 Token usage for session #1 "Golden session one"
@@ -161,8 +161,12 @@ you>                Available models
 ┃ Model                             ┃ Status ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
 │ zai-org/glm-5.2:thinking          │        │
+│ zai-org/glm-5.2                   │        │
 │ deepseek/deepseek-v4-pro:thinking │        │
+│ deepseek/deepseek-v4-pro          │        │
 │ moonshotai/kimi-k2.6:thinking     │        │
+│ moonshotai/kimi-k2.6              │        │
+│ minimax/minimax-m3                │        │
 └───────────────────────────────────┴────────┘
 
 you>
