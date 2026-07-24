@@ -635,6 +635,7 @@ _ALL_COMMANDS = [
         (":detach 1", "remove attachment #1"),
         (":outbox", "review filing proposals"),
         (":file 1", "carry out proposal #1"),
+        (":file 1 decline why", "reject #1, keeping it and the reason"),
     ]),
     ("wiki & routines", [
         (":wiki", "wiki repo status"),
@@ -1584,7 +1585,7 @@ def do_routine(conn, arg, model=None):
 # ':outbox' lists what the model has left for you, each with its verdict
 # already computed — you should be able to see what ':file 1' will do before
 # you type it. ':file <n>' carries one out, ':file all' every valid one,
-# ':file <n> drop' discards.
+# ':file <n> decline [why]' rejects one, keeping it and the reason.
 #
 # The verdicts come from mover.py, which re-validates the model's suggested
 # destination from scratch. Nothing here decides whether a move is allowed;
@@ -1627,7 +1628,8 @@ def show_outbox():
     filable = sum(1 for p in proposals if p.ok)
     console.print()
     console.print(f"  {filable} of {len(proposals)} can be filed", style="dim")
-    console.print("  :file <n> | :file all | :file <n> drop", style="dim")
+    console.print("  :file <n> | :file all | "
+                  ":file <n> decline [why]", style="dim")
     console.print()
     return proposals
 
@@ -1672,8 +1674,8 @@ def _frontmatter_title(path):
 
 
 def do_file(arg):
-    """:file <n> [drop] | :file all — carry out or discard a proposal."""
-    from mover import MoveError, commit, drop, list_proposals
+    """:file <n> [decline [why]] | :file all — carry out or reject a proposal."""
+    from mover import MoveError, commit, decline, list_proposals
 
     proposals = list_proposals()
     if not proposals:
@@ -1682,7 +1684,8 @@ def do_file(arg):
 
     parts = (arg or "").split()
     if not parts:
-        console.print("Usage: :file <n> | :file all | :file <n> drop")
+        console.print("Usage: :file <n> | :file all | "
+                      ":file <n> decline [why]")
         return
 
     if parts[0] == "all":
@@ -1717,12 +1720,19 @@ def do_file(arg):
     # so every number after it shifts by one — and a stale list on screen is
     # not a cosmetic problem: the next ':file 3' means a different file than
     # the one you just read the verdict for.
-    if len(parts) > 1 and parts[1] == "drop":
+    if len(parts) > 1 and parts[1] in ("decline", "drop"):
+        # Everything after the verb is the reason, free text. It is recorded on
+        # the draft itself rather than in a log: the drafts pile up in one
+        # folder and look alike, so a reason kept anywhere else is a join you
+        # have to make later from a filename and a timestamp.
+        reason = " ".join(parts[2:]).strip()
         try:
-            target = drop(proposal)
-            console.print(f"  dropped {proposal.name} → {target}", style="dim")
+            target = decline(proposal, reason)
+            said = f" — {reason}" if reason else ""
+            console.print(f"  declined {proposal.name}{said}", style="dim")
+            console.print(f"     → {target}", style="dim")
         except (MoveError, OSError) as e:
-            console.print(f"  cannot drop {proposal.name}: {e}", style="red")
+            console.print(f"  cannot decline {proposal.name}: {e}", style="red")
         show_outbox()
         return
 

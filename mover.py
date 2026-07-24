@@ -606,8 +606,38 @@ def _loser_subfolder(proposal):
     return "notes"
 
 
-def drop(proposal, trash_dir=None):
-    """Discard a proposal instead of filing it.
+def _stamp_declined(text, reason, when):
+    """Add `declined:` / `declined_reason:` to the draft's frontmatter.
+
+    This is the one place the mover edits a file's frontmatter for its own
+    purposes, and the exception is deliberate. Filing deliberately does *not*
+    add provenance keys — a filed document is the user's content and gets to
+    stay that way. A declined draft is the opposite case: it has left the
+    pipeline, and the only reason to keep it rather than delete it is to work
+    out later what the prompt got wrong. A reason recorded somewhere else is a
+    join you have to make a week later, from a folder of near-identical files.
+
+    Written by hand rather than re-dumped through yaml, for the same reason
+    `_ensure_id` is: round-tripping the whole block through `safe_dump`
+    reformats and re-quotes keys the author wrote by hand, and this vault's
+    frontmatter conventions (unquoted digit ids, wikilinks) do not survive it.
+    """
+    stamped = f"declined: {when.strftime('%Y-%m-%d')}\n"
+    if reason:
+        # Quoted and escaped: a reason is free text typed at a prompt and may
+        # hold a colon, which would otherwise make the block unparseable and
+        # cost the file its frontmatter.
+        clean = " ".join(str(reason).split()).replace("\\", "\\\\").replace('"', '\\"')
+        stamped += f'declined_reason: "{clean}"\n'
+
+    fm, body, raw = split_frontmatter(text)
+    if not raw:
+        return f"---\n{stamped}---\n\n{text.lstrip()}"
+    return f"---{raw.rstrip()}\n{stamped}---\n\n{body}"
+
+
+def decline(proposal, reason="", trash_dir=None, when=None):
+    """Reject a draft, keeping it and the reason it was rejected.
 
     Moved aside rather than deleted. 'Reject this draft' and 'destroy this
     draft' are different intentions, and only one of them is recoverable at
@@ -620,7 +650,8 @@ def drop(proposal, trash_dir=None):
     source = Path(proposal.path)
     if is_reserved(source):
         raise MoveError("the outbox's own readme is not a proposal — "
-                        "it cannot be dropped")
+                        "it cannot be declined")
+    when = when or datetime.datetime.now()
     if trash_dir:
         trash = Path(trash_dir)
     elif loser_dir():
@@ -628,7 +659,26 @@ def drop(proposal, trash_dir=None):
     else:
         trash = source.parent / "dropped"
     trash.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = when.strftime("%Y%m%d-%H%M%S")
     target = trash / f"{stamp}-{source.name}"
-    shutil.move(str(source), str(target))
+
+    # Read, annotate, write, unlink — the same write-then-remove order the
+    # filing path uses, and for the same reason: a crash in between leaves both
+    # copies, which is recoverable, where the reverse can lose the draft.
+    # Falls back to a plain move if the file can't be read as text, since a
+    # draft that resists annotation must still be declinable.
+    try:
+        text = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        shutil.move(str(source), str(target))
+        return target
+
+    target.write_text(_stamp_declined(text, reason, when), encoding="utf-8")
+    source.unlink()
     return target
+
+
+def drop(proposal, trash_dir=None):
+    """Decline with no reason given. Kept because it is the older name and
+    reads right when there is nothing to say beyond "not this one"."""
+    return decline(proposal, "", trash_dir)

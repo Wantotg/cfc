@@ -63,6 +63,7 @@ you>
     :detach 1               remove attachment #1
     :outbox                 review filing proposals
     :file 1                 carry out proposal #1
+    :file 1 decline why     reject #1, keeping it and the reason
 
   wiki & routines
     :wiki                   wiki repo status

@@ -23,6 +23,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — `:file <n> decline [why]` — reject a draft and record why
+The other half of the review step, and the `BACKLOG` entry that asked for a
+losers' folder. Declining moves a draft to `LOSER_DIR/<corpus>` — declined is
+not deleted, and the draft that turns out to have been the good one has to be
+recoverable — and stamps `declined:` / `declined_reason:` into its own
+frontmatter.
+
+**The reason lives on the draft, not in a log.** These pile up in one folder
+and look alike; a reason kept anywhere else is a join you have to make a week
+later from a filename and a timestamp, at which point you are re-deriving what
+was wrong with the prompt instead of reading it. This is the one place the
+mover edits frontmatter for its own purposes and the exception is deliberate:
+*filing* deliberately adds no provenance keys, because a filed document is the
+user's content, whereas a declined draft has left the pipeline and the
+annotation is the entire reason it is kept rather than binned.
+
+Written by hand rather than re-dumped through `yaml`, for the same reason
+`_ensure_id` is — a `safe_dump` round trip re-quotes an unquoted digit id and
+mangles a wikilink, and this vault's frontmatter is full of both. The reason is
+quoted and escaped on the way in, since it is free text typed at a prompt and
+an unquoted colon would cost the file its whole frontmatter block.
+
+No new command verb: it is an argument to the existing `:file`, so it inherits
+the numbering you are already looking at and the v0.8 `/` flip stays a pure
+prefix change. `:file <n> drop` still works as the terse no-reason form.
+- Files: mover.py, commands.py, tests/test_mover.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Cadence: weekly triggers, computed dates, and a YAML octal trap
 The journal's cadence, designed with Cas this session. Three parts.
 
@@ -64,7 +93,7 @@ rather than rotating), and triggers set to `0300` / `weekly 0330` / `command`.
 - Files: routines.py, schedule.py, runner.py, tests/test_routines.py,
   tests/test_schedule.py (+ vault prompts and routines)
 - Status: shipped
-- Commit: pending
+- Commit: f58d1af
 
 ## 2026-07-24 — File journal drafts, with git as the undo
 The v0.7 approve step. `99 outbox/journal/` becomes a second corpus subfolder

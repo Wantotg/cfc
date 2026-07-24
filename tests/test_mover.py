@@ -468,6 +468,50 @@ def main():
         ok("a wiki draft goes to the wiki corner",
            wdrop.parent == (v.losers / "wiki").resolve(), wdrop.parent)
 
+        print("\n--- declining records why, on the draft itself ---")
+        # A folder of near-identical rejected drafts is close to useless for
+        # debugging a prompt if nothing says what was wrong with each one, and
+        # a reason kept in a separate log is a join you have to make later from
+        # a filename and a timestamp.
+        rich_fm = ("---\nid: \"20260721080410\"\ntitle: Short term memory\n"
+                   "related:\n  - \"[[mt memory]]\"\n---\n\n# Body\n")
+        d3 = v.journal_out / "st memory.md"
+        d3.write_text(rich_fm, encoding="utf-8")
+        when = __import__("datetime").datetime(2026, 7, 24, 23, 30)
+        out = mover.decline(mover.plan(d3), "invented a day: no notes existed",
+                            when=when)
+        text = out.read_text(encoding="utf-8")
+        ok("the draft leaves the outbox", not d3.exists())
+        ok("...and is stamped with the date it was declined",
+           "declined: 2026-07-24" in text, text)
+        ok("...and with the reason",
+           "invented a day" in text, text)
+        # A reason is free text typed at a prompt. An unquoted colon would make
+        # the block unparseable and cost the file its frontmatter entirely.
+        import yaml as _y
+        fm_back, _, _ = mover.split_frontmatter(text)
+        ok("a colon in the reason does not break the frontmatter",
+           fm_back.get("declined_reason") == "invented a day: no notes existed",
+           fm_back)
+        # The vault's own conventions must survive: an unquoted digit id and a
+        # wikilink both get mangled by a yaml round-trip, so the block is
+        # edited by hand rather than re-dumped.
+        ok("...the original frontmatter is preserved verbatim",
+           'id: "20260721080410"' in text and "[[mt memory]]" in text, text)
+        ok("...and the body is untouched", text.rstrip().endswith("# Body"), text)
+
+        print("\n--- declining with no reason, and a file with no frontmatter ---")
+        bare = v.journal_out / "bare.md"
+        bare.write_text("just a body, no frontmatter\n", encoding="utf-8")
+        out2 = mover.decline(mover.plan(bare), "", when=when)
+        t2 = out2.read_text(encoding="utf-8")
+        ok("frontmatter is created when there was none",
+           t2.startswith("---\ndeclined: 2026-07-24"), t2)
+        ok("...with no empty reason key", "declined_reason" not in t2, t2)
+        ok("...and the body survives", "just a body" in t2, t2)
+        ok("'drop' still works as the terse form",
+           callable(mover.drop))
+
         print("\n--- with no LOSER_DIR, drops fall back to the outbox ---")
         saved_ld = mover.loser_dir
         mover.loser_dir = lambda: None
