@@ -644,7 +644,7 @@ Its one real consumer is `main.py`'s empty-completion handler. With a human: ask
 
 **That retry is unconditional and deliberately does NOT consult `interactive`.** A routine is a batch job whether or not someone is watching; gating it on the flag would make an on-command run give up on the first hiccup while an unattended one re-rolled twice — exactly backwards. `interactive` has no meaning in `runner.py`, which owns no console and asks nobody anything. `history` is rebuilt per attempt so a re-roll re-sends the identical request; the empty assistant rows `agent_turn` persists are left in the routine's transcript on purpose, since "it returned nothing twice" is what you want the audit trail to say.
 
-### The routine-model guard, and why the re-roll wasn't the whole story (v0.61)
+### The routine-model guard, and why the re-roll wasn't the whole story (v0.6.1)
 
 The empty-completion re-roll above rescues a *transient* hiccup. It cannot rescue a model that returns empties **every time**, and one does: `zai-org/glm-5.2:thinking`, on this provider's current quantization, empties 3/3 re-rolls and fails the run loudly — which is the re-roll working correctly, not a bug to tune. Testing across models settled it: other thinking models (`deepseek-v4-pro:thinking`) run routines fine, so this is one model's current quant, not a property of thinking models. The provider swaps quant per plan and doesn't guarantee one, so this is not something cfc can fix; the response is to keep such a model off the unattended path, not to retry harder (a doomed model just burns the whole budget).
 
@@ -653,7 +653,7 @@ The empty-completion re-roll above rescues a *transient* hiccup. It cannot rescu
 - **Membership, not thinking-detection, is deliberate.** The only signal for "is this a thinking model" is the `:thinking` id suffix — a provider string convention, same brittleness class as the wording matches — and it miscalibrates (`deepseek-v4-pro:thinking` is fine). The list is the judgement; the code trusts it and guesses nothing. Empty/unset list ⇒ no nudge, `MODEL` default, exactly as before.
 - **A failed run now records `(elapsed, session N)` in its log line, like the `ok` line does.** Before, only successful runs logged their session id; a failure logged just the reason, so on the scheduled path (no terminal) the transcript of the run you most want to open was unfindable. This is also what made three *distinct* failed sessions look like a repeated "session #77" — the terminal reported each correctly, but the durable log carried no session id to tell them apart, so cross-checking against it collapsed them.
 
-### Forgiving `:model` (v0.61)
+### Forgiving `:model` (v0.6.1)
 
 `:model` used to set whatever string you typed, verbatim. A one-character slip — `moonshotai/kimi-2.6:thinking` for `…kimi-k2.6…` — went through and came back as an opaque provider 400 a turn later, indistinguishable from a real fault. `commands.resolve_model` (pure) maps a loose query against the pool of `MODELS ∪ ROUTINE_MODELS`; `select_model` is the thin I/O shell over it, wired into `main.py`'s `:model` dispatch.
 

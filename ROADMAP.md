@@ -346,7 +346,7 @@ full loop against the live embedder is verified in use rather than in tests.
  > ^ <
 ```
 
-## v0.61 — Routine models, and a forgiving `:model` — **complete, 2026-07-24**
+## v0.6.1 — Routine models, and a forgiving `:model` — **complete, 2026-07-24**
 
 A small reliability release that came straight out of using v0.6's routines in
 anger. One thinking model (`glm-5.2:thinking`) turned out to stall on this

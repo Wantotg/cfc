@@ -79,8 +79,11 @@ guessing a verb the convention will have to rewrite.
 
 If you tag releases, a small amount of discipline keeps the tags trustworthy:
 
-- **Tags are annotated and named `vX.Y`.** A version that only exists in
-  markdown can't be checked out.
+- **Tags are annotated and named `vMAJOR.MINOR.PATCH`** (semver). A version that
+  only exists in markdown can't be checked out. A **minor** bump is a planned
+  feature version; a **patch** is a fix or QoL release between features. Avoid
+  two-digit "point releases" like `v0.41` — they read ambiguously against
+  `v0.4.1` and stop sorting once the second digit passes 9.
 - **Write the version's note into the tracked docs (e.g. `ROADMAP.md`) *before*
   you tag**, then tag. Tag first and the tag points at a commit that doesn't
   contain its own note — `git checkout vX.Y` then shows a roadmap that doesn't
