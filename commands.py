@@ -638,8 +638,8 @@ _ALL_COMMANDS = [
     ]),
     ("wiki & routines", [
         (":wiki", "wiki repo status"),
-        (":wiki diff [all]", "the diff"),
-        (":wiki commit [all] msg", "stage and commit in scope"),
+        (":wiki diff [scope]", "the diff (scope: wiki/journal/vault)"),
+        (":wiki commit [scope]", "stage & commit; add 'file' to pick one"),
         (":routine", "list routines"),
         (":routine name", "run one now"),
         (":routine new", "create one"),
@@ -1683,10 +1683,83 @@ def _wiki_filed_note():
 # the same split as runner.py, so a future headless caller isn't dragging rich
 # along behind it.
 
-def _wiki_scope(word):
-    """'all' → whole vault, anything else → the wiki corpus."""
+# The ':wiki' grammar is  :wiki <action> <scope> <granularity>.
+#   scope       wiki | journal | vault   ('all' is a soft alias for vault)
+#   granularity folder | file            (default: folder)
+# Scope picks the corpus, granularity picks whole-folder vs pick-one-file. Both
+# are optional and default to the wiki corpus, folder-wide, so the short forms
+# (':wiki diff', ':wiki commit <msg>') keep meaning exactly what they did.
+
+_WIKI_GRANS = ("folder", "file")
+
+
+def _scope_word(word):
+    """A scope keyword → its wikigit constant, or None if `word` isn't one.
+
+    'all' maps to VAULT: the whole-vault behaviour is unchanged, only the word
+    Cas types moved from 'all' to 'vault', and the alias keeps the old one live.
+    """
     import wikigit
-    return wikigit.ALL if (word or "").strip() == "all" else wikigit.WIKI
+    return {
+        "wiki": wikigit.WIKI,
+        "journal": wikigit.JOURNAL,
+        "vault": wikigit.VAULT,
+        "all": wikigit.VAULT,
+    }.get((word or "").strip().lower())
+
+
+def _scope_label(scope):
+    """How a scope is named on screen."""
+    import wikigit
+    return {wikigit.WIKI: "wiki db",
+            wikigit.JOURNAL: "journal",
+            wikigit.VAULT: "the vault"}.get(scope, scope)
+
+
+def _scope_typed(scope):
+    """The word to put back in a suggested command line for `scope`. VAULT is
+    echoed as 'vault' (the canonical word) rather than the 'all' alias."""
+    import wikigit
+    return {wikigit.WIKI: "wiki", wikigit.JOURNAL: "journal",
+            wikigit.VAULT: "vault"}.get(scope, "wiki")
+
+
+def _parse_wiki_args(arg):
+    """':wiki <action> …' arguments → (scope, granularity, rest).
+
+    Consumes an optional leading scope word, then an optional granularity word;
+    whatever remains (a commit message) is returned untouched. A scope or
+    granularity word is only consumed when it is *exactly* one of the keywords,
+    so a commit message may not begin with one of those literal words — the same
+    constraint the old 'all' carried, widened and stated in the usage text.
+    """
+    import wikigit
+    tokens = (arg or "").split()
+    scope, gran = wikigit.WIKI, "folder"
+    if tokens and _scope_word(tokens[0]):
+        scope = _scope_word(tokens.pop(0))
+    if tokens and tokens[0].lower() in _WIKI_GRANS:
+        gran = tokens.pop(0).lower()
+    return scope, gran, " ".join(tokens)
+
+
+def _pick_change(changes):
+    """Numbered pick over changed paths — the hub-picker idiom (input(), so it
+    works headless). Returns the chosen Change, or None on cancel/bad input."""
+    for i, c in enumerate(changes, 1):
+        console.print(f"    {i}) {c.label:8} {c.path}")
+    raw = input("  pick a number (Enter to cancel): ").strip()
+    if not raw:
+        return None
+    try:
+        idx = int(raw)
+    except ValueError:
+        console.print("  not a number — cancelled", style="dim")
+        return None
+    if 1 <= idx <= len(changes):
+        return changes[idx - 1]
+    console.print("  out of range — cancelled", style="dim")
+    return None
 
 
 def _print_changes(changes, indent="     "):
@@ -1743,11 +1816,19 @@ def show_wiki_status():
 
 
 def show_wiki_diff(arg=""):
-    """':wiki diff [all]' — the textual diff, plus untracked files by name."""
+    """':wiki diff [scope] [folder|file]' — the diff, whole-corpus or one file."""
+    scope, gran, _ = _parse_wiki_args(arg)
+    if gran == "file":
+        _wiki_diff_file(scope)
+    else:
+        _wiki_diff_folder(scope)
+
+
+def _wiki_diff_folder(scope):
+    """The whole-corpus diff, plus untracked files by name."""
     import wikigit
     from rich.syntax import Syntax
 
-    scope = _wiki_scope(arg)
     try:
         changes = wikigit.status(scope)
         text = wikigit.diff(scope)
@@ -1756,7 +1837,7 @@ def show_wiki_diff(arg=""):
         console.print()
         return
 
-    where = "the vault" if scope == wikigit.ALL else "wiki db"
+    where = _scope_label(scope)
     console.print()
     if not changes:
         console.print(f"  {where}: nothing changed", style="green")
@@ -1781,28 +1862,81 @@ def show_wiki_diff(arg=""):
         _print_changes(new, indent="    ")
 
     console.print()
-    # A worked example rather than "<message>" — see do_wiki_commit for why.
-    example = "tidied the aquarium pages"
-    console.print(f"  commit it:  :wiki commit "
-                  f"{'all ' if scope == wikigit.ALL else ''}{example}",
+    # A worked example rather than "<message>" — see _wiki_commit_folder for why.
+    word = _scope_typed(scope)
+    prefix = "" if scope == wikigit.WIKI else f"{word} "
+    console.print(f"  commit it:  :wiki commit {prefix}tidied the aquarium "
+                  "pages", style="dim")
+    console.print(f"  or one file:  :wiki diff {prefix}file", style="dim")
+    console.print()
+
+
+def _wiki_diff_file(scope):
+    """Pick one changed file and show just its diff."""
+    import wikigit
+    from rich.syntax import Syntax
+
+    try:
+        changes = wikigit.status(scope)
+    except wikigit.GitError as e:
+        console.print(f"\n  {e}", style="red")
+        console.print()
+        return
+
+    where = _scope_label(scope)
+    console.print()
+    if not changes:
+        console.print(f"  {where}: nothing changed", style="green")
+        console.print()
+        return
+
+    console.print(f"  {where}: pick a file to inspect", style="bold")
+    pick = _pick_change(changes)
+    if pick is None:
+        console.print()
+        return
+
+    console.print()
+    if pick.untracked:
+        console.print(f"  {pick.path}", style="bold")
+        console.print("  new file, not yet tracked — no diff to show",
+                      style="green")
+    else:
+        try:
+            text = wikigit.diff(scope, paths=[pick.path])
+        except wikigit.GitError as e:
+            console.print(f"  {e}", style="red")
+            console.print()
+            return
+        if text.strip():
+            console.print(Syntax(text, "diff", theme="ansi_dark",
+                                 word_wrap=False, background_color="default"))
+
+    console.print()
+    word = _scope_typed(scope)
+    prefix = "" if scope == wikigit.WIKI else f"{word} "
+    console.print(f"  commit just this one:  :wiki commit {prefix}file",
                   style="dim")
     console.print()
 
 
 def do_wiki_commit(arg=""):
-    """':wiki commit [all] <message>' — stage and commit everything in scope.
+    """':wiki commit [scope] [folder|file] <message>' — commit the corpus.
 
     The message is required and is never generated. A commit message written by
     code says nothing a timestamp doesn't already say, and this is the one
     place in cfc that writes permanent history.
     """
-    import wikigit
-
-    parts = (arg or "").split(maxsplit=1)
-    if parts and parts[0] == "all":
-        scope, message = wikigit.ALL, (parts[1] if len(parts) > 1 else "")
+    scope, gran, message = _parse_wiki_args(arg)
+    if gran == "file":
+        _wiki_commit_file(scope, message)
     else:
-        scope, message = wikigit.WIKI, (arg or "")
+        _wiki_commit_folder(scope, message)
+
+
+def _wiki_commit_folder(scope, message):
+    """Stage and commit everything in `scope`."""
+    import wikigit
 
     if not message.strip():
         # A concrete example, not a "<message>" placeholder — the placeholder
@@ -1812,13 +1946,34 @@ def do_wiki_commit(arg=""):
         console.print("The message is just plain text after the command:",
                       style="yellow")
         console.print("  :wiki commit tidied the aquarium pages", style="dim")
-        console.print("  :wiki commit all  (adds the rest of the vault too)",
+        console.print("  :wiki commit vault  (adds the rest of the vault too)",
+                      style="dim")
+        console.print("  :wiki commit wiki file  (pick and commit one file)",
                       style="dim")
         return
 
-    where = "the vault" if scope == wikigit.ALL else "wiki db"
+    where = _scope_label(scope)
     try:
         count = len(wikigit.status(scope))
+    except wikigit.GitError as e:
+        console.print(f"  {e}", style="red")
+        return
+
+    # The whole-vault sweep is the one that bit us with 202 files. It is a
+    # blunt instrument by design (it exists so the *rest* of the vault can be
+    # committed too), so it asks — but only at folder granularity, since a
+    # per-file vault commit is already narrow.
+    if scope == wikigit.VAULT:
+        if count == 0:
+            console.print("  the vault: nothing changed", style="green")
+            return
+        ans = input(f"  commit all {count} change(s) across the whole vault? "
+                    "[y/N]: ").strip().lower()
+        if ans not in ("y", "yes"):
+            console.print("  cancelled", style="dim")
+            return
+
+    try:
         short, subject = wikigit.commit(message, scope)
     except wikigit.GitError as e:
         console.print(f"  {e}", style="red")
@@ -1828,4 +1983,43 @@ def do_wiki_commit(arg=""):
                   f"{short} {subject}", style="green")
     # Said every time, deliberately. The repo has no remote (see wikigit.py),
     # and "committed" reads as "safe" to anyone who has ever used git with one.
+    console.print("  local only — this repo has no remote", style="dim")
+
+
+def _wiki_commit_file(scope, message):
+    """Pick one changed file and commit only it."""
+    import wikigit
+
+    try:
+        changes = wikigit.status(scope)
+    except wikigit.GitError as e:
+        console.print(f"  {e}", style="red")
+        return
+
+    where = _scope_label(scope)
+    if not changes:
+        console.print(f"  {where}: nothing changed", style="green")
+        return
+
+    console.print(f"  {where}: pick a file to commit", style="bold")
+    pick = _pick_change(changes)
+    if pick is None:
+        return
+
+    if not message.strip():
+        # The picker was interactive, so ask for the message right here rather
+        # than bouncing the user back to retype the whole command.
+        message = input(f"  commit message for {pick.path}: ").strip()
+    if not message.strip():
+        console.print("  no message — cancelled", style="dim")
+        return
+
+    try:
+        short, subject = wikigit.commit(message, scope, paths=[pick.path])
+    except wikigit.GitError as e:
+        console.print(f"  {e}", style="red")
+        return
+
+    console.print(f"  committed 1 change in {where} ({pick.path}) — "
+                  f"{short} {subject}", style="green")
     console.print("  local only — this repo has no remote", style="dim")

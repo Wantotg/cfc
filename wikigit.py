@@ -34,7 +34,13 @@ from pathlib import Path
 # runs (invariant #4: nothing else may be driving the terminal, and nothing is).
 _TIMEOUT = 120
 
+# Scope names. A scope is a *corpus* — the slice of the vault repo a command is
+# limited to. WIKI and JOURNAL each resolve to a configured directory; VAULT is
+# the whole repo (no pathspec). ALL is kept as a soft alias for VAULT so the old
+# ":wiki commit all" muscle memory keeps working — same behaviour, older word.
 WIKI = "wiki"
+JOURNAL = "journal"
+VAULT = "vault"
 ALL = "all"
 
 
@@ -53,6 +59,38 @@ def _cfg(key, default=None):
 def wiki_dir():
     d = _cfg("WIKI_DIR", "")
     return Path(d).expanduser().resolve() if d else None
+
+
+def journal_dir():
+    d = _cfg("JOURNAL_DIR", "")
+    return Path(d).expanduser().resolve() if d else None
+
+
+def scope_dir(scope):
+    """The directory a corpus scope is limited to, or None for the whole repo.
+
+    None means "no pathspec" — VAULT/ALL span the entire vault repo. A *named*
+    corpus (WIKI, JOURNAL) with no configured path is a GitError, never a silent
+    widening to the whole vault: the entire point of a scope is that it is
+    narrower than the repo, so failing to configure one must not quietly hand a
+    command the whole thing. JOURNAL is unconfigured until v0.7 gives tiered
+    memory a git-tracked home; the registry is here now so that lands as one
+    config line rather than a new branch.
+    """
+    if scope in (VAULT, ALL):
+        return None
+    if scope == WIKI:
+        d = wiki_dir()
+        if not d:
+            raise GitError("WIKI_DIR is not configured")
+        return d
+    if scope == JOURNAL:
+        d = journal_dir()
+        if not d:
+            raise GitError("JOURNAL_DIR is not configured — the journal scope "
+                           "is not available yet")
+        return d
+    raise GitError(f"unknown scope: {scope!r}")
 
 
 def _git(repo, *args, check=True):
@@ -104,21 +142,28 @@ def repo_root():
     return root
 
 
-def _pathspec(scope, root):
-    """The `--` arguments limiting a command to `scope`. [] means whole repo.
+def _pathspec(scope, root, paths=None):
+    """The `--` arguments limiting a command. [] means the whole repo.
 
     Returned as a list so it splices into an argv, and always introduced by
     `--`: without it git would be free to read a path that happens to look like
     a revision as one.
 
+    `paths`, when given, is a list of repo-relative paths (one, for per-file
+    granularity) and takes precedence over the scope's folder — the command is
+    limited to exactly those paths. This is what turns "commit the whole wiki"
+    into "commit only the file I just looked at".
+
     `root` is passed in rather than looked up. Every caller has already paid
     for one `repo_root()` — which is a subprocess across the /mnt/c bridge —
     and calling it again here would quietly double the cost of every command.
     """
-    if scope == ALL:
+    if paths:
+        return ["--", *paths]
+    d = scope_dir(scope)
+    if d is None:
         return []
-    wiki = wiki_dir()
-    rel = wiki.relative_to(root) if wiki != root else Path(".")
+    rel = d.relative_to(root) if d != root else Path(".")
     return ["--", str(rel)]
 
 
@@ -177,10 +222,11 @@ def _parse_status(raw):
     return changes
 
 
-def status(scope=WIKI, root=None):
-    """Changed paths in `scope`. Sorted by path."""
+def status(scope=WIKI, root=None, paths=None):
+    """Changed paths in `scope` (or limited to `paths`). Sorted by path."""
     root = root or repo_root()
-    raw = _git(root, "status", "--porcelain", "-z", *_pathspec(scope, root))
+    raw = _git(root, "status", "--porcelain", "-z",
+               *_pathspec(scope, root, paths))
     return sorted(_parse_status(raw), key=lambda c: c.path)
 
 
@@ -199,8 +245,8 @@ def summary():
     return wiki, other
 
 
-def diff(scope=WIKI):
-    """The textual diff for `scope`, tracked files only.
+def diff(scope=WIKI, paths=None):
+    """The textual diff for `scope` (or `paths`), tracked files only.
 
     Untracked files are deliberately absent: they have no baseline to diff
     against, and the alternative — `git add --intent-to-add` — mutates the
@@ -208,7 +254,7 @@ def diff(scope=WIKI):
     `status()` reports them, so nothing is hidden; it just isn't a diff.
     """
     root = repo_root()
-    spec = _pathspec(scope, root)
+    spec = _pathspec(scope, root, paths)
     # HEAD rather than the index, so staged and unstaged changes both appear.
     # A vault edited from Obsidian is never staged, but a half-finished
     # terminal session can leave it that way and the diff must still be true.
@@ -221,22 +267,24 @@ def tracked_count(scope=WIKI):
     return len([f for f in raw.split("\0") if f])
 
 
-def commit(message, scope=WIKI):
-    """Stage and commit everything in `scope`. Returns (short_hash, subject).
+def commit(message, scope=WIKI, paths=None):
+    """Stage and commit everything in `scope` (or only `paths`). Returns
+    (short_hash, subject).
 
     Both halves carry the pathspec, and the second one is the load-bearing
     half: `git add -- <spec>` alone would still let a `git commit` sweep up
     anything already staged elsewhere in the vault. Passing the pathspec to
     `commit` too means the resulting commit contains scope and nothing else,
-    whatever state the index was left in by something other than cfc.
+    whatever state the index was left in by something other than cfc. `paths`
+    narrows the same mechanism to a single file — the per-file commit.
     """
     message = (message or "").strip()
     if not message:
         raise GitError("a commit needs a message")
 
     root = repo_root()
-    spec = _pathspec(scope, root)
-    if not status(scope, root):
+    spec = _pathspec(scope, root, paths)
+    if not status(scope, root, paths):
         raise GitError("nothing to commit")
 
     # -A so deletions count. Within the pathspec, a page removed from the wiki

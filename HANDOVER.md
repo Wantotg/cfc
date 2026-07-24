@@ -745,16 +745,39 @@ cannot reach it — there is no tool schema and no dispatch path. Committing has
 right answer, so it is code.
 
 ```
-:wiki                      status — wiki changes listed, the rest of the vault counted
-:wiki diff [all]           the diff
-:wiki commit [all] <msg>   stage + commit everything in scope
+:wiki                            status — wiki changes listed, the rest of the vault counted
+:wiki <diff|commit> [scope] [granularity] [<msg>]
+     scope        wiki (default) | journal | vault      ('all' is a soft alias for vault)
+     granularity  folder (default) | file
 ```
 
-**Scope defaults to `WIKI_DIR` and widens only on the literal word `all`.** The
-wiki corpus is what recall reads, so it is what `:wiki` watches; the rest of the
-vault (`02 areas` holds medical material) is reachable but has to be asked for.
-The status screen *counts* the out-of-scope changes rather than hiding them —
-"wiki db: clean" must not read as "the vault is clean", which is its usual state.
+**The grammar is `:wiki <action> <scope> <granularity>` (v0.7-prep).** Scope
+picks the corpus, granularity picks whole-folder vs pick-one-file. Both are
+optional and default to the wiki corpus, folder-wide, so the short forms
+(`:wiki diff`, `:wiki commit <msg>`) mean exactly what they did before. This is
+the shape v0.7's tiered-memory review inherits — a new corpus is one registry
+entry (`wikigit.scope_dir`), not a new branch.
+
+- **Scope** resolves through `wikigit.scope_dir`: `wiki` → `WIKI_DIR`, `journal`
+  → `JOURNAL_DIR` (unconfigured until v0.7 — a named corpus with no path is a
+  `GitError`, *never* a silent widening to the whole vault), `vault`/`all` → the
+  whole repo (no pathspec). The wiki corpus is what recall reads, so it is the
+  default; the rest of the vault (`02 areas` holds medical material) has to be
+  asked for by name. The status screen *counts* the out-of-scope changes rather
+  than hiding them — "wiki db: clean" must not read as "the vault is clean".
+- **Granularity `file`** runs a numbered picker (`commands._pick_change`, the
+  hub-picker idiom over `input()`, so it works headless) over the changed files
+  in scope, then diffs or commits **only** the chosen one via a `paths=[…]`
+  pathspec. That is the per-file containment the top `BACKLOG` entry asked for:
+  inspect one file's diff, commit *that* one, not the whole set. `commit`'s
+  message is prompted right after the pick when it wasn't on the line.
+- **`:wiki commit vault` asks `[y/N]`** at folder granularity — it is the
+  whole-repo sweep that once committed 202 files in one stroke. A per-file vault
+  commit is already narrow, so it doesn't prompt.
+- **A commit message may not begin with a scope or granularity keyword**
+  (`wiki`/`journal`/`vault`/`all`/`folder`/`file`), since a leading one is
+  consumed as that token — the same constraint the old `all` carried, widened
+  and stated in the usage text.
 
 Four things are load-bearing:
 

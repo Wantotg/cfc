@@ -66,8 +66,8 @@ you>
 
   wiki & routines
     :wiki                   wiki repo status
-    :wiki diff [all]        the diff
-    :wiki commit [all] msg  stage and commit in scope
+    :wiki diff [scope]      the diff (scope: wiki/journal/vault)
+    :wiki commit [scope]    stage & commit; add 'file' to pick one
     :routine                list routines
     :routine name           run one now
     :routine new            create one

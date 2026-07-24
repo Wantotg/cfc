@@ -8,7 +8,24 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
-## ":wiki commit <message>" commits all changes, even when inspecting a specific diff. 0.6 24-07-2026
+## ~~":wiki commit <message>" commits all changes, even when inspecting a specific diff.~~ — FIXED (2026-07-24)
+
+**Fixed:** `:wiki` grew a `<action> <scope> <granularity>` grammar. Granularity
+`file` runs a numbered picker over the changed files in scope and diffs/commits
+**only** the chosen one, via a `paths=[…]` pathspec — the same containment as the
+scope pathspec, one level finer, pinned in `test_wikigit.py` (commit one wiki
+file, assert the other stays uncommitted). And `:wiki commit vault` (formerly
+`all`) now asks `[y/N]` at folder granularity — the whole-repo sweep that
+committed 202 files at once. Both halves of this entry, in one change.
+
+Note the framing shifted during the fix: the move/stamp step is `:file` (the
+mover), not `:wiki commit` (git). "Timestamp and move the files" was never
+`:wiki commit`'s job — it commits what's already in the corpus. Per-file *commit*
+is the git half; per-file *filing* stays `:outbox`/`:file`, and the two are kept
+separate so the `:updatedb` re-import still sits between them.
+
+Original report below.
+
 Description: The command :wiki diff "file" allows user to inspect the diff on file level vs wiki db level, but the commit is wiki db level, not file.
 Problem: user is viewing a single view, a commit there implies a commit on for the diff that is being inspected, not the entire wiki db. Start with file #1 and commiting that, means that now rest of the diff is NOT inspected, and commited -> script timestamps and moves the files.
 Suggestion: inspecting individual diff -> commit -> commits only that diff. Confirms the timestamp, and accapted changes.

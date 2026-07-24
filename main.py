@@ -633,8 +633,11 @@ def run_session(conn, session_id, private=False):
                 do_wiki_commit(rest_arg.strip())
             else:
                 console.print(
-                    "Usage: :wiki | :wiki diff [all] | "
-                    ":wiki commit [all] <message>", style="red")
+                    "Usage: :wiki | :wiki <diff|commit> [scope] [file] "
+                    "[<message>]", style="red")
+                console.print(
+                    "  scope: wiki (default) | journal | vault    "
+                    "granularity: folder (default) | file", style="dim")
             continue
 
         # --- Chat ---

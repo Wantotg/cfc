@@ -23,6 +23,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Per-corpus, per-file `:wiki` — and a guard on the vault sweep
+`:wiki diff`/`:wiki commit` grew a grammar: `:wiki <action> <scope> <granularity>`.
+Scope picks the corpus (`wiki` default, `journal` for v0.7's tiered memory,
+`vault` replacing the old `all` — kept as a soft alias), granularity picks whole
+-folder (default) or `file` — a numbered picker over the changed files that
+diffs or commits **only** the one you choose. That's the BACKLOG top entry:
+inspect one file's diff, commit that one, not the whole set. `:wiki commit vault`
+now asks `[y/N]` — it's the whole-repo sweep that once committed 202 files at
+once. Scope resolves through `wikigit.scope_dir`, a registry v0.7 extends with a
+single line rather than a new branch. Short forms (`:wiki diff`, `:wiki commit
+<msg>`) are unchanged. No move/commit merge — filing (`:file`) stays separate, so
+the `:updatedb` re-import still sits between move and commit.
+- Files: wikigit.py, commands.py, main.py, tests/test_wikigit.py,
+  tests/golden_baseline.txt, HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Forgive loose `:model` queries
 `:model` used to set whatever string you typed, so a one-character slip
 (`kimi-2.6` for `kimi-k2.6`) went through and came back as an opaque provider

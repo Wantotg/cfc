@@ -260,6 +260,56 @@ def main():
             ok("...leaving the repo clean",
                wikigit.status(wikigit.ALL) == [])
 
+    print("\n--- scope registry ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Repo(tmp) as r:
+            ok("wiki scope resolves to the wiki dir",
+               wikigit.scope_dir(wikigit.WIKI) == r.wiki, wikigit.scope_dir(wikigit.WIKI))
+            ok("vault scope is the whole repo (no pathspec)",
+               wikigit.scope_dir(wikigit.VAULT) is None)
+            ok("...and 'all' is a soft alias for vault",
+               wikigit.scope_dir(wikigit.ALL) is None)
+            # A named corpus with no configured path is an error, never a
+            # silent widening to the whole vault — the point of a scope is that
+            # it is narrower than the repo.
+            try:
+                wikigit.scope_dir(wikigit.JOURNAL)
+                ok("an unconfigured named corpus is refused", False)
+            except wikigit.GitError as e:
+                ok("an unconfigured named corpus is refused",
+                   "not available" in str(e) or "not configured" in str(e), e)
+            try:
+                wikigit.scope_dir("bogus")
+                ok("an unknown scope is refused", False)
+            except wikigit.GitError:
+                ok("an unknown scope is refused", True)
+
+    print("\n--- per-file granularity ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Repo(tmp) as r:
+            # Two changes inside the wiki. A per-file commit must take exactly
+            # the file it was handed and leave the other one uncommitted — the
+            # same containment as scope, one level finer. This is the BACKLOG
+            # entry: inspect one file's diff, commit that one, not the whole set.
+            (r.wiki / "20260101000000.md").write_text("# edited A\n")
+            (r.wiki / "20260101000001.md").write_text("# edited B\n")
+            one = "03 resources/wiki db/20260101000000.md"
+            two = "03 resources/wiki db/20260101000001.md"
+
+            d = wikigit.diff(wikigit.WIKI, paths=[one])
+            ok("a per-file diff shows only that file",
+               "edited A" in d and "edited B" not in d, d)
+
+            short, subject = wikigit.commit("just A", wikigit.WIKI, paths=[one])
+            files = r.files_in_head()
+            ok("a per-file commit contains the chosen file",
+               one in files, files)
+            ok("...and NOT the other changed wiki file", two not in files, files)
+            ok("...which is still uncommitted afterwards",
+               two in [c.path for c in wikigit.status()])
+            ok("a per-file commit returns hash and subject",
+               len(short) >= 7 and subject == "just A", (short, subject))
+
     print("\n--- there is no push ---")
     # Read off the AST rather than grepping the source, so the assertion is
     # about the git subcommands the module can actually issue and not about
