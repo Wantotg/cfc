@@ -1401,7 +1401,7 @@ def show_routines():
 
     table = Table(show_header=True, header_style="bold", box=None,
                   padding=(0, 2, 0, 0))
-    for col in ("id", "name", "trigger", "write", "last run"):
+    for col in ("id", "name", "model", "trigger", "write", "last run"):
         table.add_column(col)
     for r in found:
         status, ts = last_run(r.id)
@@ -1409,7 +1409,7 @@ def show_routines():
         label = r.id if r.enabled else f"{r.id} (disabled)"
         if problems[r.id]:
             label = f"! {label}"
-        table.add_row(label, r.name, str(r.trigger),
+        table.add_row(label, r.name, r.model or "default", str(r.trigger),
                       "yes" if r.write_roots else "no", when)
     console.print(table)
 
@@ -1487,7 +1487,23 @@ def create_routine():
     if on_failure is None:
         return
 
-    routine = Routine(id=rid, name=name, prompt=prompt,
+    # Optional model pin. Blank = the routine uses the vetted default (or the
+    # session's model on an on-command run). Same resolver as :model, plus a
+    # note when the pick isn't vetted for unattended runs.
+    model = ""
+    mchoice = _ask("  model (blank = routine default)", "")
+    if mchoice is None:
+        return
+    if mchoice.strip():
+        picked = select_model(mchoice.strip())
+        if picked:
+            model = picked
+            if ROUTINE_MODELS and model not in ROUTINE_MODELS:
+                console.print(f"  note: {model} isn't in ROUTINE_MODELS — it "
+                              "may stall on empty completions when run "
+                              "unattended.", style="yellow")
+
+    routine = Routine(id=rid, name=name, prompt=prompt, model=model,
                       read_roots=read_roots, write_roots=write_roots,
                       trigger=trigger, on_failure=on_failure, enabled=True,
                       body=f"Created via :routine new.")
@@ -1508,26 +1524,37 @@ def create_routine():
 
 def do_routine(conn, arg, model=None):
     """:routine <name> — run one now, narrating as it goes."""
-    from routines import RoutineError
-    from runner import run_routine
+    from routines import RoutineError, load_routine
+    from runner import effective_model, run_routine
 
     console.print()
+    # Resolve the routine up front so the warning below can name the model that
+    # will *actually* run — its own pin if it has one, otherwise the session's.
+    try:
+        routine = load_routine(arg)
+    except RoutineError as e:
+        console.print(f"  {e}", style="red")
+        console.print()
+        return
+
     # A routine is unattended-shaped even on command: if it stalls on empty
     # completions there's no turn to salvage. Nudge — don't block — when the
-    # model isn't one vetted for routines. Membership, not a thinking-model
-    # guess: ROUTINE_MODELS is the judgement. Empty list ⇒ nothing to compare
-    # against, so no nag.
-    if model and ROUTINE_MODELS and model not in ROUTINE_MODELS:
+    # effective model isn't one vetted for routines. Membership, not a
+    # thinking-model guess: ROUTINE_MODELS is the judgement. Empty list ⇒
+    # nothing to compare against, so no nag.
+    eff = effective_model(routine, model)
+    if eff and ROUTINE_MODELS and eff not in ROUTINE_MODELS:
+        pinned = " (pinned)" if routine.model else ""
         console.print(
-            f"{arg} will run on {model}, which isn't in ROUTINE_MODELS. "
-            f"It may stall on empty completions.", style="yellow")
+            f"{routine.id} will run on {eff}{pinned}, which isn't in "
+            f"ROUTINE_MODELS. It may stall on empty completions.", style="yellow")
         if input("Run anyway? (y/n) ").strip().lower() != "y":
             console.print("  cancelled", style="dim")
             console.print()
             return
-    console.print(f"Running routine: {arg}")
+    console.print(f"Running routine: {routine.name}")
     ok, summary, session_id = run_routine(
-        arg, conn, model=model,
+        routine, conn, model=model,
         # A human is present for an on-command run. The scheduled path passes
         # False, which is what ToolContext.interactive is reserved for.
         interactive=True,

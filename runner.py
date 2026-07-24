@@ -52,6 +52,23 @@ def default_routine_model():
     """
     return ROUTINE_MODELS[0] if ROUTINE_MODELS else MODEL
 
+
+def effective_model(routine, caller_model=None):
+    """The model a routine actually runs on, resolving three sources in order.
+
+    1. **The routine's own `model`** (frontmatter). A pinned model is a
+       deliberate, persisted choice attached to the task, so it wins — including
+       over the ambient session model on an on-command run. Before this, a
+       scheduled routine could only ever run on `default_routine_model()`.
+    2. **The caller's model** — the session's, which `do_routine` passes on the
+       on-command path. `None` on the scheduled path.
+    3. **The vetted default** — `default_routine_model()`.
+
+    One function so `do_routine` (which warns about the model) and `run_routine`
+    (which uses it) can never disagree about which model a run will use.
+    """
+    return getattr(routine, "model", "") or caller_model or default_routine_model()
+
 # A routine gets a bigger tool budget than a chat turn, because the number was
 # never really about cost — it is about how long a runaway loop may go before a
 # human interrupts it, and a routine has no human. In chat, hitting the ceiling
@@ -222,9 +239,9 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         event(f"last run failed at {prev_ts} (on_failure: {routine.on_failure})")
 
     ctx = routine.context(interactive=interactive)
-    # An explicit model (the on-command path passes the session's) wins; only
-    # an unattended run with none given falls to the vetted default.
-    model = model or default_routine_model()
+    # The routine's own pinned model wins, then the caller's (the session's, on
+    # the on-command path), then the vetted default for an unattended run.
+    model = effective_model(routine, model)
     started = datetime.datetime.now()
 
     # provider marks this as a routine run so the hub can filter it out

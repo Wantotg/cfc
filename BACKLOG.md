@@ -35,7 +35,26 @@ Also: :wiki commit all should give a (y/n) warning 'are you sure'. (may be imple
 Transcript: **2026-07-24 12:20:36** — ok — I cannot perform this task. The `mt memory.md` and `lt memory.md` files live in `/mnt/c/Users/disse/cooking for cats/03 resources/tiered memory/`, which is outside my allowed readable roots (`99 outbo… (42s, session 87)
 That is good and bad, report of the model came through, so that's ok. But the script needs to read the models message and flag certain keywords/phrases. Routine overview should show that the routine worked (the ok) but also flag the user that the log shows something irregular, to be inspected. "last routine performed at *timestamp*, result unclear?" 
 
-## Model selection is too generous, accepts anything. No routine model selection possible.
+## Model selection is too generous, accepts anything. ~~No routine model selection possible.~~
+
+**Routine model selection — FIXED (2026-07-24).** Routines gained an optional
+`model:` frontmatter field. `runner.effective_model` resolves routine pin ›
+caller/session model › vetted default, everywhere (both the `do_routine` nudge
+and `run_routine` use it). `:routine new` prompts for one, `:routine` shows a
+model column, and it round-trips through the file (omitted when unset). Before,
+every scheduled routine could only run on `ROUTINE_MODELS[0]`.
+
+**Still open — `:model` is deliberately generous** (the first half of this
+entry). `select_model` sets an unrecognised id anyway, with a dim note, because
+`MODELS` is not meant to be exhaustive and a wrong name fails loud at the first
+turn with a provider 400 (see the closed longcat entry). `'deepseek pro'` /
+`'shanhaig'` below are that behaviour, not a bug — they're typos that also missed
+the fuzzy-match cutoff. Tightening this (reject unless in `MODELS`, or a
+stricter fuzzy cutoff) is a real option but a **design decision for Cas**, not a
+clear defect. Parked until he calls it.
+
+Original report below.
+
 **deepseek pro' isn't in your configured models — setting it anyway
 Switched to model: deepseek pro
 Current model: deepseek pro

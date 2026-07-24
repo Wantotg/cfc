@@ -44,7 +44,7 @@ DEFAULTS = {
 
 # Frontmatter keys written in this order — a stable field order keeps the diff
 # of an edited routine readable in git/Obsidian.
-FIELD_ORDER = ("id", "name", "prompt", "read_roots", "write_roots",
+FIELD_ORDER = ("id", "name", "prompt", "model", "read_roots", "write_roots",
                "trigger", "on_failure", "enabled")
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -159,7 +159,7 @@ class Routine:
     frontmatter.
     """
 
-    def __init__(self, id, name, prompt, read_roots=(), write_roots=(),
+    def __init__(self, id, name, prompt, model="", read_roots=(), write_roots=(),
                  trigger="command", on_failure="retry", enabled=True,
                  body="", path=None):
         # The id is normalised to a slug here, at the one construction
@@ -174,6 +174,14 @@ class Routine:
         self.id = slugify(id)
         self.name = name
         self.prompt = prompt
+        # The model this routine runs on. Optional and kept as an opaque string
+        # here on purpose: routines.py imports only context/paths/yaml, so it
+        # does not know config.MODELS and must not start — vetting the model
+        # against ROUTINE_MODELS is the runner's and the REPL's job, where
+        # config already lives. Empty means "use the caller's or the vetted
+        # default" (see runner.effective_model). A routine's own pin is a
+        # deliberate, persisted choice, so it wins over the ambient default.
+        self.model = (model or "").strip()
         self.read_roots = tuple(str(r) for r in read_roots)
         self.write_roots = tuple(str(r) for r in write_roots)
         self.trigger = trigger
@@ -294,16 +302,21 @@ class Routine:
             "id": self.id,
             "name": self.name,
             "prompt": self.prompt,
+            "model": self.model,
             "read_roots": list(self.read_roots),
             "write_roots": list(self.write_roots),
             "trigger": self.trigger,
             "on_failure": self.on_failure,
             "enabled": self.enabled,
         }
+        # An unset model is omitted rather than written as `model: ''`, so a
+        # hand-authored routine that never pins one stays minimal and the
+        # round-trip is byte-stable (from_markdown reads a missing key as "").
         ordered = "".join(
             yaml.safe_dump({k: fm[k]}, default_flow_style=False,
                            allow_unicode=True, sort_keys=False)
             for k in FIELD_ORDER
+            if not (k == "model" and not fm[k])
         )
         return f"---\n{ordered}---\n\n{self.body.strip()}\n"
 
@@ -320,6 +333,7 @@ class Routine:
             id=str(fm["id"]),
             name=str(fm["name"]),
             prompt=str(fm["prompt"]),
+            model=fm.get("model") or "",
             read_roots=fm.get("read_roots") or (),
             write_roots=fm.get("write_roots") or (),
             trigger=str(fm.get("trigger", DEFAULTS["trigger"])),
@@ -342,7 +356,7 @@ class Routine:
         if not isinstance(other, Routine):
             return NotImplemented
         return all(getattr(self, f) == getattr(other, f) for f in
-                   ("id", "name", "prompt", "read_roots", "write_roots",
+                   ("id", "name", "prompt", "model", "read_roots", "write_roots",
                     "trigger", "on_failure", "enabled", "body"))
 
 

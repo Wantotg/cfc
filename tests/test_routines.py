@@ -107,6 +107,22 @@ def main():
             r.to_markdown().rstrip() + "\n\n\n")
         ok("trailing whitespace is not part of identity", trailing == r)
 
+        # The model field: optional, round-trips when set, and is OMITTED when
+        # unset so a hand-authored routine stays minimal and byte-stable.
+        ok("an unset model is omitted from the file, not written empty",
+           "model:" not in r.to_markdown(), r.to_markdown())
+        pinned = make(id="pinned", model="zai-org/glm-5.2:thinking",
+                      read_roots=[str(store.pdir)])
+        routines.save_routine(pinned)
+        pinned_back = routines.load_routine("pinned")
+        ok("a pinned model round-trips through the file",
+           pinned_back.model == "zai-org/glm-5.2:thinking" and pinned_back == pinned,
+           (pinned_back.model, pinned_back == pinned))
+        ok("...and appears in the frontmatter",
+           "model: zai-org/glm-5.2:thinking" in pinned.to_markdown(),
+           pinned.to_markdown())
+        (store.rdir / "pinned.md").unlink()   # leave the store as found
+
         print("\n--- load by id and by name ---")
         ok("by id", routines.load_routine("nightly").id == "nightly")
         ok("by display name", routines.load_routine("Nightly").id == "nightly")
@@ -481,6 +497,22 @@ def main():
                 runner.MODEL = "fallback"
                 ok("...falling back to MODEL when the list is empty",
                    runner.default_routine_model() == "fallback")
+
+                # effective_model resolves three sources in order: the routine's
+                # own pin wins over everything, then the caller's model, then the
+                # vetted default. This is the whole point of the model field —
+                # a routine can declare a model instead of always inheriting one.
+                runner.ROUTINE_MODELS = ["vetted-a"]
+                pinned = make(id="p", model="pinned-x")
+                bare = make(id="b")
+                ok("a routine's pinned model wins over the caller's",
+                   runner.effective_model(pinned, "session-y") == "pinned-x")
+                ok("...and over the vetted default",
+                   runner.effective_model(pinned, None) == "pinned-x")
+                ok("no pin falls to the caller's model (on-command)",
+                   runner.effective_model(bare, "session-y") == "session-y")
+                ok("no pin and no caller falls to the vetted default (scheduled)",
+                   runner.effective_model(bare, None) == "vetted-a")
             finally:
                 runner.ROUTINE_MODELS, runner.MODEL = saved_rm, saved_default
 

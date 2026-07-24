@@ -23,6 +23,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Let a routine pin its own model
+Routines gained an optional `model:` frontmatter field, so a routine can declare
+the model it runs on instead of every scheduled run inheriting the single vetted
+default. `runner.effective_model` resolves one order everywhere — routine pin ›
+caller's (session) model › vetted default — and both `do_routine` (the y/n nudge)
+and `run_routine` go through it, so the warning names the model that actually
+runs. The field stays an opaque string in `routines.py` (which imports no config)
+and is omitted from the file when unset. `:routine new` offers a model pick
+(blank = no pin); `:routine` shows a model column.
+- Files: routines.py, runner.py, commands.py, tests/test_routines.py,
+  HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Per-corpus, per-file `:wiki` — and a guard on the vault sweep
 `:wiki diff`/`:wiki commit` grew a grammar: `:wiki <action> <scope> <granularity>`.
 Scope picks the corpus (`wiki` default, `journal` for v0.7's tiered memory,
@@ -38,7 +52,7 @@ the `:updatedb` re-import still sits between move and commit.
 - Files: wikigit.py, commands.py, main.py, tests/test_wikigit.py,
   tests/golden_baseline.txt, HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: cb2ad1f
 
 ## 2026-07-24 — Forgive loose `:model` queries
 `:model` used to set whatever string you typed, so a one-character slip
