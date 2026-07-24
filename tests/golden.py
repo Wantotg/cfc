@@ -51,6 +51,21 @@ FIXTURE_PERSONAS = HERE / "_fixture_personas"
 # is to notice when output changes. Now it runs for real, into here.
 FIXTURE_VAULT = HERE / "_fixture_vault"
 
+# The same rule the prompts fixture follows, applied to config.py's model
+# lists: :config, :models and :tools print them verbatim, so editing your own
+# MODELS failed `check` on lines that describe your config and not the code.
+#
+# Short ids on purpose — :models renders a rich table whose column width is
+# the longest id, so a real provider id makes the *layout* config-derived too.
+# 'glm-5.2' matches the fixture sessions' model, so it exercises the
+# '<-- current' row; keeping it out of TOOLS_MODELS is what keeps the :tools
+# "NOT in TOOLS_MODELS" branch covered.
+FIXTURE_MODEL = "glm-5.2"
+FIXTURE_MODELS = ["glm-5.2", "fixture/tool-model"]
+FIXTURE_TOOLS_MODELS = ["fixture/tool-model"]
+FIXTURE_ROUTINE_MODELS = ["fixture/tool-model"]
+FIXTURE_API_BASE = "https://api.example.invalid/v1"
+
 # Commands to drive. No API calls: no chat turns, no :recall, no :remember.
 SCRIPT = [
     ":help",
@@ -294,6 +309,29 @@ def capture():
         if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
             if hasattr(mod, "AUTO_EXPORT"):
                 setattr(mod, "AUTO_EXPORT", True)
+
+    # Same class of bug as the API key, one layer up: :config, :models and
+    # :tools all print config.py's model lists straight into the baseline, so
+    # adding a model to your own config failed `check` on lines that say
+    # nothing whatever about the code. Scrubbing them is the wrong tool — they
+    # render inside a rich table whose column widths move with the longest id,
+    # so the *layout* is config-derived too. Pin the lists instead, exactly as
+    # DB_PATH and VAULT_PATH are pinned, and the baseline goes back to being a
+    # property of the source.
+    #
+    # FIXTURE_MODELS is deliberately unlike a real config: two short ids, one
+    # tools-capable and one not, which is what the `:tools` "NOT in
+    # TOOLS_MODELS" branch needs to stay covered.
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
+            for attr, val in (("MODEL", FIXTURE_MODEL),
+                              ("MODELS", FIXTURE_MODELS),
+                              ("TOOLS_MODELS", FIXTURE_TOOLS_MODELS),
+                              ("ROUTINE_MODELS", FIXTURE_ROUTINE_MODELS),
+                              ("API_BASE", FIXTURE_API_BASE)):
+                if hasattr(mod, attr):
+                    setattr(mod, attr, val if isinstance(val, str)
+                            else list(val))
 
     # get_prompts_dir()/get_personas_dir() read these at call time, so patching
     # the module attribute is enough and no call site needs to know.

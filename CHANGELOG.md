@@ -23,6 +23,47 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Configure the journal corpus, and stop the baseline pinning config
+v0.7 groundwork, plus two faults it turned up. `JOURNAL_DIR` is now a real
+config key, so `:wiki … journal` — reserved but unusable since v0.6.2 — resolves;
+the mover will file journal drafts there next. Turning it on failed
+`test_wikigit`, which asserted "an unconfigured corpus is refused" against
+*this machine's* config rather than a forced value: the property is real, the
+test was reading the wrong source. Same bug, larger, in `golden.py` — `:config`,
+`:models` and `:tools` print `MODELS`/`TOOLS_MODELS`/`MODEL`/`API_BASE`
+verbatim, so editing your own config failed `check` on lines that say nothing
+about the code, exactly the tripwire the API-key scrub exists to prevent. Both
+now pin fixture values instead. Scrubbing was the wrong tool for the model
+lists: `:models` renders a table whose column width is the longest id, so the
+layout is config-derived too. Re-recorded; the diff also lit up the
+`<-- current` row, which no real config had been exercising.
+- Files: config.py, config.example.py, tests/golden.py,
+  tests/golden_baseline.txt, tests/test_wikigit.py
+- Status: shipped
+- Commit: pending
+
+## 2026-07-24 — Stop `:routine` taking the app down on a typo
+`:routines` (or any `:routineX`) matched the bare `startswith(":routine")`
+branch, then indexed `[1]` of a one-element split — an uncaught `IndexError`
+out through `repl()` to the shell, losing the session. The dispatch now matches
+`":routine "` with the trailing space, the same guard `":wiki "` already had, so
+a near-miss falls through to the unknown-command message. Found in Cas's 0.6.2
+testing pass.
+- Files: main.py
+- Status: shipped
+- Commit: pending
+
+## 2026-07-24 — Fix a missing comma that silently disabled two models' tools
+`TOOLS_MODELS` had `"minimax/minimax-m3:thinking"` and `"minimax/minimax-m3"` on
+adjacent lines with no comma between them, so Python concatenated the literals
+into one nonexistent id and *neither* minimax model was in the list. `:tools`
+duly reported "NOT in TOOLS_MODELS" with nothing to suggest why. Config-only
+(gitignored); recorded here because the failure mode — adjacent string literals
+in a list — is silent and will happen again.
+- Files: config.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Split a routine's outcome into two signals
 A run's log status was one ok/failed bit, but it was carrying two facts: did the
 loop mechanically complete, and did the model actually do the task. A run that

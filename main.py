@@ -626,7 +626,11 @@ def run_session(conn, session_id, private=False):
             show_routines()
             continue
 
-        if user.startswith(":routine"):
+        # The trailing space is load-bearing: ':routines' matched the bare
+        # prefix, then indexed [1] of a one-element split and took the whole
+        # app down with an IndexError. Same guard as ':wiki ' below.
+
+        if user.startswith(":routine "):
             arg = user.split(maxsplit=1)[1].strip()
             if arg == "new":
                 create_routine()

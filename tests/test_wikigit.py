@@ -65,6 +65,7 @@ class Repo:
     def __init__(self, tmp):
         self.root = Path(tmp).resolve() / "cooking for cats"
         self.wiki = self.root / "03 resources" / "wiki db"
+        self.journal = self.root / "03 resources" / "journal"
         self.areas = self.root / "02 areas"
 
         # Invariant #1: assert the path before anything writes to it. A test
@@ -72,6 +73,7 @@ class Repo:
         assert str(self.root).startswith(tempfile.gettempdir()), self.root
 
         self.wiki.mkdir(parents=True)
+        self.journal.mkdir(parents=True)
         self.areas.mkdir(parents=True)
 
         git(self.root.parent, "init", "-q", str(self.root))
@@ -79,17 +81,22 @@ class Repo:
         git(self.root, "config", "user.name", "Test")
         (self.wiki / "20260101000000.md").write_text("# page one\n")
         (self.wiki / "20260101000001.md").write_text("# page two\n")
+        (self.journal / "st memory.md").write_text("# short term\n")
         (self.areas / "medical notes.md").write_text("# private\n")
         git(self.root, "add", "-A")
         git(self.root, "commit", "-q", "-m", "baseline")
 
     def __enter__(self):
-        self._saved = wikigit.wiki_dir
+        # Both corpora are patched, never read from config.py: a test whose
+        # assertions depend on whether *this machine* has JOURNAL_DIR set is
+        # the same bug the golden harness had with MODELS.
+        self._saved = (wikigit.wiki_dir, wikigit.journal_dir)
         wikigit.wiki_dir = lambda: self.wiki
+        wikigit.journal_dir = lambda: self.journal
         return self
 
     def __exit__(self, *exc):
-        wikigit.wiki_dir = self._saved
+        wikigit.wiki_dir, wikigit.journal_dir = self._saved
 
     def files_in_head(self):
         return set(git(self.root, "show", "--name-only", "--pretty=",
@@ -107,8 +114,12 @@ def main():
                wikigit.repo_root() == r.root, wikigit.repo_root())
             ok("tracked_count counts wiki pages only",
                wikigit.tracked_count() == 2, wikigit.tracked_count())
+            ok("...and journal pages only under 'journal'",
+               wikigit.tracked_count(wikigit.JOURNAL) == 1,
+               wikigit.tracked_count(wikigit.JOURNAL))
             ok("...and the whole repo under 'all'",
-               wikigit.tracked_count(wikigit.ALL) == 3)
+               wikigit.tracked_count(wikigit.ALL) == 4,
+               wikigit.tracked_count(wikigit.ALL))
 
     # The cwd trap: cfc runs inside its own git repo, so a module that
     # discovered the repo from the process cwd would diff and commit cfc's
@@ -269,15 +280,24 @@ def main():
                wikigit.scope_dir(wikigit.VAULT) is None)
             ok("...and 'all' is a soft alias for vault",
                wikigit.scope_dir(wikigit.ALL) is None)
+            ok("journal scope resolves to the journal dir",
+               wikigit.scope_dir(wikigit.JOURNAL) == r.journal,
+               wikigit.scope_dir(wikigit.JOURNAL))
             # A named corpus with no configured path is an error, never a
             # silent widening to the whole vault — the point of a scope is that
-            # it is narrower than the repo.
+            # it is narrower than the repo. Unconfigured is forced here rather
+            # than inherited from config.py, or this assertion would pass only
+            # on a machine that hasn't set JOURNAL_DIR yet — and would go
+            # silently uncovered the day one did.
+            saved, wikigit.journal_dir = wikigit.journal_dir, lambda: ""
             try:
                 wikigit.scope_dir(wikigit.JOURNAL)
                 ok("an unconfigured named corpus is refused", False)
             except wikigit.GitError as e:
                 ok("an unconfigured named corpus is refused",
                    "not available" in str(e) or "not configured" in str(e), e)
+            finally:
+                wikigit.journal_dir = saved
             try:
                 wikigit.scope_dir("bogus")
                 ok("an unknown scope is refused", False)

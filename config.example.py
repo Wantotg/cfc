@@ -168,11 +168,18 @@ ROUTINE_LOG_DIR = ""        # e.g. "<vault>/99 outbox/routine logs"
 # model the same reach, which is what the outbox exists to prevent.
 MOVE_ROOTS = ()             # e.g. (Path("<vault>"),)
 
-# Destinations under here are refused outright. Writing a page into the wiki
-# changes the corpus, but the index doesn't know until import_wiki.py runs, so
-# recall would answer from a stale copy with no signal that it's stale. Leave
+# The wiki corpus: what recall reads, and the default scope of ':wiki'.
+# Filing a page in here changes the corpus without the index knowing, so
+# ':file' sets a reindex marker and says so, and ':updatedb' clears it. Leave
 # empty if you have no wiki corpus.
 WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
+
+# The journal corpus: the tiered memory files the memory routines rewrite.
+# A ':wiki … journal' scope, and where journal drafts in '<outbox>/journal'
+# are filed to. Filing here **replaces** a live file — that is what a rollover
+# is — so the mover refuses the move unless this corpus is git-clean, leaving
+# ':wiki diff journal' as the record of what changed. Leave empty if unused.
+JOURNAL_DIR = ""            # e.g. "<vault>/03 resources/journal"
 
 # --- terminal input --------------------------------------------------------
 # Let the mouse position the cursor in the input line. Off by default, and the

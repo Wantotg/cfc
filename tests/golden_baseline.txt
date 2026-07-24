@@ -103,16 +103,15 @@ you>                                               Sessions
 
 you>
 Current configuration:
-  API base:      https://api.nano-gpt.com/v1
+  API base:      https://api.example.invalid/v1
   API key:       <KEY>
-  Default model: zai-org/glm-5.2:thinking
+  Default model: glm-5.2
   Session model: glm-5.2
   Auto-export:   on
   Stream usage:  on
   Vault path:    <ROOT>/tests/_fixture_vault
   Prompts dir:   <ROOT>/tests/_fixture_prompts
-  Quick models:  zai-org/glm-5.2:thinking, zai-org/glm-5.2, deepseek/deepseek-v4-pro:thinking,
-deepseek/deepseek-v4-pro, moonshotai/kimi-k2.6:thinking, moonshotai/kimi-k2.6, minimax/minimax-m3
+  Quick models:  glm-5.2, fixture/tool-model
 
 you>
 Token usage for session #1 "Golden session one"
@@ -156,18 +155,13 @@ you>       All tags
 └────────┴──────────┘
 
 you> Current model: glm-5.2
-you>                Available models
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
-┃ Model                             ┃ Status ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
-│ zai-org/glm-5.2:thinking          │        │
-│ zai-org/glm-5.2                   │        │
-│ deepseek/deepseek-v4-pro:thinking │        │
-│ deepseek/deepseek-v4-pro          │        │
-│ moonshotai/kimi-k2.6:thinking     │        │
-│ moonshotai/kimi-k2.6              │        │
-│ minimax/minimax-m3                │        │
-└───────────────────────────────────┴────────┘
+you>           Available models
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Model              ┃ Status      ┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ glm-5.2            │ <-- current │
+│ fixture/tool-model │             │
+└────────────────────┴─────────────┘
 
 you>
 Available prompts (<ROOT>/tests/_fixture_prompts):
@@ -202,8 +196,7 @@ Tools: inactive this turn
   master switch (TOOLS_ENABLED): on
   session toggle (:tools on|off): on
   model glm-5.2: NOT in TOOLS_MODELS
-    tools work with: zai-org/glm-5.2:thinking, deepseek/deepseek-v4-pro:thinking,
-moonshotai/kimi-k2.6:thinking
+    tools work with: fixture/tool-model
   read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
   write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
   approval: every call is gated (no auto-approve exists)
