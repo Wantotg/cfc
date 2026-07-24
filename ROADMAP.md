@@ -381,8 +381,12 @@ its own model in frontmatter) is the tidier long-term shape but touches the
 routine round-trip and its tests, so it's parked for a future feature rather
 than bolted on here.
 
-> *(note-shaped hole for Cas)*
-
+> *(note-shaped hole for Cas) Almost trapped by my version conventions. Testing different models on the same task was promising, routine functionning improved with some fixes and quality of life features. Testing continues before the small update to 0.7, preparing for the consolidation of mechanics and a smoother user experience in 0.8*
+```
+ /\⠀⠀/\  'There are 2 r's in strawberry.'
+( ◍•⩊•◍)
+/ ⊃🍓⊂\
+```
 ## v0.7 — Tiered memory
 
 ## v0.8 — Prompts, personas, traits, and one way to add them
