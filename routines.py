@@ -49,7 +49,64 @@ FIELD_ORDER = ("id", "name", "prompt", "model", "read_roots", "write_roots",
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _WIKILINK_RE = re.compile(r"^\[\[(.+)\]\]$")
-_TRIGGER_RE = re.compile(r"^(command|\d{4})$")
+# 'command' | 'HHMM' (daily) | 'weekly HHMM'.
+#
+# `weekly` does NOT mean "on Mondays". It means "when a completed calendar week
+# has gone unabsorbed" — see last_completed_week below. The distinction is the
+# whole point: a Monday check is one the machine being off on Monday makes you
+# miss entirely, and the missed week is then never processed by anything.
+_TRIGGER_RE = re.compile(r"^(command|\d{4}|weekly\s+\d{4})$")
+
+
+_RAW_TRIGGER_RE = re.compile(r"^trigger:\s*(?P<v>.+?)\s*$", re.MULTILINE)
+
+
+def _raw_trigger(text, fm):
+    """The `trigger:` value as it was actually typed.
+
+    YAML 1.1 reads a leading-zero digit string as **octal**, so `trigger: 0300`
+    — the obvious way to write 03:00, and the one every example uses — arrives
+    from `yaml.safe_load` as the integer **192**. Nothing about that is
+    visible: the file says 0300, the routine says 192, and validation rejects a
+    trigger the author never wrote. It bites 0000–0777 (any leading zero with
+    all digits ≤ 7) and leaves 1400 alone, so it fails on early-morning times
+    specifically — exactly when these jobs run.
+
+    So the field is re-read from the raw frontmatter whenever YAML hands back
+    anything but a string. Narrow on purpose: YAML stays the parser for the
+    whole file, and this intervenes only where its typing is known to lie
+    about what the file says. Quoting on write (see to_markdown) fixes files
+    cfc authors; this fixes the hand-written ones, which is most of them.
+    """
+    val = fm.get("trigger", DEFAULTS["trigger"])
+    if isinstance(val, str):
+        return val
+    head = text.split("---", 2)[1] if text.startswith("---") else text
+    m = _RAW_TRIGGER_RE.search(head)
+    if m:
+        return m.group("v").strip("'\"")
+    return str(val)
+
+
+def week_monday(d):
+    """The Monday of the Mon–Sun week containing `d`."""
+    return d - datetime.timedelta(days=d.weekday())
+
+
+def last_completed_week(d):
+    """(monday, sunday) of the most recent week that had fully ended by `d`.
+
+    "Ended" is strict: on Sunday the 26th, the week 20–26 is still running, so
+    the last completed one is 13–19. On Monday the 27th it is 20–26.
+
+    This is the anchor for a weekly routine, and it is anchored to the calendar
+    rather than to the last run on purpose. Anchoring to the run would let a
+    late run shift every subsequent week — miss one Monday and the whole
+    cadence walks forward a day and never walks back. Weeks are Mon–Sun
+    permanently, however erratic the runs are.
+    """
+    monday = week_monday(d) - datetime.timedelta(days=7)
+    return monday, monday + datetime.timedelta(days=6)
 
 
 class RoutineError(Exception):
@@ -221,10 +278,13 @@ class Routine:
             # whether the file is missing or the link syntax went unread.
             tried = " | ".join(prompt_candidates(self.prompt)) or self.prompt
             problems.append(f"prompt file not found in {prompt_dir()}: {tried}")
-        if not _TRIGGER_RE.match(str(self.trigger)):
-            problems.append(f"trigger {self.trigger!r} is not 'command' or HHMM")
-        elif str(self.trigger) != "command":
-            hh, mm = int(str(self.trigger)[:2]), int(str(self.trigger)[2:])
+        trig = str(self.trigger).strip()
+        if not _TRIGGER_RE.match(trig):
+            problems.append(f"trigger {self.trigger!r} is not 'command', "
+                            f"HHMM or 'weekly HHMM'")
+        elif trig != "command":
+            hhmm = trig.split()[-1]
+            hh, mm = int(hhmm[:2]), int(hhmm[2:])
             if hh > 23 or mm > 59:
                 problems.append(f"trigger {self.trigger!r} is not a valid time")
         if self.on_failure not in ("retry", "skip"):
@@ -336,7 +396,7 @@ class Routine:
             model=fm.get("model") or "",
             read_roots=fm.get("read_roots") or (),
             write_roots=fm.get("write_roots") or (),
-            trigger=str(fm.get("trigger", DEFAULTS["trigger"])),
+            trigger=_raw_trigger(text, fm),
             on_failure=str(fm.get("on_failure", DEFAULTS["on_failure"])),
             enabled=fm.get("enabled", DEFAULTS["enabled"]),
             body=body,
@@ -513,3 +573,39 @@ def last_run(routine_id):
     if not match:
         return None, None, False
     return match.group("status"), match.group("ts"), bool(match.group("review"))
+
+
+def last_success(routine_id):
+    """When this routine last completed a run that wasn't a failure, or None.
+
+    Distinct from `last_run` because "when did this last *do* anything" and
+    "what happened most recently" are different questions, and the cadence
+    rules need the first. A weekly job's "have I absorbed that week yet" keyed
+    off the latest run of any kind would treat a *failure* as having absorbed
+    the week and skip it permanently — the week's material would then age out
+    of short term with nothing having condensed it, silently.
+
+    `ok (review)` counts as a success, deliberately: review means "the loop
+    finished but the result wants a glance". The run happened and the file was
+    written, so re-running it would process the same period twice. The two
+    signals stay separate here for the same reason they do everywhere else.
+    """
+    path = log_path(routine_id)
+    if not path.exists():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        m = _LOG_RE.match(line.strip())
+        if not m or m.group("status") == "failed":
+            continue
+        try:
+            return datetime.datetime.strptime(m.group("ts"),
+                                              "%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            # Same direction as the scheduler's unreadable-timestamp rule: a
+            # line we cannot read is not evidence that anything succeeded.
+            return None
+    return None

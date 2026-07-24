@@ -29,6 +29,7 @@ import traceback
 from agent import LIMIT_MESSAGE, TURN_RESULT_CHARS, agent_turn
 from api import EMPTY_COMPLETION_RETRIES
 from db import PROVIDER_ROUTINE, new_session, save_message
+import routines
 from routines import RoutineError, append_log, last_run, load_routine
 
 try:
@@ -129,18 +130,69 @@ That summary is what gets recorded in the run log."""
 #     what the hand-written prompts do — not as the authority on the date.
 #   - DD-MM-YYYY because that is what the vault's journal headers use. One
 #     placeholder, one format; add more only when a prompt actually wants one.
-PLACEHOLDERS = {
-    "{{date}}": lambda now: now.strftime("%d-%m-%Y"),
-}
+# How many days of catch-up `{{dates}}` will name. A machine off for a month
+# must not produce a prompt asking for thirty diary entries in one turn — that
+# spends the whole call budget and fails, which is worse than writing the last
+# few days. Losing the older ones is the intended outcome, not a bug: a day
+# nobody captured notes for has nothing to say.
+MAX_CATCHUP_DAYS = 7
 
 _UNFILLED_RE = re.compile(r"\{\{[^}\n]{0,40}\}\}")
 
+_DATE_FMT = "%d-%m-%Y"
 
-def fill_placeholders(text, now):
+
+def owed_dates(routine_id, now, max_days=None):
+    """The dates a daily routine owes entries for, oldest first.
+
+    Normally just today. After a gap it is every day since the last successful
+    run, so a routine that missed Friday through Sunday writes those days on
+    Monday instead of silently skipping them — the entries are dated from this
+    list, never inferred from what the file already holds. Inferring is the
+    thing that drifts: a rule like "the last entry is Thursday, so write
+    Friday" is self-consistent and therefore never detects that it is three
+    days behind reality.
+    """
+    max_days = MAX_CATCHUP_DAYS if max_days is None else max_days
+    today = now.date()
+    last = routines.last_success(routine_id)
+    if last is None:
+        return [today]
+    start = last.date() + datetime.timedelta(days=1)
+    if start > today:
+        return [today]
+    span = (today - start).days + 1
+    days = [start + datetime.timedelta(days=i) for i in range(span)]
+    return days[-max_days:]
+
+
+def placeholder_values(routine_id, now):
+    """The `{{…}}` substitutions available to a routine prompt.
+
+    Every one is computed by code from the clock and the run log, because each
+    is a question the model provably cannot answer: it has no clock, and a
+    scheduled run is a fresh process with no memory of the last one.
+    """
+    week_from, week_to = routines.last_completed_week(now.date())
+    dates = owed_dates(routine_id, now)
+    return {
+        # Today. What a daily entry is stamped with on an ordinary run.
+        "{{date}}": now.strftime(_DATE_FMT),
+        # Every day owed, today included — a superset of {{date}}, and the
+        # same single value on a run that isn't catching up.
+        "{{dates}}": ", ".join(d.strftime(_DATE_FMT) for d in dates),
+        # The Mon–Sun span a weekly routine should absorb. Always the last
+        # *completed* week, so it is never a week still in progress.
+        "{{week}}": (f"{week_from.strftime(_DATE_FMT)} to "
+                     f"{week_to.strftime(_DATE_FMT)}"),
+    }
+
+
+def fill_placeholders(text, now, routine_id=""):
     """Substitute the known `{{…}}` placeholders. Returns (text, unfilled)."""
-    for token, render in PLACEHOLDERS.items():
+    for token, value in placeholder_values(routine_id, now).items():
         if token in text:
-            text = text.replace(token, render(now))
+            text = text.replace(token, value)
     return text, sorted(set(_UNFILLED_RE.findall(text)))
 
 
@@ -341,7 +393,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         append_log(routine.id, "failed", f"{e} (session {session_id})")
         return False, str(e), session_id
 
-    task, unfilled = fill_placeholders(task, started)
+    task, unfilled = fill_placeholders(task, started, routine.id)
     if unfilled:
         # Fail loud rather than let braces reach the model. An unrecognised
         # placeholder is a typo in a hand-edited prompt, and its silent form —

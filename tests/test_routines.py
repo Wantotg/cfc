@@ -177,10 +177,45 @@ def main():
            any("deny list" in p for p in
                make(read_roots=[str(ROOT / "config.py")]).validate()))
         ok("bad trigger",
-           any("not 'command' or HHMM" in p
+           any("not 'command', HHMM or 'weekly HHMM'" in p
                for p in make(trigger="3am").validate()))
         ok("out-of-range trigger",
            any("not a valid time" in p for p in make(trigger="2599").validate()))
+        ok("'weekly HHMM' validates",
+           not make(trigger="weekly 0300").validate())
+        ok("...and its time is range-checked too",
+           any("not a valid time" in p
+               for p in make(trigger="weekly 2599").validate()))
+        ok("'weekly' without a time is refused",
+           any("weekly HHMM" in p for p in make(trigger="weekly").validate()))
+
+        print("\n--- YAML reads a leading-zero trigger as OCTAL ---")
+        # `trigger: 0300` is the obvious way to write 03:00 and every example
+        # uses it — and yaml.safe_load returns the integer 192. The file says
+        # one thing, the routine says another, and validation then rejects a
+        # trigger nobody wrote. It bites 0000-0777 only, so it fails on
+        # early-morning times specifically: precisely when these jobs run.
+        import yaml as _yaml
+        ok("...which is a real YAML behaviour, not a guess",
+           _yaml.safe_load("trigger: 0300") == {"trigger": 192})
+        hand = ("---\nid: octal\nname: octal\nprompt: task.md\n"
+                "trigger: 0300\n---\n\nbody\n")
+        ok("a hand-written 0300 survives the round trip",
+           routines.Routine.from_markdown(hand).trigger == "0300",
+           routines.Routine.from_markdown(hand).trigger)
+        ok("...and validates",
+           not [p for p in routines.Routine.from_markdown(hand).validate()
+                if "trigger" in p],
+           routines.Routine.from_markdown(hand).validate())
+        quoted = hand.replace("trigger: 0300", "trigger: '0300'")
+        ok("an already-quoted one is unaffected",
+           routines.Routine.from_markdown(quoted).trigger == "0300")
+        ok("a non-octal time was never affected",
+           routines.Routine.from_markdown(
+               hand.replace("0300", "1400")).trigger == "1400")
+        ok("cfc writes it quoted, so its own files never hit this",
+           "trigger: '0300'" in make(trigger="0300").to_markdown(),
+           make(trigger="0300").to_markdown())
         ok("HHMM trigger is fine", not make(trigger="0300").validate())
         ok("bad on_failure",
            any("retry|skip" in p for p in make(on_failure="explode").validate()))
@@ -582,6 +617,51 @@ def main():
                (filled, unf))
             ok("a prompt with no placeholders is unchanged",
                runner.fill_placeholders("plain task", when) == ("plain task", []))
+
+            print("\n--- the cadence placeholders ---")
+            # Every one of these answers a question the model provably cannot:
+            # it has no clock, and a scheduled run is a fresh process with no
+            # memory of the last one.
+            mon = _dt.datetime(2026, 7, 27, 3, 0)      # a Monday
+            vals = runner.placeholder_values("no-such-routine", mon)
+            ok("{{week}} is the last COMPLETED week, never one in progress",
+               vals["{{week}}"] == "20-07-2026 to 26-07-2026", vals["{{week}}"])
+            ok("{{dates}} on a first run is just today",
+               vals["{{dates}}"] == "27-07-2026", vals["{{dates}}"])
+
+            print("\n--- catch-up after a gap ---")
+            # Missing Friday to Sunday must produce those days on Monday, not
+            # silently skip them and not have the model infer them from what
+            # the file already holds.
+            routines.append_log("gappy", "ok", "did it")
+            gap_log = routines.log_path("gappy")
+            gap_log.write_text(
+                "# Run log — gappy\n\n- **2026-07-23 03:00:05** — ok — x\n",
+                encoding="utf-8")
+            owed = runner.owed_dates("gappy", mon)
+            ok("every missed day is owed, oldest first",
+               [d.strftime("%d-%m") for d in owed] ==
+               ["24-07", "25-07", "26-07", "27-07"], owed)
+            ok("...and a same-day rerun owes only today",
+               runner.owed_dates("gappy", _dt.datetime(2026, 7, 23, 22, 0)) ==
+               [_dt.date(2026, 7, 23)])
+            # A month off must not ask for thirty entries in one turn: that
+            # spends the whole call budget and fails, which is worse than
+            # writing the recent days and letting the rest go.
+            far = runner.owed_dates("gappy", _dt.datetime(2026, 9, 1, 3, 0))
+            ok("a long outage is capped, not unbounded",
+               len(far) == runner.MAX_CATCHUP_DAYS, len(far))
+            ok("...keeping the most recent days",
+               far[-1] == _dt.date(2026, 9, 1), far[-1])
+            # A failed run is not a run that did anything, so it does not
+            # shorten what is owed.
+            gap_log.write_text(
+                "# Run log — gappy\n\n- **2026-07-23 03:00:05** — ok — x\n"
+                "- **2026-07-26 03:00:05** — failed — boom\n", encoding="utf-8")
+            ok("a failure since the last success does not shrink what is owed",
+               [d.strftime("%d-%m") for d in runner.owed_dates("gappy", mon)] ==
+               ["24-07", "25-07", "26-07", "27-07"],
+               runner.owed_dates("gappy", mon))
         finally:
             runner.agent_turn = real_turn
             conn.close()

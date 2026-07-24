@@ -23,6 +23,49 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Cadence: weekly triggers, computed dates, and a YAML octal trap
+The journal's cadence, designed with Cas this session. Three parts.
+
+**`trigger: weekly HHMM`**, and it does *not* mean "on Mondays". A weekly
+routine is due when a completed calendar week exists that it hasn't absorbed —
+`last_completed_week(today) > last_completed_week(last success)`. Two things
+that buys: catch-up is free (miss Monday, it fires Tuesday absorbing the same
+week, where a day-of-week check would skip the week entirely and nothing would
+ever process it), and the cadence can't drift (a late run absorbs the week it
+was always going to, instead of shifting every future week a day forward and
+never back). It keys off the last **success**, not the last run — the first
+version used the latest run of any kind, which let a *failure* mark the week
+absorbed and skip it permanently; that bug is now a test.
+
+**Dates are computed and injected, never inferred.** `{{dates}}` is the list of
+days a daily routine owes entries for (today, or every day since the last
+success after a gap, capped at 7 so a month's outage can't ask for thirty
+entries in one turn); `{{week}}` is the Mon–Sun span a weekly one should
+condense, always one that has ended. The rejected alternative was letting the
+model infer the date from the file ("last entry is Thursday, so write Friday"):
+self-consistent, and therefore permanently and silently wrong after a single
+missed run.
+
+**`trigger: 0300` was being read as 192.** YAML 1.1 types a leading-zero digit
+string as octal, so the obvious way to write 03:00 arrived from `safe_load` as
+an integer, and validation then rejected a trigger nobody had written. It bites
+0000–0777 only — which is to say early-morning times, exactly when these jobs
+run. `trigger:` is now re-read from the raw frontmatter whenever YAML returns a
+non-string; narrow on purpose, since YAML stays the parser for everything else.
+`safe_dump` already quotes it, so cfc-authored files were never affected —
+only the hand-written ones, which is most of them.
+
+Vault side: the three maintainer prompts rewritten for the new cadence (ST
+daily against `{{dates}}` and keeping two calendar weeks rather than a count of
+five days; MT weekly against `{{week}}`, condensing a whole week at once —
+which it structurally could not do before, seeing one day per run while being
+told to group thematically; LT on command, proposing what long term is missing
+rather than rotating), and triggers set to `0300` / `weekly 0330` / `command`.
+- Files: routines.py, schedule.py, runner.py, tests/test_routines.py,
+  tests/test_schedule.py (+ vault prompts and routines)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — File journal drafts, with git as the undo
 The v0.7 approve step. `99 outbox/journal/` becomes a second corpus subfolder
 alongside `wiki/`, so the memory routines' drafts are reviewable by `:outbox`
@@ -57,7 +100,7 @@ the reason to keep one is to debug the prompt that wrote it.
 - Files: mover.py, commands.py, config.py, config.example.py,
   tests/test_mover.py
 - Status: shipped
-- Commit: pending
+- Commit: 2cfa844
 
 ## 2026-07-24 — Inject `{{date}}` into routine prompts, and repoint them at the journal
 The three memory prompts all said "Today's date is **{{date}}**, injected by

@@ -33,7 +33,8 @@ import sys
 from pathlib import Path
 
 import routines
-from routines import RoutineError, last_run, list_routines, load_routine
+from routines import (RoutineError, last_run, last_success, list_routines,
+                      load_routine)
 
 # How many times a failing routine may be retried within one day.
 #
@@ -62,19 +63,24 @@ def lock_path():
 
 
 def parse_trigger(trigger):
-    """`trigger:` as a time of day, or None if it isn't one.
+    """`trigger:` as (kind, time). kind is 'daily' | 'weekly', or (None, None).
 
     'command' — the default — means "only when a human types :routine", and is
     the reason a tick can read every routine in the folder without running the
     ones that were never meant to be scheduled.
+
+    'weekly HHMM' is not "Mondays at HHMM". See `_weekly_not_due`.
     """
     text = str(trigger or "").strip()
+    kind = "daily"
+    if text.lower().startswith("weekly"):
+        kind, text = "weekly", text[len("weekly"):].strip()
     if len(text) != 4 or not text.isdigit():
-        return None
+        return None, None
     hh, mm = int(text[:2]), int(text[2:])
     if hh > 23 or mm > 59:
-        return None
-    return datetime.time(hh, mm)
+        return None, None
+    return kind, datetime.time(hh, mm)
 
 
 def _parse_ts(ts):
@@ -104,6 +110,37 @@ def _runs_today(routine_id, since):
     return out
 
 
+def _weekly_not_due(now, last):
+    """Why a weekly routine has nothing owed yet, or None if it has.
+
+    The rule is **not** "it is Monday". A weekly job is due when a completed
+    calendar week exists that it has not yet absorbed:
+
+        last_completed_week(today) > last_completed_week(last run)
+
+    Two things this buys, and both were the point:
+
+    - **Catch-up is free.** Miss Monday and it fires Tuesday, still absorbing
+      the same week. A day-of-week check would simply skip it, and the missed
+      week would then never be processed by anything — the silent kind of
+      failure, since the file it feeds just quietly holds less.
+    - **The cadence cannot drift.** Anchoring to the calendar rather than to
+      "seven days since the last run" means a late run absorbs the week it was
+      always going to absorb, instead of shifting every future week to a new
+      day of the week and never shifting back.
+
+    It is also indifferent to how much material the week holds. A week with
+    three entries is still a finished week; "is there enough" is a judgement
+    about content and belongs to the model, not to the scheduler.
+    """
+    owed_mon, owed_sun = routines.last_completed_week(now.date())
+    had_mon, _ = routines.last_completed_week(last.date())
+    if owed_mon <= had_mon:
+        return (f"the week of {owed_mon:%d-%m} to {owed_sun:%d-%m} was already "
+                f"absorbed on {last:%Y-%m-%d} — nothing new has completed")
+    return None
+
+
 def why_not_due(routine, now):
     """Why this routine should not run at `now`, or None if it should.
 
@@ -114,11 +151,12 @@ def why_not_due(routine, now):
     if not routine.enabled:
         return "disabled"
 
-    at = parse_trigger(routine.trigger)
+    kind, at = parse_trigger(routine.trigger)
     if at is None:
         if str(routine.trigger).strip() == "command":
             return "trigger is 'command' — runs only from :routine"
-        return f"trigger {routine.trigger!r} is not 'command' or HHMM"
+        return (f"trigger {routine.trigger!r} is not 'command', HHMM or "
+                f"'weekly HHMM'")
 
     today_at = datetime.datetime.combine(now.date(), at)
     if now < today_at:
@@ -135,7 +173,19 @@ def why_not_due(routine, now):
         # tick for the rest of the day.
         return f"last run timestamp {ts!r} is unreadable — not running"
 
-    if when < today_at:
+    if kind == "weekly":
+        # Against the last *success*, not `when` — a failed run absorbed
+        # nothing, and treating it as if it had would skip the week for good.
+        success = last_success(routine.id)
+        weekly = _weekly_not_due(now, success) if success else None
+        if weekly:
+            return weekly
+        # A completed week is unabsorbed, so it is owed. Fall through to the
+        # failure rules below — the retry bound applies to a weekly job for the
+        # same reason it applies to a daily one.
+        if status != "failed":
+            return None
+    elif when < today_at:
         # Includes the machine having been off since before the trigger. Runs
         # once, late, today. Yesterday's missed run is not replayed.
         return None
