@@ -181,6 +181,12 @@ WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
 # ':wiki diff journal' as the record of what changed. Leave empty if unused.
 JOURNAL_DIR = ""            # e.g. "<vault>/03 resources/journal"
 
+# Where a declined draft goes, split by corpus underneath (wiki/, journal/,
+# notes/). Declined is not deleted — the draft that turns out to have been the
+# good one has to be recoverable. Leave empty to drop into the outbox's own
+# 'dropped/' folder instead.
+LOSER_DIR = ""              # e.g. "<vault>/03 resources/loser corner"
+
 # --- terminal input --------------------------------------------------------
 # Let the mouse position the cursor in the input line. Off by default, and the
 # reason is a trade rather than caution: prompt_toolkit's mouse support puts

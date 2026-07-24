@@ -1606,11 +1606,17 @@ def show_outbox():
         return proposals
 
     for i, p in enumerate(proposals, 1):
+        console.print(f"  {i}. {_proposal_label(p)}", style="bold")
         if p.ok:
-            console.print(f"  {i}. {p.name}", style="bold")
-            console.print(f"     → {p.target}", style="green")
+            # "replaces" and "moves" are different promises and must not read
+            # the same. A journal rollover overwrites a live file; showing it
+            # with the same green arrow as a move into an empty slot is how a
+            # destructive step gets rubber-stamped.
+            if getattr(p, "replaces", False):
+                console.print(f"     REPLACES {p.target}", style="yellow")
+            else:
+                console.print(f"     → {p.target}", style="green")
         else:
-            console.print(f"  {i}. {p.name}", style="bold")
             # A refusal shows the destination that was *asked for* next to the
             # reason, so the model's suggestion stays visible and auditable
             # rather than being replaced by the error.
@@ -1624,6 +1630,45 @@ def show_outbox():
     console.print("  :file <n> | :file all | :file <n> drop", style="dim")
     console.print()
     return proposals
+
+
+def _proposal_label(p):
+    """`name` for an ordinary draft, `name — Title` when the two differ.
+
+    A wiki page is named after its id (`20260724201001.md`), so a list of them
+    is a list of numbers: unreadable, and impossible to choose between without
+    opening each one. The title is right there in the frontmatter. Shown
+    *alongside* the filename rather than instead of it, because the filename is
+    what lands on disk and what a refusal will name.
+    """
+    label = p.name
+    tag = ("journal" if getattr(p, "into_journal", False)
+           else "wiki" if getattr(p, "into_wiki", False) else "")
+    title = _frontmatter_title(p.path)
+    if title and title.lower() != Path(p.name).stem.lower():
+        label = f"{label}  —  {title}"
+    return f"{label}   [{tag}]" if tag else label
+
+
+def _frontmatter_title(path):
+    """The `title:` from a draft's frontmatter, or "" — never raises.
+
+    Best-effort by design: this is a display nicety, and a draft with broken
+    frontmatter must still be listed and refusable. Failing to read a title is
+    not a reason to hide a proposal from review.
+    """
+    try:
+        import yaml
+        text = Path(path).read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            return ""
+        end = text.find("\n---", 3)
+        if end < 0:
+            return ""
+        fm = yaml.safe_load(text[3:end]) or {}
+        return str(fm.get("title", "") or "").strip()
+    except Exception:
+        return ""
 
 
 def do_file(arg):
@@ -1655,6 +1700,7 @@ def do_file(arg):
                 console.print(f"  FAILED {p.name}: {e}", style="red")
         if filed_wiki:
             _wiki_filed_note()
+        show_outbox()
         return
 
     try:
@@ -1667,18 +1713,43 @@ def do_file(arg):
                       style="red")
         return
 
+    # Every path below reprints the list. Filing or dropping removes an entry,
+    # so every number after it shifts by one — and a stale list on screen is
+    # not a cosmetic problem: the next ':file 3' means a different file than
+    # the one you just read the verdict for.
     if len(parts) > 1 and parts[1] == "drop":
-        target = drop(proposal)
-        console.print(f"  dropped {proposal.name} → {target}", style="dim")
+        try:
+            target = drop(proposal)
+            console.print(f"  dropped {proposal.name} → {target}", style="dim")
+        except (MoveError, OSError) as e:
+            console.print(f"  cannot drop {proposal.name}: {e}", style="red")
+        show_outbox()
         return
 
     try:
         target = commit(proposal)
-        console.print(f"  filed {proposal.name} → {target}", style="green")
+        verb = "replaced" if getattr(proposal, "replaces", False) else "filed"
+        console.print(f"  {verb} {proposal.name} → {target}", style="green")
         if proposal.into_wiki:
             _wiki_filed_note()
+        if proposal.into_journal:
+            _journal_filed_note()
     except (MoveError, OSError) as e:
         console.print(f"  cannot file {proposal.name}: {e}", style="red")
+    show_outbox()
+
+
+def _journal_filed_note():
+    """Say what to do next after a live journal file was replaced.
+
+    The overwrite is only safe because it is inspectable and revertable, and
+    that is worth nothing if nobody knows to look. Unlike the wiki's staleness
+    marker this needs no persisted state — git is already holding the evidence,
+    and it holds it until you commit.
+    """
+    console.print("  → the live journal file was replaced. Inspect it with "
+                  ":wiki diff journal, then :wiki commit journal — or "
+                  "git checkout to undo.", style="yellow")
 
 
 def _print_wiki_stale():

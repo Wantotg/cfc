@@ -16,6 +16,7 @@ one has to come back as a refusal with a reason.
 Everything runs against temp directories — config's real vault paths are
 patched out, so this never touches the real outbox or vault.
 """
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -26,6 +27,12 @@ sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
 import mover
+import wikigit
+
+
+def git(cwd, *args):
+    return subprocess.run(("git",) + args, cwd=str(cwd), check=True,
+                          capture_output=True, text=True).stdout
 
 PASS, FAIL = [], []
 
@@ -44,22 +51,51 @@ class Vault:
         self.root = Path(tmp) / "vault"
         self.outbox = self.root / "99 outbox"
         self.wiki_out = self.outbox / "wiki"          # the wiki proposal folder
+        self.journal_out = self.outbox / "journal"    # the journal proposal folder
         self.areas = self.root / "02 areas" / "daily"
         self.wiki = self.root / "03 resources" / "wiki db"
+        self.journal = self.root / "03 resources" / "journal"
+        self.losers = self.root / "03 resources" / "loser corner"
         self.outside = Path(tmp) / "elsewhere"
-        for d in (self.outbox, self.wiki_out, self.areas, self.wiki,
-                  self.outside):
+        for d in (self.outbox, self.wiki_out, self.journal_out, self.areas,
+                  self.wiki, self.journal, self.losers, self.outside):
             d.mkdir(parents=True, exist_ok=True)
 
     def __enter__(self):
-        self._saved = (mover.move_roots, mover.outbox_roots, mover.wiki_dir)
+        self._saved = (mover.move_roots, mover.outbox_roots, mover.wiki_dir,
+                       mover.journal_dir, mover.loser_dir,
+                       wikigit.wiki_dir, wikigit.journal_dir)
         mover.move_roots = lambda: (self.root.resolve(),)
         mover.outbox_roots = lambda: (self.outbox.resolve(),)
         mover.wiki_dir = lambda: self.wiki.resolve()
+        mover.journal_dir = lambda: self.journal.resolve()
+        # Invariant #1, applied to a folder rather than a db: without this the
+        # drop tests would move fixture files into the *real* losers' corner,
+        # because loser_dir() reads config like every other path here.
+        mover.loser_dir = lambda: self.losers.resolve()
+        # The journal guard asks wikigit for the corpus's git state, and
+        # wikigit anchors repo discovery at WIKI_DIR — so both have to point
+        # into this temp vault or the guard would consult the *real* repo.
+        wikigit.wiki_dir = lambda: self.wiki.resolve()
+        wikigit.journal_dir = lambda: self.journal.resolve()
         return self
 
     def __exit__(self, *exc):
-        (mover.move_roots, mover.outbox_roots, mover.wiki_dir) = self._saved
+        (mover.move_roots, mover.outbox_roots, mover.wiki_dir,
+         mover.journal_dir, mover.loser_dir,
+         wikigit.wiki_dir, wikigit.journal_dir) = self._saved
+
+    def git_init(self):
+        """Make the vault a git repo with everything committed — the state a
+        journal move requires. Returns nothing; call `commit_all` to re-clean."""
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.email", "test@example.invalid")
+        git(self.root, "config", "user.name", "Test")
+        self.commit_all("baseline")
+
+    def commit_all(self, msg="wip"):
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", msg)
 
     def propose(self, name, destination=None, body="Some content.", extra="",
                 folder=None):
@@ -272,6 +308,141 @@ def main():
         for f in v.wiki_out.glob("*.md"):
             f.unlink()
 
+        print("\n--- the journal: filing REPLACES a live file ---")
+        # This is the one place the mover's "a target that exists is a refusal"
+        # rule cannot hold — replacing the live file *is* a rollover. What
+        # stands in for it is git: the corpus must be committed, so the move is
+        # inspectable and revertable. These assertions are the negative half of
+        # that trade and matter more than the happy path.
+        v.journal.mkdir(parents=True, exist_ok=True)
+        live = v.journal / "st memory.md"
+        live.write_text("# short term\n\noriginal content\n", encoding="utf-8")
+        v.git_init()
+
+        draft = v.propose("st memory.md", body="# short term\n\nrolled over\n",
+                          folder=v.journal_out)
+        p = mover.plan(draft)
+        ok("a journal draft is filable against a clean corpus", p.ok, p.reason)
+        ok("...routed as a journal proposal", p.into_journal)
+        ok("...targeting the live file of the same name",
+           p.target == live.resolve(), p.target)
+        ok("...and flagged as replacing, not merely moving", p.replaces)
+        ok("...found by list_proposals from the subfolder",
+           any(x.into_journal and x.name == "st memory.md"
+               for x in mover.list_proposals()))
+
+        print("\n--- an uncommitted journal refuses the move ---")
+        stray = v.journal / "hand edit.md"
+        stray.write_text("edited by hand\n", encoding="utf-8")
+        p_dirty = mover.plan(draft)
+        ok("a dirty corpus is refused", not p_dirty.ok, p_dirty.reason)
+        ok("...and the refusal names the fix",
+           ":wiki commit journal" in p_dirty.reason, p_dirty.reason)
+        ok("...the live file is untouched",
+           live.read_text(encoding="utf-8").endswith("original content\n"))
+        try:
+            mover.commit(p_dirty)
+            ok("...and committing it raises", False)
+        except mover.MoveError:
+            ok("...and committing it raises", True)
+        stray.unlink()
+
+        print("\n--- the git check is re-run at write time, not just at plan ---")
+        # The plan-time check drew the screen; this is the one that guards the
+        # write. A corpus that goes dirty between listing and filing has lost
+        # the undo the whole overwrite rests on.
+        fresh = mover.plan(draft)
+        ok("clean again, so it plans ok", fresh.ok, fresh.reason)
+        race = v.journal / "appeared between plan and commit.md"
+        race.write_text("late\n", encoding="utf-8")
+        try:
+            mover.commit(fresh)
+            ok("a corpus that went dirty mid-review is refused", False)
+        except mover.MoveError:
+            ok("a corpus that went dirty mid-review is refused", True)
+        ok("...the live file survived the refusal",
+           live.read_text(encoding="utf-8").endswith("original content\n"))
+        ok("...and the draft is still in the outbox", draft.exists())
+        race.unlink()
+
+        print("\n--- an unverifiable git state fails CLOSED ---")
+        # Failing open here would perform an unrecoverable overwrite. Note this
+        # is the opposite direction from the run-log rule in tools.py, which
+        # fails open — there, not resolving a path can only narrow what is
+        # writable; here, not checking can only widen what is destroyed.
+        saved_status = wikigit.status
+
+        def explode(*a, **kw):
+            raise wikigit.GitError("no repo here")
+
+        wikigit.status = explode
+        try:
+            p_blind = mover.plan(draft)
+            ok("git unavailable refuses the move", not p_blind.ok, p_blind.reason)
+            ok("...and says the state could not be checked",
+               "git state" in p_blind.reason, p_blind.reason)
+        finally:
+            wikigit.status = saved_status
+
+        print("\n--- the replacement itself ---")
+        good = mover.plan(draft)
+        target = mover.commit(good)
+        ok("the move returns the live path", target == live.resolve(), target)
+        ok("...the live file now holds the draft's content",
+           "rolled over" in live.read_text(encoding="utf-8"))
+        ok("...the draft has left the outbox", not draft.exists())
+        ok("...and git can still see what changed",
+           any("st memory.md" in c.path
+               for c in wikigit.status(wikigit.JOURNAL)),
+           wikigit.status(wikigit.JOURNAL))
+        v.commit_all("filed")
+
+        print("\n--- a journal draft cannot name a path out of the corpus ---")
+        # The target is built from the *filename* alone, so directory parts in
+        # a draft's name are structurally unable to escape. Pinned because the
+        # alternative (trusting a destination: key here) is the bug this whole
+        # module exists to prevent.
+        sneaky = v.journal_out / "sneaky.md"
+        sneaky.write_text("---\ndestination: /etc/\n---\n\nx\n", encoding="utf-8")
+        ps = mover.plan(sneaky)
+        ok("a destination: key in a journal draft is ignored",
+           ps.target == (v.journal / "sneaky.md").resolve(), ps.target)
+        sneaky.unlink()
+
+        print("\n--- with no JOURNAL_DIR there is no journal filing ---")
+        saved_jd = mover.journal_dir
+        mover.journal_dir = lambda: None
+        try:
+            d2 = v.propose("lt memory.md", body="x\n", folder=v.journal_out)
+            p2 = mover.plan(d2)
+            ok("an unconfigured journal refuses rather than guessing",
+               not p2.ok and "JOURNAL_DIR" in p2.reason, p2.reason)
+            d2.unlink()
+        finally:
+            mover.journal_dir = saved_jd
+
+        print("\n--- the outbox's own readme is not a proposal ---")
+        # It has no destination and never will, so it sat permanently at the
+        # top of :outbox reading REFUSED, and ':file 1 drop' would bin the
+        # folder's own documentation.
+        readme = v.outbox / "99 readme.md"
+        readme.write_text("Outbox readme\n\nWhat this folder is for.\n",
+                          encoding="utf-8")
+        ok("it is not listed as a proposal",
+           not any(x.name == "99 readme.md" for x in mover.list_proposals()))
+        pr = mover.plan(readme)
+        ok("...and planning it directly still refuses", not pr.ok, pr.reason)
+        try:
+            mover.drop(pr)
+            ok("...and it cannot be dropped", False)
+        except mover.MoveError:
+            ok("...and it cannot be dropped", True)
+        ok("...so it is still there", readme.exists())
+        for variant in ("readme.md", "00 readme.md", "README.md"):
+            ok(f"the convention covers {variant}", mover.is_reserved(variant))
+        ok("an ordinary draft is not reserved",
+           not mover.is_reserved("st memory.md"))
+
         print("\n--- dropping ---")
         p = mover.plan(v.outbox / "b-bad.md")
         dropped = mover.drop(p)
@@ -281,6 +452,32 @@ def main():
         ok("...timestamped so two drops don't collide",
            "b-bad.md" in dropped.name and dropped.name != "b-bad.md",
            dropped.name)
+        ok("...and lands in the losers' corner, under its corpus",
+           dropped.parent == (v.losers / "notes").resolve(), dropped.parent)
+
+        print("\n--- a declined draft is filed by corpus, not pooled ---")
+        # The reason to keep a declined draft is to debug the prompt that wrote
+        # it, and that is a per-routine question — a flat folder means sorting
+        # them by hand later.
+        jd = v.propose("mt memory.md", body="declined\n", folder=v.journal_out)
+        jdrop = mover.drop(mover.plan(jd))
+        ok("a journal draft goes to the journal corner",
+           jdrop.parent == (v.losers / "journal").resolve(), jdrop.parent)
+        wd = v.propose("draft.md", body="declined\n", folder=v.wiki_out)
+        wdrop = mover.drop(mover.plan(wd))
+        ok("a wiki draft goes to the wiki corner",
+           wdrop.parent == (v.losers / "wiki").resolve(), wdrop.parent)
+
+        print("\n--- with no LOSER_DIR, drops fall back to the outbox ---")
+        saved_ld = mover.loser_dir
+        mover.loser_dir = lambda: None
+        try:
+            old = v.propose("legacy.md", "02 areas/daily/")
+            legacy = mover.drop(mover.plan(old))
+            ok("an unconfigured losers' corner still drops safely",
+               legacy.parent == (v.outbox / "dropped").resolve(), legacy.parent)
+        finally:
+            mover.loser_dir = saved_ld
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

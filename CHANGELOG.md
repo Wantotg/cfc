@@ -23,6 +23,42 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — File journal drafts, with git as the undo
+The v0.7 approve step. `99 outbox/journal/` becomes a second corpus subfolder
+alongside `wiki/`, so the memory routines' drafts are reviewable by `:outbox`
+at all — they were invisible, the outbox scanning only top-level files and
+`wiki/`. The destination is the **filename**: `st memory.md` replaces
+`st memory.md`, location declaring the corpus and the name declaring which file
+in it, so nothing is taken from a model-written `destination:` key.
+
+The hard part is that filing here **overwrites a live file** — that is what a
+rollover is — and "a target that exists is a refusal" is one of the three
+properties `mover.py` exists for. What replaces it is git: the journal is in
+the vault repo, so the move is inspectable (`:wiki diff journal`) and
+revertable (`git checkout`) — but only if the corpus was clean beforehand,
+because against a dirty corpus the diff mixes the move with hand edits and
+there is no commit to return to. So the clean check *is* the undo path, run at
+plan time (so `:outbox` shows the refusal before you type `:file`) and again
+inside `commit` (the one that guards the write). It fails **closed**: if git
+can't be consulted, the move is refused rather than performed unrecoverably —
+the opposite direction from the run-log rule in `tools.py`, and for the
+opposite reason. Verified by disabling the guard: seven assertions fail.
+
+Folded in from Cas's 0.6.2 testing pass, all on the same screen: `:file` and
+`:file … drop` now **reprint the outbox**, because filing shifts every number
+after it and a stale list means the next `:file 3` is a different file than the
+verdict you just read; the outbox's own readme is **reserved** — not listed, not
+droppable (a named rule beside containment, same shape as the run log, since
+"has no frontmatter" would also hide a malformed proposal); proposals show
+their frontmatter **title** beside the filename, so a list of wiki drafts stops
+being a list of bare timestamps; and a declined draft goes to
+`LOSER_DIR/<corpus>` rather than `99 outbox/dropped/`, split by corpus because
+the reason to keep one is to debug the prompt that wrote it.
+- Files: mover.py, commands.py, config.py, config.example.py,
+  tests/test_mover.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Inject `{{date}}` into routine prompts, and repoint them at the journal
 The three memory prompts all said "Today's date is **{{date}}**, injected by
 script" and nothing was injecting — the model read the literal braces and was
@@ -41,7 +77,7 @@ under each routine's real context: the live journal is readable and *not*
 writable, the outbox is writable, the dead path is refused.
 - Files: runner.py, tests/test_routines.py (+ vault routines and prompts)
 - Status: shipped
-- Commit: pending
+- Commit: bce703b
 
 ## 2026-07-24 — Configure the journal corpus, and stop the baseline pinning config
 v0.7 groundwork, plus two faults it turned up. `JOURNAL_DIR` is now a real

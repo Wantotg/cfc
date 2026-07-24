@@ -27,6 +27,7 @@
 # separate, human-triggered step.
 import datetime
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -36,12 +37,13 @@ from paths import PathError, denial_reason, path_guard
 
 DEST_KEY = "destination"
 
-# A file dropped in this subfolder of the outbox is a *wiki* proposal: its
-# destination is implicitly the wiki corpus, so the reader routine doesn't need
-# to write a `destination:` at all — the folder is the signal. Everything else
-# (notes/, routine logs/, tiered memory/, dropped/) stays out of the proposal
-# list, same as the top-level "*.md only" rule.
+# A file dropped in one of these subfolders of the outbox is a proposal bound
+# for that corpus: the destination is implicit, so a routine doesn't need to
+# write a `destination:` at all — the folder is the signal. Everything else
+# (notes/, routine logs/, dropped/) stays out of the proposal list, same as the
+# top-level "*.md only" rule.
 WIKI_SUBFOLDER = "wiki"
+JOURNAL_SUBFOLDER = "journal"
 
 # Wiki pages are keyed by a stable frontmatter id and named <id>.md on disk (see
 # import_wiki.py and the wiki index's [[20260719160004|Title]] links). A page
@@ -53,6 +55,25 @@ WIKI_SUBFOLDER = "wiki"
 # bump below guarantees a `:file all` batch filed in the same second can't
 # collide (which would make import_wiki treat two pages as one).
 _last_wiki_id = 0
+
+
+# The outbox explains itself in a readme that lives inside it, so containment —
+# which is the whole proposal rule — admits it as a proposal. It never is one:
+# it has no destination and never will, so it sat permanently at the top of
+# `:outbox` reading `REFUSED — no destination`, and `:file 1 drop` would happily
+# file the folder's own documentation into the bin.
+#
+# Same shape as `tools.reserved_write_reason()` and for the same reason: a
+# named rule beside the containment check, not a widening of it. Name-based
+# rather than "has no frontmatter", because a *malformed* proposal — one where
+# the model forgot the key — must stay visible, and it would look identical.
+# The cost is that renaming the readme un-reserves it; the fix is one line here.
+_RESERVED_RE = re.compile(r"^\d{0,2}\s*readme\.md$", re.IGNORECASE)
+
+
+def is_reserved(path):
+    """True for an outbox file that is documentation, not a proposal."""
+    return bool(_RESERVED_RE.match(Path(path).name))
 
 
 class MoveError(Exception):
@@ -83,25 +104,30 @@ def wiki_dir():
     return Path(d).expanduser().resolve() if d else None
 
 
-def _wiki_proposal_dirs():
-    """The `wiki/` subfolder of each outbox root, where it exists."""
+def journal_dir():
+    d = _cfg("JOURNAL_DIR", "")
+    return Path(d).expanduser().resolve() if d else None
+
+
+def _proposal_dirs(subfolder):
+    """The named subfolder of each outbox root, where it exists."""
     out = []
     for root in outbox_roots():
-        wd = root / WIKI_SUBFOLDER
-        if wd.is_dir():
-            out.append(wd)
+        d = root / subfolder
+        if d.is_dir():
+            out.append(d)
     return out
 
 
-def _from_wiki_dir(source):
-    """True if `source` sits directly in an outbox `wiki/` proposal folder."""
+def _from_proposal_dir(source, subfolder):
+    """True if `source` sits directly in that outbox proposal subfolder."""
     try:
         parent = Path(source).resolve().parent
     except OSError:
         return False
-    for wd in _wiki_proposal_dirs():
+    for d in _proposal_dirs(subfolder):
         try:
-            if wd.resolve() == parent:
+            if d.resolve() == parent:
                 return True
         except OSError:
             continue
@@ -188,7 +214,8 @@ class Proposal:
     """
 
     def __init__(self, path, destination=None, target=None, ok=False,
-                 reason="", into_wiki=False, wiki_id=None, needs_id=False):
+                 reason="", into_wiki=False, wiki_id=None, needs_id=False,
+                 into_journal=False, replaces=False):
         self.path = path
         self.destination = destination
         self.target = target
@@ -201,6 +228,12 @@ class Proposal:
         self.into_wiki = into_wiki
         self.wiki_id = wiki_id
         self.needs_id = needs_id
+        # into_journal: lands in the journal corpus, where filing REPLACES a
+        # live file. `replaces` says whether this particular one does, so the
+        # review screen can show "replaces" rather than "moves" — a destructive
+        # verdict that reads like an ordinary one is the whole hazard here.
+        self.into_journal = into_journal
+        self.replaces = replaces
 
     @property
     def name(self):
@@ -298,9 +331,89 @@ def _plan_wiki(source, fm, raw):
                     into_wiki=True, wiki_id=None, needs_id=True)
 
 
+def _into_journal(target):
+    """True if `target` resolves inside the journal corpus."""
+    j = journal_dir()
+    return bool(j and (target == j or j in target.parents))
+
+
+def _journal_guard_reason():
+    """Why a journal move must not happen right now, or "" if it may.
+
+    Filing into the journal **overwrites a live file** — that is what a
+    rollover is, and it is the one place the mover's "a target that exists is a
+    refusal" rule cannot hold. What replaces that rule is git: the journal is
+    inside the vault repo, so an overwrite is inspectable (`:wiki diff journal`)
+    and reversible (`git checkout`) — but only if the corpus was clean when the
+    move happened. Against a dirty corpus the diff mixes cfc's move with
+    whatever was edited by hand, and there is no commit to go back to.
+
+    So the undo path is the precondition, not a nicety. Fails **closed**: if
+    git can't be consulted at all, the move is refused rather than performed
+    unrecoverably. That is the opposite of the run-log rule in tools.py, which
+    fails open — there, failing to resolve the log dir can only *narrow* what is
+    writable; here, failing to check can only widen what is destroyed.
+    """
+    try:
+        import wikigit
+    except ImportError:                                   # pragma: no cover
+        return "cannot import wikigit to check the journal is committed"
+    try:
+        changed = wikigit.status(wikigit.JOURNAL)
+    except Exception as e:                                # noqa: BLE001
+        # GitError, or anything the git call throws. Either way the state is
+        # unknown, and an unverifiable undo is not an undo.
+        return f"cannot check the journal's git state ({e})"
+    if changed:
+        names = ", ".join(sorted(c.path.rsplit("/", 1)[-1] for c in changed)[:3])
+        more = "" if len(changed) <= 3 else f" (+{len(changed) - 3} more)"
+        return (f"the journal has uncommitted changes — {names}{more}. "
+                f"Filing overwrites a live file, so commit or revert first: "
+                f":wiki commit journal")
+    return ""
+
+
+def _plan_journal(source, raw):
+    """Verdict for a draft bound for the journal corpus.
+
+    The destination is the **filename**: a draft called `st memory.md` replaces
+    `st memory.md`. Location declares the corpus, the name declares which file
+    in it — so the model still names nothing it isn't already naming by writing
+    the draft, and code does the resolving. Same reading as the wiki subfolder,
+    one level finer.
+    """
+    j = journal_dir()
+    if not j:
+        return Proposal(source, reason="no JOURNAL_DIR configured — cannot "
+                        "file into the journal")
+    dest = str(raw) if raw else "journal"
+    target = j / Path(source).name
+    why = denial_reason(target)
+    if why:
+        return Proposal(source, destination=dest, target=target,
+                        into_journal=True, reason=why)
+
+    # NOT a `target.exists()` refusal — see _journal_guard_reason. Replacing
+    # the live file is the operation, and git is what makes it safe.
+    why = _journal_guard_reason()
+    if why:
+        return Proposal(source, destination=dest, target=target,
+                        into_journal=True, reason=why)
+
+    return Proposal(source, destination=dest, target=target, ok=True,
+                    into_journal=True,
+                    replaces=target.exists())
+
+
 def plan(source):
     """Read one outbox file and decide what would happen. Never raises."""
     source = Path(source)
+    # Reserved files are filtered out of the list, but `plan` is reachable
+    # directly — so the refusal lives here too, the same split as path_guard
+    # sitting inside dispatch rather than only at the gate.
+    if is_reserved(source):
+        return Proposal(source, reason="the outbox's own readme is not a "
+                        "proposal — it stays where it is")
     try:
         text = source.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -312,8 +425,10 @@ def plan(source):
     # A file in the outbox `wiki/` subfolder is wiki-bound by location; it needs
     # no `destination:` key. A top-level file still declares its destination,
     # and that destination may now point into the wiki too.
-    if _from_wiki_dir(source):
+    if _from_proposal_dir(source, WIKI_SUBFOLDER):
         return _plan_wiki(source, fm, raw)
+    if _from_proposal_dir(source, JOURNAL_SUBFOLDER):
+        return _plan_journal(source, raw)
     if not raw:
         return Proposal(source, reason="no destination")
 
@@ -324,6 +439,11 @@ def plan(source):
 
     if _into_wiki(target):
         return _plan_wiki(source, fm, raw)
+    # A top-level draft may name the journal explicitly. Routed through the
+    # same planner so there is one answer to "what happens when something lands
+    # in the journal", however it got addressed there.
+    if _into_journal(target):
+        return _plan_journal(source, raw)
 
     why = denial_reason(target)
     if why:
@@ -352,13 +472,16 @@ def list_proposals():
         if not root.is_dir():
             continue
         for f in sorted(root.glob("*.md")):
+            if is_reserved(f):
+                continue
             out.append(plan(f))
-    # The wiki proposal subfolder is a second, explicit source — its pages are
-    # what the reader routine drafts. Everything else under the outbox stays
-    # out, same as the top-level rule.
-    for wd in _wiki_proposal_dirs():
-        for f in sorted(wd.glob("*.md")):
-            out.append(plan(f))
+    # The corpus subfolders are the other explicit sources — wiki pages from
+    # the reader routine, journal drafts from the memory routines. Everything
+    # else under the outbox stays out, same as the top-level rule.
+    for sub in (WIKI_SUBFOLDER, JOURNAL_SUBFOLDER):
+        for d in _proposal_dirs(sub):
+            for f in sorted(d.glob("*.md")):
+                out.append(plan(f))
     return out
 
 
@@ -375,6 +498,8 @@ def commit(proposal):
 
     if proposal.into_wiki:
         return _commit_wiki(proposal)
+    if proposal.into_journal:
+        return _commit_journal(proposal)
 
     source, target = proposal.path, proposal.target
 
@@ -429,15 +554,79 @@ def _commit_wiki(proposal):
     return target
 
 
+def _commit_journal(proposal):
+    """File a draft into the journal corpus, replacing the live file.
+
+    The re-plan is not a formality here, it is the guard: it re-runs the git
+    check at the moment of the write. A list drawn a minute ago may have been
+    clean when it was drawn — and the whole safety argument for overwriting is
+    that there is a commit to go back to, which stops being true the instant
+    something else touches the corpus.
+    """
+    source = Path(proposal.path)
+    fresh = plan(source)
+    if not fresh.ok or not fresh.into_journal:
+        raise MoveError(fresh.reason or "the proposal changed since it was listed")
+
+    j = journal_dir()
+    if not j:
+        raise MoveError("no JOURNAL_DIR configured")
+    target = path_guard(j / source.name, move_roots())
+    if target != fresh.target:
+        raise MoveError("the journal target changed since it was listed")
+
+    text = strip_destination(source.read_text(encoding="utf-8"))
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    # os.replace overwrites atomically: the live file is never observed
+    # half-written, and a crash leaves either the old file or the new one.
+    os.replace(tmp, target)
+    source.unlink()
+    return target
+
+
+def loser_dir():
+    d = _cfg("LOSER_DIR", "")
+    return Path(d).expanduser().resolve() if d else None
+
+
+def _loser_subfolder(proposal):
+    """Which corner of the losers' corner this draft belongs in.
+
+    Split by corpus rather than pooled, because the reason to keep a declined
+    draft at all is to debug the *prompt* that produced it — and that is a
+    per-routine question. A flat folder makes you sort them again by hand.
+    """
+    if getattr(proposal, "into_journal", False):
+        return JOURNAL_SUBFOLDER
+    if getattr(proposal, "into_wiki", False):
+        return WIKI_SUBFOLDER
+    return "notes"
+
+
 def drop(proposal, trash_dir=None):
     """Discard a proposal instead of filing it.
 
     Moved aside rather than deleted. 'Reject this draft' and 'destroy this
     draft' are different intentions, and only one of them is recoverable at
     3am when it turns out the draft was the good one.
+
+    Declined drafts land in `LOSER_DIR/<corpus>` when one is configured, and in
+    the outbox's own `dropped/` otherwise — so a config that predates the
+    losers' corner keeps working unchanged.
     """
     source = Path(proposal.path)
-    trash = Path(trash_dir) if trash_dir else source.parent / "dropped"
+    if is_reserved(source):
+        raise MoveError("the outbox's own readme is not a proposal — "
+                        "it cannot be dropped")
+    if trash_dir:
+        trash = Path(trash_dir)
+    elif loser_dir():
+        trash = loser_dir() / _loser_subfolder(proposal)
+    else:
+        trash = source.parent / "dropped"
     trash.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     target = trash / f"{stamp}-{source.name}"
