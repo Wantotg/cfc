@@ -372,6 +372,39 @@ def main():
     ok("still an httpx.HTTPError, so every existing catch matches",
        raised != "")
 
+    print("\n--- an empty-completion 400 re-rolls instead of failing ---")
+    # nano-gpt surfaces a thinking model's empty completion as a 400 on the
+    # non-streaming path. It is the same benign hiccup the stream path re-rolls,
+    # so the tool loop must not let it out as a hard error — it returns an empty
+    # message, which is exactly what runner._turn_with_retry re-rolls on. The
+    # discrimination is the whole point: this must NOT catch the max_tokens 400
+    # above, or an oversize request would re-roll forever.
+    conn.execute("DELETE FROM messages")
+    conn.commit()
+
+    def empty_400(messages, model=None, tools=None):
+        raise httpx.HTTPError(
+            "HTTP 400 from provider: The model returned an empty response. "
+            "No charge was applied.")
+
+    agent.call_api = empty_400
+    hist = [{"role": "user", "content": "go"}]
+    raised = ""
+    try:
+        final, out = drive(agent.agent_turn, [], hist, "m", conn, 1)
+    except httpx.HTTPError as e:
+        raised = str(e)
+    ok("an empty-completion 400 does not raise", raised == "", raised)
+    ok("...it returns an empty message the caller can re-roll",
+       final.get("content") == "", final)
+    ok("...and says what happened", "provider hiccup" in out, out[-200:])
+    ok("...persisted as an empty row, like any empty completion",
+       conn.execute("SELECT COUNT(*) FROM messages WHERE role='assistant' "
+                    "AND TRIM(content)=''").fetchone()[0] == 1)
+    ok("the max_tokens 400 is still recognised as a real failure, not this one",
+       not agent._is_empty_completion_400(
+           httpx.HTTPError("HTTP 400 from provider: max_tokens too small")))
+
     print("\n--- the model is told the budgets up front ---")
     guidance = agent.tools_guidance(max_calls=9)
     ok("guidance is one system message",

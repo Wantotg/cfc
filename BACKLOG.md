@@ -15,6 +15,65 @@ Suggestion: inspecting individual diff -> commit -> commits only that diff. Conf
 Also: :wiki commit all should give a (y/n) warning 'are you sure'. (may be implemented, was no diff to test this yet.)
 
 
+## The interactive tool path drops an empty-completion turn without offering a retry. 0.8-adjacent, 24-07-2026
+**Found:** 2026-07-24, fixing the empty-completion 400 on the tool path.
+Description: `agent_turn` now maps a thinking-model empty-completion 400 onto the
+empty-completion path — it returns an empty message. Routines re-roll it
+(`runner._turn_with_retry`); the **interactive** chat tool path (`main.py`, the
+`use_tools` branch) just takes the empty return, prints the "provider hiccup"
+note, renders an **empty answer panel**, and moves on.
+Problem: the streaming path in the same situation *asks* `retry? (y/n)` (see the
+empty-completion handler around `main.py:700`). The tool path offers no such
+prompt and paints a blank panel. Not broken — a human can retype — but the two
+paths handle the identical event differently, and the empty panel reads as a
+render bug.
+Suggestion: on an empty return from `agent_turn` in the interactive branch, skip
+the empty panel and offer the same `retry? (y/n)` the stream path does (reuse the
+handler, don't fork it). Low priority; symmetry, not a fault.
+
+## ":diff decline <file>" — send a declined draft to a losers' folder. 0.7, 24-07-2026
+**Found:** in the note-reader workflow rewrite (00 inbox/400-error brief).
+Description: the wiki-review loop lets you inspect a proposed page's diff, but
+there's no way to *reject* one from there. A decline should move that draft to
+`03 resources/loser corner` rather than leaving it in the proposal folder or
+silently dropping it — declined ≠ deleted, and the losers' corner is managed
+later in a chat session (model reads on approval, output to `99 outbox`).
+Suggestion: `:diff decline <file title>` (the diff display should show the title
+so there's something to type). Code-driven move, same shape as the mover — the
+command names the target, code re-validates and carries it out. v0.7's tiered
+memory wants the same behaviour for declined journal entries (see the v0.7
+draft), so build the move once and point both at it.
+Note: pairs with the top entry — per-file `:wiki commit` and per-file decline are
+the two halves of "act on the draft you're looking at, not the whole set."
+
+## ":move" — a file selector over the outbox. 0.8, 24-07-2026
+**Found:** in the note-reader workflow brief.
+Description: a command to move a file out of `99 outbox` (top level only, not the
+subfolders) into the vault, driven like `:attach`: list filenames, arrow-select,
+Enter to confirm, Esc to leave. The terminal states what will move and asks for a
+destination (default `00 inbox`, arrow-select subfolders — today only
+`00 inbox/notes` exists). A single Enter confirms — moving files, not replacing,
+so no y/n. If a same-named file exists at the target, warn and offer: replace /
+rename-the-new-one (timestamp appended?) / cancel; typing `replace` rather than
+picking it is the protection against a careless clobber.
+Where it fits: it's a filing command, closest to the existing `:outbox`/`:file`
+pair rather than the taxonomy's attach/remove verbs — decide during v0.8 whether
+it's a third filing command or an extension of that pair before naming it, so it
+lands under the right prefix.
+
+## Retire the ":"-command "startswith" chain for an exact-match table. 0.8-adjacent, 24-07-2026
+**Found:** 2026-07-24, planning the v0.8 command flip.
+Description: dispatch in `main.py` is a long `if user.startswith(":x")` chain, and
+the branch order is load-bearing — `":attached".startswith(":attach")` is true,
+which `main.py:368` carries a comment about. The v0.8 `:`→`/` flip is a *prefix
+change* by decision, so it preserves the trap rather than fixing it.
+Suggestion: after the flip settles, replace the chain with an exact-match command
+table + argument split, which kills the ordering trap structurally. Deliberately
+**not** bundled into the flip — that would break the "one re-baseline, pure
+prefix change" property that makes the flip safe. Its own session. See the v0.8
+build draft, block 5.
+
+
 ## ~~The run log sits inside the model's write scope~~ — FIXED (2026-07-23)
 
 **Fixed:** `tools.reserved_write_reason()` refuses any write resolving inside

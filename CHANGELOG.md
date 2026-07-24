@@ -23,6 +23,21 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Re-roll the empty-completion 400 on the tool path
+A thinking model's occasional empty completion arrives as an HTTP 400 (`The
+model returned an empty response`) on the non-streaming tool path, not as a 200
+with empty content — so it escaped through the exception door and neither the
+stream re-roll nor `runner._turn_with_retry` (both keyed off an empty *return*)
+ever saw it, and a routine died on a transient the retry machinery exists to
+absorb. `agent_turn` now recognises that specific 400 by its wording and returns
+an empty message, mapping it back onto the empty-completion path: routines
+re-roll and fail only if it persists, chat drops the turn. Only that 400 is
+caught — every other 400, oversize above all, still raises. Inherited by private
+chat for free.
+- Files: agent.py, tests/test_agent.py, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-23 — Record the v0.8 command taxonomy as a standing decision
 Settled the verb spine ahead of the work that implements it, so a command added
 before v0.8's `:` → `/` flip is named by the verb it will carry after — keeping
@@ -32,7 +47,7 @@ the flip a pure prefix change instead of a rename. `/add` (internal attach),
 deliberately deferred. Docs only, no code — the build itself is v0.8.
 - Files: HANDOVER.md, CLAUDE.example.md
 - Status: shipped
-- Commit: pending
+- Commit: 7c41537
 
 ## 2026-07-23 — File proposed pages into the wiki, id stamped at approval
 The mover refused wiki destinations outright, because a page landing in the
@@ -69,7 +84,7 @@ staleness is made *loud* with a one-command fix.
 - Files: `mover.py`, `import_wiki.py`, `backfill.py`, `commands.py`,
   `tests/test_mover.py`, `HANDOVER.md`
 - Status: shipped
-- Commit: pending
+- Commit: 5f8c7f7
 
 ## 2026-07-23 — Normalise routine ids to slugs at load, not reject them
 Routines are hand-authored in Obsidian, where `id: note reader` is what you
@@ -85,7 +100,7 @@ itself next saves it. The name stays free text; only the id coerces.
   still catches an id that slugifies to nothing as "id is empty".
 - Files: `routines.py`, `tests/test_routines.py`
 - Status: shipped
-- Commit: pending
+- Commit: 5f8c7f7
 
 ## 2026-07-23 — Run routines on a schedule, from one OS entry
 `main.py --run-due` is the headless entry point an OS scheduler calls on a

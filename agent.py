@@ -275,6 +275,30 @@ def _finish(text, history, conn, session_id, model):
     return final
 
 
+# A thinking model returns the occasional empty completion — a provider hiccup,
+# not a size limit; the same context usually answers on a re-roll. On the
+# streaming path that arrives as a 200 with empty content, and main.py re-rolls
+# it. On the **non-streaming** path the tool loop takes, nano-gpt surfaces the
+# same thing as an HTTP 400 whose body reads "The model returned an empty
+# response" — so it comes through the exception door and neither main.py's stream
+# re-roll nor runner._turn_with_retry (which both key off an *empty return*) ever
+# saw it. A routine died on a transient the retry machinery was built to absorb.
+#
+# The match is on the provider's wording, and that coupling is deliberately
+# fail-safe: it recognises ONLY the empty-response 400 and nothing else. An
+# oversize 400 — or any other — must keep raising, because re-rolling it re-sends
+# an identical doomed request and spends the whole budget on it. If nano-gpt ever
+# rewords this, we stop recognising it and fall straight back to the hard-fail
+# path below, which is the current behaviour — never a new silent pass. Same
+# provider-wording hazard the codebase flags for LIMIT_MESSAGE and the litter
+# markers; the fail direction is what makes it safe.
+_EMPTY_COMPLETION_MARK = "empty response"
+
+
+def _is_empty_completion_400(err):
+    return _EMPTY_COMPLETION_MARK in str(err).lower()
+
+
 def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                max_calls=None, touched=None):
     """Run a turn that may use tools. Returns the final assistant message.
@@ -360,6 +384,18 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
             try:
                 resp = call_api(messages, model=model, tools=offer)
             except httpx.HTTPError as e:
+                # An empty-completion 400 is the benign thinking-model hiccup,
+                # not a real failure — map it back onto the empty-completion path
+                # the callers already own by returning an empty message. runner's
+                # _turn_with_retry then re-rolls it (bounded, and fails the run
+                # loudly if it persists); the interactive tool path drops the
+                # turn, same as it does a 200-empty. Persisted like any empty
+                # completion the loop produces, so the routine's audit transcript
+                # shows the hiccup. Every OTHER 400 keeps the raise path below.
+                if _is_empty_completion_400(e):
+                    console.print("\n[the model returned no answer — provider "
+                                  "hiccup, common on thinking models]")
+                    return _finish("", history, conn, session_id, model)
                 # Re-raised as the same class, so every existing `except
                 # httpx.HTTPError` still matches, with our side of the request
                 # appended to the provider's words. main.py prints it and
