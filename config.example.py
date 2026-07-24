@@ -86,7 +86,7 @@ ATTACH_ROOTS = (
 )
 ATTACH_EXTENSIONS = {".md", ".txt", ".py", ".json", ".yaml", ".yml",
                      ".toml", ".csv", ".sql", ".sh"}
-ATTACH_MAX_CHARS = 100_000
+ATTACH_MAX_CHARS = 150_000
 ATTACH_BUDGET_FRACTION = 0.4   # max share of the model's context one file may take
 ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")
 

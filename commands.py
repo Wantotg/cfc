@@ -64,7 +64,7 @@ except ImportError:
 try:
     from config import ATTACH_MAX_CHARS
 except ImportError:
-    ATTACH_MAX_CHARS = 100_000
+    ATTACH_MAX_CHARS = 150_000
 try:
     from config import ATTACH_BUDGET_FRACTION
 except ImportError:
