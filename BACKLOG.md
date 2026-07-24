@@ -18,6 +18,13 @@ Also: :wiki commit all should give a (y/n) warning 'are you sure'. (may be imple
 Transcript: **2026-07-24 12:20:36** — ok — I cannot perform this task. The `mt memory.md` and `lt memory.md` files live in `/mnt/c/Users/disse/cooking for cats/03 resources/tiered memory/`, which is outside my allowed readable roots (`99 outbo… (42s, session 87)
 That is good and bad, report of the model came through, so that's ok. But the script needs to read the models message and flag certain keywords/phrases. Routine overview should show that the routine worked (the ok) but also flag the user that the log shows something irregular, to be inspected. "last routine performed at *timestamp*, result unclear?" 
 
+## Model selection is too generous, accepts anything. No routine model selection possible.
+**deepseek pro' isn't in your configured models — setting it anyway
+Switched to model: deepseek pro
+Current model: deepseek pro
+ 'shanhaig' isn't in your configured models — setting it anyway
+Switched to model: shanhaig
+Current model: shanhaig**
 
 ## The interactive tool path drops an empty-completion turn without offering a retry. 0.8-adjacent, 24-07-2026
 **Found:** 2026-07-24, fixing the empty-completion 400 on the tool path.
