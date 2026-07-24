@@ -35,7 +35,7 @@ as intent. `resolve_model` is a pure, tested core; `select_model` is the I/O
 shell. Inherited by private chat for free — it's the same `:model` dispatch.
 - Files: commands.py, main.py, tests/test_model.py
 - Status: shipped
-- Commit: pending
+- Commit: b94666f
 
 ## 2026-07-24 — Guard routines against models that stall
 Add a `ROUTINE_MODELS` config list of models vetted for unattended runs. Its

@@ -346,6 +346,43 @@ full loop against the live embedder is verified in use rather than in tests.
  > ^ <
 ```
 
+## v0.61 — Routine models, and a forgiving `:model` — **complete, 2026-07-24**
+
+A small reliability release that came straight out of using v0.6's routines in
+anger. One thinking model (`glm-5.2:thinking`) turned out to stall on this
+provider's current quantization — it returns an empty completion every time and
+the run fails loudly, which is v0.6's re-roll working, not a new bug. Other
+thinking models run routines fine, so the fix isn't to retry harder; it's to
+stop an unattended job from ever landing on a model that stalls, and to make a
+loose model name forgiving so a typo doesn't masquerade as a provider fault.
+
+- **`ROUTINE_MODELS` — a vetted list, and the default a scheduled run uses.**
+  Its first entry is what `--run-due` runs on when no model is passed, closing
+  the hole where a scheduled routine silently inherited the *interactive* chat
+  default (which may be the very model that stalls). An on-command `:routine`
+  still uses the session model but nudges (y/n) when it's off-list. Membership,
+  not a "thinking-model" guess — some thinking models are fine, so the list is
+  the judgement and the code trusts it. Unset ⇒ falls back to the old default,
+  no nudge.
+- **A failed routine's log line now names its session** (elapsed + `session N`),
+  matching the success line. A scheduled failure used to leave the session id
+  only on the terminal, so the transcript of the run you most wanted to open was
+  unfindable — and three distinct failures read as one repeated session number.
+- **`:model` forgives a loose query.** An exact id switches silently; a single
+  strong match asks "did you mean X?"; several offer a numbered pick; a
+  near-miss is caught by a fuzzy nearest, so a one-character slip
+  (`kimi-2.6` → `kimi-k2.6`) is offered rather than 400ing at the provider a
+  turn later; only a genuinely unrecognised id is set raw, with a note. Matches
+  your configured models only — no live catalogue — and an unlisted model is
+  still reachable by typing it in full.
+
+Deferred, not forgotten: a **per-routine `model:` field** (a routine declaring
+its own model in frontmatter) is the tidier long-term shape but touches the
+routine round-trip and its tests, so it's parked for a future feature rather
+than bolted on here.
+
+> *(note-shaped hole for Cas)*
+
 ## v0.7 — Tiered memory
 
 ## v0.8 — Prompts, personas, traits, and one way to add them
