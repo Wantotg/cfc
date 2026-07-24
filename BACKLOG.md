@@ -86,6 +86,46 @@ Current model: deepseek pro
 Switched to model: shanhaig
 Current model: shanhaig**
 
+## Processed notes stay in "00 inbox/notes" forever. 0.8, 24-07-2026
+**Found:** 2026-07-24, wiring the journal cadence. Cas had already hit it — it's
+in `st memory.md` for the 22nd: "routine read a stale note from the 24th because
+it was still in inbox/notes."
+Description: nothing removes a note from `00 inbox/notes` after a routine has
+processed it, so the folder grows without bound and every run re-reads material
+it has already written up.
+Mitigated, not fixed: the ST prompt now tells the model a note belongs to a date
+by its own `created:` field and to ignore anything outside the dates it was
+handed, so a stale note no longer produces a duplicate entry. That is a *prompt*
+holding the line, which is the weaker half of every pair in this project — and
+the cost is still real, since every run pays to read the whole folder.
+Suggestion: a code-driven move, same shape as the mover. After a successful run,
+notes whose `created:` date is covered by that run move to a processed folder.
+Deliberately not the model's job (it has a right answer) and deliberately not
+part of v0.7, which had enough moving parts.
+
+## Obsidian's template syntax and cfc's placeholders are both "{{ }}". 0.8-adjacent, 24-07-2026
+**Found:** 2026-07-24, adding the cadence placeholders.
+Description: `runner.PLACEHOLDERS` substitutes `{{date}}`, `{{dates}}`,
+`{{week}}` in a routine prompt. Obsidian's own templates use the same braces —
+this vault's `note template.md` has `{{date:YYYY-MM-DD}}` in it.
+Not live: matching is exact, so `{{date:…}}` is untouched, and the prompts point
+at the template by path rather than quoting it. But a bare `{{date}}` pasted
+into a prompt from an Obsidian template *would* be substituted, and the model
+would then write today's date into a new note where the placeholder belongs.
+Suggestion: an escape (`\{{date}}`), or confine substitution to a marked region.
+Don't build it on spec — the failure is visible the first time it happens and
+the fix is one line. Recorded so it isn't a surprise.
+
+## ":file" takes a number, not a title. 0.7 leftover, 24-07-2026
+**Found:** Cas's 0.6.2 testing pass.
+Description: `:outbox` now shows each proposal's frontmatter title beside its
+filename, which fixes the "list of bare timestamps" half of the report. Typing
+one is still `:file 3`.
+Suggestion: accept `:file Aquarium Nitrogen Cycle` as well, matching the title
+case-insensitively, refusing an ambiguous match rather than guessing. Pairs with
+the `:move` entry below — both are "name the thing instead of counting rows" —
+so decide the argument-parsing shape once, for both.
+
 ## The interactive tool path drops an empty-completion turn without offering a retry. 0.8-adjacent, 24-07-2026
 **Found:** 2026-07-24, fixing the empty-completion 400 on the tool path.
 Description: `agent_turn` now maps a thinking-model empty-completion 400 onto the
@@ -102,7 +142,32 @@ Suggestion: on an empty return from `agent_turn` in the interactive branch, skip
 the empty panel and offer the same `retry? (y/n)` the stream path does (reuse the
 handler, don't fork it). Low priority; symmetry, not a fault.
 
-## ":diff decline <file>" — send a declined draft to a losers' folder. 0.7, 24-07-2026
+## ~~":diff decline <file>" — send a declined draft to a losers' folder.~~ — FIXED (v0.7, 2026-07-24)
+
+**Fixed**, as `:file <n> decline [why]` rather than `:diff decline <title>`. The
+verb changed on purpose: decline is an argument to the existing filing command,
+so it inherits the numbering `:outbox` already put on screen and needs no new
+command name — which matters because the v0.8 taxonomy has no slot for a
+`/decline`, and the `:`→`/` flip has to stay a pure prefix change. Built once
+and pointed at both corpora, as the entry asked: `LOSER_DIR/<corpus>`
+(`wiki/`, `journal/`, `notes/`), split by corpus because the reason to keep a
+declined draft is to debug the prompt that produced it, which is a per-routine
+question.
+
+Beyond the original ask: the **reason is recorded on the draft itself**
+(`declined:` / `declined_reason:` in its frontmatter). A folder of near-identical
+rejects with nothing saying what was wrong with each is close to useless a week
+later — you end up re-deriving the fault instead of reading it. Frontmatter is
+edited by hand rather than re-dumped through `yaml`, since a round trip
+re-quotes unquoted digit ids and mangles wikilinks; the reason is quoted and
+escaped, because free text with a colon would otherwise cost the file its whole
+frontmatter block. Pinned in `test_mover.py`.
+
+Also landed with it: `99 outbox/dropped/` retires (still the fallback when no
+`LOSER_DIR` is configured), and the outbox's own readme became undroppable.
+
+Original report below.
+
 **Found:** in the note-reader workflow rewrite (00 inbox/400-error brief).
 Description: the wiki-review loop lets you inspect a proposed page's diff, but
 there's no way to *reject* one from there. A decline should move that draft to

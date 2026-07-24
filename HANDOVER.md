@@ -603,7 +603,8 @@ The last third of the routines work. A routine writes into `99 outbox` with a su
 
 ```
 model  → writes <vault>/99 outbox/<name>.md, frontmatter carries `destination:`
-Cas    → :outbox to review, :file <n> to approve  (or :file <n> drop)
+         (or drops it in wiki/ or journal/, where the folder is the signal)
+Cas    → :outbox to review, :file <n> to approve  (or :file <n> decline [why])
 mover  → re-validates the destination against MOVE_ROOTS, then moves it
 ```
 
@@ -632,6 +633,155 @@ Three properties, and they are the module's whole reason to exist:
 - **`drop` moves aside, it doesn't delete.** "Reject this draft" and "destroy this draft" are different intentions and only one is recoverable. Dropped files go to `99 outbox/dropped/` with a timestamp prefix.
 - **Only top-level `*.md` in the outbox are considered** — the run logs live in a subfolder and are not proposals. Same shape as the wiki importer's top-level-only rule.
 - A file with no `destination:` is listed as "no destination" rather than hidden. That means the outbox's own `99 readme.md` shows up as a permanent non-proposal; noise, judged not worth a special case, since hiding non-proposals would also hide a *malformed* one where the model forgot the key.
+
+### The journal, and the one place "a target that exists is a refusal" cannot hold (v0.7)
+
+The journal is three files — `st`/`mt`/`lt memory.md` in `JOURNAL_DIR` — that a
+model keeps as a diary, each tier more compressed than the last. It is **not**
+part of recall and is not a corpus: memory is a search index over a wiki, this
+is a document the model rewrites. Keep the two apart.
+
+`99 outbox/journal/` is a **second corpus subfolder** beside `wiki/`
+(`JOURNAL_SUBFOLDER`), so a draft there is journal-bound by location. The
+destination is the **filename**: `st memory.md` replaces `st memory.md`.
+Location declares the corpus, name declares which file in it, and a
+`destination:` key in a journal draft is ignored entirely — pinned by a test,
+because trusting one is the bug this module exists to prevent.
+
+**Filing a journal draft overwrites a live file. That is what a rollover is,
+and it breaks property 3 of the mover's own charter.** The refusal cannot simply
+be deleted — what replaces it has to be as strong. It is git:
+
+- The journal is inside the vault repo, so an overwrite is inspectable
+  (`:wiki diff journal`) and revertable (`git checkout`).
+- **That only holds if the corpus was clean beforehand.** Against a dirty
+  journal the diff mixes cfc's move with hand edits and there is no commit to
+  return to — so `_journal_guard_reason` refuses the move unless
+  `wikigit.status(JOURNAL)` is empty. **The clean check is the undo path**, not
+  a tidiness preference.
+- Checked at **plan time** (so `:outbox` shows the refusal before you type
+  `:file`) and **again inside `commit`** — the list may be minutes old, and the
+  second one is what guards the write. Same split as everywhere else here.
+- **Fails closed.** If git can't be consulted, the move is refused rather than
+  performed unrecoverably. Note this is the *opposite* direction from
+  `tools.reserved_write_reason`, which fails open — there, failing to resolve a
+  path can only narrow what is writable; here, failing to check can only widen
+  what is destroyed. When you add a guard, work out which of those it is.
+
+Verified by disabling the guard on purpose: seven assertions in `test_mover.py`
+fail. `Proposal.replaces` carries "this one overwrites" to the command layer,
+which renders `REPLACES` in yellow rather than the green `→` — a destructive
+verdict that reads like an ordinary one is how it gets rubber-stamped.
+
+**ST keeps two calendar weeks, not five days, and the reason is the approval
+step.** MT's draft has to be reviewed before its week's material leaves ST, so
+ST holds the current week and the previous one — a full week of slack. Decline
+an MT draft and there is until the next Monday to re-run it. A count ("keep
+exactly 5") cannot express this and cannot detect a gap either: five entries
+might span five days or nine, and nothing would ever notice.
+
+### Cadence: what the model is told, and what it is never asked to work out
+
+**No date is ever inferred.** A model has no clock, and a scheduled run is a
+fresh process with no memory of the last one — so both facts are computed by
+code and injected. `runner.placeholder_values` is the whole set:
+
+- `{{date}}` — today.
+- `{{dates}}` — every day a daily routine owes an entry for, today included.
+  After a gap that is several days, so a routine that missed Friday–Sunday
+  writes them on Monday. Capped at `MAX_CATCHUP_DAYS` (7): a month's outage
+  must not produce a prompt asking for thirty entries in one turn, which would
+  spend the whole call budget and fail — worse than writing the recent days and
+  letting the rest go.
+- `{{week}}` — the Mon–Sun span a weekly routine should condense. Always a week
+  that has **ended** (`routines.last_completed_week`), never one in progress.
+
+**The rejected design was letting the model infer the date from the file** —
+"the last entry is Thursday, so write Friday". It is self-consistent, so after
+one missed run it is permanently wrong and nothing can detect it. That is the
+same silent-drift shape this codebase keeps flagging, and it was the one part of
+the original sketch that had to go.
+
+Substitution is `str.replace`, never `str.format`: a prompt is hand-written
+markdown and a JSON example or code fence would make `.format` raise, turning a
+formatting nicety into a run that never starts. An unrecognised `{{…}}` is
+**reported** through `on_event` rather than passed through quietly — it reached
+the model as literal text otherwise, and the first real firing (`{{content}}`,
+`{{path}}`, dead stubs in the note-writer prompt) proved the warning earns its
+keep. It names the known set too, because "is this for me to fill in?" was the
+first question it produced.
+
+**Note the collision:** Obsidian's own template syntax is also `{{…}}`, and this
+vault's `note template.md` uses `{{date:YYYY-MM-DD}}`. The format-spec form is
+safe (matching is exact), but a bare `{{date}}` inlined into a prompt from an
+Obsidian template *would* be substituted. Not live — prompts reference the
+template by path — but it is one paste away.
+
+### `trigger: weekly HHMM` is not "on Mondays"
+
+A weekly routine is due when **a completed calendar week exists that it has not
+absorbed**: `last_completed_week(now) > last_completed_week(last success)`.
+
+- **Catch-up is free.** Miss Monday, it fires Tuesday on the same week. A
+  day-of-week check skips it, and that week then ages out of ST with nothing
+  having condensed it — the file quietly holds less and nothing says so.
+- **The cadence cannot drift.** Anchoring to the calendar rather than "seven
+  days since the last run" means a late run absorbs the week it was always going
+  to, instead of shifting every future week a day forward and never back.
+- **It is indifferent to how much the week holds.** Three entries is still that
+  week. "Is there enough" is a judgement about content and belongs to the model.
+- **It keys off `routines.last_success`, not `last_run`.** The first version used
+  the latest run of any kind, so a *failure* marked the week absorbed and skipped
+  it permanently. `ok (review)` counts as success — the file was written, and
+  re-running would condense the same week twice.
+
+**`trigger: 0300` was being read as 192.** YAML 1.1 types a leading-zero digit
+string as octal, so the obvious way to write 03:00 arrived from `safe_load` as
+an integer and validation rejected a trigger nobody wrote. It bites `0000`–`0777`
+only — early-morning times, which is when these jobs run. `routines._raw_trigger`
+re-reads the field from the raw frontmatter whenever YAML hands back a
+non-string: narrow on purpose, since YAML stays the parser for everything else.
+`safe_dump` already quotes it, so cfc-authored files were never affected — only
+hand-written ones, which is most of them. **Any other field that is a
+digit-string is exposed to this same trap.**
+
+### Declining, and where the reason lives
+
+`:file <n> decline [why]` moves a draft to `LOSER_DIR/<corpus>` and stamps
+`declined:` / `declined_reason:` into its own frontmatter. `drop` is the same
+call with no reason, kept because it reads right when there is nothing to say.
+
+- **The reason goes on the draft, not in a log.** These pile up in one folder
+  and look alike; a reason kept elsewhere is a join you make a week later from a
+  filename and a timestamp, by which point you are re-deriving what was wrong
+  with the prompt instead of reading it.
+- **This is the one place the mover edits frontmatter for its own purposes**, and
+  the exception is deliberate: *filing* adds no provenance keys because a filed
+  document is the user's content, whereas a declined draft has left the pipeline
+  and the annotation is the entire reason it is kept rather than binned.
+- **Written by hand, not re-dumped through `yaml`** — same reason as
+  `_ensure_id`. A `safe_dump` round trip re-quotes an unquoted digit id and
+  mangles a wikilink, and this vault's frontmatter is full of both.
+- **The reason is quoted and escaped.** It is free text typed at a prompt; an
+  unquoted colon would make the block unparseable and cost the file its entire
+  frontmatter, silently.
+- **No new command verb** — it is an argument to `:file`, so it inherits the
+  numbering already on screen and the v0.8 `/` flip stays a pure prefix change.
+  A `:decline` would have been a verb the taxonomy has no slot for.
+
+**The outbox's own readme is reserved** (`mover.is_reserved`, matching
+`NN readme.md`). It has no destination and never will, so it sat permanently at
+the top of `:outbox` reading `REFUSED — no destination`, and `:file 1 drop`
+would bin the folder's own documentation. Same shape as
+`tools.reserved_write_reason`: a named rule beside containment, not a widening
+of it. Name-based rather than "has no frontmatter", because a *malformed*
+proposal — one where the model forgot the key — must stay visible and would look
+identical. `plan()` refuses it as well as `list_proposals` skipping it, since
+`plan` is reachable directly.
+
+**`:file` and `:file … decline` reprint the outbox.** Filing removes an entry, so
+every number after it shifts — a stale list on screen means the next `:file 3` is
+a different file than the verdict you just read. Not cosmetic.
 
 ### Empty completions, and what `interactive` is actually for
 
@@ -793,7 +943,7 @@ entry (`wikigit.scope_dir`), not a new branch.
   pathspec. That is the per-file containment the top `BACKLOG` entry asked for:
   inspect one file's diff, commit *that* one, not the whole set. `commit`'s
   message is prompted right after the pick when it wasn't on the line.
-- **`:wiki commit vault` asks `[y/N]`** at folder granularity — it is the
+- **`:wiki commit vault` asks `(y/n)`** at folder granularity — it is the
   whole-repo sweep that once committed 202 files in one stroke. A per-file vault
   commit is already narrow, so it doesn't prompt.
 - **A commit message may not begin with a scope or granularity keyword**
@@ -939,12 +1089,20 @@ loudly:
 | `commands.py` / `import_anthropic.py` markers | `backfill.is_litter` | markers get embedded as content |
 | `routines.append_log`'s line | `routines.last_run` | `on_failure` reads the wrong status |
 | `tools.write_file`'s success line | `tools.written_path` | the run log says a run wrote nothing |
+| `routines.append_log`'s status word | `routines.last_success` | a weekly routine's week is marked absorbed, or never is |
 
 The failure is always a **silent false negative**: nothing raises, a regex
 simply stops matching, and the feature quietly returns "there is nothing here"
 — which is indistinguishable from the truthful answer. `is_litter` shipped with
 exactly this bug once (matching one marker against a whole concatenated string
 instead of per line).
+
+The fifth row is the newest and the most consequential: `last_success` decides
+whether a weekly routine has already processed a week. Reword `append_log`'s
+status word and either every week reads as unabsorbed (it re-condenses the same
+week forever) or none does (the material ages out of short term uncondensed).
+Both are quiet. `tests/test_schedule.py` pins it through `log()`, which writes
+lines the way `append_log` writes them.
 
 Two rules, both already applied above:
 
@@ -1020,7 +1178,19 @@ Two design points settled with it — detail in `ROADMAP_PRIVATE.md` and the
 8. **A routine is reconstructable from its file alone**, keyed by its `id`, and an invalid one cannot be *saved*. The only ungated context in the system comes from `ToolContext.for_routine()`, which forces a declared write scope in the same call; `gated` has no setter and there is no config flag that pre-clears a tool. Don't rebuild one under a new name.
 9. **Wiki recall keys off the frontmatter id and stays wiki-only.** `import_wiki` identifies a page by `source_uuid` (the id), not filename/hash, and on edit drops the page's chunks+vectors so they rebuild — never orphaning a `session_id` (the parked bug). Recall filters `provider='wiki'`; the chat log is indexed (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and must never break a chat turn.
 10. **A private chat's isolation is the connection, not a flag.** It runs against `db(":memory:")`; every `conn`-driven write is already a no-op against disk, including the ones `agent_turn` makes on its own. `private=True` gates only the three paths that *escape* the connection (auto-embed, auto-export, model file-writes via empty write roots). If you add a new disk-writing path, route it through `conn` or it will silently defeat this — and `tests/test_private.py` pins the negative.
-11. **A delete reaches the index that points at what was deleted.** `chunks`/`vec_chunks` have no foreign keys, so `delete_session`/`delete_message` cascade in code — index rows first, vectors before chunks, a vector-delete failure raising rather than half-completing. Leaving them behind is not one bug but three: deleted content still searchable, orphaned rows, and — because SQLite reuses rowids — stale chunks silently re-attaching to unrelated live messages. `tests/test_schema.py` pins all three.
+11. **A move that overwrites a live file requires a verified undo.** Journal
+    filing is the only path in the system that replaces existing content, and it
+    is allowed only against a git-clean corpus — checked at plan time *and*
+    inside `commit`, and **failing closed** when git can't be consulted. If you
+    add another overwriting path, it owes the same thing: an undo you have
+    checked exists, not one you assume does. Everywhere else the rule is still
+    "a target that exists is a refusal", and that has not been relaxed.
+12. **Nothing in a routine infers the date or the period it is working on.**
+    Both are computed by code and injected (`runner.placeholder_values`), because
+    a model has no clock and a scheduled run is a fresh process. Inference from
+    the document — "the last entry is Thursday, so write Friday" — is
+    self-consistent and therefore silently wrong forever after one missed run.
+13. **A delete reaches the index that points at what was deleted.** `chunks`/`vec_chunks` have no foreign keys, so `delete_session`/`delete_message` cascade in code — index rows first, vectors before chunks, a vector-delete failure raising rather than half-completing. Leaving them behind is not one bug but three: deleted content still searchable, orphaned rows, and — because SQLite reuses rowids — stale chunks silently re-attaching to unrelated live messages. `tests/test_schema.py` pins all three.
 
 ---
 
@@ -1028,9 +1198,20 @@ Two design points settled with it — detail in `ROADMAP_PRIVATE.md` and the
 
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
+**The lesson below generalised once already, and the second instance is bigger
+than the first.** `:config`, `:models` and `:tools` print `MODELS`,
+`TOOLS_MODELS`, `MODEL` and `API_BASE` straight into the baseline, so adding a
+model to your own config failed `check` on lines that say nothing whatever about
+the code. Scrubbing was the wrong tool — `:models` renders a rich table whose
+column width is the longest id, so the *layout* is config-derived too. They are
+**pinned to fixture values** in `capture()` instead, exactly as `DB_PATH` and
+`VAULT_PATH` are. `test_wikigit` had the same bug in miniature: it asserted "an
+unconfigured corpus is refused" against whatever the machine's config said, so
+configuring `JOURNAL_DIR` broke it. Both now force the value they test.
+
 **`SCRUB` is what keeps the baseline a property of the code and nothing else.** Timestamps, addresses, `$HOME` and the repo root are normalised on *both* sides at compare time — so adding a rule fixes an existing baseline without re-recording, and `record` is only needed to stop the raw value living in the tracked file. The rule that earned this paragraph: `:config` prints the last 4 of the API key, so **rotating the key failed `check` on a line that says nothing about the code**. Not a leak — it is exactly what a provider dashboard shows — but a tripwire that fires on something the code cannot cause is a tripwire that gets rubber-stamped, and this harness is the one that has to be trusted after a refactor. It scrubs only the `...abcd` form: with no key configured the line reads `not set`, which still diffs against `<KEY>`, because a config that lost its key is a real finding. Generalise it — anything a baseline pins that lives in `config.py` rather than in the source is the same bug.
 
-Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the two budgets, every call answered on an interrupt, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written), `test_mover` (destination refused not guessed, wiki refusal, plan/commit race, atomicity), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table), `test_schedule` (the six not-due rules, same-day catch-up, `on_failure` both ways, the retry bound, a corrupt log causes no run storm, the tick lock). 18 suites. None need an API key.
+Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the two budgets, every call answered on an interrupt, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written, the YAML-octal trigger trap, the cadence placeholders and the catch-up cap), `test_mover` (destination refused not guessed, plan/commit race, atomicity, the journal's git guard in both directions and its fail-closed case, the reserved readme, decline preserving hand-written frontmatter), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table), `test_schedule` (the six not-due rules, same-day catch-up, `on_failure` both ways, the retry bound, a corrupt log causes no run storm, the tick lock, and weekly due-ness: calendar-anchored, catch-up after a missed Monday, a failed run not counting as absorbed), `test_model`, `test_model_revert`. 20 suites. None need an API key.
 
 `test_schedule` passes `now` in and writes the run log by hand, on purpose: the scheduler's decisions are pure functions of (routine file, run log, now), and a scheduler you can only test by waiting until 03:00 is a scheduler nobody tests. Its assertions are mostly negatives — a job that fires twice, or retries a permanent failure ninety times a day, costs real money while nobody is watching.
 
@@ -1059,8 +1240,8 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 | `routines.py` | the `Routine` object, its markdown file store, and the append-only run log |
 | `runner.py` | `run_routine` — one routine's execution; the headless entry point in all but name |
 | `schedule.py` | which routines are due (`why_not_due`, `due_routines`), the tick lock, and `cli` — the `--run-due` / `--run-routine` / `--due` entry point |
-| `mover.py` | filing a proposal out of the outbox: `plan`/`commit`/`drop`, destination re-validation |
-| `wikigit.py` | the vault repo: `status`/`diff`/`commit`, scoped to `WIKI_DIR` unless widened. Owns no console |
+| `mover.py` | filing a proposal out of the outbox: `plan`/`commit`/`decline`, destination re-validation, the journal's git guard |
+| `wikigit.py` | the vault repo: `status`/`diff`/`commit`, scoped to a corpus (`wiki`/`journal`/`vault`) and optionally one file. Owns no console |
 | `preflight.py` | the launcher's embedder check — real POST, dimension guard, never blocks the launch |
 | `launch.sh` | what the desktop shortcut runs: repo + venv + preflight, then `main.py` |
 | `run-due.sh` | what the OS scheduler runs: repo + venv + preflight, then `main.py --run-due`. Nothing interactive |
@@ -1068,13 +1249,30 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 | `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer` |
 | `splash.py` | the launch screen: baked pixel art composited under the title, asset rotation, Enter/Esc gate. Depends on `ui`, not the reverse |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*` (incl. `TOOLS_MAX_CALLS_PER_TURN` and `TOOLS_MAX_TURN_RESULT_CHARS`, the turn's two budgets), `ROUTINE_*` (incl. `ROUTINE_MAX_CALLS_PER_TURN`), `MOVE_ROOTS`, `WIKI_DIR`, `STREAM_USAGE`, `API_READ_TIMEOUT`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*` (incl. `TOOLS_MAX_CALLS_PER_TURN` and `TOOLS_MAX_TURN_RESULT_CHARS`, the turn's two budgets), `ROUTINE_*` (incl. `ROUTINE_MAX_CALLS_PER_TURN`), `MOVE_ROOTS`, `WIKI_DIR`, `JOURNAL_DIR`, `LOSER_DIR`, `STREAM_USAGE`, `API_READ_TIMEOUT`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
 
 ---
 
 ## Current state & open threads
 
-- **Just landed (v0.5, "the scheduler"):** two things, in this order and for a
+- **Just landed (v0.7, "tiered memory"):** the journal's approve step and its
+  cadence. Most of the drafting half already existed **outside the repo** —
+  three routines and three prompts Cas had written in the vault — so this
+  version is the cfc side: `99 outbox/journal/` as a proposal source (the drafts
+  were invisible to `:outbox` before), overwrite-under-git as the replacement
+  for the mover's exists-refusal, `trigger: weekly HHMM` meaning "a finished
+  week is unabsorbed" rather than "on Mondays", computed dates injected so
+  nothing is inferred, and `:file <n> decline [why]`. Four bugs surfaced on the
+  way and all four were the quiet kind: a missing comma had concatenated two
+  `TOOLS_MODELS` entries into one nonexistent id, `trigger: 0300` was being read
+  as octal 192, a failed weekly run marked its week absorbed, and the golden
+  baseline had been pinning `config.py`'s model lists. **Not done here:** the
+  first scheduled (as opposed to on-command) run has not happened yet — ST is
+  `0300`, MT is `weekly 0330`, and both are waiting on a real tick. The prompts
+  were rewritten substantially for the new cadence and have had one on-command
+  run each; read the first scheduled outputs rather than trusting them.
+
+- **Before that (v0.5, "the scheduler"):** two things, in this order and for a
   reason. First the **tool turn's two budgets** — the call ceiling was counting
   loop iterations rather than calls, nothing bounded a turn's total tool
   output, and an interrupted turn left an unanswered call in the live

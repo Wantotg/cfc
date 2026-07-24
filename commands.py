@@ -1480,7 +1480,7 @@ def create_routine():
     # read=true/write=false is the default the handover specifies, and a
     # routine that can write should be a decision somebody made out loud.
     write_roots = []
-    if (_ask("  allow writing? (y/N)") or "n").lower().startswith("y"):
+    if (_ask("  allow writing? (y/n, default n)") or "n").lower().startswith("y"):
         write_roots = _ask_paths("write", None)
         if write_roots is None:
             return
@@ -2086,7 +2086,7 @@ def _wiki_commit_folder(scope, message):
             console.print("  the vault: nothing changed", style="green")
             return
         ans = input(f"  commit all {count} change(s) across the whole vault? "
-                    "[y/N]: ").strip().lower()
+                    "(y/n): ").strip().lower()
         if ans not in ("y", "yes"):
             console.print("  cancelled", style="dim")
             return

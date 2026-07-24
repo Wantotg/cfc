@@ -23,6 +23,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-24 — Documentation for v0.7
+`README.md` and `HANDOVER.md` rewritten together, as they are coupled. README
+gains a "The journal" section (the three tiers, why `REPLACES` is rendered
+differently from `→`, why filing needs a committed corpus, and that missing days
+is the intended outcome rather than a gap to paper over), a `trigger:` table
+covering `weekly HHMM`, and the YAML-octal warning where someone writing a
+trigger by hand will actually meet it. HANDOVER gains four sections — the
+journal and its git guard, the cadence and what is never inferred, weekly
+due-ness, and declining — plus two new invariants (an overwriting move owes a
+*verified* undo; nothing in a routine infers its own date), a fifth row in the
+producer/parser table (`append_log`'s status word ↔ `last_success`), and the
+generalised version of the golden-baseline lesson.
+
+Also cleared from the 0.6.2 testing pass: the whole-vault commit prompt reads
+`(y/n)` rather than `[y/N]`. `BACKLOG.md` strikes the `:diff decline` entry and
+gains three: notes are never removed from the inbox after processing (mitigated
+by prompt, which is the weak half), Obsidian's template syntax collides with the
+placeholder braces (latent, not live), and `:file` still takes a number rather
+than a title.
+- Files: README.md, HANDOVER.md, BACKLOG.md, commands.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Say what an unrecognised placeholder means
 The unfilled-placeholder warning fired on its first real run — `{{content}}`
 and `{{path}}` in the note-writer prompt — and the reasonable reading of it was
@@ -38,7 +61,7 @@ loop, so nothing ever substituted it and the model had been reading the braces
 verbatim every run. Found by the warning, which is what it is for.
 - Files: runner.py (+ vault prompt)
 - Status: shipped
-- Commit: pending
+- Commit: 19fb6cb
 
 ## 2026-07-24 — `:file <n> decline [why]` — reject a draft and record why
 The other half of the review step, and the `BACKLOG` entry that asked for a
@@ -67,7 +90,7 @@ the numbering you are already looking at and the v0.8 `/` flip stays a pure
 prefix change. `:file <n> drop` still works as the terse no-reason form.
 - Files: mover.py, commands.py, tests/test_mover.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: f982eb5
 
 ## 2026-07-24 — Cadence: weekly triggers, computed dates, and a YAML octal trap
 The journal's cadence, designed with Cas this session. Three parts.

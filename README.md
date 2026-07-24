@@ -21,8 +21,10 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **File attachments** — inject a local text file into a session; it persists and comes back on reopen
 - **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, behind an approval gate. It can also `write_file`, but only into one narrow write root that cannot reach your code
 - **Token tracking** — live context-usage bar with warnings as the window fills
-- **Routines, on command or on a schedule** — a task the model runs against its own declared roots, `:routine <name>` now or on a trigger time. One OS scheduler entry covers every routine; cfc decides what's due from each routine's own file and its run log
-- **Vault git from the REPL** — review and commit hand-edited wiki pages with `:wiki diff` / `:wiki commit`, scoped to the wiki corpus unless you widen it
+- **Routines, on command or on a schedule** — a task the model runs against its own declared roots, `:routine <name>` now, at a trigger time, or once a calendar week has finished. One OS scheduler entry covers every routine; cfc decides what's due from each routine's own file and its run log
+- **A tiered journal the model maintains** — a rolling diary in three tiers (short, medium, long term), each more compressed than the last. Routines draft the rollovers, you review them with `:outbox`, and `:file` carries one out. Nothing reaches the live files without you approving it, and the undo is git
+- **Propose, review, approve** — everything the model writes lands in one outbox with its destination already worked out, and a human decides. `:file <n>` files it, `:file <n> decline <why>` rejects it and records the reason on the draft for later prompt debugging
+- **Vault git from the REPL** — review and commit hand-edited pages with `:wiki diff` / `:wiki commit`, scoped to the wiki corpus by default, the journal or the whole vault on request, per folder or per file
 - **Rolling backups** — the database is snapshotted on startup, automatically
 - **A launcher that checks its dependencies** — `launch.sh` confirms the embedder is up (starting LM Studio and loading the model if not) before opening the app, so memory failing silently stops being a thing
 
@@ -147,9 +149,21 @@ vanishes silently exited cleanly.
 
 ### Running routines on a schedule
 
-A routine's `trigger:` field is either `command` (the default — it runs only
-when you type `:routine <name>`) or a time of day as `HHMM`. Something on the
-OS side has to call cfc on a tick; cfc works out the rest:
+A routine's `trigger:` field is one of three things:
+
+| `trigger:` | When it runs |
+|---|---|
+| `command` | Only when you type `:routine <name>`. The default |
+| `0300` | Daily, on the first tick at or after 03:00. A day missed is not replayed the next day |
+| `weekly 0330` | When a Monday–Sunday week has *finished* and this routine hasn't processed it yet — **not** "on Mondays". Miss Monday and it runs Tuesday, on the same week |
+
+**Quote a time with a leading zero if you write it by hand:** `trigger: "0300"`.
+Unquoted, YAML reads a leading-zero digit string as octal and `0300` becomes
+`192`. cfc re-reads the field from the raw file to undo this, and validation
+catches what's left, but the quotes make it a non-question. It only affects
+`0000`–`0777`, which is to say early-morning times.
+
+Something on the OS side has to call cfc on a tick; cfc works out the rest:
 
 ```bash
 python main.py --due                  # what's due right now, run nothing
@@ -301,10 +315,10 @@ still returns to the hub.
 | `:outbox` | List files the model has proposed, and where each would go |
 | `:file <n>` | File one proposal at its destination |
 | `:file all` | File every valid proposal |
-| `:file <n> drop` | Discard a proposal — moved aside, not deleted |
+| `:file <n> decline [why]` | Reject a proposal — moved to the losers' corner with the reason recorded on it (`drop` is the terse form) |
 | `:wiki` | Vault repo status — wiki changes listed, the rest counted |
-| `:wiki diff [all]` | Show the diff; `all` widens past the wiki to the vault |
-| `:wiki commit [all] <msg>` | Stage and commit everything in scope |
+| `:wiki diff [scope] [file]` | Show the diff. Scope: `wiki` (default), `journal`, `vault`. Add `file` to pick one |
+| `:wiki commit [scope] [file] <msg>` | Stage and commit what's in scope; `vault` asks first |
 | `:tokens` | Detailed context-usage breakdown |
 | `:export [n]` | Export a session to Obsidian (this one by default) |
 | `:config` | Show current configuration (key masked) |
@@ -375,6 +389,54 @@ Retrieval has a floor (`MAX_DISTANCE`, currently `1.08`): if nothing is within i
 
 The number is specific to `bge-m3` **and** this corpus, including how the corpus is chunked — re-measure if any of those change.
 
+## The journal
+
+Separate from recall, and don't confuse the two: memory is a *search index* over
+a wiki you wrote. The journal is a **diary the model keeps**, in three files that
+get shorter as they get older.
+
+```
+03 resources/journal/st memory.md    days, as they happen
+                     mt memory.md    one block per finished week
+                     lt memory.md    single lines, the things that lasted
+```
+
+Three routines maintain them, and none of them writes to those files. Each
+drafts a whole replacement into `99 outbox/journal/`, and `:outbox` shows it as
+a proposal you can read before anything happens:
+
+```
+  1. st memory.md  —  Short term memory   [journal]
+     REPLACES /…/03 resources/journal/st memory.md
+```
+
+`REPLACES` rather than `→` because it is a replacement — filing a journal draft
+overwrites the live file, which is what a rollover *is*. That's the one place
+the outbox's "a target that already exists is a refusal" rule doesn't hold, so
+something else has to make it safe, and that something is git: the journal lives
+in the vault repo, so **cfc refuses the move unless the journal is committed.**
+Then `:wiki diff journal` shows exactly what the rollover did and
+`git checkout` undoes it. If git can't be consulted at all, the move is refused
+rather than done — you can't offer an undo you haven't checked exists.
+
+**Nothing infers a date.** Each routine is handed the dates it owes, computed by
+cfc from the clock and the run log, because a model has no clock and a scheduled
+run is a fresh process with no memory of the last one. Prompts use `{{dates}}`
+(the days a daily routine owes, including catch-up after a gap) and `{{week}}`
+(the Monday–Sunday span a weekly one should condense — always one that has
+ended). An unrecognised `{{…}}` is reported at the start of the run rather than
+reaching the model as literal text.
+
+**A weekly routine is due when a finished week hasn't been absorbed yet** —
+`trigger: weekly 0330` does *not* mean "Mondays at 03:30". Miss Monday and it
+runs on Tuesday, taking the same week. A day-of-week check would simply skip it,
+and that week would then age out of short term with nothing having condensed it
+— the quiet kind of failure, where the file just holds less and nothing says so.
+
+Missing days is fine and expected. A day nobody captured anything for gets no
+entry, a week with three days in it condenses to three days' worth. The journal
+holding less is the correct outcome, not a gap to paper over.
+
 ## Security
 
 Read this before turning tools on.
@@ -397,6 +459,8 @@ The tests that back this up are worth keeping green: `tests/test_paths.py` cover
 ## Known limitations
 
 - **The scheduler needs one entry on the OS side, and it's yours to create** — cfc decides *what* is due, but something has to call it on a tick. See “Running routines on a schedule”. Nothing is scheduled until you set a routine's `trigger:` to a time and add that entry.
+- **The journal is not in recall** — it is a diary the model writes, not a corpus you can ask questions of. Reading it back into a conversation is a later idea, not a thing that works today.
+- **Filing a journal draft needs a committed journal.** That's the price of being allowed to overwrite a live file at all — see “The journal”. If `:outbox` refuses one, `:wiki commit journal` (or a `git checkout` to throw away the hand-edit) is the fix.
 - **Recall is wiki-only** — the semantic index answers from the distilled wiki, which states each decision once. Raw chat logs are indexed (`source='chat'`) but not yet folded into recall; that hybrid is a future additive step. This sidesteps the old "resolution staleness" problem, where searching raw transcripts surfaced the messages where a decision was being *argued* over the one where it was settled.
 - **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams. (Reasoning still shows on the tool path — it just arrives all at once per step rather than streaming in.)
 - **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `:tools` tells you whether the active model qualifies.
@@ -421,7 +485,7 @@ Known rough edges live in `BACKLOG.md`.
 | `runner.py` | running one routine — the headless entry point in all but name |
 | `schedule.py` | which routines are due, and the `--run-due` entry point |
 | `mover.py` | filing a proposal out of the outbox: re-validates the destination, or refuses |
-| `wikigit.py` | the vault repo: status, diff and commit, scoped to the wiki by default |
+| `wikigit.py` | the vault repo: status, diff and commit, scoped to a corpus by default |
 | `preflight.py` | the launcher's embedder check — is LM Studio up with bge-m3 loaded? |
 | `complete.py` | Tab completion for `:attach` |
 | `hub.py` | the session browser and picker |
