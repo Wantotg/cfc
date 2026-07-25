@@ -23,6 +23,31 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-25 — Parse a command line once, dispatch from a table
+v0.8, block 1 of 9. Command dispatch was a chain of `user.startswith(":foo")`
+tests whose correctness depended on the order they were written in:
+`":attached".startswith(":attach")` is true, so `:attached` had to be tested
+first or it read as attaching a file called "ed" — a trap patched with a comment
+rather than structurally, and one that returns every time a command is added
+whose name prefixes another. `parse.py` now turns a line into a `Cmd`
+(verb · args · raw) once, and `run_session` holds a verb→handler table. Exact
+verb matching cannot have that bug; `:routines` and `:dbfoo` are simply not
+commands.
+
+The prefix is one constant in the parser, which is what makes block 8's `:` → `/`
+flip a one-character change rather than thirty-five edits. Aliases (`h`, `?`,
+`db`) resolve in the parser, so dispatch and completion cannot disagree about the
+surface.
+
+Behaviour is unchanged — `tests/golden.py check` passes byte-for-byte, which is
+the harness's whole purpose — with one exception it could not cover: `:title abc`
+reached a bare `int()` and took the REPL down. `Cmd.int_arg` returns a default
+instead, and the affected commands print a usage line. Same class as the
+`:routines` IndexError, fixed at the parser this time rather than per command.
+- Files: parse.py, main.py, tests/test_parse.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-24 — Documentation for v0.7
 `README.md` and `HANDOVER.md` rewritten together, as they are coupled. README
 gains a "The journal" section (the three tiers, why `REPLACES` is rendered
