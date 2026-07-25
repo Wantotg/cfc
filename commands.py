@@ -92,7 +92,10 @@ from ui import (console, context_style, context_thresholds, make_bar,
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
 from paths import path_guard, PathError
-from pools import pool, pool_dir, load as load_pool
+from pools import (pool, pool_dir, load as load_pool,
+                   match as pools_match, fill as pools_fill,
+                   tried as pools_tried, bad_name_reason,
+                   match_active as pools_match_active, active_layers)
 import tools
 
 # How many chunks :recall and :remember pull. Also a diagnostic: if eight hits
@@ -171,6 +174,13 @@ def list_pool(kind):
 
     console.print(f"\nAvailable {p.plural} ({d}):\n")
     for f in files:
+        # A name cfc can't accept is reported here rather than swallowed. The
+        # file would otherwise sit in the folder never resolving, with nothing
+        # said — the silent-failure shape this codebase keeps flagging.
+        reason = bad_name_reason(f.stem)
+        if reason:
+            console.print(f"  {f.stem:<24}  ! {reason}", style="dim")
+            continue
         first_line = f.read_text(encoding="utf-8").strip()
         first_line = first_line.split("\n")[0].lstrip(
             "# ").strip()
@@ -191,6 +201,80 @@ def list_traits():
     list_pool("trait")
 
 
+def _pick_layer(query, options):
+    """Numbered pick over `(kind, name)` options. Enter cancels.
+
+    A numbered `input()`, matching the hub picker, `select_model` and
+    `_pick_change` — not an arrow-key dialog. There is no full-screen selection
+    widget in this codebase and one attach is not the reason to import one:
+    prompt_toolkit and rich must never drive the terminal at once (invariant
+    #4), and this stays inline in the REPL.
+    """
+    console.print(f"  \"{query}\" matches {len(options)}:")
+    for i, (kind, name) in enumerate(options, 1):
+        console.print(f"    {i}) {name}  —  {pool(kind).label}")
+    raw = input("  pick a number (Enter to cancel): ").strip()
+    if not raw:
+        return None
+    try:
+        idx = int(raw)
+    except ValueError:
+        console.print("  not a number — cancelled", style="dim")
+        return None
+    if 1 <= idx <= len(options):
+        return options[idx - 1]
+    console.print("  out of range — cancelled", style="dim")
+    return None
+
+
+def resolve_layer(query, active=None, kinds=None):
+    """`(kind, name)` for a query, asking when it is ambiguous. None if
+    nothing was resolved — having said why.
+
+    The thin I/O shell over `pools.match`/`pools.fill`, the same pure-core /
+    shell split `resolve_model`/`select_model` uses. `kinds` restricts the
+    search to one pool, which is what the explicit form (`:add trait relax`)
+    passes; `active` is what the session already carries, which decides the
+    collision walk.
+    """
+    matches = pools_match(query, kinds=kinds)
+    if not matches:
+        console.print(f"  {pools_tried(query)}", style="dim")
+        return None
+    distinct = {name for _, name in matches}
+    if len(distinct) > 1:
+        # Several different things match equally well. A resolver does not
+        # judge under ambiguity — it lists and asks.
+        return _pick_layer(query, matches)
+    # One name, possibly in more than one pool: priority decides, and the walk
+    # skips a pool that is already carrying it.
+    return pools_fill(matches, active or {})
+
+
+def resolve_attached(query, active, kinds=None):
+    """`(kind, name)` for something the session is *carrying*, or None.
+
+    `/remove`'s half of the resolver. It searches the attached layers rather
+    than the pools, so naming a real prompt you never attached fails and says
+    so, instead of succeeding at nothing.
+    """
+    matches = pools_match_active(query, active, kinds=kinds)
+    if not matches:
+        carrying = active_layers(active, kinds)
+        if not carrying:
+            console.print("  nothing attached to remove", style="dim")
+        else:
+            have = ", ".join(f"{n} ({pool(k).label})" for k, n in carrying)
+            console.print(f"  no attached layer matches '{query.strip()}' "
+                          f"— carrying: {have}", style="dim")
+        return None
+    if len({name for _, name in matches}) > 1:
+        return _pick_layer(query, matches)
+    # One name in more than one pool: peel the highest-priority one, which is
+    # the reverse of the walk /add does and lands on the same layer /add filled.
+    return matches[0]
+
+
 def load_prompt_file(name):
     """(body, filename) for a system prompt, or (None, None)."""
     return load_pool("prompt", name)
@@ -204,6 +288,12 @@ def load_persona_file(name):
 def load_trait_file(name):
     """(body, filename) for a trait, or (None, None)."""
     return load_pool("trait", name)
+
+
+def load_pool_file(kind, name):
+    """(body, filename) for any pool. What the resolver's caller uses once it
+    knows which pool it landed in."""
+    return load_pool(kind, name)
 
 
 def known_models():

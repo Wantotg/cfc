@@ -23,6 +23,41 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-25 — /add and /remove: two verbs across five mechanisms
+v0.8, blocks 4 and 5, built together because they are two halves of one
+resolver. `:prompt name`, `:persona name`, `:attach path` and `:tag name` were
+four verbs for one idea — put this on the session — and `:prompt off`,
+`:persona off`, `:detach n`, `:untag` and `:forget` were five for taking it off
+again. They are now `:add` and `:remove`, still `:`-prefixed until block 8. The
+old verbs still work; nothing is removed until the flip.
+
+The shared resolver lives in `pools.py` as a pure core with a thin I/O shell in
+`commands.py`, the same split `resolve_model`/`select_model` uses. It is
+case-insensitive, resolves a unique partial, and **never judges under
+ambiguity**: two different names matching equally well is a numbered pick, not a
+guess. Tiers don't mix, so an exact name never loses to a near miss. A failure
+names the forms and the pools it searched, so "typed it wrong" and "the thing is
+broken" stay distinguishable.
+
+`/add` searches what the pools *hold*; `/remove` searches what the session is
+*carrying* — naming a real prompt you never attached has to fail rather than
+succeed at nothing. A bare name walks the pools by priority (System > Persona >
+Trait) and skips a pool already carrying that name, so repeating `:add relax`
+walks down. That walk silently didn't advance at first: `sessions.system_prompt_name`
+holds `relax.md` while a pool resolves `relax`, and comparing them raw meant the
+name never looked attached. `pools.stem` normalises in one place — doing it per
+call site is exactly how it broke.
+
+`:remove excerpts` replaces `:forget`, reversing the standing decision's
+"`:forget` becomes `/delete`": `:forget` never deleted anything, and the line
+between the two verbs is whether retyping the command gets it back. A pool file
+whose name contains `#` is refused and flagged in the listing — `#n` is the
+attachment namespace, and a file that silently never resolves is the failure
+shape this codebase keeps naming.
+- Files: pools.py, parse.py, commands.py, main.py, tests/test_resolve.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-25 — One assembler, three pools, and traits behind them
 v0.8, blocks 2 and 3. `assemble.py` takes the system layers (persona → system
 prompt → traits, one message each, empty layers absent) out of the chat path and
@@ -51,7 +86,7 @@ a command yet — that is block 4.
 - Files: assemble.py, pools.py, db.py, commands.py, main.py, config.example.py,
   tests/test_assemble.py, tests/test_pools.py, tests/golden.py
 - Status: shipped
-- Commit: pending
+- Commit: 4a6020e
 
 ## 2026-07-25 — Parse a command line once, dispatch from a table
 v0.8, block 1 of 9. Command dispatch was a chain of `user.startswith(":foo")`

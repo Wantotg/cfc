@@ -97,3 +97,20 @@ def parse(line, prefix=PREFIX):
         raw=raw,
         args=tuple(raw.split()),
     )
+
+
+def looks_like_path(fragment):
+    """Is this argument a filesystem path rather than a name?
+
+    `/add` takes both — a bare name is one of cfc's own pools, a path is an
+    external file — so something has to tell them apart. The rule is the
+    fragment's *shape*, and it is deliberately loose, because it is only ever
+    consulted **after** the pools have been searched and found nothing: a real
+    pool item called `relax.md` resolves as a name and never reaches here.
+
+    Lives in the parser because `complete.py` asks the same question to decide
+    whether to offer pool names or filesystem paths, and two copies of this
+    rule is how completion and dispatch come to disagree about one line.
+    """
+    f = (fragment or "").strip()
+    return bool(f) and any(c in f for c in "/\\~.")

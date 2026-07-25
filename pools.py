@@ -49,7 +49,8 @@ class Pool:
     the code without changing a character of what it prints.
     """
 
-    def __init__(self, kind, configured, default, plural, singular, usage):
+    def __init__(self, kind, configured, default, plural, singular, usage,
+                 label):
         self.kind = kind
         # The single seam. Every path into this pool goes through `dir()`, so
         # pointing `configured` somewhere else re-points the whole pool — which
@@ -60,6 +61,10 @@ class Pool:
         self.plural = plural
         self.singular = singular
         self.usage = usage
+        # What an attach or detach calls this pool back to the user: "added
+        # Relaxed — Trait". On a partial or a case-fold the report *is* how you
+        # learn what happened, so it names the pool as well as the item.
+        self.label = label
 
     def dir(self):
         # Read through the attribute rather than captured at import, so a test
@@ -72,13 +77,13 @@ class Pool:
 POOLS = {
     "prompt": Pool(
         "prompt", PROMPTS_DIR, lambda: Path.home() / ".cfc" / "prompts",
-        "prompts", "prompt", "system prompts"),
+        "prompts", "prompt", "system prompts", "System prompt"),
     "persona": Pool(
         "persona", PERSONAS_DIR, lambda: Path.home() / ".cfc" / "personas",
-        "personas", "persona", "personas"),
+        "personas", "persona", "personas", "Persona"),
     "trait": Pool(
         "trait", TRAITS_DIR, lambda: Path.home() / ".cfc" / "traits",
-        "traits", "trait", "traits"),
+        "traits", "trait", "traits", "Trait"),
 }
 
 # Bare-name resolution order for `/add` and `/remove`: a name that exists in
@@ -114,7 +119,166 @@ def names(kind):
     return sorted(f.stem for f in d.glob("*.md"))
 
 
-def bodies(kind, names):
+# --- Resolving a name ---
+#
+# One resolver, shared by `/add` and `/remove`. The routine loader is the
+# precedent (id → display name → slug, first hit wins) and it works, so this
+# extends the idea rather than inventing a second dialect: try the strongest
+# form first, and only widen when it finds nothing.
+#
+# The rule that keeps it honest is that **it never judges under ambiguity**. If
+# two things match equally well the caller is handed both and asks; a resolver
+# that picked one would be making a guess the user cannot see, which is the same
+# failure the retrieval floor is set to avoid.
+
+TIERS = ("exact", "prefix", "substring")
+
+# `#n` is how an attachment is referred to everywhere in the surface
+# (`/remove #1`), so a pool item whose name contains `#` would be typeable only
+# by accident. It is refused rather than escaped: the namespace is worth more
+# than the one file that wanted the character.
+BAD_NAME_CHARS = "#"
+
+
+def bad_name_reason(name):
+    """Why this item can't be attached by name, or None.
+
+    Reported where the pool is *listed*, not swallowed — a file sitting in the
+    folder and never resolving, with nothing said, is the silent-failure shape
+    this codebase keeps flagging.
+    """
+    bad = [c for c in BAD_NAME_CHARS if c in (name or "")]
+    if bad:
+        return (f"'{bad[0]}' is reserved — it is the attachment namespace "
+                f"(#1, #2). Rename the file.")
+    return None
+
+
+def _tier(query, name):
+    """How well `name` matches `query`, or None. Case-insensitive, always —
+    these are filenames in an Obsidian vault, where capitalisation is a
+    display choice nobody should have to reproduce at a prompt."""
+    q, n = query.strip().lower(), name.lower()
+    if not q:
+        return None
+    if q == n:
+        return "exact"
+    if n.startswith(q):
+        return "prefix"
+    if q in n:
+        return "substring"
+    return None
+
+
+def _best(query, pairs):
+    """The `(kind, name)` pairs matching `query` at the strongest tier that
+    found anything.
+
+    Tiers don't mix: an exact hit means near-misses are not offered, so typing
+    a name in full always does what it says even when it is a prefix of three
+    other names. Order is preserved from `pairs` — pool priority, then
+    alphabetical — which is the order they are numbered in if the caller asks.
+    """
+    hits = {t: [] for t in TIERS}
+    for kind, name in pairs:
+        t = _tier(query, name)
+        if t and not bad_name_reason(name):
+            hits[t].append((kind, name))
+    for t in TIERS:
+        if hits[t]:
+            return hits[t]
+    return []
+
+
+def match(query, kinds=None):
+    """Matches among everything the pools *hold*. What `/add` searches."""
+    kinds = tuple(kinds) if kinds else PRIORITY
+    return _best(query, [(k, n) for k in kinds for n in names(k)])
+
+
+def stem(name):
+    """A pool item's name, however it was stored.
+
+    `sessions.system_prompt_name` holds the **filename** (`relax.md`) because
+    that is what it has always held and the hub's columns render it; a pool
+    resolves by **stem** (`relax`). Those two are compared constantly — the
+    collision walk is exactly "is this pool already carrying that name" — so
+    they are normalised in one place rather than at each comparison. Doing it
+    per call site is how the walk silently stops advancing, which it did.
+    """
+    n = (name or "").strip()
+    return n[:-3] if n.lower().endswith(".md") else n
+
+
+def active_layers(active, kinds=None):
+    """`(kind, name)` for everything currently attached, in priority order.
+
+    `active` maps kind → a name (the singular pools) or a list of names
+    (traits). Flattening it here means `/remove`, `/status` and the resolver
+    all read the session's layers through one shape instead of each knowing
+    which pools are singular. Names come back as stems — see `stem`.
+    """
+    kinds = tuple(kinds) if kinds else PRIORITY
+    out = []
+    for kind in kinds:
+        carried = (active or {}).get(kind)
+        if not carried:
+            continue
+        for name in ([carried] if isinstance(carried, str) else carried):
+            out.append((kind, stem(name)))
+    return out
+
+
+def match_active(query, active, kinds=None):
+    """Matches among what the session is *carrying*. What `/remove` searches.
+
+    Deliberately not the same set as `match`: removing is about detaching
+    something that is on, so a query that names a real prompt you never
+    attached must fail rather than silently doing nothing. Same tier rules, so
+    a partial peels a layer exactly as a partial attached it.
+    """
+    return _best(query, active_layers(active, kinds))
+
+
+def fill(matches, active):
+    """Which pool a resolved name should fill, given what is already attached.
+
+    `active` maps kind → the name(s) that pool currently carries. When a name
+    exists in more than one pool, the highest-priority pool that isn't already
+    carrying it wins — so repeating `/add relax` walks down the pools instead
+    of doing nothing twice. That walk is emergent rather than designed: it is
+    allowed to work, and it is not advertised.
+
+    Returns `(kind, name)`, or None if `matches` is empty. Callers pass
+    matches that already share one name; several *names* is ambiguity, which
+    is the caller's to ask about, not this function's to resolve.
+    """
+    if not matches:
+        return None
+    carried = dict()
+    for kind, name in active_layers(active):
+        carried.setdefault(kind, []).append(name)
+    for kind, name in matches:
+        if stem(name) not in carried.get(kind, []):
+            return kind, name
+    return matches[0]
+
+
+def tried(query):
+    """What a failed lookup looked for, for the message that says so.
+
+    A failure has to distinguish "you typed it wrong" from "the thing is
+    broken", which means naming the forms and the pools searched — the same
+    reason `Routine.validate()` lists every candidate it tried.
+    """
+    counts = ", ".join(
+        f"{len(names(k))} {POOLS[k].plural if len(names(k)) != 1 else POOLS[k].singular}"
+        for k in PRIORITY)
+    return (f"no exact, prefix or substring match for '{query.strip()}' "
+            f"in {counts}")
+
+
+def bodies(kind, wanted):
     """The bodies for a list of names, in the order given.
 
     A name whose file has gone is **skipped, not reported here.** The session
@@ -126,7 +290,7 @@ def bodies(kind, names):
     stays attached, which is how a real signal gets trained out.
     """
     out = []
-    for n in names or []:
+    for n in wanted or []:
         body, _ = load(kind, n)
         if body:
             out.append(body)

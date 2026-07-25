@@ -7,6 +7,7 @@
 #
 #     python3 main.py [session_id]
 import sys
+from itertools import takewhile
 
 import httpx
 
@@ -37,9 +38,9 @@ except ImportError:
 from splash import splash
 from rich.text import Text
 
-from parse import parse
+from parse import parse, looks_like_path
 from assemble import assemble_system
-from pools import bodies as pool_bodies
+from pools import bodies as pool_bodies, pool as pool_of, stem
 
 from ui import console, human_panel, read_input, set_completer
 # `db` is both the module and its connect function; main.py wants the
@@ -73,6 +74,7 @@ from commands import (
     do_updatedb, auto_embed,
     do_attach, show_attachments, do_detach,
     show_tools_state,
+    resolve_layer, resolve_attached, load_pool_file,
     show_routines, create_routine, do_routine,
     show_outbox, do_file,
     show_wiki_status, show_wiki_diff, do_wiki_commit,
@@ -568,6 +570,174 @@ def run_session(conn, session_id, private=False):
                               "':personas' to list "
                               "available files.")
 
+    # --- Attaching and detaching: /add and /remove ---
+    #
+    # Two verbs across five mechanisms. `:prompt name`, `:persona name`,
+    # `:attach path` and `:tag name` were four verbs for one idea — put this on
+    # the session — and `:prompt off`, `:persona off`, `:detach n`, `:untag`
+    # and `:forget` were five for taking it off again. The taxonomy's whole
+    # claim is that a new attachable thing costs no new verb, and these two
+    # functions are where that claim is either true or isn't.
+
+    def _active():
+        """What the session is carrying, in the shape the resolver reads."""
+        return {"prompt": system_prompt_name,
+                "persona": persona_name,
+                "trait": list(trait_names)}
+
+    def _attach_layer(kind, name):
+        """Put one resolved pool item on the session and say what happened."""
+        nonlocal system_prompt, system_prompt_name, persona, persona_name
+        nonlocal trait_names
+        body, filename = load_pool_file(kind, name)
+        if body is None:
+            # Resolution said it was there, so this is a file that moved or
+            # became unreadable between the two — worth naming as such.
+            console.print(f"'{name}' resolved but could not be read from "
+                          f"{pool_of(kind).plural}.")
+            return
+        label = pool_of(kind).label
+        if kind == "prompt":
+            set_system_prompt(conn, session_id, body, filename)
+            system_prompt, system_prompt_name = body, filename
+        elif kind == "persona":
+            set_persona(conn, session_id, body, filename)
+            persona, persona_name = body, filename
+        else:
+            # Traits stack. Re-adding an active one is a clear no-op rather
+            # than a duplicate: two copies of a trait in the prompt is not
+            # twice the instruction, it is a bug that reads as emphasis.
+            if name in trait_names:
+                console.print(f"{name} — {label} is already on.")
+                return
+            trait_names = trait_names + [name]
+            set_traits(conn, session_id, trait_names)
+        console.print(f"added {name} — {label} ({len(body)} characters)")
+
+    def h_add(cmd):
+        if not cmd.args:
+            console.print("Usage: :add <name> | :add <prompt|persona|trait> "
+                          "<name> | :add <path> | :add tag [session] <name>")
+            return
+        head = cmd.arg(0).lower()
+
+        # Tags never resolve bare — ':add python' must not guess a tag — so
+        # the kind is required and is checked before anything else.
+        if head in ("tag", "tags"):
+            rest = cmd.args[1:]
+            if not rest:
+                console.print("Usage: :add tag <name> or "
+                              ":add tag <session_id> <name>")
+            elif len(rest) == 1:
+                add_tag(conn, session_id, rest[0])
+            elif rest[0].isdigit():
+                add_tag(conn, int(rest[0]), cmd.tail(2))
+            else:
+                console.print("Usage: :add tag <session_id> <name>")
+            return
+
+        # Explicit kind: ':add trait relax' searches that pool only.
+        p = pool_of(head)
+        if p and len(cmd.args) > 1:
+            found = resolve_layer(cmd.tail(1), _active(), kinds=[p.kind])
+            if found:
+                _attach_layer(*found)
+            return
+        if p:
+            console.print(f"Usage: :add {p.singular} <name>   "
+                          f"(:list {p.plural} to see them)")
+            return
+
+        # Bare: search the three pools by priority. A path is only considered
+        # once that has found nothing, so a pool item named like a file still
+        # wins — see parse.looks_like_path.
+        found = resolve_layer(cmd.raw, _active())
+        if found:
+            _attach_layer(*found)
+        elif looks_like_path(cmd.raw):
+            do_attach(conn, session_id, history, cmd.raw,
+                      model=current_model)
+
+    def _detach_layer(kind, name):
+        nonlocal system_prompt, system_prompt_name, persona, persona_name
+        nonlocal trait_names
+        # The singular pools store a filename and the resolver works in stems;
+        # report the stem either way, so what you are told you removed is what
+        # you typed. See pools.stem.
+        label, name = pool_of(kind).label, stem(name)
+        if kind == "prompt":
+            clear_system_prompt(conn, session_id)
+            system_prompt = system_prompt_name = None
+        elif kind == "persona":
+            clear_persona(conn, session_id)
+            persona = persona_name = None
+        else:
+            trait_names = [t for t in trait_names if t != name]
+            set_traits(conn, session_id, trait_names)
+        console.print(f"removed {name} — {label}")
+
+    def h_remove(cmd):
+        if not cmd.args:
+            console.print("Usage: :remove <name> | :remove "
+                          "<prompt|persona|trait> [name] | :remove #<n> | "
+                          ":remove tag <name> | :remove excerpts")
+            return
+        head = cmd.arg(0).lower()
+
+        # `#n` is the attachment namespace. Any trailing text is ignored, so
+        # pasting a line straight out of the attachment list works.
+        if head.startswith("#"):
+            digits = "".join(takewhile(str.isdigit, head[1:]))
+            if digits:
+                do_detach(conn, session_id, history, digits)
+            else:
+                console.print("Usage: :remove #<n>   (:status lists them)")
+            return
+
+        if head in ("tag", "tags"):
+            rest = cmd.args[1:]
+            if not rest:
+                console.print("Usage: :remove tag <name> or "
+                              ":remove tag <session_id> <name>")
+            elif len(rest) == 1:
+                remove_tag(conn, session_id, rest[0])
+            elif rest[0].isdigit():
+                remove_tag(conn, int(rest[0]), cmd.tail(2))
+            else:
+                console.print("Usage: :remove tag <session_id> <name>")
+            return
+
+        # Injected recall excerpts. This is a *detach*, not a delete: :remember
+        # attached them and nothing durable is destroyed by dropping them,
+        # which is exactly the line between :remove and :delete.
+        if head in ("excerpts", "excerpt"):
+            do_forget(history, injected)
+            return
+
+        # A bare kind peels whatever that pool is carrying: ':remove persona'.
+        p = pool_of(head)
+        if p and len(cmd.args) == 1:
+            carried = _active().get(p.kind)
+            if not carried:
+                console.print(f"No {p.singular} attached.")
+            elif isinstance(carried, str):
+                _detach_layer(p.kind, carried)
+            elif len(carried) == 1:
+                _detach_layer(p.kind, carried[0])
+            else:
+                # Several traits and no name: ambiguity is listed, never
+                # guessed. "Which one" is a question only the user can answer.
+                console.print(f"  {len(carried)} {p.plural} attached: "
+                              f"{', '.join(carried)}")
+                console.print(f"  :remove {p.singular} <name>", style="dim")
+            return
+
+        query = cmd.tail(1) if p else cmd.raw
+        found = resolve_attached(query, _active(),
+                                 kinds=[p.kind] if p else None)
+        if found:
+            _detach_layer(*found)
+
     # --- Settings ---
 
     def h_database(cmd):
@@ -668,6 +838,8 @@ def run_session(conn, session_id, private=False):
         "attached": h_attached,
         "detach": h_detach,
         "attach": h_attach,
+        "add": h_add,
+        "remove": h_remove,
         "models": h_models,
         "model": h_model,
         "taglist": h_taglist,
