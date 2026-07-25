@@ -40,6 +40,7 @@ FIXTURE = HERE / "_fixture.db"
 # changes.
 FIXTURE_PROMPTS = HERE / "_fixture_prompts"
 FIXTURE_PERSONAS = HERE / "_fixture_personas"
+FIXTURE_TRAITS = HERE / "_fixture_traits"
 # The script ends with :q, and :q honours AUTO_EXPORT — so every `check` used
 # to write the fixture session into Cas's real VAULT_PATH. Nothing was
 # corrupted (the files overwrite each other) but "the tests don't touch
@@ -157,9 +158,10 @@ def assert_not_real(path, what):
 
 
 def build_prompt_fixtures():
-    """Two prompt files and two personas, with fixed names."""
+    """Two files in each pool, with fixed names."""
     for d, names in ((FIXTURE_PROMPTS, ("alpha", "beta")),
-                     (FIXTURE_PERSONAS, ("gamma", "delta"))):
+                     (FIXTURE_PERSONAS, ("gamma", "delta")),
+                     (FIXTURE_TRAITS, ("epsilon", "zeta"))):
         d.mkdir(exist_ok=True)
         for n in names:
             (d / f"{n}.md").write_text(f"# {n}\nfixture\n", encoding="utf-8")
@@ -176,7 +178,7 @@ def clean_fixture_vault():
 
 
 def clean_prompt_fixtures():
-    for d in (FIXTURE_PROMPTS, FIXTURE_PERSONAS):
+    for d in (FIXTURE_PROMPTS, FIXTURE_PERSONAS, FIXTURE_TRAITS):
         if d.is_dir():
             for f in d.glob("*.md"):
                 f.unlink()
@@ -333,11 +335,13 @@ def capture():
                     setattr(mod, attr, val if isinstance(val, str)
                             else list(val))
 
-    # get_prompts_dir()/get_personas_dir() read these at call time, so patching
-    # the module attribute is enough and no call site needs to know.
-    import commands as _cmds
-    _cmds.PROMPTS_DIR = str(FIXTURE_PROMPTS)
-    _cmds.PERSONAS_DIR = str(FIXTURE_PERSONAS)
+    # Every path into a pool goes through Pool.dir(), which reads `configured`
+    # at call time — so re-pointing the pool is enough and no call site needs to
+    # know. Patching config instead would miss anything that read it at import.
+    import pools as _pools
+    _pools.POOLS["prompt"].configured = str(FIXTURE_PROMPTS)
+    _pools.POOLS["persona"].configured = str(FIXTURE_PERSONAS)
+    _pools.POOLS["trait"].configured = str(FIXTURE_TRAITS)
 
     # Redirect the shared Console by mutating it, never by rebinding a module
     # attribute: once modules do `from ui import console`, setting chat.console

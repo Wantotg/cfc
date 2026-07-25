@@ -24,14 +24,6 @@ from rich.text import Text
 from config import API_BASE, API_KEY, MODEL, VAULT_PATH, AUTO_EXPORT
 
 try:
-    from config import PROMPTS_DIR
-except ImportError:
-    PROMPTS_DIR = ""
-try:
-    from config import PERSONAS_DIR
-except ImportError:
-    PERSONAS_DIR = ""
-try:
     from config import MODELS
 except ImportError:
     MODELS = []
@@ -100,6 +92,7 @@ from ui import (console, context_style, context_thresholds, make_bar,
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
 from paths import path_guard, PathError
+from pools import pool, pool_dir, load as load_pool
 import tools
 
 # How many chunks :recall and :remember pull. Also a diagnostic: if eight hits
@@ -107,16 +100,19 @@ import tools
 MEMORY_K = 8
 
 
+# The three pools live in pools.py, which owns their folders and their
+# loading. These stay as names because half the codebase already asks for a
+# pool this way; they are one line each and resolve through the same table.
 def get_prompts_dir():
-    if PROMPTS_DIR:
-        return Path(PROMPTS_DIR).expanduser()
-    return Path.home() / ".cfc" / "prompts"
+    return pool_dir("prompt")
 
 
 def get_personas_dir():
-    if PERSONAS_DIR:
-        return Path(PERSONAS_DIR).expanduser()
-    return Path.home() / ".cfc" / "personas"
+    return pool_dir("persona")
+
+
+def get_traits_dir():
+    return pool_dir("trait")
 
 
 def show_tags(conn, session_id):
@@ -147,26 +143,33 @@ def list_all_tags(conn):
     console.print()
 
 
-def list_prompts():
-    """List all available prompt files in the prompts directory."""
-    prompts_dir = get_prompts_dir()
-    if not prompts_dir.exists():
-        prompts_dir.mkdir(parents=True, exist_ok=True)
-        console.print(f"Created prompts directory:\n  "
-                      f"{prompts_dir}")
-        console.print("Add .md files here to use as system "
-                      "prompts.")
+def list_pool(kind):
+    """Print what a pool holds. One function for all three: `:prompts`,
+    `:personas` and the traits listing printed three near-identical copies of
+    this, and a third copy was exactly what block 3 existed not to write.
+
+    The wording is parameterised rather than generalised — the output is
+    unchanged, character for character, which is what `tests/golden.py` checks.
+    """
+    p = pool(kind)
+    d = p.dir()
+    if not d.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        console.print(f"Created {p.plural} directory:\n  "
+                      f"{d}")
+        console.print(f"Add .md files here to use as "
+                      f"{p.usage}.")
         return
 
-    files = sorted(prompts_dir.glob("*.md"))
+    files = sorted(d.glob("*.md"))
     if not files:
-        console.print(f"No prompt files found in:\n  "
-                      f"{prompts_dir}")
-        console.print("Create .md files here to use as system "
-                      "prompts.")
+        console.print(f"No {p.singular} files found in:\n  "
+                      f"{d}")
+        console.print(f"Create .md files here to use as "
+                      f"{p.usage}.")
         return
 
-    console.print(f"\nAvailable prompts ({prompts_dir}):\n")
+    console.print(f"\nAvailable {p.plural} ({d}):\n")
     for f in files:
         first_line = f.read_text(encoding="utf-8").strip()
         first_line = first_line.split("\n")[0].lstrip(
@@ -176,85 +179,31 @@ def list_prompts():
     console.print()
 
 
-def load_prompt_file(name):
-    """Load a system prompt from a markdown file.
-    Returns (content, filename) or (None, None) if not found.
-    """
-    prompts_dir = get_prompts_dir()
-    prompts_dir.mkdir(parents=True, exist_ok=True)
-
-    if name.endswith(".md"):
-        candidates = [prompts_dir / name]
-    else:
-        candidates = [
-            prompts_dir / f"{name}.md",
-            prompts_dir / name,
-        ]
-
-    for path in candidates:
-        if path.is_file():
-            content = path.read_text(encoding="utf-8").strip()
-            return content, path.name
-
-    return None, None
+def list_prompts():
+    list_pool("prompt")
 
 
 def list_personas():
-    """List all available persona files."""
-    personas_dir = get_personas_dir()
-    if not personas_dir.exists():
-        personas_dir.mkdir(parents=True, exist_ok=True)
-        console.print(f"Created personas directory:\n  "
-                     f"{personas_dir}")
-        console.print("Add .md files here to use as "
-                     "personas.")
-        return
+    list_pool("persona")
 
-    files = sorted(personas_dir.glob("*.md"))
-    if not files:
-        console.print(f"No persona files found in:\n  "
-                     f"{personas_dir}")
-        console.print("Create .md files here to use as "
-                     "personas.")
-        return
 
-    console.print(f"\nAvailable personas "
-                 f"({personas_dir}):\n")
-    for f in files:
-        first_line = f.read_text(
-            encoding="utf-8"
-        ).strip()
-        first_line = first_line.split("\n")[0].lstrip(
-            "# ").strip()
-        preview = first_line[:50] if first_line \
-            else "(empty)"
-        console.print(f"  {f.stem:<24}  {preview}")
-    console.print()
+def list_traits():
+    list_pool("trait")
+
+
+def load_prompt_file(name):
+    """(body, filename) for a system prompt, or (None, None)."""
+    return load_pool("prompt", name)
 
 
 def load_persona_file(name):
-    """Load a persona from a markdown file.
-    Returns (content, filename) or (None, None).
-    """
-    personas_dir = get_personas_dir()
-    personas_dir.mkdir(parents=True, exist_ok=True)
+    """(body, filename) for a persona, or (None, None)."""
+    return load_pool("persona", name)
 
-    if name.endswith(".md"):
-        candidates = [personas_dir / name]
-    else:
-        candidates = [
-            personas_dir / f"{name}.md",
-            personas_dir / name,
-        ]
 
-    for path in candidates:
-        if path.is_file():
-            content = path.read_text(
-                encoding="utf-8"
-            ).strip()
-            return content, path.name
-
-    return None, None
+def load_trait_file(name):
+    """(body, filename) for a trait, or (None, None)."""
+    return load_pool("trait", name)
 
 
 def known_models():

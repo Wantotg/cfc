@@ -23,6 +23,36 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-25 — One assembler, three pools, and traits behind them
+v0.8, blocks 2 and 3. `assemble.py` takes the system layers (persona → system
+prompt → traits, one message each, empty layers absent) out of the chat path and
+into one function, so a fourth layer is added there and not in each turn path.
+Order is preserved rather than chosen: it is what shipped, and moving it changes
+the bytes of every request for no argued reason.
+
+`pools.py` then makes prompts, personas and traits **one mechanism**. All three
+were already the same thing on disk — a folder of `.md` files where the filename
+is the identity — and `commands.py` held three near-identical copies of the list
+and load code. Writing a fourth for traits was exactly what extracting the
+assembler was meant to prevent, so the three collapse to one `Pool` table and the
+listing keeps its wording parameterised: golden is unchanged, character for
+character. `Pool.dir()` reads `configured` at call time and is the single seam —
+`golden.py` re-points the pools there instead of patching `commands`, which would
+have missed anything reading the value at import.
+
+Traits themselves: `TRAITS_DIR`, one file per trait (no id — the file is the id;
+a combined file would need a parser, and that hazard has a five-row table in
+`HANDOVER.md`), and a `traits` JSON column on `sessions` via the existing
+on-connect `ALTER TABLE`. **Names are stored, never bodies** — bodies are re-read
+from the pool every turn, so editing a trait file changes what every session
+carrying that name sends. A name whose file has gone is skipped rather than
+warned about per turn; `/status` is where that gap will show. Nothing is wired to
+a command yet — that is block 4.
+- Files: assemble.py, pools.py, db.py, commands.py, main.py, config.example.py,
+  tests/test_assemble.py, tests/test_pools.py, tests/golden.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-25 — Parse a command line once, dispatch from a table
 v0.8, block 1 of 9. Command dispatch was a chain of `user.startswith(":foo")`
 tests whose correctness depended on the order they were written in:
@@ -46,7 +76,7 @@ instead, and the affected commands print a usage line. Same class as the
 `:routines` IndexError, fixed at the parser this time rather than per command.
 - Files: parse.py, main.py, tests/test_parse.py
 - Status: shipped
-- Commit: pending
+- Commit: 5ef0ba2
 
 ## 2026-07-24 — Documentation for v0.7
 `README.md` and `HANDOVER.md` rewritten together, as they are coupled. README
@@ -69,7 +99,7 @@ placeholder braces (latent, not live), and `:file` still takes a number rather
 than a title.
 - Files: README.md, HANDOVER.md, BACKLOG.md, commands.py
 - Status: shipped
-- Commit: pending
+- Commit: a2a41af
 
 ## 2026-07-24 — Say what an unrecognised placeholder means
 The unfilled-placeholder warning fired on its first real run — `{{content}}`

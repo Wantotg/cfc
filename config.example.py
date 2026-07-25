@@ -10,10 +10,13 @@ VAULT_PATH = "PLACEHOLDER"
 # Automatically export session to Obsidian when you leave it
 AUTO_EXPORT = True
 
-# Where system prompt markdown files are stored
-# Point to a folder in your Obsidian vault so you can edit prompts there
+# Where the three pools of attachable text live: one folder each, one .md
+# file per item, the filename is the name. Point them at your Obsidian vault so
+# you can edit them there. A system prompt and a persona are singular (one at a
+# time); traits are plural and stack, so keep them short and single-purpose.
 PROMPTS_DIR = "PLACEHOLDER"
 PERSONAS_DIR = "PLACEHOLDER"
+TRAITS_DIR = "PLACEHOLDER"
 
 # Models available on your plan (for the :models command)
 # Replace these with the actual model names from your nano-gpt dashboard

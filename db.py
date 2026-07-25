@@ -90,7 +90,7 @@ def db(path=None):
         );
     """)
     for col in ["system_prompt", "system_prompt_name",
-                "persona", "persona_name"]:
+                "persona", "persona_name", "traits"]:
         try:
             conn.execute(
                 f"ALTER TABLE sessions ADD COLUMN {col} TEXT"
@@ -596,6 +596,46 @@ def clear_persona(conn, session_id):
         "UPDATE sessions SET persona=NULL, "
         "persona_name=NULL WHERE id=?",
         (session_id,),
+    )
+    conn.commit()
+
+
+def get_traits(conn, session_id):
+    """The trait *names* this session carries, in attach order.
+
+    Names, never bodies — the bodies are re-read from the pool on load, so
+    editing a trait file updates every session carrying that name instead of
+    leaving copies of an old draft frozen in rows nobody would think to look
+    at. Same reason a routine keeps `prompt:` as a reference rather than
+    inlining the prompt.
+
+    A row that is NULL, empty or unparseable reads as no traits. This is a
+    *display and prompt-assembly* field, and the safe direction for a value we
+    can't read is the one that carries less into the request — never a crash on
+    the way into a session.
+    """
+    row = conn.execute(
+        "SELECT traits FROM sessions WHERE id=?",
+        (session_id,),
+    ).fetchone()
+    if not row or not row[0]:
+        return []
+    try:
+        names = json.loads(row[0])
+    except (ValueError, TypeError):
+        return []
+    return [n for n in names if isinstance(n, str)] \
+        if isinstance(names, list) else []
+
+
+def set_traits(conn, session_id, names):
+    """Replace this session's trait list. Stored as a JSON array so the order
+    survives; `[]` is written as NULL, so "no traits" has one representation
+    in the column rather than two that have to agree."""
+    names = [n for n in (names or []) if n]
+    conn.execute(
+        "UPDATE sessions SET traits=? WHERE id=?",
+        (json.dumps(names) if names else None, session_id),
     )
     conn.commit()
 

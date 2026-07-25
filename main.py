@@ -38,6 +38,8 @@ from splash import splash
 from rich.text import Text
 
 from parse import parse
+from assemble import assemble_system
+from pools import bodies as pool_bodies
 
 from ui import console, human_panel, read_input, set_completer
 # `db` is both the module and its connect function; main.py wants the
@@ -51,6 +53,7 @@ from db import (
     get_system_prompt, get_system_prompt_name,
     set_system_prompt, clear_system_prompt,
     get_persona, get_persona_name, set_persona, clear_persona,
+    get_traits, set_traits,
     delete_session,
 )
 from agent import agent_turn, render_answer, tools_guidance
@@ -179,6 +182,10 @@ def run_session(conn, session_id, private=False):
     )
     persona = get_persona(conn, session_id)
     persona_name = get_persona_name(conn, session_id)
+    # Names, not bodies: the bodies are re-read from the pool on every turn, so
+    # editing a trait file updates every session carrying its name. See
+    # db.get_traits.
+    trait_names = get_traits(conn, session_id)
 
     print_session_header(conn, session_id, current_model, current_title,
                          system_prompt_name, persona_name, private=private)
@@ -286,6 +293,7 @@ def run_session(conn, session_id, private=False):
     def h_new(cmd):
         nonlocal session_id, history, injected, current_title, current_model
         nonlocal system_prompt, system_prompt_name, persona, persona_name
+        nonlocal trait_names
         if AUTO_EXPORT and history and not private:
             safe_export(conn, session_id)
         session_id = new_session(conn)
@@ -297,6 +305,7 @@ def run_session(conn, session_id, private=False):
         system_prompt_name = None
         persona = None
         persona_name = None
+        trait_names = []
         console.print(f"\nStarted session "
                       f"#{session_id}\n")
 
@@ -712,17 +721,10 @@ def run_session(conn, session_id, private=False):
                      model=current_model)
         history.append({"role": "user", "content": user})
 
-        prefix = []
-        if persona:
-            prefix.append({
-                "role": "system",
-                "content": persona,
-            })
-        if system_prompt:
-            prefix.append({
-                "role": "system",
-                "content": system_prompt,
-            })
+        # One place builds the system layers, so a new one is added there and
+        # not in each turn path. Same order as before it was a function.
+        prefix = assemble_system(system_prompt, persona,
+                                 pool_bodies("trait", trait_names))
 
         # Tools need all three switches on. Otherwise the original single
         # streamed call, unchanged.
