@@ -440,7 +440,51 @@ actually working), v0.5 (it's a nightly job) and v0.6 (the same draft → approv
  ( o_o ) 'OPUS POCUS PILATUS PAS'
   (>x<)
 ```
-## v0.8 — Prompts, personas, traits, and one way to add them
+## v0.8 — The command surface
+*Completed 2026-07-25.*
+
+A rework of the command surface. The prompt/persona/trait composition system
+rides along as the vehicle, not the headline — success measured in verbs
+removed, not features added. **33 verbs → 21**, one grammar, and a new
+attachable feature now costs no new verb.
+
+```
+/verb [kind] [target] [message]
+```
+
+- **Three questions, three commands.** `/help` (what can I type), `/list <kind>`
+  (what exists), `/status` (what's active right now). Everything else changes
+  something. `/status` alone absorbed eight bare commands, `/list` seven
+  listings.
+- **`/add` and `/remove`, across five mechanisms.** Four verbs used to put
+  something on a session — `:prompt`, `:persona`, `:attach`, `:tag` — and five
+  took it off. Now two do, over one resolver: case-insensitive, a unique partial
+  resolves, and ambiguity is a numbered pick rather than a guess. A bare name
+  walks the pools by priority (System > Persona > Trait); a path-shaped argument
+  is an external file.
+- **Traits.** The third pool — small named blocks that compose *alongside* a
+  system prompt and a persona, and unlike those two they stack. One `.md` file
+  each, exactly like prompts and personas: the filename is the name, no id, no
+  combined file. The session stores the *names*, so editing a trait file changes
+  what every session carrying it sends.
+- **One assembler.** `assemble_system(system_prompt, persona, traits)` builds the
+  request's system layers in one place, so the fourth layer is added there and
+  not in each turn path. Extracted first on purpose: it is what made unifying the
+  three pools safe instead of writing the duplication a third time.
+- **The dispatcher, rewritten first.** `parse(line) → Cmd` plus a verb→handler
+  table replaced a chain of `startswith` tests whose correctness depended on the
+  order they were written in — the trap that made `:attached` read as attaching a
+  file called "ed", and `:routines` take the whole app down. Exact matching
+  cannot have either bug.
+- **`/` instead of `:`.** One constant in the parser, and it touched no handler —
+  which was the argument for rewriting the dispatcher first rather than last. The
+  old prefix still works for this version and says so once per session; retired
+  verbs tell you what replaced them instead of being sent to the model as a chat
+  message.
+- **Private chat inherits all of it with no `if private` branch** — the test that
+  the design holds. `/new p` starts one from inside a session.
+
+> *(note-shaped hole for Cas)*
 
 ## v1.0 — Hardening, and a decision
 

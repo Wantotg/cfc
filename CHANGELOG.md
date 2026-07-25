@@ -23,6 +23,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-25 — Documentation for v0.8
+`README.md` and `HANDOVER.md` rewritten together, as they are coupled. README's
+in-session command section is now built around the grammar rather than a 47-row
+table — the three questions first, then the verbs grouped by what they do — plus
+traits as the third pool, the resolver's forgiveness, the `/remove`-vs-`/delete`
+line (whether retyping gets it back), the two deliberate grammar exceptions, and
+what happens to the `:` commands.
+
+HANDOVER replaces the recorded-early taxonomy section with what was built and
+what reversed on the way, and gains five: `parse.py` and the `startswith` trap it
+closes structurally, `pools.py` and why the assembler had to come first, the
+resolver's never-guess rule, traits, and short model names being display-only.
+New invariant #13 — the surface is three lists that must agree, checked rather
+than maintained, because an unrecognised verb goes to *the model*, so a
+documented verb missing from the table is an API call rather than an error
+message.
+
+The v0.8 body moves from `ROADMAP_PRIVATE.md` into `ROADMAP.md` with its
+completion date, per the split; Cas's note is his to write.
+- Files: README.md, HANDOVER.md, ROADMAP.md, tests/test_private.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-25 — /status, /list, the renames, and the flip
 v0.8, blocks 6 to 9. `:status` and `:list` are the two absorbing verbs and the
 biggest single cut: eight bare commands (`:title`, `:tokens`, `:prompt`,
@@ -74,7 +97,7 @@ are the ones a rename quietly breaks. 213 → 290 lines.
   tests/golden.py, tests/golden_baseline.txt, tests/test_parse.py,
   tests/test_complete.py, tests/test_mover.py
 - Status: shipped
-- Commit: pending
+- Commit: 3d0c3d0
 
 ## 2026-07-25 — /add and /remove: two verbs across five mechanisms
 v0.8, blocks 4 and 5, built together because they are two halves of one
