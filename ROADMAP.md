@@ -422,7 +422,7 @@ both got sharpened first. Most of it came out of using v0.6.1 in anger.
   ( T   )     /
  (((^_(((/(((_>
 ```
-## v0.7 — Tiered memory
+## v0.7 — Tiered memory **complete, 2026-07-24**
 Same mechanics, but editing a rolling journal, diary style: short term,
 medium term, long term. The LLM drafts suggestions, the human approves,
 a script moves. 
@@ -440,8 +440,7 @@ actually working), v0.5 (it's a nightly job) and v0.6 (the same draft → approv
  ( o_o ) 'OPUS POCUS PILATUS PAS'
   (>x<)
 ```
-## v0.8 — The command surface
-*Completed 2026-07-25.*
+## v0.8 — The command surface **Complete, 2026-07-25.**
 
 A rework of the command surface. The prompt/persona/trait composition system
 rides along as the vehicle, not the headline — success measured in verbs
@@ -484,7 +483,11 @@ attachable feature now costs no new verb.
 - **Private chat inherits all of it with no `if private` branch** — the test that
   the design holds. `/new p` starts one from inside a session.
 
-> *(note-shaped hole for Cas)*
+> *(note-shaped hole for Cas) Roadmap gives me rerolling energy *why not start again and do it right from the ground up, now that you know what to do?* I don't know what I'm doing. Feature complete first, before looking back or ahead.*
+
+```
+ฅ^•ﻌ•^ฅ 'Re-roll! Re-roll! Re-roll!'
+``` 
 
 ## v1.0 — Hardening, and a decision
 
