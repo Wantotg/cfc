@@ -418,7 +418,7 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
         msg = {"role": "assistant", "content": msg.get("content") or "",
                **({"tool_calls": calls} if calls else {})}
         history.append(msg)
-        # Persist this call's usage so the post-turn bar and :tokens work on the
+        # Persist this call's usage so the post-turn bar and /status work on the
         # tool path — the whole reason both went blank when tools took over.
         save_message(conn, session_id, "assistant", msg["content"],
                      model=model,

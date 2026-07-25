@@ -85,7 +85,7 @@ def is_local(base):
 def probe(timeout=PROBE_TIMEOUT):
     """One real embedding request. Returns (ok, detail).
 
-    Deliberately an /embeddings POST and not a GET on /v1/models: the model
+    Deliberately an /embeddings POST and not a GET on /v1/list models: the model
     list reports what LM Studio has on *disk*, so it answers happily while the
     model is unloaded and the thing cfc needs still fails. Test what you need,
     not a proxy for it — this is the same call `embed_texts` makes, minus the
@@ -248,7 +248,7 @@ def ensure():
     if not acted:
         _say(" ", f"server is up on port {port} and {model} is loaded, so "
                   "this is not a startup problem.", DIM)
-    _say(" ", "cfc will start; :recall and auto-embed will not work.", DIM)
+    _say(" ", "cfc will start; /recall and auto-embed will not work.", DIM)
     return False
 
 

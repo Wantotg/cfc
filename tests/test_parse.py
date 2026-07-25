@@ -23,7 +23,8 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
-from parse import parse, Cmd, PREFIX, ALIASES
+from parse import (parse, Cmd, PREFIX, LEGACY_PREFIX, ALIASES,
+                   RETIRED, VERBS, RESERVED)
 
 PASS, FAIL = [], []
 
@@ -110,14 +111,49 @@ def main():
 
     print("\n--- the prefix is one constant ---")
     ok("parse takes the prefix as a parameter",
-       parse("/add relax", prefix="/") is not None
-       and parse("/add relax", prefix="/").verb == "add",
+       parse("!add relax", prefix="!") is not None
+       and parse("!add relax", prefix="!").verb == "add",
        "the v0.8 flip is this constant, not thirty-five edits")
-    ok("the other prefix stops parsing when it isn't current",
-       parse(":add relax", prefix="/") is None)
+    ok("a prefix that isn't current doesn't parse",
+       parse("%add relax", prefix="!", legacy=None) is None)
+
+    print("\n--- the retired prefix, for one version ---")
+    ok("the old prefix still runs the command",
+       parse(f"{LEGACY_PREFIX}add relax").verb == "add",
+       "a migration that breaks what it migrates teaches only that the "
+       "upgrade was a mistake")
+    ok("...and is flagged as legacy so the REPL can say so",
+       parse(f"{LEGACY_PREFIX}add relax").legacy is True)
+    ok("the current prefix is not flagged",
+       parse(f"{PREFIX}add relax").legacy is False)
+    ok("the legacy prefix can be switched off in one place",
+       parse(f"{LEGACY_PREFIX}add relax", legacy=None) is None,
+       "removing it next minor is deleting a constant")
+    ok("the two prefixes are different characters",
+       PREFIX != LEGACY_PREFIX, (PREFIX, LEGACY_PREFIX))
     ok("Cmd is immutable", isinstance(p("/help"), Cmd)
        and _frozen(p("/help")),
        "handlers receive the parse, they don't edit it")
+
+    print("\n--- the surface: three lists that have to agree ---")
+    ok("twenty-one verbs", len(VERBS) == 21, len(VERBS))
+    ok("no verb is listed twice", len(set(VERBS)) == len(VERBS))
+    ok("every retired verb points at a live one",
+       all(r.split()[0] in VERBS for r in RETIRED.values()),
+       [r for r in RETIRED.values() if r.split()[0] not in VERBS])
+    ok("no retired verb is also a live one",
+       not (set(RETIRED) & set(VERBS)), set(RETIRED) & set(VERBS))
+    ok("no alias collides with a live verb",
+       not (set(ALIASES) & set(VERBS)), set(ALIASES) & set(VERBS))
+    ok("every alias resolves to a live verb",
+       all(v in VERBS for v in ALIASES.values()), ALIASES)
+    ok("nothing reserved is spent",
+       not (set(RESERVED) & set(VERBS)), set(RESERVED) & set(VERBS))
+    # main.py asserts its handler table equals VERBS at session start; this is
+    # the same guarantee from the other side, without needing a session.
+    ok("a retired verb still parses, so the REPL can correct it",
+       parse(f"{PREFIX}prompts").verb == "prompts",
+       "otherwise it falls through and is sent to the model as a message")
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

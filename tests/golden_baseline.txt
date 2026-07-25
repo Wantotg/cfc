@@ -5,15 +5,15 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Context         8 tokens
   Tools           glm-5.2 is not in TOOLS_MODELS — off
 
-  :help          every command
-  :q             back to the session list
-  :new           start a new session
-  :prompt name   set the system prompt  (:prompts to list)
-  :persona name  set the persona  (:personas to list)
-  :attach path   attach a local text file
-  :remember q    pull matching excerpts into this conversation
-  :tokens        token usage for this session
-  Alt+Enter      insert a newline  (Enter sends)
+  /help             every command
+  /q                back to the session list
+  /new              start a new session  (/new p for a private one)
+  /status           everything active in this session
+  /list <kind>      what exists  (prompts, traits, models, chats…)
+  /add <name|path>  attach a prompt, persona, trait or file
+  /remove <name>    take one off again
+  /remember q       pull matching excerpts into this conversation
+  Alt+Enter         insert a newline  (Enter sends)
 
 --- Previous messages in this session ---
 you> what did we decide about the vector db?
@@ -27,71 +27,68 @@ ai> 500 tokens with 75 overlap.
 --- End of history ---
 
 you>
-  session
-    :q                      back to the session list
-    :new                    start a new session
-    :list                   show every session, routine runs included
-    :title                  show this session's title
-    :title 5 Name           rename session #5
-    :delete                 delete this session (with confirm)
-    :delete 5               delete session #5 (with confirm)
-    :export                 export this session to Obsidian
-    :export 5               export session #5
-    :tokens                 token usage for this session
-    :config                 show all settings
+  /verb [kind] [target] [message]
+    a bare number is a chat id · #1 is an attachment · the message is always the rest of the line
 
-  prompts & personas
-    :prompts                list available system prompt files
-    :prompt                 show the current system prompt
-    :prompt name            set the system prompt from 'name.md'
-    :prompt off             remove the system prompt
-    :personas               list available persona files
-    :persona                show the current persona
-    :persona name           set the persona from 'name.md'
-    :persona off            remove the persona
+  ask
+    /help                   this list
+    /list <kind>            what exists: prompts · personas · traits · models · routines · tags ·
+chats · sessions · outbox
+    /status                 what's active in this session
+    /status prompt          print the attached prompt's text (or persona/trait)
+    /config                 deployment settings
+    /search word            search every message for 'word'
+
+  context — attach and detach
+    /add name               attach a prompt, persona or trait by name
+    /add trait name         …naming the kind, when the name is in two pools
+    /add path/to/file       attach an external file
+    /add tag python         tag this session  (/add tag 3 python for #3)
+    /remove name            take off whichever layer is carrying that name
+    /remove persona         take off whatever persona is on
+    /remove #1              detach attachment #1
+    /remove tag python      untag
+    /remove excerpts        drop the last injected recall block
+
+  destroy
+    /delete chat            delete this conversation (with confirm)
+    /delete chat 5          delete conversation #5
+
+  data
+    /export                 export this session to Obsidian
+    /export chat 5          export session #5
 
   memory
-    :recall q               ask your wiki a question (cited answer)
-    :remember q             pull matching excerpts into this conversation
-    :forget                 drop the last injected excerpts
-    :updatedb               index anything not yet embedded
-    :database on|off        enable/disable recall & remember this session
+    /recall q               ask your wiki a question (cited answer)
+    /remember q             pull matching excerpts into this conversation
+    /update db              re-import the wiki and index anything new
 
-  files
-    :attach path            attach a local text file (persistent)
-    :attached               list attachments in this session
-    :detach 1               remove attachment #1
-    :outbox                 review filing proposals
-    :file 1                 carry out proposal #1
-    :file 1 decline why     reject #1, keeping it and the reason
+  session
+    /new                    start a new session  (/new p for a private one)
+    /q                      back to the session list
+    /title 5 Name           rename session #5
 
-  wiki & routines
-    :wiki                   wiki repo status
-    :wiki diff [scope]      the diff (scope: wiki/journal/vault)
-    :wiki commit [scope]    stage & commit; add 'file' to pick one
-    :routine                list routines
-    :routine name           run one now
-    :routine new            create one
+  settings
+    /model name             switch model  (/list models to see them)
+    /tools on|off           toggle tools for this session
+    /database on|off        toggle recall & remember this session
 
-  models & tools
-    :model                  show the current model
-    :model name             switch to model 'name'
-    :models                 list configured models
-    :tools                  show tool state for this session
-    :tools on|off           toggle tools for this session
-
-  tags & search
-    :grep word              search all messages for 'word'
-    :tag python             add tag 'python' to this session
-    :tag 3 python           add tag to session #3
-    :tags                   show tags on this session
-    :untag python           remove tag from this session
-    :taglist                show all tags with session counts
+  wiki, routines, filing
+    /wiki                   wiki repo status
+    /wiki diff [kind]       the diff (kind: wiki/journal/vault)
+    /wiki commit [kind]     stage & commit; add 'file' to pick one
+    /routine name           run a routine now  (/routine new to create one)
+    /file 1                 carry out filing proposal #1  (/list outbox)
+    /file 1 decline why     reject #1, keeping it and the reason
 
   editing
     Alt+Enter               insert a newline (Enter sends)
     Ctrl-C                  cancel the current line, stay in the session
     Ctrl-D                  leave the session (on an empty line)
+
+you>
+/list <kind> — one of:
+  prompts · personas · traits · models · routines · tags · chats · sessions · outbox
 
 you>                                               Sessions
 ┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
@@ -102,6 +99,50 @@ you>                                               Sessions
 │    3 │ <TS>  │    0 │       — │ (untitled)                      │          │         │
 └──────┴───────────────────┴──────┴─────────┴─────────────────────────────────┴──────────┴─────────┘
 
+you>                                             Recent chats
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
+┃   ID ┃ Updated           ┃ Msgs ┃     Ctx ┃ Title                           ┃ Prompt   ┃ Persona ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━┩
+│    1 │ <TS>  │    4 │       8 │ Golden session one              │          │         │
+│    2 │ <TS>  │    2 │       3 │ Golden session two              │          │         │
+│    3 │ <TS>  │    0 │       — │ (untitled)                      │          │         │
+└──────┴───────────────────┴──────┴─────────┴─────────────────────────────────┴──────────┴─────────┘
+
+you>
+Available prompts (<ROOT>/tests/_fixture_prompts):
+
+  alpha                     alpha
+  beta                      beta
+
+you>
+Available personas (<ROOT>/tests/_fixture_personas):
+
+  delta                     delta
+  gamma                     gamma
+
+you>
+Available traits (<ROOT>/tests/_fixture_traits):
+
+  epsilon                   epsilon
+  zeta                      zeta
+
+you>           Available models
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Model              ┃ Status      ┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ glm-5.2            │ <-- current │
+│ fixture/tool-model │             │
+└────────────────────┴─────────────┘
+
+you>       All tags
+┏━━━━━━━━┳━━━━━━━━━━┓
+┃ Tag    ┃ Sessions ┃
+┡━━━━━━━━╇━━━━━━━━━━┩
+│ memory │        1 │
+└────────┴──────────┘
+
+you> Don't know how to list 'nonsense'. One of:
+  prompts · personas · traits · models · routines · tags · chats · sessions · outbox
 you>
 Current configuration:
   API base:      https://api.example.invalid/v1
@@ -115,36 +156,84 @@ Current configuration:
   Quick models:  glm-5.2, fixture/tool-model
 
 you>
-Token usage for session #1 "Golden session one"
-Model: glm-5.2
-Messages in session: 4
+Session #1  ·  glm-5.2  ·  Golden session one
+  System prompt   not set
+  Persona         not set
+  Traits          none
+  Attached        nothing
+  Tags            memory
+  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Database        on
+  Context         8 tokens
+  Last turn       0 in · 8 out
 
-Context limit:      unknown
-  (add glm-5.2 to MODEL_LIMITS in config.py)
-
-Current context:             8 tokens
-  Last input:                0 tokens
-  Last output:               8 tokens
-
-Total tokens used in this session:
-  All input:                15 tokens
-  All output:               28 tokens
-  Combined:                 43 tokens
-
-you> Current title: Golden session one
-you> Title: Golden session two
-you> Session #1 tags: memory
-you> Session #2 has no tags.
-you>       All tags
-┏━━━━━━━━┳━━━━━━━━━━┓
-┃ Tag    ┃ Sessions ┃
-┡━━━━━━━━╇━━━━━━━━━━┩
-│ memory │        1 │
-└────────┴──────────┘
-
+you> No prompt attached.
+you> added alpha — System prompt (15 characters)
+you> added gamma — Persona (15 characters)
+you> added epsilon — Trait (17 characters)
+you> added zeta — Trait (14 characters)
 you> Tagged session #1 with 'wsl'.
-you> Session #1 tags: memory, wsl
+you>
+Session #1  ·  glm-5.2  ·  Golden session one
+  System prompt   alpha
+  Persona         gamma
+  Traits          epsilon, zeta
+  Attached        nothing
+  Tags            memory, wsl
+  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Database        on
+  Context         8 tokens
+  Last turn       0 in · 8 out
+
+you>
+System prompt: alpha
+
+---
+# alpha
+fixture
+---
+
+you>
+Trait: epsilon
+
+---
+# epsilon
+fixture
+---
+
+
+Trait: zeta
+
+---
+# zeta
+fixture
+---
+
+you> epsilon — Trait is already on.
+you> removed epsilon — Trait
+you> removed zeta — Trait
+you> removed gamma — Persona
 you> Removed tag 'wsl' from session #1.
+you>
+Nothing injected in this session to forget.
+
+you>   no attached layer matches 'nosuchthing' — carrying: alpha (System prompt)
+you>   no exact, prefix or substring match for 'nosuchthing' in 2 prompts, 2 personas, 2 traits
+you> Usage: /add <name> | /add <prompt|persona|trait> <name> | /add <path> | /add tag [session] <name>
+you> Usage: /remove <name> | /remove <prompt|persona|trait> [name] | /remove #<n> | /remove tag <name> |
+/remove excerpts
+you>
+Session #1  ·  glm-5.2  ·  Golden session one
+  System prompt   alpha
+  Persona         not set
+  Traits          none
+  Attached        nothing
+  Tags            memory
+  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Database        on
+  Context         8 tokens
+  Last turn       0 in · 8 out
+
 you> Tagged session #2 with 'python'.
 you>       All tags
 ┏━━━━━━━━┳━━━━━━━━━━┓
@@ -156,30 +245,6 @@ you>       All tags
 └────────┴──────────┘
 
 you> Current model: glm-5.2
-you>           Available models
-┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
-┃ Model              ┃ Status      ┃
-┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
-│ glm-5.2            │ <-- current │
-│ fixture/tool-model │             │
-└────────────────────┴─────────────┘
-
-you>
-Available prompts (<ROOT>/tests/_fixture_prompts):
-
-  alpha                     alpha
-  beta                      beta
-
-you> No system prompt set. Use ':prompts' to see available prompt files.
-you> System prompt removed.
-you>
-Available personas (<ROOT>/tests/_fixture_personas):
-
-  delta                     delta
-  gamma                     gamma
-
-you> No persona set. Use ':personas' to see available persona files.
-you> Persona removed.
 you>
 Found 2 match(es) in 1 session(s):
 
@@ -190,12 +255,12 @@ Session #1  "Golden session one"
 you>
 No matches found for 'zzz-no-such-word'.
 
-you> Usage: :grep <keyword>
-Example: :grep indexing
+you> Usage: /search <keyword>
+Example: /search indexing
 you>
 Tools: inactive this turn
   master switch (TOOLS_ENABLED): on
-  session toggle (:tools on|off): on
+  session toggle (/tools on|off): on
   model glm-5.2: NOT in TOOLS_MODELS
     tools work with: fixture/tool-model
   read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
@@ -205,9 +270,21 @@ Tools: inactive this turn
   max tool output per turn: 120,000 chars
   available: list_dir, read_file, grep (read), write_file (write)
 
+you> Database is on for this session.
+you> Usage: /delete chat [<id>]   (deletes this conversation and its messages)
+  /remove is the reversible one — prompts, personas, traits, attachments, excerpts.
+you> Don't know how to delete 'wombat'. Deletable: chat.
 you>
-Nothing injected in this session to forget.
+/update <kind> — one of:
+  db     re-import the wiki and embed anything not yet indexed
 
+you> Don't know how to update 'wombat'. Updatable: db.
 you> Session #1 titled: Renamed By Golden
-you> Current title: Renamed By Golden
+you> /title | /title <session id> | /title <session id> <new title>
+you> : is now / — try /help. The old prefix works for this version.
+:prompts is now /list prompts
+you> :tokens is now /status
+you> :grep is now /search <word>
+you> :forget is now /remove excerpts
+you> :detach is now /remove #<n>
 you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]

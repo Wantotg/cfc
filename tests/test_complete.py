@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
 import complete
+from parse import PREFIX
 
 PASS, FAIL = [], []
 
@@ -78,6 +79,39 @@ class Roots:
 
     def __exit__(self, *exc):
         (complete.ATTACH_ROOTS, complete.WIKI_DIR) = self._saved
+
+
+class Pools:
+    """Temp prompt/persona/trait folders.
+
+    Pointed here rather than at the real config for the same reason
+    `golden.py` does it: a completion test that reads Cas's vault passes or
+    fails on what he happened to name a persona this week.
+    """
+
+    ITEMS = {"prompt": ("cas", "normal"), "persona": ("muse",),
+             "trait": ("relax", "terse")}
+
+    def __init__(self, tmp):
+        import pools
+        self.pools = pools
+        self.dirs = {}
+        for kind, items in self.ITEMS.items():
+            d = Path(tmp) / f"pool-{kind}"
+            d.mkdir(parents=True, exist_ok=True)
+            for n in items:
+                (d / f"{n}.md").write_text(f"{kind} {n}\n")
+            self.dirs[kind] = d
+
+    def __enter__(self):
+        self._saved = {k: self.pools.POOLS[k].configured for k in self.ITEMS}
+        for k, d in self.dirs.items():
+            self.pools.POOLS[k].configured = str(d)
+        return self
+
+    def __exit__(self, *exc):
+        for k, v in self._saved.items():
+            self.pools.POOLS[k].configured = v
 
 
 class Routines:
@@ -147,67 +181,96 @@ def main():
             ok("the vault sorts first despite being second in config",
                roots[0] == r.vault.resolve(), roots)
 
-            got = completions(":attach notes")
+            got = completions(f"{PREFIX}add notes")
             ok("a name in both roots offers both", len(got) == 2, got)
             ok("...vault first, because Tab takes the first one",
                got and "cooking for cats" in got[0], got)
 
             print("\n--- matching ---")
-            got = completions(":attach hando")
+            got = completions(f"{PREFIX}add hando")
             ok("matching is case-insensitive",
                any("HANDOVER.md" in g for g in got), got)
 
-            got = completions(":attach no")
-            ok("a stem under MIN_CHARS offers nothing", got == [], got)
+            got = completions(f"{PREFIX}add no")
+            ok("a stem under MIN_CHARS offers no paths",
+               all(".md" not in g for g in got), got)
 
             got = completions("hello wor")
             ok("a line that isn't :attach offers nothing", got == [], got)
 
             print("\n--- what must never be offered ---")
-            got = completions(":attach config")
+            got = completions(f"{PREFIX}add config")
             ok("config.py is never offered — it is on the deny list",
                got == [], got)
 
-            got = completions(":attach pictu")
+            got = completions(f"{PREFIX}add pictu")
             ok("a non-attachable extension is not offered", got == [], got)
 
-            got = completions(":attach outsi")
+            got = completions(f"{PREFIX}add outsi")
             ok("a file outside every root is not offered", got == [], got)
 
             print("\n--- directories ---")
-            got = completions(":attach 00 in")
+            got = completions(f"{PREFIX}add 00 in")
             ok("a directory is offered with a trailing slash",
                got and got[0].endswith("/"), got)
+
+    print("\n--- pool names: /add and /remove ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Roots(tmp) as r, Pools(tmp):
+            got = completions(f"{PREFIX}add rel")
+            ok("a trait completes", got == ["relax"], got)
+            got = completions(f"{PREFIX}add ")
+            ok("a bare Tab lists every pool item — MIN_CHARS is a path rule",
+               got == ["cas", "normal", "muse", "relax", "terse"], got)
+            ok("...in pool priority order, which is /add's own resolution "
+               "order", got.index("cas") < got.index("muse") < got.index("relax"))
+            got = completions(f"{PREFIX}remove rel")
+            ok("/remove completes the same names", got == ["relax"], got)
+            # The rule dispatch uses to decide what the argument *was*, asked
+            # here so completion cannot disagree with it.
+            got = completions(f"{PREFIX}add ~/")
+            ok("a path-shaped fragment switches to the filesystem",
+               all(g in ("", ) or "/" in g or g.endswith(".md")
+                   for g in got), got)
+            got = completions(f"{PREFIX}add hando")
+            ok("a name matching no pool item falls through to paths",
+               any("HANDOVER.md" in g for g in got), got)
+
+    print("\n--- /list kinds ---")
+    got = completions(f"{PREFIX}list tr")
+    ok("a kind completes", got == ["traits"], got)
+    got = completions(f"{PREFIX}list ")
+    ok("a bare Tab lists every kind", "sessions" in got and "chats" in got, got)
 
     print("\n--- ':routine' completion ---")
     with tempfile.TemporaryDirectory() as tmp:
         with Routines(tmp):
-            got = completions(":routine ")
+            got = completions(f"{PREFIX}routine ")
             ok("a bare Tab lists every routine — MIN_CHARS is a path rule",
                got == ["wiki-maintainer", "Wiki Maintainer Suggest",
                        "zz-broken", "zz broken"], got)
 
-            got = completions(":routine wiki-")
+            got = completions(f"{PREFIX}routine wiki-")
             ok("an id prefix completes the id", got == ["wiki-maintainer"], got)
 
-            got = completions(":routine Wiki M")
+            got = completions(f"{PREFIX}routine Wiki M")
             ok("a display name completes too, spaces and all",
                got == ["Wiki Maintainer Suggest"], got)
 
             # The id sorts first: it is shorter to type, and the head of the
             # list is what Tab takes without a second keystroke.
-            got = completions(":routine w")
+            got = completions(f"{PREFIX}routine w")
             ok("the id is offered before the name",
                got[:2] == ["wiki-maintainer", "Wiki Maintainer Suggest"], got)
 
-            got = completions(":routine ne")
+            got = completions(f"{PREFIX}routine ne")
             ok("':routine new' is offered", got == ["new"], got)
 
             # A routine you can't run is the one you're most likely reaching
             # for — to fix it. Hiding it would read as it having been deleted.
             ok("a broken routine is still offered",
-               "zz-broken" in completions(":routine zz"),
-               completions(":routine zz"))
+               "zz-broken" in completions(f"{PREFIX}routine zz"),
+               completions(f"{PREFIX}routine zz"))
 
     ok("a line that isn't a completable command is inert",
        completions(":help") == [], completions(":help"))

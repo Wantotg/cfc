@@ -1,4 +1,4 @@
-# complete.py — tab completion for ':attach <path>' and ':routine <name>'.
+# complete.py — tab completion for '/add <path>' and '/routine <name>'.
 #
 # Only active when the line starts with one of those. Everything else falls
 # back to no completion, which is what the REPL had before.
@@ -6,7 +6,7 @@
 # Completions are scoped to ATTACH_ROOTS and never offer a path outside them, or
 # one path_guard would refuse. That's a courtesy, not a control: the guard in
 # do_attach is what actually enforces the jail, and it runs regardless of what
-# was typed or completed. Offering a path here that :attach would then refuse
+# was typed or completed. Offering a path here that /attach would then refuse
 # is just a way to waste someone's afternoon.
 #
 # **Two front ends, because the REPL has two readers.** `read_input` uses
@@ -26,6 +26,7 @@ try:
 except ImportError:
     readline = None
 
+from parse import PREFIX, looks_like_path
 from paths import path_guard, PathError
 
 try:
@@ -42,8 +43,13 @@ try:
 except ImportError:
     WIKI_DIR = ""
 
-TRIGGER = ":attach "
-ROUTINE_TRIGGER = ":routine "
+# What each completable command is triggered by. Built from PREFIX rather than
+# spelled out, so the flip did not have to touch this module — and so a second
+# flip can't leave completion answering to a prefix nobody types.
+TRIGGER = f"{PREFIX}add "
+ROUTINE_TRIGGER = f"{PREFIX}routine "
+LIST_TRIGGER = f"{PREFIX}list "
+REMOVE_TRIGGER = f"{PREFIX}remove "
 
 # Stay silent until at least this many characters of a name have been typed.
 # Tab on an empty or barely-started fragment would otherwise dump a whole
@@ -242,14 +248,14 @@ def _present(p):
 
 # --- routines --------------------------------------------------------------
 #
-# ':routine <key>' resolves by id first, then display name — so both are worth
+# '/routine <key>' resolves by id first, then display name — so both are worth
 # offering, and a routine whose name reads nothing like its id (which is the
 # normal case once a name is a sentence and the id is a handle) is reachable
 # from either end. The id comes first because it is the shorter thing to type
 # and the first candidate is what Tab takes without a second keystroke.
 #
 # Broken routines are still offered. They are exactly what you are reaching
-# for when you are trying to fix one, and ':routine' already reports why each
+# for when you are trying to fix one, and '/routine' already reports why each
 # is broken — a completer that silently hides them would make a routine that
 # stopped validating look like a routine that stopped existing.
 
@@ -278,6 +284,30 @@ def _routine_candidates(fragment):
     return out
 
 
+def _pool_candidates(fragment):
+    """(text, display, meta) for every prompt, persona and trait matching.
+
+    Offered in pool priority order, which is the order `/add` would resolve a
+    collision in — so the first thing Tab hands you is the thing typing the
+    name would have attached.
+    """
+    try:
+        from pools import PRIORITY, POOLS, names, bad_name_reason
+    except ImportError:
+        return []
+    frag = fragment.strip().lower()
+    out = []
+    for kind in PRIORITY:
+        try:
+            items = names(kind)
+        except Exception:                          # noqa: BLE001
+            continue                 # an unreadable pool is silence, not a crash
+        for n in items:
+            if n.lower().startswith(frag) and not bad_name_reason(n):
+                out.append((n, n, POOLS[kind].label))
+    return out
+
+
 def _dispatch(line):
     """(fragment, [(text, display, meta), …]) for a line, or None if inert.
 
@@ -285,13 +315,28 @@ def _dispatch(line):
     below cannot disagree about it — which is the failure this module already
     had once, in the other direction.
     """
-    if line.startswith(TRIGGER):
-        fragment = line[len(TRIGGER):].lstrip()
+    if line.startswith(TRIGGER) or line.startswith(REMOVE_TRIGGER):
+        trigger = (TRIGGER if line.startswith(TRIGGER) else REMOVE_TRIGGER)
+        fragment = line[len(trigger):].lstrip()
+        # `/add` takes both a pool name and a path, so completion has to pick
+        # one. It asks `parse.looks_like_path` — the same question dispatch
+        # asks when it decides what the argument *was*. Two copies of that rule
+        # is how completion and dispatch come to disagree about one line, which
+        # is the failure this module has already had once.
+        if not looks_like_path(fragment):
+            pool_items = _pool_candidates(fragment)
+            if pool_items or not fragment:
+                return fragment, pool_items
         return fragment, [(m, Path(m).name + ("/" if m.endswith("/") else ""),
                            str(Path(m).parent)) for m in _candidates(fragment)]
     if line.startswith(ROUTINE_TRIGGER):
         fragment = line[len(ROUTINE_TRIGGER):].lstrip()
         return fragment, _routine_candidates(fragment)
+    if line.startswith(LIST_TRIGGER):
+        fragment = line[len(LIST_TRIGGER):].lstrip().lower()
+        from commands import LISTABLE
+        return fragment, [(k, k, "") for k in LISTABLE
+                          if k.startswith(fragment)]
     return None
 
 

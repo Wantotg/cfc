@@ -38,7 +38,8 @@ except ImportError:
 from splash import splash
 from rich.text import Text
 
-from parse import parse, looks_like_path
+from parse import (parse, looks_like_path, RETIRED, VERBS,
+                   PREFIX, LEGACY_PREFIX)
 from assemble import assemble_system
 from pools import bodies as pool_bodies, pool as pool_of, stem
 
@@ -73,7 +74,7 @@ from commands import (
     do_recall, do_remember, do_forget,
     do_updatedb, auto_embed,
     do_attach, show_attachments, do_detach,
-    show_tools_state,
+    show_tools_state, show_status, show_list,
     resolve_layer, resolve_attached, load_pool_file,
     show_routines, create_routine, do_routine,
     show_outbox, do_file,
@@ -90,8 +91,8 @@ def _one_line(text, width=60):
     return flat[:width] + ("..." if len(flat) > width else "")
 
 
-_DB_OFF = ("Database is off for this chat — :database on to enable "
-           ":recall and :remember.")
+_DB_OFF = ("Database is off for this chat — /database on to enable "
+           "/recall and /remember.")
 
 # What a command handler returns to leave the session. A nested handler can't
 # `break` the loop it lives in; a sentinel makes the exit visible at the call
@@ -159,11 +160,11 @@ def run_session(conn, session_id, private=False):
     # terminal, which is what the empty-completion handler consults before it
     # asks anyone anything.
     chat_ctx = chat_context(private=private)
-    injected = []          # blocks added by :remember, newest last
+    injected = []          # blocks added by /remember, newest last
     tools_on = True        # session toggle; the master switch still gates it
-    # Whether :recall/:remember/:updatedb may reach the wiki this session. A
+    # Whether /recall/:remember/:updatedb may reach the wiki this session. A
     # normal chat: on. A private chat: DATABASE_ACTIVE (default off), so memory
-    # is sealed unless you type :database on. This is the *read* axis and is
+    # is sealed unless you type /database on. This is the *read* axis and is
     # separate from privacy, which is about the write paths — a private chat
     # never persists regardless of this flag.
     db_on = True if not private else DATABASE_ACTIVE
@@ -178,6 +179,10 @@ def run_session(conn, session_id, private=False):
     # the same dispatch, and a private chat's throwaway db takes the revert the
     # same way, persisting nothing real either way.
     revert_model = None
+    # The old prefix still works for one version. Said once per session, not
+    # once per command: a correction printed after every line is one that stops
+    # being read, and the command it corrects ran anyway.
+    said_legacy = False
     system_prompt = get_system_prompt(conn, session_id)
     system_prompt_name = get_system_prompt_name(
         conn, session_id
@@ -201,7 +206,7 @@ def run_session(conn, session_id, private=False):
         console.print(Text.from_markup(
             "[bold]Private chat[/] — nothing here is written down. No "
             "transcript, no\nmemory index, no auto-export, and it won't "
-            "appear in the hub. Closing it\n(:q, Ctrl-D, or quitting) ends "
+            "appear in the hub. Closing it\n(/q, Ctrl-D, or quitting) ends "
             "it for good; there is no restore. Model file\nwrites are "
             "blocked; an explicit [bold]:export[/] is the one thing that "
             "reaches disk,\nand only because you asked for it by name.",
@@ -209,12 +214,12 @@ def run_session(conn, session_id, private=False):
         ))
         if db_on:
             console.print(
-                "The wiki database is on: :recall and :remember work here. "
-                ":database off to seal it.", style="cyan")
+                "The wiki database is on: /recall and /remember work here. "
+                "/database off to seal it.", style="cyan")
         else:
             console.print(
-                "The wiki database is off: :recall and :remember are "
-                "disabled. :database on to\nenable them (change the default "
+                "The wiki database is off: /recall and /remember are "
+                "disabled. /database on to\nenable them (change the default "
                 "with DATABASE_ACTIVE in config).", style="cyan")
         console.print()
     print_core_commands()
@@ -289,13 +294,30 @@ def run_session(conn, session_id, private=False):
     def h_help(cmd):
         print_help()
 
-    def h_list(cmd):
-        list_sessions(conn)
-
     def h_new(cmd):
         nonlocal session_id, history, injected, current_title, current_model
         nonlocal system_prompt, system_prompt_name, persona, persona_name
         nonlocal trait_names
+        # `:new p` — a private chat from inside a session, joining `p` at the
+        # hub. It **nests** rather than replacing this session: a private chat
+        # is a side trip, and coming back to what you were doing is the point.
+        # The isolation is the same one the hub's `p` gets, for the same reason
+        # — a separate in-memory connection, closed on the way out. No
+        # `if private` branch is involved, which is the test that the design
+        # holds (invariant #10).
+        if cmd.arg(0).lower() in ("p", "private"):
+            priv = db(":memory:")
+            try:
+                run_session(priv, new_session(priv), private=True)
+            finally:
+                priv.close()
+            # Say where you have landed. Returning from a private chat into an
+            # ordinary one with no marker is how a message ends up in the
+            # wrong place.
+            print_session_header(conn, session_id, current_model,
+                                 current_title, system_prompt_name,
+                                 persona_name, private=private)
+            return
         if AUTO_EXPORT and history and not private:
             safe_export(conn, session_id)
         session_id = new_session(conn)
@@ -314,12 +336,14 @@ def run_session(conn, session_id, private=False):
     def h_config(cmd):
         show_config(current_model)
 
-    def h_tokens(cmd):
-        show_token_stats(conn, session_id,
-                         current_model, current_title)
-
     def h_export(cmd):
-        target = _session_arg(cmd)
+        # `:export`, `:export chat 5`, and `:export 5` — a bare integer is a
+        # chat id everywhere in the surface, so the kind is optional here even
+        # though `:delete` requires it. The asymmetry is deliberate and is
+        # about consequence, not consistency: an export you didn't mean costs
+        # a file, a delete you didn't mean costs the conversation.
+        i = 1 if cmd.arg(0).lower() in ("chat", "chats", "session") else 0
+        target = _session_arg(cmd, i)
         if target is None:
             return
         export_session(conn, target, quiet=False)
@@ -332,8 +356,8 @@ def run_session(conn, session_id, private=False):
             return
         target = cmd.int_arg(0)
         if target is None:
-            console.print(":title | :title <session id> | "
-                          ":title <session id> <new title>")
+            console.print("/title | /title <session id> | "
+                          "/title <session id> <new title>")
             return
         new_title = cmd.tail(1)
         if not new_title:
@@ -346,7 +370,26 @@ def run_session(conn, session_id, private=False):
                       f"{new_title}")
 
     def h_delete(cmd):
-        target = _session_arg(cmd)
+        """`:delete` destroys durable data, so it **always** needs a kind.
+
+        Bare `:delete` lists what is deletable and acts on nothing. That is
+        not politeness: the drafts had bare `:delete` meaning both "delete
+        this conversation" and "drop the injected excerpts", and a confirm
+        prompt is the worst possible place to discover which one you typed.
+        Detaching lives under `:remove`, where nothing is destroyed.
+        """
+        if not cmd.args:
+            console.print("Usage: /delete chat [<id>]   "
+                          "(deletes this conversation and its messages)")
+            console.print("  /remove is the reversible one — prompts, "
+                          "personas, traits, attachments, excerpts.",
+                          style="dim")
+            return
+        if cmd.arg(0).lower() not in ("chat", "chats", "session"):
+            console.print(f"Don't know how to delete '{cmd.arg(0)}'. "
+                          f"Deletable: chat.")
+            return
+        target = _session_arg(cmd, 1)
         if target is None:
             return
         title = get_session_title(conn, target)
@@ -366,22 +409,43 @@ def run_session(conn, session_id, private=False):
         else:
             console.print("Cancelled.")
 
-    def h_grep(cmd):
+    def h_search(cmd):
         if not cmd.raw:
-            console.print("Usage: :grep <keyword>")
-            console.print("Example: :grep indexing")
+            console.print("Usage: /search <keyword>")
+            console.print("Example: /search indexing")
             return
         search_messages(conn, cmd.raw)
 
-    # --- Memory ---
+    def h_update(cmd):
+        """`:update db` — re-import the wiki, then index anything new.
+
+        Bare `:update` says what is updatable rather than guessing, the same
+        rule `:delete` follows: a command that reaches the vault and the
+        embedder should be typed on purpose. `database` is accepted for `db`,
+        matching the plural forgiveness `:list` has.
+        """
+        what = cmd.arg(0).lower()
+        if not what:
+            console.print(f"\n{PREFIX}update <kind> — one of:")
+            console.print("  db     re-import the wiki and embed anything "
+                          "not yet indexed\n")
+            return
+        if what not in ("db", "database"):
+            console.print(f"Don't know how to update '{cmd.arg(0)}'. "
+                          f"Updatable: db.")
+            return
+        if not db_on:
+            console.print(_DB_OFF)
+            return
+        do_updatedb(cmd.tail(1))
 
     def h_recall(cmd):
         if not db_on:
             console.print(_DB_OFF)
             return
         if not cmd.raw:
-            console.print("Usage: :recall <question>")
-            console.print("Example: :recall what did we "
+            console.print("Usage: /recall <question>")
+            console.print("Example: /recall what did we "
                           "decide about the vector db?")
             return
         do_recall(cmd.raw)
@@ -391,38 +455,12 @@ def run_session(conn, session_id, private=False):
             console.print(_DB_OFF)
             return
         if not cmd.raw:
-            console.print("Usage: :remember <query>")
-            console.print("Example: :remember what we "
+            console.print("Usage: /remember <query>")
+            console.print("Example: /remember what we "
                           "decided about chunking")
             return
         do_remember(conn, session_id, history, injected,
                     cmd.raw, model=current_model)
-
-    def h_forget(cmd):
-        do_forget(history, injected)
-
-    def h_updatedb(cmd):
-        if not db_on:
-            console.print(_DB_OFF)
-            return
-        do_updatedb(cmd.raw)
-
-    # --- Attachments ---
-
-    def h_attached(cmd):
-        show_attachments(conn, session_id)
-
-    def h_detach(cmd):
-        do_detach(conn, session_id, history, cmd.raw)
-
-    def h_attach(cmd):
-        do_attach(conn, session_id, history, cmd.raw,
-                  model=current_model)
-
-    # --- Models ---
-
-    def h_models(cmd):
-        list_models(current_model)
 
     def h_model(cmd):
         nonlocal current_model, revert_model
@@ -447,137 +485,6 @@ def run_session(conn, session_id, private=False):
                         and new_model != prev_model else None)
 
     # --- Tags ---
-
-    def h_taglist(cmd):
-        list_all_tags(conn)
-
-    def h_tags(cmd):
-        if not cmd.args:
-            show_tags(conn, session_id)
-            return
-        target = cmd.int_arg(0)
-        if target is None:
-            console.print("Usage: :tags | :tags <session_id>")
-            return
-        show_tags(conn, target)
-
-    def h_tag(cmd):
-        if not cmd.args:
-            console.print("Usage: :tag <name> or "
-                          ":tag <session_id> <name>")
-        elif len(cmd.args) == 1:
-            if cmd.args[0].isdigit():
-                show_tags(conn, int(cmd.args[0]))
-            else:
-                add_tag(conn, session_id, cmd.args[0])
-        elif cmd.args[0].isdigit():
-            add_tag(conn, int(cmd.args[0]), cmd.tail(1))
-        else:
-            console.print("Usage: :tag <session_id> "
-                          "<name>")
-
-    def h_untag(cmd):
-        if not cmd.args:
-            console.print("Usage: :untag <name> or "
-                          ":untag <session_id> <name>")
-        elif len(cmd.args) == 1:
-            if cmd.args[0].isdigit():
-                console.print("Usage: :untag "
-                              "<session_id> <name>")
-            else:
-                remove_tag(conn, session_id, cmd.args[0])
-        elif cmd.args[0].isdigit():
-            remove_tag(conn, int(cmd.args[0]), cmd.tail(1))
-        else:
-            console.print("Usage: :untag "
-                          "<session_id> <name>")
-
-    # --- System prompt and persona ---
-
-    def h_prompts(cmd):
-        list_prompts()
-
-    def h_prompt(cmd):
-        nonlocal system_prompt, system_prompt_name
-        arg = cmd.raw
-        if not arg:
-            if system_prompt:
-                console.print(f"\nSystem prompt: "
-                              f"{system_prompt_name}\n")
-                console.print("---")
-                console.print(system_prompt)
-                console.print("---\n")
-            else:
-                console.print("No system prompt set. Use "
-                              "':prompts' to see "
-                              "available prompt files.")
-        elif arg == "off":
-            clear_system_prompt(conn, session_id)
-            system_prompt = None
-            system_prompt_name = None
-            console.print("System prompt removed.")
-        else:
-            content, name = load_prompt_file(arg)
-            if content is not None:
-                set_system_prompt(conn, session_id,
-                                  content, name)
-                system_prompt = content
-                system_prompt_name = name
-                console.print(f"System prompt set: {name}")
-                console.print(f"({len(content)} "
-                              f"characters)")
-            else:
-                console.print(f"Prompt file '{arg}' not "
-                              "found. Use ':prompts' to "
-                              "list available files.")
-
-    def h_personas(cmd):
-        list_personas()
-
-    def h_persona(cmd):
-        nonlocal persona, persona_name
-        arg = cmd.raw
-        if not arg:
-            if persona:
-                console.print(f"\nPersona: "
-                              f"{persona_name}\n")
-                console.print("---")
-                console.print(persona)
-                console.print("---\n")
-            else:
-                console.print("No persona set. Use "
-                              "':personas' to see "
-                              "available persona "
-                              "files.")
-        elif arg == "off":
-            clear_persona(conn, session_id)
-            persona = None
-            persona_name = None
-            console.print("Persona removed.")
-        else:
-            content, name = load_persona_file(arg)
-            if content is not None:
-                set_persona(conn, session_id,
-                            content, name)
-                persona = content
-                persona_name = name
-                console.print(f"Persona set: {name}")
-                console.print(f"({len(content)} "
-                              f"characters)")
-            else:
-                console.print(f"Persona file '{arg}' "
-                              "not found. Use "
-                              "':personas' to list "
-                              "available files.")
-
-    # --- Attaching and detaching: /add and /remove ---
-    #
-    # Two verbs across five mechanisms. `:prompt name`, `:persona name`,
-    # `:attach path` and `:tag name` were four verbs for one idea — put this on
-    # the session — and `:prompt off`, `:persona off`, `:detach n`, `:untag`
-    # and `:forget` were five for taking it off again. The taxonomy's whole
-    # claim is that a new attachable thing costs no new verb, and these two
-    # functions are where that claim is either true or isn't.
 
     def _active():
         """What the session is carrying, in the shape the resolver reads."""
@@ -616,27 +523,27 @@ def run_session(conn, session_id, private=False):
 
     def h_add(cmd):
         if not cmd.args:
-            console.print("Usage: :add <name> | :add <prompt|persona|trait> "
-                          "<name> | :add <path> | :add tag [session] <name>")
+            console.print("Usage: /add <name> | /add <prompt|persona|trait> "
+                          "<name> | /add <path> | /add tag [session] <name>")
             return
         head = cmd.arg(0).lower()
 
-        # Tags never resolve bare — ':add python' must not guess a tag — so
+        # Tags never resolve bare — '/add python' must not guess a tag — so
         # the kind is required and is checked before anything else.
         if head in ("tag", "tags"):
             rest = cmd.args[1:]
             if not rest:
-                console.print("Usage: :add tag <name> or "
-                              ":add tag <session_id> <name>")
+                console.print("Usage: /add tag <name> or "
+                              "/add tag <session_id> <name>")
             elif len(rest) == 1:
                 add_tag(conn, session_id, rest[0])
             elif rest[0].isdigit():
                 add_tag(conn, int(rest[0]), cmd.tail(2))
             else:
-                console.print("Usage: :add tag <session_id> <name>")
+                console.print("Usage: /add tag <session_id> <name>")
             return
 
-        # Explicit kind: ':add trait relax' searches that pool only.
+        # Explicit kind: '/add trait relax' searches that pool only.
         p = pool_of(head)
         if p and len(cmd.args) > 1:
             found = resolve_layer(cmd.tail(1), _active(), kinds=[p.kind])
@@ -644,8 +551,8 @@ def run_session(conn, session_id, private=False):
                 _attach_layer(*found)
             return
         if p:
-            console.print(f"Usage: :add {p.singular} <name>   "
-                          f"(:list {p.plural} to see them)")
+            console.print(f"Usage: /add {p.singular} <name>   "
+                          f"(/list {p.plural} to see them)")
             return
 
         # Bare: search the three pools by priority. A path is only considered
@@ -678,9 +585,9 @@ def run_session(conn, session_id, private=False):
 
     def h_remove(cmd):
         if not cmd.args:
-            console.print("Usage: :remove <name> | :remove "
-                          "<prompt|persona|trait> [name] | :remove #<n> | "
-                          ":remove tag <name> | :remove excerpts")
+            console.print("Usage: /remove <name> | /remove "
+                          "<prompt|persona|trait> [name] | /remove #<n> | "
+                          "/remove tag <name> | /remove excerpts")
             return
         head = cmd.arg(0).lower()
 
@@ -691,30 +598,30 @@ def run_session(conn, session_id, private=False):
             if digits:
                 do_detach(conn, session_id, history, digits)
             else:
-                console.print("Usage: :remove #<n>   (:status lists them)")
+                console.print("Usage: /remove #<n>   (/status lists them)")
             return
 
         if head in ("tag", "tags"):
             rest = cmd.args[1:]
             if not rest:
-                console.print("Usage: :remove tag <name> or "
-                              ":remove tag <session_id> <name>")
+                console.print("Usage: /remove tag <name> or "
+                              "/remove tag <session_id> <name>")
             elif len(rest) == 1:
                 remove_tag(conn, session_id, rest[0])
             elif rest[0].isdigit():
                 remove_tag(conn, int(rest[0]), cmd.tail(2))
             else:
-                console.print("Usage: :remove tag <session_id> <name>")
+                console.print("Usage: /remove tag <session_id> <name>")
             return
 
-        # Injected recall excerpts. This is a *detach*, not a delete: :remember
+        # Injected recall excerpts. This is a *detach*, not a delete: /remember
         # attached them and nothing durable is destroyed by dropping them,
-        # which is exactly the line between :remove and :delete.
+        # which is exactly the line between /remove and /delete.
         if head in ("excerpts", "excerpt"):
             do_forget(history, injected)
             return
 
-        # A bare kind peels whatever that pool is carrying: ':remove persona'.
+        # A bare kind peels whatever that pool is carrying: '/remove persona'.
         p = pool_of(head)
         if p and len(cmd.args) == 1:
             carried = _active().get(p.kind)
@@ -729,7 +636,7 @@ def run_session(conn, session_id, private=False):
                 # guessed. "Which one" is a question only the user can answer.
                 console.print(f"  {len(carried)} {p.plural} attached: "
                               f"{', '.join(carried)}")
-                console.print(f"  :remove {p.singular} <name>", style="dim")
+                console.print(f"  /remove {p.singular} <name>", style="dim")
             return
 
         query = cmd.tail(1) if p else cmd.raw
@@ -745,11 +652,11 @@ def run_session(conn, session_id, private=False):
         arg = cmd.raw.lower()
         if arg == "on":
             db_on = True
-            console.print("Database on: :recall and :remember can reach "
+            console.print("Database on: /recall and /remember can reach "
                           "the wiki this session.")
         elif arg == "off":
             db_on = False
-            console.print("Database off: :recall and :remember are "
+            console.print("Database off: /recall and /remember are "
                           "disabled this session.")
         elif not arg:
             state = "on" if db_on else "off"
@@ -758,7 +665,7 @@ def run_session(conn, session_id, private=False):
                 console.print("This is a private chat; it stays sealed "
                               "unless you turn the database on.")
         else:
-            console.print("Usage: :database | :database on | :database off")
+            console.print("Usage: /database | /database on | /database off")
 
     def h_tools(cmd):
         nonlocal tools_on
@@ -778,7 +685,20 @@ def run_session(conn, session_id, private=False):
         elif not arg:
             show_tools_state(current_model, tools_on)
         else:
-            console.print("Usage: :tools | :tools on | :tools off")
+            console.print("Usage: /tools | /tools on | /tools off")
+
+    # --- The two absorbing verbs ---
+
+    def h_status(cmd):
+        show_status(conn, session_id, current_model, current_title,
+                    private=private,
+                    system_prompt_name=system_prompt_name,
+                    persona_name=persona_name, trait_names=trait_names,
+                    tools_on=tools_on, db_on=db_on, injected=injected,
+                    kind=cmd.arg(0) or None)
+
+    def h_list(cmd):
+        show_list(conn, cmd.raw, current_model)
 
     # --- Feature areas ---
 
@@ -791,9 +711,6 @@ def run_session(conn, session_id, private=False):
             create_routine()
         else:
             do_routine(conn, cmd.raw, model=current_model)
-
-    def h_outbox(cmd):
-        show_outbox()
 
     def h_file(cmd):
         do_file(cmd.raw)
@@ -810,7 +727,7 @@ def run_session(conn, session_id, private=False):
             do_wiki_commit(rest)
         else:
             console.print(
-                "Usage: :wiki | :wiki <diff|commit> [scope] [file] "
+                "Usage: /wiki | /wiki <diff|commit> [scope] [file] "
                 "[<message>]", style="red")
             console.print(
                 "  scope: wiki (default) | journal | vault    "
@@ -820,43 +737,44 @@ def run_session(conn, session_id, private=False):
     # command: it falls through to the model, exactly as an unmatched
     # `startswith` did. Aliases (`h`, `?`, `db`) are resolved by the parser, so
     # this table holds canonical verbs only.
+    # The command surface: twenty-one verbs. Anything not here is not a
+    # command — it goes to the model. Aliases (`h`, `?`, `db`) and retired
+    # verbs are the parser's business, so this table holds live verbs only.
     HANDLERS = {
-        "q": h_quit,
+        # ask
         "help": h_help,
         "list": h_list,
-        "new": h_new,
+        "status": h_status,
         "config": h_config,
-        "tokens": h_tokens,
-        "export": h_export,
-        "title": h_title,
-        "delete": h_delete,
-        "grep": h_grep,
-        "recall": h_recall,
-        "remember": h_remember,
-        "forget": h_forget,
-        "updatedb": h_updatedb,
-        "attached": h_attached,
-        "detach": h_detach,
-        "attach": h_attach,
+        "search": h_search,
+        # context
         "add": h_add,
         "remove": h_remove,
-        "models": h_models,
+        # destroy
+        "delete": h_delete,
+        # data
+        "export": h_export,
+        # memory
+        "recall": h_recall,
+        "remember": h_remember,
+        "update": h_update,
+        # session
+        "new": h_new,
+        "q": h_quit,
+        "title": h_title,
+        # settings
         "model": h_model,
-        "taglist": h_taglist,
-        "tags": h_tags,
-        "tag": h_tag,
-        "untag": h_untag,
-        "prompts": h_prompts,
-        "prompt": h_prompt,
-        "personas": h_personas,
-        "persona": h_persona,
-        "database": h_database,
         "tools": h_tools,
-        "routine": h_routine,
-        "outbox": h_outbox,
-        "file": h_file,
+        "database": h_database,
+        # feature areas
         "wiki": h_wiki,
+        "routine": h_routine,
+        "file": h_file,
     }
+    # The table and the canonical list must agree. Checked rather than
+    # remembered: a verb in one and not the other is a command that is
+    # documented and does nothing, or does something and is undocumented.
+    assert set(HANDLERS) == set(VERBS), set(HANDLERS) ^ set(VERBS)
 
 
     while True:
@@ -874,10 +792,28 @@ def run_session(conn, session_id, private=False):
 
         cmd = parse(user)
         if cmd is not None:
+            if cmd.legacy and not said_legacy:
+                said_legacy = True
+                console.print(f"{LEGACY_PREFIX} is now {PREFIX} — try "
+                              f"{PREFIX}help. The old prefix works for this "
+                              f"version.", style="dim")
             handler = HANDLERS.get(cmd.verb)
             if handler is not None:
                 if handler(cmd) is _LEAVE:
                     break
+                continue
+            replacement = RETIRED.get(cmd.verb)
+            if replacement:
+                # A verb the taxonomy retired. Say what replaced it and stop:
+                # falling through would *send it to the model* as a chat
+                # message, which is an API call and a confusing answer in
+                # place of a one-line correction.
+                # Echo the prefix they actually typed: printing "/prompts is
+                # now …" at someone who typed ":prompts" names a command that
+                # never existed under either prefix.
+                typed = LEGACY_PREFIX if cmd.legacy else PREFIX
+                console.print(f"{typed}{cmd.verb} is now "
+                              f"{PREFIX}{replacement}", style="dim")
                 continue
             # An unrecognised verb is not a command; it goes to the model,
             # exactly as an unmatched startswith did. cfc does not claim the

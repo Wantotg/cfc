@@ -31,6 +31,8 @@ sys.dont_write_bytecode = True
 for _cache in ROOT.glob("**/__pycache__"):
     if ".venv" not in _cache.parts:
         shutil.rmtree(_cache, ignore_errors=True)
+from parse import PREFIX
+
 BASELINE = HERE / "golden_baseline.txt"
 FIXTURE = HERE / "_fixture.db"
 # The chat screen lists the prompt and persona files that are *available*, so
@@ -69,39 +71,69 @@ FIXTURE_API_BASE = "https://api.example.invalid/v1"
 
 # Commands to drive. No API calls: no chat turns, no :recall, no :remember.
 SCRIPT = [
-    ":help",
-    ":list",
-    ":config",
-    ":tokens",
-    ":title",
-    ":title 2",
-    ":tags",
-    ":tags 2",
-    ":taglist",
-    ":tag wsl",
-    ":tags",
-    ":untag wsl",
-    ":tag 2 python",
-    ":taglist",
-    ":model",
-    ":models",
+    f"{PREFIX}help",
+    f"{PREFIX}list",
+    f"{PREFIX}list sessions",
+    f"{PREFIX}list chats",
+    f"{PREFIX}list prompts",
+    f"{PREFIX}list personas",
+    f"{PREFIX}list traits",
+    f"{PREFIX}list models",
+    f"{PREFIX}list tags",
+    f"{PREFIX}list nonsense",
+    f"{PREFIX}config",
+    f"{PREFIX}status",
+    f"{PREFIX}status prompt",
+    # The absorbing verbs, then the ones that change something. Order matters:
+    # /status is driven again after the attaches so the baseline holds both the
+    # empty and the carrying screen.
+    f"{PREFIX}add alpha",
+    f"{PREFIX}add gamma",
+    f"{PREFIX}add trait epsilon",
+    f"{PREFIX}add trait zeta",
+    f"{PREFIX}add tag wsl",
+    f"{PREFIX}status",
+    f"{PREFIX}status prompt",
+    f"{PREFIX}status trait",
+    f"{PREFIX}add epsilon",
+    f"{PREFIX}remove epsilon",
+    f"{PREFIX}remove trait",
+    f"{PREFIX}remove persona",
+    f"{PREFIX}remove tag wsl",
+    f"{PREFIX}remove excerpts",
+    f"{PREFIX}remove nosuchthing",
+    f"{PREFIX}add nosuchthing",
+    f"{PREFIX}add",
+    f"{PREFIX}remove",
+    f"{PREFIX}status",
+    # Tags on another session, and the bare-integer rule.
+    f"{PREFIX}add tag 2 python",
+    f"{PREFIX}list tags",
+    f"{PREFIX}model",
+    f"{PREFIX}search vector",
+    f"{PREFIX}search zzz-no-such-word",
+    f"{PREFIX}search",
+    # /tools echoes the read/write root split and the "no auto-approve exists"
+    # line. Pinned here because that output is a statement about the permission
+    # model, not just a status dump.
+    f"{PREFIX}tools",
+    f"{PREFIX}database",
+    # Kinds are required where something is destroyed, and refused where the
+    # kind is unknown. Both print and act on nothing, which is the point.
+    f"{PREFIX}delete",
+    f"{PREFIX}delete wombat",
+    f"{PREFIX}update",
+    f"{PREFIX}update wombat",
+    f"{PREFIX}title 1 Renamed By Golden",
+    f"{PREFIX}title abc",
+    # Retired verbs are corrected, not sent to the model. Every one of these
+    # would otherwise cost an API call and return a confused answer.
     ":prompts",
-    ":prompt",
-    ":prompt off",
-    ":personas",
-    ":persona",
-    ":persona off",
+    ":tokens",
     ":grep vector",
-    ":grep zzz-no-such-word",
-    ":grep",
-    # :tools echoes the read/write root split and the "no auto-approve exists"
-    # line. Pinned here because that output is now a statement about the
-    # permission model, not just a status dump.
-    ":tools",
     ":forget",
-    ":title 1 Renamed By Golden",
-    ":title",
-    ":q",
+    ":detach 1",
+    f"{PREFIX}q",
 ]
 
 REAL_DB = Path.home() / ".cfc" / "chat.db"

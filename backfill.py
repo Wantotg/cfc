@@ -20,7 +20,7 @@ from embed import embed_texts, EMBED_DIM
 # A chunk that is ONLY a marker is litter — skip embedding it.
 #   [tool_use: ...] / [tool_result]  — written by import_anthropic.py
 #   [:remember ... (ephemeral)]      — written by commands.py's :remember
-# The :remember marker is persisted deliberately: it's the only record that
+# The /remember marker is persisted deliberately: it's the only record that
 # recalled excerpts were injected at that point, so an export can distinguish a
 # grounded claim from an invented one. Embedding it would put a row that
 # describes a search into the results of future searches. Keep the row, skip
@@ -102,7 +102,7 @@ def update_index(db_path, limit=None):
     """Bring a db's chunks + vectors current in one call: chunk new messages,
     then embed the new chunks. Opens its own connection with sqlite-vec loaded,
     so callers needn't manage the extension. Returns (chunks_made,
-    vectors_added). This is what :updatedb and the per-turn auto-embed call."""
+    vectors_added). This is what /update db and the per-turn auto-embed call."""
     from chunk import chunk_new
     db = connect(db_path)
     try:
@@ -118,7 +118,7 @@ def update_index(db_path, limit=None):
 # does not know until import_wiki runs. The old mover refused wiki destinations
 # outright to stop that happening silently; v0.6 allows the move and makes the
 # staleness LOUD instead — this marker is the signal. Set when a page is filed
-# into the wiki, shown by :outbox and :wiki, cleared when :updatedb re-imports.
+# into the wiki, shown by /list outbox and /wiki, cleared when /update db re-imports.
 #
 # A file rather than a DB row: it needs no schema change, survives across
 # sessions, and lives next to chat.db where cfc's runtime state already sits.
@@ -135,7 +135,7 @@ def mark_wiki_stale():
         p = _wiki_marker_path()
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "w") as f:
-            f.write("run :updatedb to re-import the wiki\n")
+            f.write("run /update db to re-import the wiki\n")
     except OSError:
         pass
 

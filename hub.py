@@ -1,6 +1,6 @@
 # hub.py — the session browser: what you see before you're in a conversation.
 #
-# list_sessions() is the :list command's table. pick_session() is the launcher
+# list_sessions() is the /list command's table. pick_session() is the launcher
 # prompt at startup, and returns one of:
 #   an int   — resume that session id
 #   None     — start a new session
@@ -154,7 +154,7 @@ def _context_cell(model, tok_in, tok_out):
 
 
 def _add_rows(table, rows, numbering):
-    """`numbering` is 'id' for :list (open it by that number) or 'index' for the
+    """`numbering` is 'id' for /list (open it by that number) or 'index' for the
     picker (1..n against what's on screen). They are different numbers and
     conflating them is how you open the wrong session."""
     for i, (sid, title, ts, msg_count, prompt_name, persona_name,
@@ -280,6 +280,28 @@ def recent_chats(conn, limit=HUB_CHATS):
     ).fetchall()
 
 
+def show_recent_chats(conn):
+    """`:list chats` — the picker's view, printed from inside a session.
+
+    Deliberately the same rows as `pick_session` (`recent_chats`), not a second
+    query: "which conversations do I have" must have one answer whether it is
+    asked from the hub or from a session. It numbers by **id**, unlike the
+    picker, because there is nothing here to pick — the number you would type
+    next is `:export chat 12`, and the picker's positional 1..n would send it
+    to the wrong session.
+    """
+    rows = recent_chats(conn)
+    if not rows:
+        console.print("No chats yet.")
+        return
+    table = _session_table("Recent chats")
+    table.columns[0].header = "ID"
+    table.columns[0].width = 4
+    _add_rows(table, rows, numbering="id")
+    console.print(table)
+    console.print()
+
+
 def pick_session(conn):
     """Show recent chats and routine health, and let the user pick one or
     start new."""
@@ -302,7 +324,7 @@ def pick_session(conn):
         _print_routines(routines)
     console.print("Type a number to resume, 'n' for new "
                   "session, 'p' for private, 'q' to quit.")
-    console.print("':list' inside a session shows every session, "
+    console.print("'/list sessions' inside a session shows every session, "
                   "routine runs included.", style="dim")
 
     while True:

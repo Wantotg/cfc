@@ -23,6 +23,59 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-25 — /status, /list, the renames, and the flip
+v0.8, blocks 6 to 9. `:status` and `:list` are the two absorbing verbs and the
+biggest single cut: eight bare commands (`:title`, `:tokens`, `:prompt`,
+`:persona`, `:tags`, `:attached`, `:model`, `:tools`) collapse into one screen of
+session state, and seven listings into `/list <kind>`. The line between `/status`
+and `/config` is ownership — session state versus deployment settings — which is
+why "routine model" stays in `/config`.
+
+Two things the brief routed to `/status` would have been quietly lost, so they
+are kept: `/status prompt` prints the attached prompt's *text* (bare `:prompt`
+was the only way to read one without opening the file), and bare `/tools` keeps
+the three-switch diagnostic rather than the one-line summary.
+
+Then the renames — `/delete chat`, `/search`, `/update db`, `/export chat 5`,
+`/new p` — and the flip. `:` → `/` was one constant in the parser and touched no
+handler, which was the whole argument for rewriting the dispatcher first. The old
+prefix still works for this version and says so **once per session**, not once
+per command; removing it next minor is deleting a constant.
+
+Three things came out of doing it rather than planning it:
+
+- **Retired verbs are corrected, not swallowed.** An unrecognised verb falls
+  through to the model, so without a `RETIRED` map `:prompts` would have been
+  *sent as a chat message* — an API call and a confused answer in place of a
+  one-line correction. It echoes the prefix you typed, since "/prompts is now …"
+  names a command that never existed.
+- **The surface is three lists that have to agree** (the handler table,
+  `parse.VERBS`, `RETIRED`), which is the drift hazard `HANDOVER.md` already has
+  a table for. `main.py` asserts the table equals `VERBS`, and `test_parse` pins
+  the rest: no alias collides with a verb, every retired verb points at a live
+  one, nothing reserved is spent.
+- **The `[:remember …]` marker keeps its colon.** It is a persisted storage
+  format parsed by `db._MARKER_RE` and `backfill._MARKER_LINE`, not part of the
+  command surface. Flipping it would have silently stopped every existing marker
+  row from parsing — the exact failure that table exists to name.
+
+Completion follows the surface: `/add` and `/remove` offer pool names in priority
+order and switch to the filesystem via the same `parse.looks_like_path` dispatch
+uses, so the two cannot disagree about one line — the failure `complete.py` has
+already had once. `/list` completes its kinds. `test_complete` now points the
+pools at a fixture rather than reading Cas's vault.
+
+Golden re-baselined **once**, at the end, and the script rewritten to drive the
+new surface — including the paths that print and act on nothing (`/delete` and
+`/update` without a kind, `/add` with no match, a retired verb), because those
+are the ones a rename quietly breaks. 213 → 290 lines.
+- Files: parse.py, main.py, commands.py, hub.py, ui.py, complete.py, and the
+  prose sweep across agent/backfill/mover/schedule/wikigit/preflight,
+  tests/golden.py, tests/golden_baseline.txt, tests/test_parse.py,
+  tests/test_complete.py, tests/test_mover.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-25 — /add and /remove: two verbs across five mechanisms
 v0.8, blocks 4 and 5, built together because they are two halves of one
 resolver. `:prompt name`, `:persona name`, `:attach path` and `:tag name` were
@@ -56,7 +109,7 @@ attachment namespace, and a file that silently never resolves is the failure
 shape this codebase keeps naming.
 - Files: pools.py, parse.py, commands.py, main.py, tests/test_resolve.py
 - Status: shipped
-- Commit: pending
+- Commit: 1114408
 
 ## 2026-07-25 — One assembler, three pools, and traits behind them
 v0.8, blocks 2 and 3. `assemble.py` takes the system layers (persona → system

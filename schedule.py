@@ -65,7 +65,7 @@ def lock_path():
 def parse_trigger(trigger):
     """`trigger:` as (kind, time). kind is 'daily' | 'weekly', or (None, None).
 
-    'command' — the default — means "only when a human types :routine", and is
+    'command' — the default — means "only when a human types /routine", and is
     the reason a tick can read every routine in the folder without running the
     ones that were never meant to be scheduled.
 
@@ -154,7 +154,7 @@ def why_not_due(routine, now):
     kind, at = parse_trigger(routine.trigger)
     if at is None:
         if str(routine.trigger).strip() == "command":
-            return "trigger is 'command' — runs only from :routine"
+            return "trigger is 'command' — runs only from /routine"
         return (f"trigger {routine.trigger!r} is not 'command', HHMM or "
                 f"'weekly HHMM'")
 

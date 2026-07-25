@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
 import mover
+from parse import PREFIX
 import wikigit
 
 
@@ -337,7 +338,8 @@ def main():
         p_dirty = mover.plan(draft)
         ok("a dirty corpus is refused", not p_dirty.ok, p_dirty.reason)
         ok("...and the refusal names the fix",
-           ":wiki commit journal" in p_dirty.reason, p_dirty.reason)
+           f"{PREFIX}wiki commit journal" in p_dirty.reason,
+           p_dirty.reason)
         ok("...the live file is untouched",
            live.read_text(encoding="utf-8").endswith("original content\n"))
         try:

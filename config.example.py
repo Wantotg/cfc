@@ -2,7 +2,7 @@
 API_BASE = "https://api.nano-gpt.com/v1"   # check their docs for the exact URL
 API_KEY  = ""   # paste your key here
 MODEL    = "zai-org/glm-5.2:thinking"                    # pick a model your plan supports
-RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers :recall (grounded synthesis)
+RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /recall (grounded synthesis)
 
 # Path to a folder inside your Obsidian vault where chats will be exported
 VAULT_PATH = "PLACEHOLDER"

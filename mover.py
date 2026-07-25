@@ -60,7 +60,7 @@ _last_wiki_id = 0
 # The outbox explains itself in a readme that lives inside it, so containment —
 # which is the whole proposal rule — admits it as a proposal. It never is one:
 # it has no destination and never will, so it sat permanently at the top of
-# `:outbox` reading `REFUSED — no destination`, and `:file 1 drop` would happily
+# `/list outbox` reading `REFUSED — no destination`, and `:file 1 drop` would happily
 # file the folder's own documentation into the bin.
 #
 # Same shape as `tools.reserved_write_reason()` and for the same reason: a
@@ -209,8 +209,8 @@ class Proposal:
 
     `ok` is False for anything that cannot be filed — no destination, outside
     the roots, wiki, target exists. `reason` says which, in the words shown to
-    the human. Computing the verdict at list time is deliberate: ':outbox'
-    should show you what will happen *before* you type ':file 1'.
+    the human. Computing the verdict at list time is deliberate: '/list outbox'
+    should show you what will happen *before* you type '/file 1'.
     """
 
     def __init__(self, path, destination=None, target=None, ok=False,
@@ -369,7 +369,7 @@ def _journal_guard_reason():
         more = "" if len(changed) <= 3 else f" (+{len(changed) - 3} more)"
         return (f"the journal has uncommitted changes — {names}{more}. "
                 f"Filing overwrites a live file, so commit or revert first: "
-                f":wiki commit journal")
+                f"/wiki commit journal")
     return ""
 
 

@@ -21,9 +21,16 @@
 # matching cannot have that bug.
 from dataclasses import dataclass
 
-# v0.8 flips this to "/". It is one constant on purpose: the flip is a change
-# to the grammar, not thirty-five edits to the handlers.
-PREFIX = ":"
+# The command prefix. It is one constant on purpose: flipping it in v0.8 was a
+# change to the grammar and not to a single handler.
+#
+# `LEGACY_PREFIX` is accepted for one version and then removed. A `:` command
+# still runs, and `Cmd.legacy` tells the REPL to say so — once per session, not
+# once per command, because a correction repeated forty times is one that stops
+# being read. Self-removing rather than an undocumented dialect kept alive
+# forever: delete the constant and `:add` becomes ordinary prose again.
+PREFIX = "/"
+LEGACY_PREFIX = ":"
 
 # Typed verb → canonical verb. Kept here rather than in the dispatch table so
 # completion and dispatch agree on the whole surface by construction; two lists
@@ -32,6 +39,55 @@ ALIASES = {
     "h": "help",
     "?": "help",
     "db": "database",
+}
+
+
+# The whole surface, in the order `/help` groups them. This is the canonical
+# list: `main.py` asserts its handler table matches, so a verb added to one and
+# not the other fails at import rather than at the moment someone types it.
+# Three lists that have to agree (the table, this, and `RETIRED`) is exactly the
+# drift `HANDOVER.md` names as a recurring hazard — so they are checked, not
+# maintained by hand.
+VERBS = (
+    "help", "list", "status", "config", "search",     # ask
+    "add", "remove",                                  # context
+    "delete",                                         # destroy
+    "export",                                         # data
+    "recall", "remember", "update",                   # memory
+    "new", "q", "title",                              # session
+    "model", "tools", "database",                     # settings
+    "wiki", "routine", "file",                        # feature areas
+)
+
+# Verbs held but deliberately unspent. Reserving costs nothing; spending one
+# does, which is why `:routine name` stayed `/routine name` rather than becoming
+# `/start name`.
+RESERVED = ("connect", "start", "launch", "swap", "continue", "refresh",
+            "import")
+
+# Verbs the taxonomy retired, and what replaced them. Kept for one minor
+# version so muscle memory costs a line of help rather than an API call — an
+# unrecognised verb falls through to the model, so without this `:prompts`
+# would be *sent to it* as a chat message. Self-removing, like the old-prefix
+# nudge: delete the map and the words become ordinary prose again.
+RETIRED = {
+    "prompts": "list prompts",
+    "prompt": "status  (or add <name> to attach one)",
+    "personas": "list personas",
+    "persona": "status  (or add <name> to attach one)",
+    "attach": "add <path>",
+    "attached": "status",
+    "detach": "remove #<n>",
+    "forget": "remove excerpts",
+    "tag": "add tag <name>",
+    "untag": "remove tag <name>",
+    "tags": "status",
+    "taglist": "list tags",
+    "grep": "search <word>",
+    "updatedb": "update db",
+    "tokens": "status",
+    "models": "list models",
+    "outbox": "list outbox",
 }
 
 
@@ -47,6 +103,7 @@ class Cmd:
     verb: str
     raw: str
     args: tuple
+    legacy: bool = False
 
     def arg(self, i, default=""):
         """Token `i` after the verb, or `default` if the line stopped short."""
@@ -76,17 +133,26 @@ class Cmd:
             return default
 
 
-def parse(line, prefix=PREFIX):
+def parse(line, prefix=PREFIX, legacy=LEGACY_PREFIX):
     """A `Cmd`, or None if this line isn't a command.
 
     None means "not addressed to us" — the caller sends it to the model. A
-    bare prefix with nothing after it is also None: `:` on its own is a typo,
+    bare prefix with nothing after it is also None: `/` on its own is a typo,
     and treating it as a verb named "" would need a special case in the table.
+
+    `legacy` is the retired prefix. It parses identically and sets
+    `Cmd.legacy`, so the REPL can nudge without the command failing — a
+    migration that breaks the thing it is migrating teaches only that the
+    upgrade was a mistake.
     """
     line = (line or "").strip()
-    if not line.startswith(prefix):
+    was_legacy = False
+    if line.startswith(prefix):
+        body = line[len(prefix):].strip()
+    elif legacy and line.startswith(legacy):
+        body, was_legacy = line[len(legacy):].strip(), True
+    else:
         return None
-    body = line[len(prefix):].strip()
     if not body:
         return None
     verb, _, raw = body.partition(" ")
@@ -96,6 +162,7 @@ def parse(line, prefix=PREFIX):
         verb=ALIASES.get(verb, verb),
         raw=raw,
         args=tuple(raw.split()),
+        legacy=was_legacy,
     )
 
 

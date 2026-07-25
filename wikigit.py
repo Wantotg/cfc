@@ -37,7 +37,7 @@ _TIMEOUT = 120
 # Scope names. A scope is a *corpus* — the slice of the vault repo a command is
 # limited to. WIKI and JOURNAL each resolve to a configured directory; VAULT is
 # the whole repo (no pathspec). ALL is kept as a soft alias for VAULT so the old
-# ":wiki commit all" muscle memory keeps working — same behaviour, older word.
+# "/wiki commit all" muscle memory keeps working — same behaviour, older word.
 WIKI = "wiki"
 JOURNAL = "journal"
 VAULT = "vault"

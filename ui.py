@@ -78,6 +78,21 @@ _CTX_GREEN_MAX = 15   # green below this
 _CTX_ORANGE_MAX = 35  # orange up to this, red above
 
 
+def short_model(model):
+    """A model id trimmed to what a human reads: `zai-org/glm-5.2:thinking`
+    becomes `glm-5.2:thinking`.
+
+    **Display only.** The full id is what goes on the wire, into the sessions
+    table, and into the `in` checks against `TOOLS_MODELS`, `MODEL_LIMITS` and
+    `ROUTINE_MODELS` — all of which are exact. Store or send the short form and
+    tool calling silently stops firing while the context bar goes uncoloured,
+    with no error raised anywhere. So there is exactly one of these, it is
+    called at the moment of printing, and nothing keeps its result.
+    """
+    m = (model or "").strip()
+    return m.rsplit("/", 1)[-1] if "/" in m else m
+
+
 def context_thresholds():
     """(green_max, orange_max), from config if it says otherwise.
 

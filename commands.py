@@ -7,7 +7,7 @@
 #
 # The memory layer (search.py / recall.py) pulls in sqlite-vec and the
 # embedding API. It's imported lazily inside each command so that a missing or
-# broken memory layer degrades :recall / :remember only, rather than stopping
+# broken memory layer degrades /recall / /remember only, rather than stopping
 # cfc from starting at all.
 import difflib
 import hashlib
@@ -88,17 +88,21 @@ except ImportError:
     TOOLS_MAX_TURN_RESULT_CHARS = 120_000
 
 from ui import (console, context_style, context_thresholds, make_bar,
+                short_model,
                 make_snippet)
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
+from parse import PREFIX
 from paths import path_guard, PathError
 from pools import (pool, pool_dir, load as load_pool,
                    match as pools_match, fill as pools_fill,
                    tried as pools_tried, bad_name_reason,
-                   match_active as pools_match_active, active_layers)
+                   match_active as pools_match_active, active_layers,
+                   stem as pool_stem, names as pool_names, PRIORITY,
+                   POOLS)
 import tools
 
-# How many chunks :recall and :remember pull. Also a diagnostic: if eight hits
+# How many chunks /recall and /remember pull. Also a diagnostic: if eight hits
 # come back and seven are the same dead end, that's the corpus talking.
 MEMORY_K = 8
 
@@ -407,7 +411,7 @@ def list_models(current_model):
     if not MODELS:
         console.print("No MODELS list in config.py.")
         console.print("You can still switch with "
-                      ":model <name>")
+                      "/model <name>")
         console.print("Add a MODELS list to config.py for "
                       "quick access.")
         return
@@ -505,7 +509,7 @@ def show_token_stats(conn, session_id, current_model,
             console.print("\nContext is getting long.",
                           style="yellow")
             console.print("Consider starting a new session "
-                          "(:new)")
+                          "(/new)")
         elif pct > green_max:
             console.print("\nContext is filling up.",
                           style="yellow")
@@ -564,12 +568,11 @@ def _header_row(label, value, style=None):
 
 
 def _strip_md(name):
-    """Display-only, same as the hub's: the .md is noise in a status line.
-    The stored name keeps its extension and every other command still shows
-    it."""
-    if name and name.endswith(".md"):
-        return name[:-3]
-    return name or ""
+    """Display-only: the .md is noise in a status line. The stored name keeps
+    its extension. One implementation, in `pools`, because the resolver
+    compares the two spellings constantly and two copies of this rule is how
+    the collision walk stopped advancing once already."""
+    return pool_stem(name)
 
 
 def print_session_header(conn, session_id, model, title,
@@ -623,81 +626,234 @@ def print_session_header(conn, session_id, model, title,
         _header_row("Tools", f"{model} is not in TOOLS_MODELS — off", "yellow")
 
 
+def show_status(conn, session_id, model, title, private=False,
+                system_prompt_name=None, persona_name=None, trait_names=(),
+                tools_on=True, db_on=True, injected=(), kind=None):
+    """`:status` — everything active in this session, on one screen.
+
+    It absorbs eight bare commands (`:title`, `:tokens`, `:prompt`, `:persona`,
+    `:tags`, `/status`, `:model`, `:tools`), which is most of the cut the
+    taxonomy claims. The line between this and `:config` is ownership: this is
+    session state, `:config` is deployment settings. "Routine model" is a
+    deployment setting and lives there, not here.
+
+    `kind` prints one layer's *body* instead of the screen — `:status prompt`.
+    The bare `:prompt` used to be the only way to read an attached prompt
+    without opening the file, and folding it into a names-only screen would
+    have quietly dropped that.
+    """
+    if kind:
+        p = pool(kind)
+        if not p:
+            console.print(f"No such kind '{kind}'. Try: "
+                          f"{', '.join(POOLS_ORDER)}.")
+            return
+        carried = {"prompt": system_prompt_name, "persona": persona_name,
+                   "trait": list(trait_names)}[p.kind]
+        carried = [carried] if isinstance(carried, str) else list(carried or [])
+        if not carried:
+            console.print(f"No {p.singular} attached.")
+            return
+        for name in carried:
+            body, _ = load_pool(p.kind, name)
+            console.print(f"\n{p.label}: {_strip_md(name)}\n")
+            console.print("---")
+            # A name that resolves to nothing is the one case worth naming
+            # here: the session carries it, so it is not "not attached", and
+            # the body is what you came to read.
+            console.print(body if body is not None
+                          else "(file not found — it was renamed or removed)")
+            console.print("---\n")
+        return
+
+    if private:
+        heading = Text("\nPrivate session", style="bold")
+        heading.append(f"  ·  {short_model(model)}", style="dim")
+    else:
+        heading = Text(f"\nSession #{session_id}", style="bold")
+        heading.append(f"  ·  {short_model(model)}  ·  ", style="dim")
+        heading.append(title or "(untitled)")
+    console.print(heading)
+
+    _header_row("System prompt", _strip_md(system_prompt_name) or "not set",
+                "magenta" if system_prompt_name else "dim")
+    _header_row("Persona", _strip_md(persona_name) or "not set",
+                "green" if persona_name else "dim")
+    if trait_names:
+        # A trait whose file has gone is named here rather than warned about
+        # every turn — this screen is where "what is this session carrying"
+        # gets answered, so it is where the gap belongs.
+        shown = []
+        for n in trait_names:
+            body, _ = load_pool("trait", n)
+            shown.append(_strip_md(n) if body else f"{_strip_md(n)} (missing)")
+        _header_row("Traits", ", ".join(shown), "yellow")
+    else:
+        _header_row("Traits", "none", "dim")
+
+    items = list_attachments(conn, session_id)
+    if items:
+        est = sum(a.get("est_tokens", 0) for a in items)
+        for i, a in enumerate(items, 1):
+            _header_row("Attached" if i == 1 else "",
+                        f"#{i} {a.get('name', '?')}  "
+                        f"({a.get('chars', 0):,} chars)", "cyan")
+        _header_row("", f"~{est:,} tokens in total", "dim")
+    else:
+        _header_row("Attached", "nothing", "dim")
+
+    tags = get_session_tags(conn, session_id)
+    _header_row("Tags", ", ".join(tags) if tags else "none",
+                "cyan" if tags else "dim")
+    if injected:
+        _header_row("Excerpts", f"{len(injected)} recalled block"
+                    f"{'s' if len(injected) != 1 else ''} in this conversation",
+                    "blue")
+
+    supported = model in TOOLS_MODELS
+    if TOOLS_ENABLED and tools_on and supported:
+        _header_row("Tools", "active", "green")
+    else:
+        why = ("TOOLS_ENABLED is off" if not TOOLS_ENABLED
+               else "off for this session" if not tools_on
+               else f"{short_model(model)} is not in TOOLS_MODELS")
+        _header_row("Tools", f"inactive — {why}", "dim")
+    _header_row("Database", "on" if db_on else "off",
+                "green" if db_on else "dim")
+
+    tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
+    limit = MODEL_LIMITS.get(model)
+    if ctx and limit:
+        pct = ctx / limit * 100
+        _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
+                    context_style(pct))
+    elif ctx:
+        # No known limit for this model: a raw count, uncoloured. A colour
+        # would be a verdict the code can't make.
+        _header_row("Context", f"{ctx:,} tokens", "dim")
+    else:
+        _header_row("Context", "empty — no messages yet", "dim")
+    if tok_in or tok_out:
+        _header_row("Last turn", f"{tok_in:,} in · {tok_out:,} out", "dim")
+    console.print()
+
+
+# What `:list` can list, in the order the bare form prints them. Two of these
+# answer questions people think are one: `chats` is the picker's view — real
+# conversations — while `sessions` is everything, routine runs and wiki pages
+# included.
+LISTABLE = ("prompts", "personas", "traits", "models", "routines", "tags",
+            "chats", "sessions", "outbox")
+POOLS_ORDER = tuple(POOLS[k].singular for k in PRIORITY)
+
+
+def show_list(conn, what, current_model):
+    """`:list <kind>` — what exists. Bare, it prints the kinds.
+
+    Singular and plural both work: `:list trait` and `:list traits` are the
+    same question, and making someone remember which one cfc wants is the sort
+    of friction the whole taxonomy exists to remove.
+    """
+    what = (what or "").strip().lower().rstrip()
+    if not what:
+        console.print(f"\n{PREFIX}list <kind> — one of:")
+        console.print(f"  {' · '.join(LISTABLE)}\n")
+        return
+    p = pool(what)
+    if p:
+        list_pool(p.kind)
+        return
+    if what in ("model", "models"):
+        list_models(current_model)
+    elif what in ("routine", "routines"):
+        show_routines()
+    elif what in ("tag", "tags"):
+        list_all_tags(conn)
+    elif what in ("chat", "chats"):
+        from hub import show_recent_chats
+        show_recent_chats(conn)
+    elif what in ("session", "sessions"):
+        from hub import list_sessions
+        list_sessions(conn)
+    elif what in ("outbox",):
+        show_outbox()
+    else:
+        console.print(f"Don't know how to list '{what}'. One of:")
+        console.print(f"  {' · '.join(LISTABLE)}")
+
+
 # (command, what it does). The nine that earn a place on the screen you look at
 # most; everything else is one `:help` away.
 _CORE_COMMANDS = [
-    (":help", "every command"),
-    (":q", "back to the session list"),
-    (":new", "start a new session"),
-    (":prompt name", "set the system prompt  (:prompts to list)"),
-    (":persona name", "set the persona  (:personas to list)"),
-    (":attach path", "attach a local text file"),
-    (":remember q", "pull matching excerpts into this conversation"),
-    (":tokens", "token usage for this session"),
+    (f"{PREFIX}help", "every command"),
+    (f"{PREFIX}q", "back to the session list"),
+    (f"{PREFIX}new", f"start a new session  ({PREFIX}new p for a private one)"),
+    (f"{PREFIX}status", "everything active in this session"),
+    (f"{PREFIX}list <kind>", "what exists  (prompts, traits, models, chats…)"),
+    (f"{PREFIX}add <name|path>", "attach a prompt, persona, trait or file"),
+    (f"{PREFIX}remove <name>", "take one off again"),
+    (f"{PREFIX}remember q", "pull matching excerpts into this conversation"),
     ("Alt+Enter", "insert a newline  (Enter sends)"),
 ]
 
+# The whole surface: twenty-one verbs, grouped by what they are for. The
+# grammar line above them is what makes this a list you can hold in your head
+# rather than a table you re-read — every command is verb, then kind, then
+# target, then free text.
 _ALL_COMMANDS = [
-    ("session", [
-        (":q", "back to the session list"),
-        (":new", "start a new session"),
-        (":list", "show every session, routine runs included"),
-        (":title", "show this session's title"),
-        (":title 5 Name", "rename session #5"),
-        (":delete", "delete this session (with confirm)"),
-        (":delete 5", "delete session #5 (with confirm)"),
-        (":export", "export this session to Obsidian"),
-        (":export 5", "export session #5"),
-        (":tokens", "token usage for this session"),
-        (":config", "show all settings"),
+    ("ask", [
+        (f"{PREFIX}help", "this list"),
+        (f"{PREFIX}list <kind>", "what exists: prompts · personas · traits · models · "
+                         "routines · tags · chats · sessions · outbox"),
+        (f"{PREFIX}status", "what's active in this session"),
+        (f"{PREFIX}status prompt", "print the attached prompt's text (or persona/trait)"),
+        (f"{PREFIX}config", "deployment settings"),
+        (f"{PREFIX}search word", "search every message for 'word'"),
     ]),
-    ("prompts & personas", [
-        (":prompts", "list available system prompt files"),
-        (":prompt", "show the current system prompt"),
-        (":prompt name", "set the system prompt from 'name.md'"),
-        (":prompt off", "remove the system prompt"),
-        (":personas", "list available persona files"),
-        (":persona", "show the current persona"),
-        (":persona name", "set the persona from 'name.md'"),
-        (":persona off", "remove the persona"),
+    ("context — attach and detach", [
+        (f"{PREFIX}add name", "attach a prompt, persona or trait by name"),
+        (f"{PREFIX}add trait name",
+         "…naming the kind, when the name is in two pools"),
+        (f"{PREFIX}add path/to/file", "attach an external file"),
+        (f"{PREFIX}add tag python",
+         f"tag this session  ({PREFIX}add tag 3 python for #3)"),
+        (f"{PREFIX}remove name", "take off whichever layer is carrying that name"),
+        (f"{PREFIX}remove persona", "take off whatever persona is on"),
+        (f"{PREFIX}remove #1", "detach attachment #1"),
+        (f"{PREFIX}remove tag python", "untag"),
+        (f"{PREFIX}remove excerpts", "drop the last injected recall block"),
+    ]),
+    ("destroy", [
+        (f"{PREFIX}delete chat", "delete this conversation (with confirm)"),
+        (f"{PREFIX}delete chat 5", "delete conversation #5"),
+    ]),
+    ("data", [
+        (f"{PREFIX}export", "export this session to Obsidian"),
+        (f"{PREFIX}export chat 5", "export session #5"),
     ]),
     ("memory", [
-        (":recall q", "ask your wiki a question (cited answer)"),
-        (":remember q", "pull matching excerpts into this conversation"),
-        (":forget", "drop the last injected excerpts"),
-        (":updatedb", "index anything not yet embedded"),
-        (":database on|off", "enable/disable recall & remember this session"),
+        (f"{PREFIX}recall q", "ask your wiki a question (cited answer)"),
+        (f"{PREFIX}remember q", "pull matching excerpts into this conversation"),
+        (f"{PREFIX}update db", "re-import the wiki and index anything new"),
     ]),
-    ("files", [
-        (":attach path", "attach a local text file (persistent)"),
-        (":attached", "list attachments in this session"),
-        (":detach 1", "remove attachment #1"),
-        (":outbox", "review filing proposals"),
-        (":file 1", "carry out proposal #1"),
-        (":file 1 decline why", "reject #1, keeping it and the reason"),
+    ("session", [
+        (f"{PREFIX}new", f"start a new session  ({PREFIX}new p for a private one)"),
+        (f"{PREFIX}q", "back to the session list"),
+        (f"{PREFIX}title 5 Name", "rename session #5"),
     ]),
-    ("wiki & routines", [
-        (":wiki", "wiki repo status"),
-        (":wiki diff [scope]", "the diff (scope: wiki/journal/vault)"),
-        (":wiki commit [scope]", "stage & commit; add 'file' to pick one"),
-        (":routine", "list routines"),
-        (":routine name", "run one now"),
-        (":routine new", "create one"),
+    ("settings", [
+        (f"{PREFIX}model name", f"switch model  ({PREFIX}list models to see them)"),
+        (f"{PREFIX}tools on|off", "toggle tools for this session"),
+        (f"{PREFIX}database on|off", "toggle recall & remember this session"),
     ]),
-    ("models & tools", [
-        (":model", "show the current model"),
-        (":model name", "switch to model 'name'"),
-        (":models", "list configured models"),
-        (":tools", "show tool state for this session"),
-        (":tools on|off", "toggle tools for this session"),
-    ]),
-    ("tags & search", [
-        (":grep word", "search all messages for 'word'"),
-        (":tag python", "add tag 'python' to this session"),
-        (":tag 3 python", "add tag to session #3"),
-        (":tags", "show tags on this session"),
-        (":untag python", "remove tag from this session"),
-        (":taglist", "show all tags with session counts"),
+    ("wiki, routines, filing", [
+        (f"{PREFIX}wiki", "wiki repo status"),
+        (f"{PREFIX}wiki diff [kind]", "the diff (kind: wiki/journal/vault)"),
+        (f"{PREFIX}wiki commit [kind]", "stage & commit; add 'file' to pick one"),
+        (f"{PREFIX}routine name",
+         f"run a routine now  ({PREFIX}routine new to create one)"),
+        (f"{PREFIX}file 1", f"carry out filing proposal #1  ({PREFIX}list outbox)"),
+        (f"{PREFIX}file 1 decline why", "reject #1, keeping it and the reason"),
     ]),
     ("editing", [
         ("Alt+Enter", "insert a newline (Enter sends)"),
@@ -710,16 +866,28 @@ _ALL_COMMANDS = [
 def print_core_commands():
     """The short list, printed on entering a session."""
     console.print()
+    # Width from the longest entry, not a literal: `/add <name|path>` outgrew
+    # the hard-coded 15 and ran into its own description.
+    width = max(len(c) for c, _ in _CORE_COMMANDS) + 2
     for cmd, what in _CORE_COMMANDS:
-        line = Text(f"  {cmd:<15}", style="cyan")
+        line = Text(f"  {cmd:<{width}}", style="cyan")
         line.append(what, style="dim")
         console.print(line)
     console.print()
 
 
 def print_help():
-    """`:help` — everything, grouped."""
+    """`:help` — everything, grouped, under one grammar line.
+
+    Twenty-one verbs rather than the old forty-seven forms. The grammar line is
+    the point of the exercise: once every command is verb → kind → target →
+    free text, the list is something you read once instead of a table you come
+    back to.
+    """
     console.print()
+    console.print(f"  {PREFIX}verb [kind] [target] [message]", style="bold")
+    console.print("    a bare number is a chat id · #1 is an attachment · "
+                  "the message is always the rest of the line\n", style="dim")
     for group, items in _ALL_COMMANDS:
         console.print(f"  {group}", style="bold")
         for cmd, what in items:
@@ -751,7 +919,7 @@ def print_context_bar(model, tok_in, tok_out):
     console.print()
     console.print(make_bar(pct, ctx=ctx, limit=limit))
     if pct > context_thresholds()[1]:
-        console.print("Context getting long -- consider :new",
+        console.print("Context getting long -- consider /new",
                       style="yellow")
 
 
@@ -902,7 +1070,7 @@ def do_remember(conn, session_id, history, injected, query,
              "content": build_envelope(query, hits)}
     history.append(block)
     # Track the dict itself, not its index: history keeps growing and a
-    # :forget of an earlier block would shift every index after it.
+    # /remove excerpts of an earlier block would shift every index after it.
     injected.append(block)
 
     marker = (f'[:remember "{query}" → {len(hits)} excerpts '
@@ -910,7 +1078,7 @@ def do_remember(conn, session_id, history, injected, query,
     save_message(conn, session_id, "user", marker, model=model)
 
     console.print(f"\nInjected {len(hits)} excerpts "
-                  f"(ephemeral — :forget to drop):")
+                  f"(ephemeral — /remove excerpts to drop):")
     for h in hits:
         snippet = " ".join(h["text"].split())[:56]
         console.print(f"  [{h['distance']:.3f}] ({h['kind']}) "
@@ -944,7 +1112,7 @@ def do_updatedb(arg=""):
     the per-turn auto-embed — useful when AUTO_EMBED is off, after a bulk import,
     or to catch up if the embedder was down.
 
-    `:updatedb prune` additionally removes index rows left behind by a delete
+    `/update db prune` additionally removes index rows left behind by a delete
     that predates the cascade in db.py. Reported by default and removed only on
     request: this is the one maintenance path that *deletes*, and a command
     people run casually should not quietly drop rows.
@@ -968,7 +1136,7 @@ def do_updatedb(arg=""):
         elif gone or mis:
             console.print(
                 f"\n[stale index rows: {len(gone)} orphaned, "
-                f"{len(mis)} mis-attributed — run ':updatedb prune' to "
+                f"{len(mis)} mis-attributed — run '/update db prune' to "
                 f"remove them]")
         conn.close()
     except Exception as e:
@@ -995,7 +1163,7 @@ def do_updatedb(arg=""):
             # Close the loop: a filed page is now in the recall index and is an
             # untracked/changed file in the vault repo. Point at the last step.
             console.print("  new pages are uncommitted in the vault — review "
-                          "with :wiki diff, save with :wiki commit <message>",
+                          "with /wiki diff, save with /wiki commit <message>",
                           style="dim")
         if skipped:
             console.print(f"[{skipped} wiki file(s) had no id and were NOT "
@@ -1023,7 +1191,7 @@ def do_updatedb(arg=""):
 def auto_embed():
     """Silent per-turn index update. Best-effort: a failed embed (e.g. the local
     embedder is down) must never break a chat turn, so it warns quietly and the
-    message stays saved for a later :updatedb to pick up."""
+    message stays saved for a later /update db to pick up."""
     if not AUTO_EMBED:
         return
     try:
@@ -1033,9 +1201,9 @@ def auto_embed():
         console.print(f"[auto-embed skipped: {e}]")
 
 
-# --- :attach ---------------------------------------------------------------
+# --- /attach ---------------------------------------------------------------
 #
-# An attachment is a real message row, unlike a :remember injection. That's
+# An attachment is a real message row, unlike a /remember injection. That's
 # deliberate: an attachment is what the conversation is *about*, so it should
 # come back when the session is reopened. A recall excerpt is a transient
 # lookup and dies with the session.
@@ -1053,7 +1221,7 @@ def _display_path(p):
 def attach_wrapper(name, display_path, digest, text):
     """The envelope the model sees.
 
-    The closing line is load-bearing, same as the :remember envelope: without
+    The closing line is load-bearing, same as the /remember envelope: without
     a boundary, a file full of imperative prose ("Run this, then delete that")
     reads as instructions rather than as reference material.
     """
@@ -1067,14 +1235,14 @@ def attach_wrapper(name, display_path, digest, text):
 
 
 def do_attach(conn, session_id, history, raw_path, model):
-    """:attach <path> — read a local text file into the session, persistently.
+    """/add <path> — read a local text file into the session, persistently.
 
     Refusal order is deliberate: the jail first (so a path outside the root is
     never even statted), then existence, then type, then size. Each check
     reports the most specific reason it can.
     """
     if not raw_path:
-        console.print("Usage: :attach <path>")
+        console.print("Usage: /add <path>")
         roots = ", ".join(str(r) for r in ATTACH_ROOTS)
         console.print(f"Files must live under one of: {roots}")
         return
@@ -1142,7 +1310,7 @@ def do_attach(conn, session_id, history, raw_path, model):
 
 
 def show_attachments(conn, session_id):
-    """:attached — what's attached to this session."""
+    """/status — what's attached to this session."""
     items = list_attachments(conn, session_id)
     if not items:
         console.print("\nNothing attached to this session.\n")
@@ -1164,7 +1332,7 @@ def show_attachments(conn, session_id):
 
 
 def do_detach(conn, session_id, history, arg):
-    """:detach <n> — drop an attachment by its :attached index.
+    """/remove #<n> — drop an attachment by its /status index.
 
     Hard-deletes the row and removes it from the live history, so the model
     stops seeing it this turn rather than only after a reopen.
@@ -1176,7 +1344,7 @@ def do_detach(conn, session_id, history, arg):
     try:
         idx = int((arg or "").strip())
     except ValueError:
-        console.print("Usage: :detach <n>   (see :attached)")
+        console.print("Usage: /remove #<n>   (see /status)")
         return
     if not 1 <= idx <= len(items):
         console.print(f"No attachment #{idx}. There are {len(items)}.")
@@ -1194,7 +1362,7 @@ def do_detach(conn, session_id, history, arg):
     digest = a.get("sha256")
     # Drop it from live context too. Match on the sha in the wrapper rather
     # than on identity: history was rebuilt from the DB on reopen, so the dict
-    # in `history` is not the dict :attach appended.
+    # in `history` is not the dict /attach appended.
     if digest:
         for m in list(history):
             if m.get("role") == "user" and digest in (m.get("content") or ""):
@@ -1320,7 +1488,7 @@ def gate_and_dispatch(call, approval, ctx=None):
 
 
 def show_tools_state(current_model, session_on):
-    """:tools — why tools are or aren't available right now.
+    """/tools — why tools are or aren't available right now.
 
     Three switches have to line up (master, model, session), so the answer to
     "why isn't this working" should be one command, not three guesses.
@@ -1333,7 +1501,7 @@ def show_tools_state(current_model, session_on):
                   f"this turn")
     console.print(f"  master switch (TOOLS_ENABLED): "
                   f"{'on' if TOOLS_ENABLED else 'off'}")
-    console.print(f"  session toggle (:tools on|off): "
+    console.print(f"  session toggle (/tools on|off): "
                   f"{'on' if session_on else 'off'}")
     console.print(f"  model {current_model}: "
                   f"{'supports tools' if supported else 'NOT in TOOLS_MODELS'}")
@@ -1364,7 +1532,7 @@ def show_tools_state(current_model, session_on):
 # person who made it.
 #
 # Imported lazily inside each function, like the memory layer above, so a
-# broken routine store degrades ':routine' alone rather than stopping cfc from
+# broken routine store degrades '/routine' alone rather than stopping cfc from
 # starting.
 
 
@@ -1416,7 +1584,7 @@ def _ask_paths(label, routines):
 
 
 def show_routines():
-    """:routine — what exists, and what's broken."""
+    """/routine — what exists, and what's broken."""
     from routines import RoutineError, last_run, list_routines, routine_dir
 
     try:
@@ -1428,13 +1596,13 @@ def show_routines():
     console.print()
     console.print(f"Routines ({routine_dir()})")
     if not found and not bad:
-        console.print("  (none yet — ':routine new' to make one)", style="dim")
+        console.print("  (none yet — '/routine new' to make one)", style="dim")
         console.print()
         return
 
     # A routine that parses can still be unrunnable — a non-slug id, a prompt
     # file that moved, a read root that was renamed. Listing those as
-    # available and only failing at ':routine <name>' makes a broken *routine*
+    # available and only failing at '/routine <name>' makes a broken *routine*
     # look like a mistyped *command*, which is exactly how one afternoon went.
     # Validation costs a few stats over /mnt/c and this screen is on demand.
     problems = {r.id: r.validate() for r in found}
@@ -1469,7 +1637,7 @@ def show_routines():
 
 
 def create_routine():
-    """:routine new — the sequential creation flow. No TUI."""
+    """/routine new — the sequential creation flow. No TUI."""
     from routines import (Routine, RoutineError, prompt_dir, save_routine,
                           slugify)
 
@@ -1532,7 +1700,7 @@ def create_routine():
         return
 
     # Optional model pin. Blank = the routine uses the vetted default (or the
-    # session's model on an on-command run). Same resolver as :model, plus a
+    # session's model on an on-command run). Same resolver as /model, plus a
     # note when the pick isn't vetted for unattended runs.
     model = ""
     mchoice = _ask("  model (blank = routine default)", "")
@@ -1550,7 +1718,7 @@ def create_routine():
     routine = Routine(id=rid, name=name, prompt=prompt, model=model,
                       read_roots=read_roots, write_roots=write_roots,
                       trigger=trigger, on_failure=on_failure, enabled=True,
-                      body=f"Created via :routine new.")
+                      body=f"Created via /routine new.")
 
     # Second validation pass. The per-field checks above cannot see a write
     # root that overlaps the cfc source — that is ScopeError's job, raised
@@ -1562,12 +1730,12 @@ def create_routine():
         console.print(f"  Not saved: {e}", style="red")
         return
     console.print(f"  Saved: {dest}", style="green")
-    console.print(f"  Run it with ':routine {rid}'", style="dim")
+    console.print(f"  Run it with '/routine {rid}'", style="dim")
     console.print()
 
 
 def do_routine(conn, arg, model=None):
-    """:routine <name> — run one now, narrating as it goes."""
+    """/routine <name> — run one now, narrating as it goes."""
     from routines import RoutineError, load_routine
     from runner import effective_model, looks_unclear, run_routine
 
@@ -1621,10 +1789,10 @@ def do_routine(conn, arg, model=None):
 
 # --- filing proposals out of the outbox ------------------------------------
 #
-# ':outbox' lists what the model has left for you, each with its verdict
-# already computed — you should be able to see what ':file 1' will do before
-# you type it. ':file <n>' carries one out, ':file all' every valid one,
-# ':file <n> decline [why]' rejects one, keeping it and the reason.
+# '/list outbox' lists what the model has left for you, each with its verdict
+# already computed — you should be able to see what '/file 1' will do before
+# you type it. '/file <n>' carries one out, '/file all' every valid one,
+# '/file <n> decline [why]' rejects one, keeping it and the reason.
 #
 # The verdicts come from mover.py, which re-validates the model's suggested
 # destination from scratch. Nothing here decides whether a move is allowed;
@@ -1632,7 +1800,7 @@ def do_routine(conn, arg, model=None):
 
 
 def show_outbox():
-    """:outbox — pending proposals and what would happen to each."""
+    """/list outbox — pending proposals and what would happen to each."""
     from mover import list_proposals, outbox_roots
 
     proposals = list_proposals()
@@ -1667,8 +1835,8 @@ def show_outbox():
     filable = sum(1 for p in proposals if p.ok)
     console.print()
     console.print(f"  {filable} of {len(proposals)} can be filed", style="dim")
-    console.print("  :file <n> | :file all | "
-                  ":file <n> decline [why]", style="dim")
+    console.print("  /file <n> | /file all | "
+                  "/file <n> decline [why]", style="dim")
     console.print()
     return proposals
 
@@ -1713,7 +1881,7 @@ def _frontmatter_title(path):
 
 
 def do_file(arg):
-    """:file <n> [decline [why]] | :file all — carry out or reject a proposal."""
+    """/file <n> [decline [why]] | /file all — carry out or reject a proposal."""
     from mover import MoveError, commit, decline, list_proposals
 
     proposals = list_proposals()
@@ -1723,14 +1891,14 @@ def do_file(arg):
 
     parts = (arg or "").split()
     if not parts:
-        console.print("Usage: :file <n> | :file all | "
-                      ":file <n> decline [why]")
+        console.print("Usage: /file <n> | /file all | "
+                      "/file <n> decline [why]")
         return
 
     if parts[0] == "all":
         filable = [p for p in proposals if p.ok]
         if not filable:
-            console.print("Nothing filable — see :outbox for why.", style="dim")
+            console.print("Nothing filable — see /list outbox for why.", style="dim")
             return
         filed_wiki = False
         for p in filable:
@@ -1751,13 +1919,13 @@ def do_file(arg):
         if index < 1:
             raise IndexError
     except (ValueError, IndexError):
-        console.print(f"No proposal {parts[0]!r} — :outbox lists them.",
+        console.print(f"No proposal {parts[0]!r} — /list outbox lists them.",
                       style="red")
         return
 
     # Every path below reprints the list. Filing or dropping removes an entry,
     # so every number after it shifts by one — and a stale list on screen is
-    # not a cosmetic problem: the next ':file 3' means a different file than
+    # not a cosmetic problem: the next '/file 3' means a different file than
     # the one you just read the verdict for.
     if len(parts) > 1 and parts[1] in ("decline", "drop"):
         # Everything after the verb is the reason, free text. It is recorded on
@@ -1797,19 +1965,19 @@ def _journal_filed_note():
     and it holds it until you commit.
     """
     console.print("  → the live journal file was replaced. Inspect it with "
-                  ":wiki diff journal, then :wiki commit journal — or "
+                  "/wiki diff journal, then /wiki commit journal — or "
                   "git checkout to undo.", style="yellow")
 
 
 def _print_wiki_stale():
     """One line if a page was filed into the wiki but not yet re-imported.
-    Shown by :outbox and :wiki so the stale state survives leaving the session,
+    Shown by /list outbox and /wiki so the stale state survives leaving the session,
     not only the moment of filing."""
     try:
         from backfill import wiki_stale
         if wiki_stale():
             console.print("  recall index stale — a page was filed into the "
-                          "wiki; run :updatedb to re-import.", style="yellow")
+                          "wiki; run /update db to re-import.", style="yellow")
     except Exception:
         pass
 
@@ -1825,12 +1993,12 @@ def _wiki_filed_note():
     except Exception:
         pass
     console.print("  → filed into the wiki. Recall index is now stale — "
-                  "run :updatedb to re-import.", style="yellow")
+                  "run /update db to re-import.", style="yellow")
 
 
 # --- the vault repo -------------------------------------------------------
 #
-# ':wiki' is a review screen for the Obsidian vault's git repo, and ':wiki
+# '/wiki' is a review screen for the Obsidian vault's git repo, and '/wiki
 # commit' is the only thing in cfc that writes git history. Both are plain
 # code — no model, no tool schema, nothing the LLM can reach. See wikigit.py
 # for why, and for why the default scope is the wiki corpus rather than the
@@ -1840,12 +2008,12 @@ def _wiki_filed_note():
 # the same split as runner.py, so a future headless caller isn't dragging rich
 # along behind it.
 
-# The ':wiki' grammar is  :wiki <action> <scope> <granularity>.
+# The '/wiki' grammar is  /wiki <action> <scope> <granularity>.
 #   scope       wiki | journal | vault   ('all' is a soft alias for vault)
 #   granularity folder | file            (default: folder)
 # Scope picks the corpus, granularity picks whole-folder vs pick-one-file. Both
 # are optional and default to the wiki corpus, folder-wide, so the short forms
-# (':wiki diff', ':wiki commit <msg>') keep meaning exactly what they did.
+# ('/wiki diff', '/wiki commit <msg>') keep meaning exactly what they did.
 
 _WIKI_GRANS = ("folder", "file")
 
@@ -1882,7 +2050,7 @@ def _scope_typed(scope):
 
 
 def _parse_wiki_args(arg):
-    """':wiki <action> …' arguments → (scope, granularity, rest).
+    """'/wiki <action> …' arguments → (scope, granularity, rest).
 
     Consumes an optional leading scope word, then an optional granularity word;
     whatever remains (a commit message) is returned untouched. A scope or
@@ -1927,7 +2095,7 @@ def _print_changes(changes, indent="     "):
 
 
 def show_wiki_status():
-    """':wiki' — what has changed, wiki first, the rest of the vault counted.
+    """'/wiki' — what has changed, wiki first, the rest of the vault counted.
 
     The vault line is a count and a pointer, not a listing. It exists so that
     "wiki db: clean" can never be mistaken for "the vault is clean" — which is
@@ -1957,7 +2125,7 @@ def show_wiki_status():
 
     if other:
         console.print(f"  vault:   {len(other)} changed elsewhere "
-                      f"→ :wiki diff all", style="dim")
+                      f"→ /wiki diff all", style="dim")
     else:
         console.print("  vault:   clean", style="dim")
 
@@ -1967,13 +2135,13 @@ def show_wiki_status():
         console.print(f"  {short}  {when}  {subject}", style="dim")
 
     console.print()
-    console.print("  :wiki diff [all] | :wiki commit [all] <message>",
+    console.print("  /wiki diff [all] | /wiki commit [all] <message>",
                   style="dim")
     console.print()
 
 
 def show_wiki_diff(arg=""):
-    """':wiki diff [scope] [folder|file]' — the diff, whole-corpus or one file."""
+    """'/wiki diff [scope] [folder|file]' — the diff, whole-corpus or one file."""
     scope, gran, _ = _parse_wiki_args(arg)
     if gran == "file":
         _wiki_diff_file(scope)
@@ -2022,9 +2190,9 @@ def _wiki_diff_folder(scope):
     # A worked example rather than "<message>" — see _wiki_commit_folder for why.
     word = _scope_typed(scope)
     prefix = "" if scope == wikigit.WIKI else f"{word} "
-    console.print(f"  commit it:  :wiki commit {prefix}tidied the aquarium "
+    console.print(f"  commit it:  /wiki commit {prefix}tidied the aquarium "
                   "pages", style="dim")
-    console.print(f"  or one file:  :wiki diff {prefix}file", style="dim")
+    console.print(f"  or one file:  /wiki diff {prefix}file", style="dim")
     console.print()
 
 
@@ -2072,13 +2240,13 @@ def _wiki_diff_file(scope):
     console.print()
     word = _scope_typed(scope)
     prefix = "" if scope == wikigit.WIKI else f"{word} "
-    console.print(f"  commit just this one:  :wiki commit {prefix}file",
+    console.print(f"  commit just this one:  /wiki commit {prefix}file",
                   style="dim")
     console.print()
 
 
 def do_wiki_commit(arg=""):
-    """':wiki commit [scope] [folder|file] <message>' — commit the corpus.
+    """'/wiki commit [scope] [folder|file] <message>' — commit the corpus.
 
     The message is required and is never generated. A commit message written by
     code says nothing a timestamp doesn't already say, and this is the one
@@ -2102,10 +2270,10 @@ def _wiki_commit_folder(scope, message):
         # a real first commit.
         console.print("The message is just plain text after the command:",
                       style="yellow")
-        console.print("  :wiki commit tidied the aquarium pages", style="dim")
-        console.print("  :wiki commit vault  (adds the rest of the vault too)",
+        console.print("  /wiki commit tidied the aquarium pages", style="dim")
+        console.print("  /wiki commit vault  (adds the rest of the vault too)",
                       style="dim")
-        console.print("  :wiki commit wiki file  (pick and commit one file)",
+        console.print("  /wiki commit wiki file  (pick and commit one file)",
                       style="dim")
         return
 
