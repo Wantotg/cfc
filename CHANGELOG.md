@@ -23,6 +23,54 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-25 — Rewrite the handover for a reader who has the repo
+`HANDOVER.md` was written for a model working *without* the source — Claude App,
+or any session with no file access — so it re-described a great deal that is now
+simply readable. That reader no longer exists here, and the cost of carrying the
+old shape was paid at the top of every session: 1558 lines, 150 KB, most of it
+derivable from one file.
+
+The new one is 407 lines and holds only what reading the code cannot produce:
+the settled decisions and the failure behind each, the rejected designs that
+will look like good ideas again (the timer thread, one scheduler entry per
+routine, widening `WRITE_ROOTS`), the provenance of the tuned constants, the
+producer/parser drift table, the scars — bugs that were live and silent — and
+what is still unverified. Cut wholesale: the splash compositor's arithmetic, the
+schema listings, the command grammar, the module-by-module narrative, the test
+suites enumerated by name. All of that is in the code, and a second copy is a
+copy that goes stale — which this file had already done once.
+
+Two ideas that had generated about a third of the old document are now stated
+once, near the top, so they can be re-derived rather than looked up: **model for
+judgement under ambiguity, code for anything with a right answer**, and **prefer
+the failure that is visible** — with the note that a new guard should fail open
+or closed deliberately, because `tools.reserved_write_reason` and the journal's
+git guard point in opposite directions on purpose.
+
+The old file is kept as `HANDOVER-legacy.md`, frozen at v0.8 with a header
+saying so, and is out of the update loop from here. It holds the long-form
+reasoning behind most of the new file's one-liners; deleting a record of why
+things are the way they are is how they get re-decided.
+
+`README.md` is rewritten with it, per the coupling: the operational half kept in
+full (setup, the command tables, the Task Scheduler entry, the Windows shortcut,
+the vault's git setup) and the design essays that now live once in HANDOVER cut
+to a line each. 46 KB → 34 KB, at the same line count — the prose that went was
+replaced by tables, which is the trade a reference document wants. One stale
+claim fixed on the way: README still said wiki destinations were "refused
+outright", which v0.6 replaced with filing plus a loud staleness marker. Also a
+garbled example of the retired-verb notice, and two things missing from README
+entirely — the routine `review` flag, and the run log being closed to
+`write_file`.
+
+The "Where to read" paragraph no longer says HANDOVER wins on every point of
+detail. It doesn't, deliberately: on mechanism, the code wins. Changed in both
+`CLAUDE.example.md` (tracked) and the local `CLAUDE.md` (gitignored, so it isn't
+in this commit).
+- Files: HANDOVER.md (new), HANDOVER-legacy.md (was HANDOVER.md), README.md, CLAUDE.example.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-25 — Documentation for v0.8
 `README.md` and `HANDOVER.md` rewritten together, as they are coupled. README's
 in-session command section is now built around the grammar rather than a 47-row
@@ -44,7 +92,7 @@ The v0.8 body moves from `ROADMAP_PRIVATE.md` into `ROADMAP.md` with its
 completion date, per the split; Cas's note is his to write.
 - Files: README.md, HANDOVER.md, ROADMAP.md, tests/test_private.py
 - Status: shipped
-- Commit: pending
+- Commit: 524c006
 
 ## 2026-07-25 — /status, /list, the renames, and the flip
 v0.8, blocks 6 to 9. `:status` and `:list` are the two absorbing verbs and the

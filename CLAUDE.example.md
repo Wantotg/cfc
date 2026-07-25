@@ -65,11 +65,12 @@ OpenAI-compatible API (nano-gpt), SQLite backend, `rich` for the REPL,
 `prompt_toolkit` for the input editor. Entry point: `python main.py
 [session_id]`.
 
-**`HANDOVER.md` is the technical doc** and wins on every point of detail — the
-architecture, the invariants, the tuned constants and the reasons behind
-non-obvious choices. Read it before touching the memory layer, the tool-calling
-jail, or the DB schema. `CHANGELOG.md` is the history, `BACKLOG.md` is what's
-owed, `README.md` is how a human uses it.
+**`HANDOVER.md` is what the code can't tell you** — the settled decisions, the
+designs already tried and rejected, the provenance of the tuned constants, and
+the bugs that were quiet enough that nothing failed while they were live. On any
+point of mechanism, read the code. Read the handover before touching the memory
+layer, the tool-calling jail, or the DB schema. `CHANGELOG.md` is the history,
+`BACKLOG.md` is what's owed, `README.md` is how a human uses it.
 
 Don't restate their contents here.
 
