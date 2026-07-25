@@ -16,6 +16,28 @@ ahead gets only its number and title, as a placeholder — the actual planning
 (design reasoning, ordering, dependencies) lives in `ROADMAP_PRIVATE.md`,
 gitignored, and moves over here in full the day the version ships.
 
+## What "feature complete" means here
+
+**`BUGS.md` is empty.** Every claim made up to and including that version does
+what it says. `BACKLOG.md` does *not* have to be empty — that file is, by its
+own definition, things that still work and are merely owed.
+
+It's a line in the sand rather than a promise to stop adding features. cfc has
+shipped features that weren't fully functional as intended; a feature-complete
+version is where that stops being true. Two are planned: **v1.0**, minimal cfc,
+and **v1.9**, cfc as wanted. **v2.0** rebuilds on what the first two taught.
+
+Past v1.0 the arc is planned but not committed to numbers, so it isn't stubbed
+here yet.
+
+## The vault is a separate project
+
+The Obsidian vault cfc reads and writes has its own repo and its own roadmap.
+The seam: **cfc ships the mechanism, the vault ships the words** — safe code
+defaults, gate text and chat mechanics here; templates, structure and
+walkthrough material there. The two are not worked on equally. When a version
+lines up with something on the vault side, its note says so.
+
 ---
 
 ## v0.1 — 2026-07-21
@@ -488,6 +510,8 @@ attachable feature now costs no new verb.
 ```
 ฅ^•ﻌ•^ฅ 'Re-roll! Re-roll! Re-roll!'
 ``` 
+
+## v0.9 — The connection
 
 ## v1.0 — Hardening, and a decision
 
