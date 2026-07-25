@@ -11,20 +11,21 @@ For the internals — architecture, data model, invariants, and the reasoning be
 - **Rich terminal UI** — a pixel-art splash at launch, live Markdown rendering, colour-coded speaker panels (you, AI reasoning, AI answer), spinners, styled tables, progress bars
 - **Streaming responses** rendered as Markdown in real time — with a live view of thinking models' reasoning, and a re-roll when a model returns an empty completion — it asks you if you're there, and retries on its own if you're not. Reasoning shows on the tool path too (rendered per step, not streamed)
 - **Local SQLite storage** — every session and message, fully queryable, single portable file
-- **Private chat** — start one with `p` at the hub: same client, but it runs in-memory and leaves nothing on disk — no transcript, no memory index, no title, invisible to the hub. Model file-writes are blocked; only an `:export` you type yourself reaches disk
+- **Private chat** — start one with `p` at the hub: same client, but it runs in-memory and leaves nothing on disk — no transcript, no memory index, no title, invisible to the hub. Model file-writes are blocked; only an `/export` you type yourself reaches disk
 - **Obsidian export** — auto-exports sessions to Markdown with YAML frontmatter
 - **Per-session models** — switch models mid-project; each message records what generated it
-- **System prompts & personas** — Markdown files injected as system messages, editable in Obsidian
+- **One command grammar** — `/verb [kind] [target] [message]`, twenty-one verbs. `/add` attaches anything (a prompt, a persona, a trait, a file, a tag), `/remove` takes any of it off again, `/status` says what's on, `/list` says what exists. Names are forgiving — a unique partial resolves, ambiguity is a numbered pick, never a guess
+- **System prompts, personas & traits** — Markdown files injected as system messages, editable in Obsidian. Prompts and personas are singular; traits stack, so you can compose a voice out of small pieces
 - **Tagging** — many-to-many tags, exported to Obsidian frontmatter
 - **Search** — case-insensitive substring search across all messages
 - **Semantic memory** — a knowledge wiki (Obsidian Markdown) embedded locally; ask it a question and get an answer cited by page, or pull the raw excerpts into the live context. New chats are indexed as they happen
 - **File attachments** — inject a local text file into a session; it persists and comes back on reopen
 - **Local file tools** — let the model request `list_dir` / `read_file` / `grep` itself, behind an approval gate. It can also `write_file`, but only into one narrow write root that cannot reach your code
 - **Token tracking** — live context-usage bar with warnings as the window fills
-- **Routines, on command or on a schedule** — a task the model runs against its own declared roots, `:routine <name>` now, at a trigger time, or once a calendar week has finished. One OS scheduler entry covers every routine; cfc decides what's due from each routine's own file and its run log
-- **A tiered journal the model maintains** — a rolling diary in three tiers (short, medium, long term), each more compressed than the last. Routines draft the rollovers, you review them with `:outbox`, and `:file` carries one out. Nothing reaches the live files without you approving it, and the undo is git
-- **Propose, review, approve** — everything the model writes lands in one outbox with its destination already worked out, and a human decides. `:file <n>` files it, `:file <n> decline <why>` rejects it and records the reason on the draft for later prompt debugging
-- **Vault git from the REPL** — review and commit hand-edited pages with `:wiki diff` / `:wiki commit`, scoped to the wiki corpus by default, the journal or the whole vault on request, per folder or per file
+- **Routines, on command or on a schedule** — a task the model runs against its own declared roots, `/routine <name>` now, at a trigger time, or once a calendar week has finished. One OS scheduler entry covers every routine; cfc decides what's due from each routine's own file and its run log
+- **A tiered journal the model maintains** — a rolling diary in three tiers (short, medium, long term), each more compressed than the last. Routines draft the rollovers, you review them with `/list outbox`, and `/file` carries one out. Nothing reaches the live files without you approving it, and the undo is git
+- **Propose, review, approve** — everything the model writes lands in one outbox with its destination already worked out, and a human decides. `/file <n>` files it, `/file <n> decline <why>` rejects it and records the reason on the draft for later prompt debugging
+- **Vault git from the REPL** — review and commit hand-edited pages with `/wiki diff` / `/wiki commit`, scoped to the wiki corpus by default, the journal or the whole vault on request, per folder or per file
 - **Rolling backups** — the database is snapshotted on startup, automatically
 - **A launcher that checks its dependencies** — `launch.sh` confirms the embedder is up (starting LM Studio and loading the model if not) before opening the app, so memory failing silently stops being a thing
 
@@ -74,7 +75,7 @@ Then edit `config.py` and set:
 - `MOUSE_INPUT` — click to position the cursor in the input line (default off; see Usage for the trade-off)
 - `LMS_CLI` — only if `launch.sh` can't find the LM Studio CLI on its own
 
-`config.py` is gitignored and will never be committed — it holds your key and stays local. It's also on the deny list in `paths.py`, so `:attach` and the file tools refuse to read it even though it sits inside the project.
+`config.py` is gitignored and will never be committed — it holds your key and stays local. It's also on the deny list in `paths.py`, so `/add` and the file tools refuse to read it even though it sits inside the project.
 
 **4. Run**
 
@@ -95,8 +96,8 @@ alias cfc='~/projects/cfc/launch.sh'
 **preflight check** in front of it: it activates the venv, then confirms the
 embedder actually answers before opening the app.
 
-That check exists because of an asymmetry. Everything memory-shaped — `:recall`,
-`:remember`, `:updatedb`, the per-turn auto-embed — assumes LM Studio is running
+That check exists because of an asymmetry. Everything memory-shaped — `/recall`,
+`/remember`, `/update db`, the per-turn auto-embed — assumes LM Studio is running
 with bge-m3 loaded, and when it isn't, none of them say so. Auto-embed warns
 quietly by design; recall just returns nothing, which looks exactly like "memory
 has nothing on that". The preflight turns a silent degradation into one line at
@@ -153,7 +154,7 @@ A routine's `trigger:` field is one of three things:
 
 | `trigger:` | When it runs |
 |---|---|
-| `command` | Only when you type `:routine <name>`. The default |
+| `command` | Only when you type `/routine <name>`. The default |
 | `0300` | Daily, on the first tick at or after 03:00. A day missed is not replayed the next day |
 | `weekly 0330` | When a Monday–Sunday week has *finished* and this routine hasn't processed it yet — **not** "on Mondays". Miss Monday and it runs Tuesday, on the same week |
 
@@ -249,7 +250,7 @@ Past it is the **hub**, listing your 10 most recent **chats** — id, last
 update, message count, how full the context is, title, system prompt and
 persona — and, below that, your routines with a traffic light on when each last
 ran (green under a day, orange under two, red beyond). Routine transcripts and
-wiki pages are kept off this list; `:list` inside a session still shows every
+wiki pages are kept off this list; `/list sessions` inside a session still shows every
 session there is. From there:
 
 | Key | Action |
@@ -259,88 +260,180 @@ session there is. From there:
 | `p` | New **private** chat (nothing saved) |
 | `q` | Quit |
 
-The hub is home base: `:q` inside a session brings you back here rather than
+The hub is home base: `/q` inside a session brings you back here rather than
 quitting, so the program only exits from the hub (`q`, or Ctrl-D/Ctrl-C). The
 splash does **not** reappear on the way back — it's a launch screen, not a menu.
 
 A **private chat** (`p`) behaves like a normal one — same model, prompts,
 personas, and read tools — but **nothing is written down**. It runs against an
-in-memory database, so closing it (`:q`, Ctrl-D, or quitting the app) ends it
+in-memory database, so closing it (`/q`, Ctrl-D, or quitting the app) ends it
 for good: no transcript, no memory index, no auto-export, no title, and it never
 appears in the hub. There is no restore. Two deliberate exceptions: the model's
 own file-writes are blocked (a private chat leaves zero disk artifacts), while
-an explicit `:export` *you* type is honoured — the rule is that nothing reaches
+an explicit `/export` *you* type is honoured — the rule is that nothing reaches
 disk unless you ask for it by name. The wiki database starts sealed in a private
-chat (`:recall`/`:remember` disabled); `:database on` opens it, or set
+chat (`/recall`/`/remember` disabled); `/database on` opens it, or set
 `DATABASE_ACTIVE = True` in config to have it on by default.
 
-`python main.py 5` opens session 5 directly, skipping the hub — but its `:q`
+`python main.py 5` opens session 5 directly, skipping the hub — but its `/q`
 still returns to the hub.
 
 ### In-session commands
 
+Commands start with `/` and follow one grammar:
+
+```
+/verb [kind] [target] [message]
+```
+
+*kind* is which pool or corpus (optional wherever it can be worked out),
+*target* is the thing — a name, a number, a path — and *message* is free text,
+always last and always the rest of the line. Two rules hold everywhere: **a bare
+integer is a chat id** (`/delete chat 5`, `/title 5 Name`), and **`#n` is an
+attachment** (`/remove #1`).
+
+Three commands answer the three questions you actually have:
+
+| Command | Answers |
+|---|---|
+| `/help` | What can I type? |
+| `/list <kind>` | What exists? |
+| `/status` | What's active right now? |
+
+Everything else changes something.
+
+**ask**
+
 | Command | Action |
 |---------|--------|
-| `:q` | Back to the hub (auto-exports if enabled) |
-| `:new` | Start a new session in place |
-| `:list` | Every session, not just the recent 20 |
-| `:delete [n]` | Delete a session (this one by default), after a confirmation |
-| `:model <name>` | Switch the current session's model |
-| `:model` | Show the current model |
-| `:models` | List configured models |
-| `:persona <name>` | Load a persona from `PERSONAS_DIR` |
-| `:persona off` | Remove the persona |
-| `:personas` | List available personas |
-| `:prompt <name>` | Load a system prompt from `PROMPTS_DIR` |
-| `:prompt off` | Remove the system prompt |
-| `:prompts` | List available system prompts |
-| `:tag <name>` | Add a tag (auto-lowercased) |
-| `:untag <name>` | Remove a tag |
-| `:tags` / `:taglist` | Show tags / all tags with counts |
-| `:grep <keyword>` | Substring search across all messages |
-| `:recall <question>` | Ask the wiki a question; answer cited by page, no session effect |
-| `:remember <query>` | Pull matching excerpts into the live context (ephemeral) |
-| `:forget` | Drop the most recently injected excerpts |
-| `:updatedb` | Index any not-yet-embedded messages into memory now |
-| `:updatedb prune` | Also remove index rows left behind by an old delete (see below) |
-| `:database on` / `:database off` | Enable/disable `:recall` & `:remember` this session (alias `:db`) |
-| `:attach <path>` | Attach a local text file to the session (persistent) |
-| `:attached` | List attachments in this session |
-| `:detach <n>` | Remove an attachment by its `:attached` index |
-| `:tools` | Show whether tools are active, and why |
-| `:tools on` / `:tools off` | Toggle tools for this session |
-| `:routine` | List routines, with the outcome of each one's last run |
-| `:routine new` | Create a routine (name, prompt, roots, trigger) |
-| `:routine <name>` | Run a routine now |
-| `:outbox` | List files the model has proposed, and where each would go |
-| `:file <n>` | File one proposal at its destination |
-| `:file all` | File every valid proposal |
-| `:file <n> decline [why]` | Reject a proposal — moved to the losers' corner with the reason recorded on it (`drop` is the terse form) |
-| `:wiki` | Vault repo status — wiki changes listed, the rest counted |
-| `:wiki diff [scope] [file]` | Show the diff. Scope: `wiki` (default), `journal`, `vault`. Add `file` to pick one |
-| `:wiki commit [scope] [file] <msg>` | Stage and commit what's in scope; `vault` asks first |
-| `:tokens` | Detailed context-usage breakdown |
-| `:export [n]` | Export a session to Obsidian (this one by default) |
-| `:config` | Show current configuration (key masked) |
-| `:title` | Show the current title |
-| `:title <n>` | Show session `n`'s title |
-| `:title <n> <name>` | Rename session `n` |
+| `/help` | Every command, grouped (aliases: `/h`, `/?`) |
+| `/list` | The kinds you can list |
+| `/list <kind>` | `prompts` · `personas` · `traits` · `models` · `routines` · `tags` · `chats` · `sessions` · `outbox` |
+| `/status` | Everything active in this session: prompt, persona, traits, attachments, tags, tools, database, context |
+| `/status <kind>` | Print the attached prompt's, persona's or traits' actual text |
+| `/config` | Deployment settings (key masked) |
+| `/search <word>` | Substring search across all messages |
+
+`/list chats` is the picker's view — real conversations. `/list sessions` is
+everything, routine runs and wiki pages included. Two different questions.
+
+**context — attach and detach**
+
+| Command | Action |
+|---------|--------|
+| `/add <name>` | Attach a system prompt, persona or trait by name |
+| `/add <kind> <name>` | Same, naming the pool: `/add trait relax` |
+| `/add <path>` | Attach an external file (persistent, comes back on reopen) |
+| `/add tag <name>` | Tag this session (`/add tag 3 python` tags session 3) |
+| `/remove <name>` | Take off whichever layer is carrying that name |
+| `/remove <kind>` | Take off whatever that pool is carrying: `/remove persona` |
+| `/remove #<n>` | Detach attachment `n` |
+| `/remove tag <name>` | Untag |
+| `/remove excerpts` | Drop the most recently injected recall block |
+
+Names are forgiving: case-insensitive, and a unique partial resolves — `/add
+relax` finds `Relaxed`. If several things match, you get a numbered list and
+pick; nothing is guessed. The confirmation always reports what it picked
+(`added Relaxed — Trait`), because on a partial that report *is* how you learn
+what happened.
+
+A bare name is looked for in the three pools in priority order — **system prompt,
+then persona, then trait** — and fills the highest-priority one not already
+carrying it. A path-shaped argument is an external file. The pools are searched
+first, so a trait genuinely called `notes.md` still wins over a file.
+
+**Traits are the new pool.** One `.md` file each in `TRAITS_DIR`, exactly like
+prompts and personas — the filename is the name, no id, no combined file. Unlike
+those two they **stack**: a system prompt and a persona are singular and get
+overwritten, traits append in the order you attach them. They belong to the
+session, and the *names* are stored, not the text — so editing a trait file
+changes what every session carrying it sends, with no re-attaching.
+
+**destroy**
+
+| Command | Action |
+|---------|--------|
+| `/delete chat` | Delete this conversation, after a confirmation |
+| `/delete chat 5` | Delete conversation 5 |
+
+`/delete` always needs a kind, and bare `/delete` lists what is deletable and
+acts on nothing. The line between it and `/remove` is not memory-versus-the-rest
+— it is **whether retyping the command gets it back.** `/remove` never destroys
+anything.
+
+**data · memory · session**
+
+| Command | Action |
+|---------|--------|
+| `/export` | Export this session to Obsidian |
+| `/export chat 5` | Export session 5 |
+| `/recall <question>` | Ask the wiki; answer cited by page, no session effect |
+| `/remember <query>` | Pull matching excerpts into the live context (ephemeral) |
+| `/update db` | Re-import the wiki, then index anything not yet embedded |
+| `/update db prune` | Also remove index rows left behind by an old delete |
+| `/new` | Start a new session in place |
+| `/new p` | Start a private chat from here (joins `p` at the hub) |
+| `/q` | Back to the hub (auto-exports if enabled) |
+| `/title <n> <name>` | Rename session `n` |
+
+**settings**
+
+| Command | Action |
+|---------|--------|
+| `/model <name>` | Switch the session's model (loose names resolve) |
+| `/tools` | Whether tools are active, and which switch is blocking |
+| `/tools on` / `/tools off` | Toggle tools for this session |
+| `/database on` / `/database off` | Enable/disable `/recall` & `/remember` this session (alias `/db`) |
+
+**wiki, routines, filing**
+
+| Command | Action |
+|---------|--------|
+| `/wiki` | Vault repo status — wiki changes listed, the rest counted |
+| `/wiki diff [kind] [file]` | Show the diff. Kind: `wiki` (default), `journal`, `vault`. Add `file` to pick one |
+| `/wiki commit [kind] [file] <msg>` | Stage and commit what's in scope; `vault` asks first |
+| `/routine <name>` | Run a routine now |
+| `/routine new` | Create a routine (name, prompt, roots, trigger) |
+| `/file <n>` | File one proposal at its destination (`/list outbox` to review) |
+| `/file all` | File every valid proposal |
+| `/file <n> decline [why]` | Reject a proposal — moved to the losers' corner with the reason recorded on it (`drop` is the terse form) |
+
+**Two deliberate exceptions to the grammar.** `/file 1 decline <why>` keeps
+target-then-action, so it inherits the numbering already on screen; and `/wiki`
+carries an extra `folder|file` slot, because it is the one command whose object
+has a sub-granularity.
+
+**Coming from the `:` commands?** They still work for this version, with a
+one-line note the first time you use one in a session. Verbs that were retired
+rather than renamed tell you what replaced them — `/list prompts` says `/list
+prompts` — instead of being sent to the model as a message. Both go away in the
+next minor version.
 
 **Multi-line input:** just type or paste. Enter sends; **Alt+Enter** inserts a
 newline. A pasted block keeps its line breaks and doesn't submit early. Ctrl+C
 at the prompt clears the current line (it no longer leaves the session — use
-`:q` or Ctrl-D for that); Ctrl+C during streaming cancels the request.
+`/q` or Ctrl-D for that); Ctrl+C during streaming cancels the request.
 
-**Tab completion** on `:attach`, scoped to `ATTACH_ROOTS`. Type three or more
-characters of a name and press Tab; it stays quiet before that rather than
-dumping a directory.
+**Tab completion** on `/add`, `/remove`, `/routine` and `/list`.
+
+On `/add` and `/remove` it offers pool names first — every prompt, persona and
+trait, in the same priority order the command itself resolves them — and
+switches to the filesystem the moment the fragment looks like a path (a slash, a
+tilde, a dot). It is the same rule the command uses to decide what you typed, so
+completion and dispatch cannot disagree about one line.
+
+Path completion is scoped to `ATTACH_ROOTS`. Type three or more characters of a
+name and press Tab; it stays quiet before that rather than dumping a directory.
+Pool names and routine names have no such floor — there are a handful of each and
+listing them all on a bare Tab is exactly what you want when the thing you can't
+remember is the name.
 
 A fragment **with a slash** navigates — `~/projects/cfc/READ` lists that folder.
 A fragment **without one** searches by name across the roots, breadth-first, so
 a note two folders deep in the vault is found by typing its name. Vault matches
 come before repo matches, because the first candidate is the one Tab takes
 without a second keystroke. Matching is case-insensitive and never offers a path
-`:attach` would then refuse.
+`/add` would then refuse.
 
 **`MOUSE_INPUT`** (in `config.py`, default off) lets you click to position the
 cursor in the input line. The trade is real: while the prompt is live it
@@ -354,7 +447,7 @@ The flow:
 
 ```
 main.py → splash() → repl() ┬→ pick_session() → run_session() ─┐
-          Esc → exit         └───────────← :q ←─────────────────┘
+          Esc → exit         └───────────← /q ←─────────────────┘
                               q at the hub → quit
 ```
 
@@ -377,11 +470,11 @@ python chunk.py ~/.cfc/chat.db                     # chunk
 python backfill.py ~/.cfc/chat.db                  # embed
 ```
 
-Editing a page and re-importing re-chunks and re-embeds it under the same id, so a page's identity survives edits. New in-app chats are indexed automatically after each turn (`AUTO_EMBED`), or on demand with `:updatedb`; they're tagged `source='chat'` and accumulate for a future wiki+chat hybrid, while recall stays wiki-only for now.
+Editing a page and re-importing re-chunks and re-embeds it under the same id, so a page's identity survives edits. New in-app chats are indexed automatically after each turn (`AUTO_EMBED`), or on demand with `/update db`; they're tagged `source='chat'` and accumulate for a future wiki+chat hybrid, while recall stays wiki-only for now.
 
-Deleting a session deletes what indexes it. `chunks` and `vec_chunks` are an index over `messages` with no foreign key enforcing the link, so this is code rather than a database constraint — and until 2026-07-23 it wasn't there at all: a deleted conversation stayed searchable, and, because SQLite reuses row ids, a stale chunk could later attach itself to an unrelated message and be cited under it. `:updatedb` reports any such rows left in an older database and `:updatedb prune` removes them.
+Deleting a session deletes what indexes it. `chunks` and `vec_chunks` are an index over `messages` with no foreign key enforcing the link, so this is code rather than a database constraint — and until 2026-07-23 it wasn't there at all: a deleted conversation stayed searchable, and, because SQLite reuses row ids, a stale chunk could later attach itself to an unrelated message and be cited under it. `/update db` reports any such rows left in an older database and `/update db prune` removes them.
 
-`:recall` synthesises an answer cited by page title and id, and leaves the session untouched. `:remember` injects the raw excerpts into the live context and is ephemeral — only a marker row persists, so an export can still tell a grounded claim from an invented one. `:forget` drops the last injection.
+`/recall` synthesises an answer cited by page title and id, and leaves the session untouched. `/remember` injects the raw excerpts into the live context and is ephemeral — only a marker row persists, so an export can still tell a grounded claim from an invented one. `/remove excerpts` drops the last injection.
 
 The embedder is self-hosted here (`bge-m3` on LM Studio) but any OpenAI-compatible `/embeddings` endpoint works — set `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY`, or leave them to fall back to the chat provider's hosted copy.
 
@@ -402,7 +495,7 @@ get shorter as they get older.
 ```
 
 Three routines maintain them, and none of them writes to those files. Each
-drafts a whole replacement into `99 outbox/journal/`, and `:outbox` shows it as
+drafts a whole replacement into `99 outbox/journal/`, and `/list outbox` shows it as
 a proposal you can read before anything happens:
 
 ```
@@ -415,7 +508,7 @@ overwrites the live file, which is what a rollover *is*. That's the one place
 the outbox's "a target that already exists is a refusal" rule doesn't hold, so
 something else has to make it safe, and that something is git: the journal lives
 in the vault repo, so **cfc refuses the move unless the journal is committed.**
-Then `:wiki diff journal` shows exactly what the rollover did and
+Then `/wiki diff journal` shows exactly what the rollover did and
 `git checkout` undoes it. If git can't be consulted at all, the move is refused
 rather than done — you can't offer an undo you haven't checked exists.
 
@@ -451,7 +544,7 @@ Read this before turning tools on.
 - **`TOOLS_ENABLED = False` by default.** Opt-in, not opt-out.
 - **A small surface.** `list_dir`, `read_file`, `grep`, `write_file`, and nothing else. No shell, no delete, no move.
 - **Denial is data.** A denied, skipped or refused call returns `{"error": ...}` to the model as a tool result. It reads it and adapts; it doesn't crash the turn. Asked to fetch `API_KEY`, the model gets `config.py is on the deny list` and moves on — the key never reaches it.
-- **The model proposes where a file should go; it doesn't put it there.** A routine writes into the outbox with a suggested `destination:` in the frontmatter. `:outbox` shows you each suggestion and what would happen; `:file <n>` carries it out. The mover re-validates the destination from scratch against its own `MOVE_ROOTS` — the suggestion is **data, not authority** — and refuses anything outside them rather than guessing at a near-miss. It may write outside `WRITE_ROOTS` precisely *because it is not the model*, which is why it stays a separate step instead of widening what the model can reach. Wiki destinations are refused outright: a page written there would leave the recall index stale with no signal that it's stale.
+- **The model proposes where a file should go; it doesn't put it there.** A routine writes into the outbox with a suggested `destination:` in the frontmatter. `/list outbox` shows you each suggestion and what would happen; `/file <n>` carries it out. The mover re-validates the destination from scratch against its own `MOVE_ROOTS` — the suggestion is **data, not authority** — and refuses anything outside them rather than guessing at a near-miss. It may write outside `WRITE_ROOTS` precisely *because it is not the model*, which is why it stays a separate step instead of widening what the model can reach. Wiki destinations are refused outright: a page written there would leave the recall index stale with no signal that it's stale.
 - **Routines are the one ungated path, and that is the whole reason they declare their own roots.** A chat has two guardrails: the roots, and you at the gate. A routine that runs at 03:00 has no human, so the gate cannot function and its roots are the only thing left. That is why a routine names its own read and write roots in its file, why those are validated when it is created rather than when it runs, and why a routine whose write root overlaps the source **cannot be saved at all**. The safety is the narrow root — never a pre-cleared tool. Every run appends to a log, so an unattended run that failed can't look like one that had nothing to do.
 
 The tests that back this up are worth keeping green: `tests/test_paths.py` covers traversal, symlink escape, the deny list, and the write jail; `tests/test_gate.py` asserts that approving a call still doesn't bypass the guard, that writes are never auto-approved, and that a readable path is not a writable one.
@@ -460,12 +553,14 @@ The tests that back this up are worth keeping green: `tests/test_paths.py` cover
 
 - **The scheduler needs one entry on the OS side, and it's yours to create** — cfc decides *what* is due, but something has to call it on a tick. See “Running routines on a schedule”. Nothing is scheduled until you set a routine's `trigger:` to a time and add that entry.
 - **The journal is not in recall** — it is a diary the model writes, not a corpus you can ask questions of. Reading it back into a conversation is a later idea, not a thing that works today.
-- **Filing a journal draft needs a committed journal.** That's the price of being allowed to overwrite a live file at all — see “The journal”. If `:outbox` refuses one, `:wiki commit journal` (or a `git checkout` to throw away the hand-edit) is the fix.
+- **Filing a journal draft needs a committed journal.** That's the price of being allowed to overwrite a live file at all — see “The journal”. If `/list outbox` refuses one, `/wiki commit journal` (or a `git checkout` to throw away the hand-edit) is the fix.
 - **Recall is wiki-only** — the semantic index answers from the distilled wiki, which states each decision once. Raw chat logs are indexed (`source='chat'`) but not yet folded into recall; that hybrid is a future additive step. This sidesteps the old "resolution staleness" problem, where searching raw transcripts surfaced the messages where a decision was being *argued* over the one where it was settled.
 - **Streaming is off when tools are active** — tool-call deltas arrive fragmented and the `arguments` string has to be reassembled across chunks by index. Not worth it; these responses are fast. The normal chat path still streams. (Reasoning still shows on the tool path — it just arrives all at once per step rather than streaming in.)
-- **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `:tools` tells you whether the active model qualifies.
-- Streaming token counts depend on the provider supporting `stream_options: {"include_usage": true}`. Without it, the post-response bar is skipped, but `:tokens` still works from stored data.
+- **Tool calling needs a model in `TOOLS_MODELS`** — not every provider's models handle it. The list was verified against nano-gpt rather than assumed; `/tools` tells you whether the active model qualifies.
+- Streaming token counts depend on the provider supporting `stream_options: {"include_usage": true}`. Without it, the post-response bar is skipped, but `/status` still works from stored data.
 - Search is substring (`LIKE`), not full-text. Fine at current scale; FTS5 is a possible upgrade.
+- **Traits are per-session and don't follow you** — they belong to the chat they were attached to, the same way a system prompt and a persona already do. There is no global "always on" trait; if that turns out to be the daily move, it earns a setting later rather than a third scope invented on spec.
+- **`/swap` doesn't exist.** `/add` overwrites the singular layers and appends to traits; `/remove` peels. Swap is redundant where it's unambiguous and ambiguous where it isn't (*which* trait?), so it is held rather than spent.
 - Sessions are linear — no branching.
 - Single user, local machine.
 
@@ -476,7 +571,10 @@ Known rough edges live in `BACKLOG.md`.
 | File | Holds |
 |---|---|
 | `main.py` | the REPL: dispatch, and the live session state |
-| `commands.py` | what each `:` command does, and the approval gate |
+| `parse.py` | the command grammar: one line in, a verb and its arguments out |
+| `commands.py` | what each command does, and the approval gate |
+| `pools.py` | the three pools — prompts, personas, traits — and the name resolver |
+| `assemble.py` | the system layers of a request, in order |
 | `agent.py` | the tool-calling turn |
 | `tools.py` | the tools and the dispatcher |
 | `context.py` | what a given run may read, write, and whether it's gated |
@@ -487,7 +585,7 @@ Known rough edges live in `BACKLOG.md`.
 | `mover.py` | filing a proposal out of the outbox: re-validates the destination, or refuses |
 | `wikigit.py` | the vault repo: status, diff and commit, scoped to a corpus by default |
 | `preflight.py` | the launcher's embedder check — is LM Studio up with bge-m3 loaded? |
-| `complete.py` | Tab completion for `:attach` |
+| `complete.py` | Tab completion for `/add`, `/remove`, `/routine`, `/list` |
 | `hub.py` | the session browser and picker |
 | `db.py` | connection, schema, every query |
 | `api.py` | streaming and non-streaming calls to the endpoint |
@@ -509,7 +607,7 @@ python tests/test_paths.py       # the jail
 python tests/test_tools.py       # tools and dispatcher
 python tests/test_gate.py        # the approval gate
 python tests/test_agent.py       # the agent loop and tool replay
-python tests/test_attach.py      # :attach / :attached / :detach
+python tests/test_attach.py      # /add / /status / /remove
 python tests/test_schema.py      # the kind/meta migration, and the delete cascade
 python tests/test_litter.py      # the litter filter's marker coupling
 python tests/test_routines.py    # the routine file round-trip, scope refusal, run log
@@ -518,11 +616,15 @@ python tests/test_empty.py       # empty completions: ask a human, or re-roll an
 python tests/test_chunk.py       # chunk sizing and boundary seeking at both edges
 python tests/test_wikigit.py     # vault git: scope containment, the -z parse, no push
 python tests/test_preflight.py   # the embedder check: dimension guard, never hangs
-python tests/test_complete.py    # :attach completion: vault first, and the jail holds
+python tests/test_complete.py    # /add completion: vault first, and the jail holds
 python tests/test_splash.py      # the splash compositor: aspect, resampling, the key read
 python tests/test_hub.py         # the screens: chat filter, colours, routine freshness
 python tests/test_private.py     # private chat: real db untouched, writes blocked, db toggle
 python tests/test_schedule.py    # what's due and what isn't: catch-up, on_failure, the lock
+python tests/test_parse.py       # the grammar, and that the verb lists agree
+python tests/test_pools.py       # the three pools, and a session's trait list
+python tests/test_resolve.py     # the resolver: tiers, the collision walk, never guessing
+python tests/test_assemble.py    # the system layers: order, and that empty means absent
 ```
 
 None of them need an API key. `golden.py record` re-baselines the output once a change to it is intended — check the diff first; it's there to catch the changes you *didn't* intend.

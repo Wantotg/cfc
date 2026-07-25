@@ -109,6 +109,30 @@ def main_():
     ok("auto-export is skipped on :q", exports == [], exports)
     priv.close()   # and with the connection gone, so is the conversation
 
+    print("\n--- the v0.8 surface adds a session field; it goes nowhere ---")
+    # Invariant #10: a new disk-writing path has to be routed through `conn` or
+    # it silently defeats the isolation. `traits` is the first column added
+    # since private chat landed, so the negative is pinned rather than assumed.
+    import pools
+    tdir = Path(tempfile.mkdtemp())
+    (tdir / "quiet.md").write_text("be quiet\n", encoding="utf-8")
+    saved_trait_dir = pools.POOLS["trait"].configured
+    pools.POOLS["trait"].configured = str(tdir)
+    try:
+        real_before = dbmod.get_traits(real, real_sid)
+        priv3 = dbmod.db(":memory:")
+        p3 = dbmod.new_session(priv3, title="(untitled)")
+        drive(priv3, p3, private=True, keys="/add trait quiet\n/q\n")
+        ok("a trait attaches in a private chat",
+           dbmod.get_traits(priv3, p3) == ["quiet"],
+           dbmod.get_traits(priv3, p3))
+        ok("...and the real db never hears about it",
+           dbmod.get_traits(real, real_sid) == real_before,
+           dbmod.get_traits(real, real_sid))
+        priv3.close()
+    finally:
+        pools.POOLS["trait"].configured = saved_trait_dir
+
     print("\n--- but an explicit :export is still honoured ---")
     priv2 = dbmod.db(":memory:")
     p2 = dbmod.new_session(priv2, title="(untitled)")
