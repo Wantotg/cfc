@@ -16,7 +16,7 @@ repl()  = outer hub loop: pick_session ⇄ run_session, quits only from the hub
 run_session() = one session's REPL: read line → dispatch → repeat
 ```
 
-`repl()` owns the connection and the loop; `run_session()` runs one session and returns when the user leaves it (`:q`, EOF, Ctrl-C), which `repl()` reads as "back to the hub." A `session_id` from the CLI still returns to the hub on `:q`. This split is also what keeps `tests/golden.py` able to drive one session in isolation — it calls `run_session` directly.
+`repl()` owns the connection and the loop; `run_session()` runs one session and returns when the user leaves it (`/q`, EOF, Ctrl-C), which `repl()` reads as "back to the hub." A `session_id` from the CLI still returns to the hub on `/q`. This split is also what keeps `tests/golden.py` able to drive one session in isolation — it calls `run_session` directly.
 
 **The splash is in `__main__`, not `repl()`** — it fires once per launch, and
 returning from a session to the hub must not re-show it. Enter continues, Esc
@@ -103,7 +103,7 @@ under `"*"`, no config change either.
 
 ### The hub and the chat screen (v0.4)
 
-**The picker shows chats; `:list` shows everything.** A session's `provider` is
+**The picker shows chats; `/list sessions` shows everything.** A session's `provider` is
 the **session-kind discriminator**, not merely which API answered — `wiki` was
 never an API provider either. `PROVIDER_CHAT`/`PROVIDER_WIKI`/`PROVIDER_ROUTINE`
 live in `db.py`, and `hub.recent_chats` excludes the last two. Seven of twenty
@@ -155,7 +155,7 @@ rows that do have a value — followed by what *is* available, because the only
 reason to mention it is to make attaching one cheap. The forty-line command
 dump is gone: it scrolled the session header off the screen every time you
 opened a conversation, so the thing it existed to tell you was the thing it
-hid. Nine commands on entry, `:help` for the rest.
+hid. Nine commands on entry, `/help` for the rest.
 
 **Context colours are opinionated; the percentages are not.** `ui.context_style`
 is the single mapping, read by the bar, the hub's Ctx column *and* the
@@ -242,7 +242,7 @@ matches. Before, all three arrived as one indistinguishable `[error] HTTP 400`.
 
 **Reasoning is presentation-only, both paths.** It is never persisted and never re-enters `history`: `stream_response` returns it but `main.py` saves only the answer text; `agent_turn` reads `msg["reasoning"]` off the raw response *before* reassigning `msg` to the normalized `{role, content, tool_calls?}` dict that goes to both `history` and `save_message`. So reasoning is not stored, not exported, and not replayed back to the API (it isn't a valid input field, and would bloat context). Keep it that way — the DB holds messages, not the model's scratch thinking.
 
-**Invariant — the two paths must end a turn identically.** Both persist usage and render the post-turn context bar via the single `commands.print_context_bar`. This exists because they *did* drift: when tools became the default path, the spinner and token bar (both streaming-only) silently vanished and usage was discarded, blanking `:tokens` too. Any new per-turn UI belongs in a shared helper, not one branch.
+**Invariant — the two paths must end a turn identically.** Both persist usage and render the post-turn context bar via the single `commands.print_context_bar`. This exists because they *did* drift: when tools became the default path, the spinner and token bar (both streaming-only) silently vanished and usage was discarded, blanking `/status` too. Any new per-turn UI belongs in a shared helper, not one branch.
 
 **Timeouts are per-phase, and the two paths' read timeouts are not the same quantity.** `api.py` sets `httpx.Timeout(connect=10, read=…, write=60, pool=10)` via `_timeout()`, never a scalar — a scalar is applied to all four phases alike, and connect and read want opposite values: a connection that hasn't landed in ten seconds never will, while a read is legitimately silent for as long as the model thinks.
 
@@ -254,7 +254,7 @@ matches. Before, all three arrived as one indistinguishable `[error] HTTP 400`.
 
 **Provider quirk (nano-gpt thinking models):** reasoning streams as `delta.reasoning` (distinct from `delta.content`), *ahead of* any answer. It's rendered live in the reasoning panel and also returned (the third tuple element) so callers can tell a reasoning-only turn from a truly empty one. The **non-streaming** response carries the same thing under `message.reasoning` — which is why the tool path can now show reasoning too; before, `agent_turn` discarded that field and tools-on turns (the default for a tools-capable thinking model) rendered no reasoning at all. `usage` arrives in a final chunk when `stream_options.include_usage` is set (`STREAM_USAGE`, default true); it includes cache-read/creation and `reasoning_tokens` breakdowns. Non-thinking-vs-thinking is purely a config/model-id concern; the code doesn't branch on it.
 
-**Input is a `prompt_toolkit` editor** (`ui.read_input`), not `input()`. One lazily-built `PromptSession`, reused. **Enter submits; Alt+Enter (ESC+CR) inserts a newline; bracketed paste lands intact** (multi-line paste no longer submits early — this is why the old `"""` heredoc mode was deleted). Shift+Enter is deliberately unbound: prompt_toolkit maps its terminal sequence back to plain Enter (`ansi_escape_sequences.py`), so it can't be a newline without breaking Enter. **Ctrl-C cancels the current line and stays in the session** (it used to leave — that shortcut is gone); **Ctrl-D on an empty line / `:q` leave.** When stdin isn't a TTY (piped input, `tests/golden.py`) `read_input` falls back to plain `input()` — prompt_toolkit needs a real terminal, and the fallback keeps the golden output byte-for-byte.
+**Input is a `prompt_toolkit` editor** (`ui.read_input`), not `input()`. One lazily-built `PromptSession`, reused. **Enter submits; Alt+Enter (ESC+CR) inserts a newline; bracketed paste lands intact** (multi-line paste no longer submits early — this is why the old `"""` heredoc mode was deleted). Shift+Enter is deliberately unbound: prompt_toolkit maps its terminal sequence back to plain Enter (`ansi_escape_sequences.py`), so it can't be a newline without breaking Enter. **Ctrl-C cancels the current line and stays in the session** (it used to leave — that shortcut is gone); **Ctrl-D on an empty line / `/q` leave.** When stdin isn't a TTY (piped input, `tests/golden.py`) `read_input` falls back to plain `input()` — prompt_toolkit needs a real terminal, and the fallback keeps the golden output byte-for-byte.
 
 **Empty completions are a thing.** GLM-5.2:thinking occasionally returns a near-empty completion (a handful of tokens, `finish_reason=stop`, no `content`) — a provider-side hiccup, *not* a size limit; the same context answers on a re-roll. `main.py`'s stream path loops on this: it distinguishes reasoning-only (`[the model thought but returned no answer…]`) from genuinely empty (`[empty response]`), then either asks `retry? (y/n)` or re-rolls on its own depending on `ToolContext.interactive` — see "Empty completions, and what `interactive` is actually for". Empty completions are never persisted on the stream path (the guard predates this, but it's why two dead empty-assistant rows once accumulated in a long thinking-model session and had to be swept).
 
@@ -290,14 +290,14 @@ list is the complete set on purpose.
 `private=True` on `run_session` gates only the **three things that escape the connection**:
 
 1. **auto-embed** — `commands.auto_embed` opens the real `chat.db` by hardcoded `DB_PATH`, not `conn`, so it must be skipped explicitly (it's also inert — the private messages never reach the real db — but don't even call it).
-2. **auto-export** — `safe_export` reads `conn` but writes a `.md` to the vault. Skipped on every exit (`:q`, EOF, `:new`). An **explicit `:export` is still honoured**: the contract is "nothing is written down unless you ask for it by name", and typing the command is asking. Model-proposed writes are not asking — see below.
+2. **auto-export** — `safe_export` reads `conn` but writes a `.md` to the vault. Skipped on every exit (`/q`, EOF, `/new`). An **explicit `/export` is still honoured**: the contract is "nothing is written down unless you ask for it by name", and typing the command is asking. Model-proposed writes are not asking — see below.
 3. **model file-writes** — `chat_context(private=True)` yields **empty write roots**, so `tools.precheck` refuses `write_file` before it runs ("writing is not enabled"). Same closed-commitment guarantee the outbox leans on: no write scope, structurally, rather than a deny check. Read tools are untouched — private blocks recording, not reading. This is also why `run_session` now passes `ctx=chat_ctx` into `agent_turn` explicitly; before, `agent_turn` built its own default context and the `chat_ctx` in `run_session` was used only for the `interactive` flag.
 
 **Title generation is off in private** — a chat that can't be restored and never appears in the hub has nothing to label, and it saved an API round-trip per first message.
 
-**The database *read* axis is separate from privacy.** `:recall`/`:remember` only *read* the wiki (via `recall`/`search`, which open the real db themselves, not through `conn`), so they leak nothing — but a private chat still seals them by default. `db_on` is the session flag: `True` for a normal chat, `DATABASE_ACTIVE` (config, default `False`) for a private one. `:database on|off` (alias `:db`) flips it; the three memory commands check it and the entry banner states it. Keep the two axes distinct: privacy is about the write paths and holds regardless of `db_on`; `db_on` is only about whether memory may be *reached*.
+**The database *read* axis is separate from privacy.** `/recall`/`/remember` only *read* the wiki (via `recall`/`search`, which open the real db themselves, not through `conn`), so they leak nothing — but a private chat still seals them by default. `db_on` is the session flag: `True` for a normal chat, `DATABASE_ACTIVE` (config, default `False`) for a private one. `/database on|off` (alias `/db`) flips it; the three memory commands check it and the entry banner states it. Keep the two axes distinct: privacy is about the write paths and holds regardless of `db_on`; `db_on` is only about whether memory may be *reached*.
 
-**Tested, because "private" is a claim whose failure is silent** — `tests/test_private.py` asserts the real db is untouched after a full turn (against a control that proves the assertion can fail), that auto-embed/auto-export don't fire, that an explicit `:export` still does, that write_file is refused, and the whole `db_on` truth table. Miss one write path and the conversation is on disk with nothing to show it; the negative has to be pinned.
+**Tested, because "private" is a claim whose failure is silent** — `tests/test_private.py` asserts the real db is untouched after a full turn (against a control that proves the assertion can fail), that auto-embed/auto-export don't fire, that an explicit `/export` still does, that write_file is refused, and the whole `db_on` truth table. Miss one write path and the conversation is on disk with nothing to show it; the negative has to be pinned.
 
 ---
 
@@ -305,7 +305,7 @@ list is the complete set on purpose.
 
 One SQLite DB. Schema is created and migrated **on every `db()` connect** — `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE` guarded by `OperationalError`, plus a one-shot reclassification pass. Safe to open an old DB with a new build; the migration finds nothing to do on later starts.
 
-- **`sessions`** — id, title, model, provider, created/updated_at, and (added by migration) `system_prompt`, `system_prompt_name`, `persona`, `persona_name`.
+- **`sessions`** — id, title, model, provider, created/updated_at, and (added by migration) `system_prompt`, `system_prompt_name`, `persona`, `persona_name`, **`traits`**. `traits` is a JSON array of *names*, NULL when empty so "no traits" has one representation; unparseable reads as `[]` rather than raising, since the safe direction for a value we can't read is the one that carries less into the request.
 - **`messages`** — id, session_id, role, content, model, tokens_in, tokens_out, created_at, **`kind`**, **`meta`** (JSON, shape depends on kind).
 - **`tags`** / **`session_tags`** — many-to-many.
 - **`chunks`** (built by `chunk.py`) — id, message_id, session_id, kind (`message`|`thinking`), ordinal, text, token_est, **`source`** (`chat`|`wiki`, derived from the session's provider). `UNIQUE(message_id, kind, ordinal)`.
@@ -343,8 +343,8 @@ run against real data: a chunk is stale if its message row is gone, *or* if
 operation — `chunk_new` copies the session id straight off the message row it
 is chunking, and `messages.session_id` is never reassigned anywhere in the
 codebase. A disagreement is therefore proof of a reused rowid, not a guess.
-`find_stale_chunks`/`prune_stale_chunks`, surfaced as `:updatedb prune`; plain
-`:updatedb` reports and removes nothing, because a command people run casually
+`find_stale_chunks`/`prune_stale_chunks`, surfaced as `/update db prune`; plain
+`/update db` reports and removes nothing, because a command people run casually
 should not quietly drop rows.
 
 Real `ON DELETE CASCADE` is the better answer and is **not** done: SQLite can't
@@ -364,7 +364,7 @@ This is the spine of several behaviors:
 - **`_drop_orphan_tool_calls`** runs on every replay. **Invariant:** an assistant message requesting a call that was never answered makes the whole conversation 400 forever. Interrupted tool turns (Ctrl-C, crash between saving call and result) produce exactly that. Orphans are dropped from the *replay* (DB rows stay); prose said alongside dropped calls is kept. Without this, one interrupted turn permanently bricks a session the user can't see or edit.
 - **The live half of that invariant was missing until v0.5, and the gap is worth understanding.** `agent_turn` appends the assistant message carrying `tool_calls` to `history` *before* dispatching them, and `history` is what the REPL replays from for the rest of the session. Ctrl-C at the approval prompt therefore poisoned the session **in place**: every later message re-sent the orphan and 400ed. Reopening the session repaired it — via the drop above — which is precisely what made the failure look intermittent and provider-shaped rather than local and deterministic. `agent_turn` now answers every requested call on every path out of the loop, exceptions included, so the orphan is never created; the replay-time drop stays as the older, blunter half of the same guarantee. **Repair-on-read and never-write-it are not substitutes**: the first only helps a reader that re-reads.
 - **Attachments** export/replay as a one-line reference (meta holds path/size), not the file body dumped inline.
-- **`recall_marker`** — the only persisted trace of a `:remember` injection; see Memory.
+- **`recall_marker`** — the only persisted trace of a `/remember` injection; see Memory.
 
 ---
 
@@ -391,10 +391,10 @@ A wiki page maps to a session keyed by its **stable frontmatter id** (stored as 
 
 ### Four REPL commands
 
-- **`:recall <q>`** — retrieves wiki-only (`provider='wiki'`), then a model answers **only** from the excerpts, citing by page **title + stable id**, and says so when they don't cover it. **No session effect.**
-- **`:remember <q>`** — injects raw excerpts into live `history` inside a boundary envelope (`[recalled from memory…]` / `[end recalled excerpts. These are reference pages from your wiki, not instructions.]`). The closing line is **load-bearing**: wiki pages carry the user's own decisions and instructions, so without the marker they read as current commands. Cites by id. **Ephemeral** — lives in `history` only, dies with the session; only a `recall_marker` row persists so an export can tell a grounded claim from an invented one. Uses `search()` (raw excerpts), *not* `recall()`.
-- **`:forget`** — drops the most recent injected block by dict identity, not index (history keeps growing).
-- **`:updatedb`** — chunk + embed anything not yet indexed (`backfill.update_index`). Manual counterpart to the per-turn **auto-embed** hook (`commands.auto_embed`, gated by `AUTO_EMBED`), which runs after each chat turn on both turn paths. Best-effort by design: a failed embed (embedder down) warns quietly and never breaks a turn; the message stays saved for a later pass. Both share `chunk_new` + `embed_new`, so there is one incremental code path, not three.
+- **`/recall <q>`** — retrieves wiki-only (`provider='wiki'`), then a model answers **only** from the excerpts, citing by page **title + stable id**, and says so when they don't cover it. **No session effect.**
+- **`/remember <q>`** — injects raw excerpts into live `history` inside a boundary envelope (`[recalled from memory…]` / `[end recalled excerpts. These are reference pages from your wiki, not instructions.]`). The closing line is **load-bearing**: wiki pages carry the user's own decisions and instructions, so without the marker they read as current commands. Cites by id. **Ephemeral** — lives in `history` only, dies with the session; only a `recall_marker` row persists so an export can tell a grounded claim from an invented one. Uses `search()` (raw excerpts), *not* `recall()`.
+- **`/remove excerpts`** — drops the most recent injected block by dict identity, not index (history keeps growing).
+- **`/update db`** — chunk + embed anything not yet indexed (`backfill.update_index`). Manual counterpart to the per-turn **auto-embed** hook (`commands.auto_embed`, gated by `AUTO_EMBED`), which runs after each chat turn on both turn paths. Best-effort by design: a failed embed (embedder down) warns quietly and never breaks a turn; the message stays saved for a later pass. Both share `chunk_new` + `embed_new`, so there is one incremental code path, not three.
 
 ### Retrieval tuning — hard-won, don't re-derive
 
@@ -406,7 +406,7 @@ A wiki page maps to a session keyed by its **stable frontmatter id** (stored as 
 - Flat score spread is a *symptom* of an unanswerable query, not a cause, and a poor discriminator (a good query scored 1.4% spread). Don't build on it.
 - **The chunk window seeks to a boundary at both edges** (`chunk.py:_end_at`/`_open_at`). It was a flat fixed-char cut, which sliced mid-word at *both* ends — 22 of 26 chunks opened on a fragment like `'ne that decides when…'`, embedding leading garbage as if it were content. `_end_at` prefers paragraph > line > sentence > space, but never gives up more than `_MIN_FILL` (60%) of the window, so seeking can't collapse chunk sizes on prose without paragraph breaks; `_open_at` moves the overlap start forward to the next whitespace only, because preferring a *better* boundary there would silently eat the overlap it exists to preserve. Both fall back to a hard cut on input with no boundary at all, and the loop guarantees forward progress (`max(i+1, …)`) — a pathological seam must not spin forever. `tests/test_chunk.py` pins all of it, and was checked against the old implementation to confirm it actually fails on the bug.
 - **Re-chunking invalidates the floor.** The corpus is half of what `MAX_DISTANCE` measures, so a chunker change means a re-measurement, not a re-run of the old number. v0.2 did both in that order.
-- **`is_litter`** (`backfill.py`) skips embedding marker-only chunks and sub-`MIN_TOKENS` (5) content. Floor is 5 not 20 — the 7–20 band is real material. The marker regex `_MARKER_LINE` matches **per line** (concatenated tool markers chunk together; matching one marker against the whole string let them through — that bug shipped once). It hard-codes formats from `commands.py` and `import_anthropic.py`; `tests/test_litter.py` pins the coupling. `db.py:_MARKER_RE` parses the same `:remember` marker and is pinned by `tests/test_schema.py`.
+- **`is_litter`** (`backfill.py`) skips embedding marker-only chunks and sub-`MIN_TOKENS` (5) content. Floor is 5 not 20 — the 7–20 band is real material. The marker regex `_MARKER_LINE` matches **per line** (concatenated tool markers chunk together; matching one marker against the whole string let them through — that bug shipped once). It hard-codes formats from `commands.py` and `import_anthropic.py`; `tests/test_litter.py` pins the coupling. `db.py:_MARKER_RE` parses the same `/remember` marker and is pinned by `tests/test_schema.py`.
 
 ### Embedding endpoint is separate from chat
 
@@ -493,13 +493,13 @@ pair is backed up, editable from Obsidian without a terminal, and reached over
 WSL's fast direction (`/mnt/c`, Linux→Windows) rather than the slow, flakier
 `\\wsl.localhost` (Windows→Linux). Don't reintroduce the repo folders.
 
-**Approval:** `TurnApproval` is per-turn state; `A` (allow-all) lives on the instance and dies with the turn — "resets each turn" is true by construction, not by remembering to reset. `A` never covers write tools, and the write panel doesn't offer the key. **There is no `TOOLS_AUTO_APPROVE`** — it was deleted, and `tests/test_gate.py` asserts its absence by `hasattr`. Three switches must line up for tools to fire (master `TOOLS_ENABLED`, session `:tools on|off`, model in `TOOLS_MODELS`); `:tools` prints which of the three is blocking.
+**Approval:** `TurnApproval` is per-turn state; `A` (allow-all) lives on the instance and dies with the turn — "resets each turn" is true by construction, not by remembering to reset. `A` never covers write tools, and the write panel doesn't offer the key. **There is no `TOOLS_AUTO_APPROVE`** — it was deleted, and `tests/test_gate.py` asserts its absence by `hasattr`. Three switches must line up for tools to fire (master `TOOLS_ENABLED`, session `/tools on|off`, model in `TOOLS_MODELS`); `/tools` prints which of the three is blocking.
 
 ---
 
 ## Routines
 
-A routine is a task the model runs on command (`:routine`) or on a schedule (`--run-due`; see The scheduler). Two modules: `routines.py` (the object and its file store — light, imports only `context`/`paths`/`yaml`) and `runner.py` (execution — reaches for the API, the DB and the tool loop).
+A routine is a task the model runs on command (`/routine`) or on a schedule (`--run-due`; see The scheduler). Two modules: `routines.py` (the object and its file store — light, imports only `context`/`paths`/`yaml`) and `runner.py` (execution — reaches for the API, the DB and the tool loop).
 
 ```
 <vault>/06 metadata/routines/<id>.md        ROUTINE_DIR        the routine
@@ -521,7 +521,7 @@ The failure this fixes was `prompt file not found: …/[[wiki draft writer promp
 
 Identity is the `id` field, **not the filename** — the same lesson as the wiki importer. Renaming a routine keeps its log history instead of orphaning it. `Routine.__eq__` compares fields and ignores `path`, which is provenance. The corollary is that changing an `id` *does* orphan the log (`ROUTINE_LOG_DIR/<id>.md`) and changes what the system prompt tells the model it is; changing the `name` or the filename costs nothing.
 
-**The id is a slug and the name is free text, and those are two different jobs.** The id is the handle you type and the log's filename; the name is what the routine is called in Obsidian, and it is allowed to be a sentence. They need not resemble each other — `load_routine` resolves **id → display name (case-insensitive) → the slug of what was typed**, so `:routine Wiki Maintainer` finds `wiki-maintainer`. The slugged pass runs last so an exact match on either always wins.
+**The id is a slug and the name is free text, and those are two different jobs.** The id is the handle you type and the log's filename; the name is what the routine is called in Obsidian, and it is allowed to be a sentence. They need not resemble each other — `load_routine` resolves **id → display name (case-insensitive) → the slug of what was typed**, so `/routine Wiki Maintainer` finds `wiki-maintainer`. The slugged pass runs last so an exact match on either always wins.
 
 **The id is *coerced* to a slug at construction, not rejected (v0.6).** `Routine.__init__` runs it through `slugify` — the same chokepoint that strips `body`. The reason is that these files are hand-authored in Obsidian, where `id: note reader` is the natural thing to type, and a strict "not a slug" validation failure turned every hand-made routine into one that couldn't run. Coercing instead means the id is a clean handle everywhere it is used, while the **file on disk keeps whatever was written** until cfc itself next saves it: `to_markdown()` emits the slug, but loading does not rewrite disk, so Obsidian's own link-and-rename machinery never fights a file cfc silently changed under it. `validate()` no longer reports "not a slug" (unreachable after coercion) but still catches an id that slugifies to *nothing* as "id is empty". The one cost: a routine that had been logging under a spaced id starts a fresh log file under the slug — moot while every routine is fresh.
 
@@ -538,7 +538,7 @@ Identity is the `id` field, **not the filename** — the same lesson as the wiki
 
 `runner.run_routine(key, conn, ...)` returns `(ok, summary, session_id)` and **never raises for an expected failure** — the `except Exception` around `agent_turn` is deliberately broad because every path out of here must reach the log. An unattended run that dies silently is indistinguishable from one that had nothing to do.
 
-**This is the headless entry point in everything but name.** `:routine <name>` calls it with nothing in between, and `main.py --run-routine` / `--run-due` do too (v0.5) — which is why the scheduler, when it arrived, changed nothing in this module. Keep REPL state, prompting and terminal assumptions out of `runner.py`; the on-command path has a human and the scheduled path does not, and they must not diverge. Progress is reported through an optional `on_event` callback so the module owns no console.
+**This is the headless entry point in everything but name.** `/routine <name>` calls it with nothing in between, and `main.py --run-routine` / `--run-due` do too (v0.5) — which is why the scheduler, when it arrived, changed nothing in this module. Keep REPL state, prompting and terminal assumptions out of `runner.py`; the on-command path has a human and the scheduled path does not, and they must not diverge. Progress is reported through an optional `on_event` callback so the module owns no console.
 
 **Do not build an in-process timer thread.** Invariant #4 (prompt_toolkit and rich must never drive the terminal at once) makes a background thread rendering panels mid-input a real bug, and a heartbeat has to fire when the REPL is closed. The OS scheduler calls the entry point.
 
@@ -593,18 +593,18 @@ Two consumers, and the second is why it is a log and not a `print`: a human aski
 **A run has two independent outcomes, and one `ok`/`failed` word cannot carry both.** `status` is *loop health* — did the mechanical run complete (a crash, timeout, empty-completion or call-limit is `failed`). But a loop can finish cleanly while the model's own answer reports it couldn't do the task ("I cannot perform this task, those files are outside my allowed roots") — a real case that logged a clean `ok` and had a nightly job doing nothing for weeks before anyone noticed. So `append_log` carries a **second, orthogonal `review` flag**, rendered as ` (review)` right after the status (reading `ok (review)`), and `last_run()` now returns `(status, ts, review)`. `runner.looks_unclear()` computes it from the final message by phrase match — first-person and jail-specific ("i cannot", "outside my allowed roots") so a summary of external content rarely trips it, and **biased to over-flag**: a false flag costs one glance, a missed one is the silent failure this exists to surface. Same brittleness/fail-safe class as `LIMIT_MESSAGE` — reword the refusals and it degrades to a plain `ok`, never a false `failed`.
 
 - **`review` is kept out of `status` on purpose.** The run did not fail, so `on_failure` must not retry it — folding "needs a glance" into "failed" would make the scheduler re-run a working routine at full API cost. The two signals stay two fields end to end: log line, `last_run`, and the displays.
-- **Surfaced everywhere the outcome is read:** the hub routine panel and `:routine` show a yellow `review` (distinct from red `failed` and dim `ok`; in the narrow hub cell `review` shadows `ok`, but the log keeps both facts), and `do_routine` prints the flag live so an on-command run says so without opening the log. `tests/test_routines.py` pins the phrase heuristic and that a flagged run reads back `status='ok'` with `review=True`.
+- **Surfaced everywhere the outcome is read:** the hub routine panel and `/routine` show a yellow `review` (distinct from red `failed` and dim `ok`; in the narrow hub cell `review` shadows `ok`, but the log keeps both facts), and `do_routine` prints the flag live so an on-command run says so without opening the log. `tests/test_routines.py` pins the phrase heuristic and that a flagged run reads back `status='ok'` with `review=True`.
 
 ---
 
 ## Filing: propose / approve / move
 
-The last third of the routines work. A routine writes into `99 outbox` with a suggested `destination:` in the file's frontmatter; `:outbox` lists proposals with their verdicts; `:file <n>` carries one out. `mover.py` holds it all.
+The last third of the routines work. A routine writes into `99 outbox` with a suggested `destination:` in the file's frontmatter; `/list outbox` lists proposals with their verdicts; `/file <n>` carries one out. `mover.py` holds it all.
 
 ```
 model  → writes <vault>/99 outbox/<name>.md, frontmatter carries `destination:`
          (or drops it in wiki/ or journal/, where the folder is the signal)
-Cas    → :outbox to review, :file <n> to approve  (or :file <n> decline [why])
+Cas    → :outbox to review, /file <n> to approve  (or /file <n> decline [why])
 mover  → re-validates the destination against MOVE_ROOTS, then moves it
 ```
 
@@ -619,14 +619,14 @@ Three properties, and they are the module's whole reason to exist:
 **Wiki destinations were refused outright until v0.6; now they are filed, with the staleness made loud instead of the move made impossible.** The original reason still holds and is worth stating: writing a page into the corpus changes what recall reads, but the index doesn't know until `import_wiki.py` runs, so recall keeps answering from a stale copy **with no signal that it's stale** — silent, and arriving weeks later. v0.6 does not delete that guard, it *replaces* it (roadmap wording: "not the version that quietly deletes the refusal"). Three pieces, in `mover.py` + `commands.py` + `backfill.py`:
 
 - **The `wiki/` subfolder of the outbox is a second proposal source** (`WIKI_SUBFOLDER`). A draft there is wiki-bound by *location* — no `destination:` key needed, the folder is the signal. `list_proposals` scans it alongside the top-level `*.md`; everything else under the outbox (`notes/`, `routine logs/`, `tiered memory/`, `dropped/`) stays out, so the top-level-only rule that keeps run logs out of proposals is intact. A top-level file may still target the wiki via an explicit `destination:` and is routed through the same path (`_into_wiki` decides by containment).
-- **The id is stamped at approval, by code, never by the model.** A wiki page is keyed by its frontmatter id and named `<id>.md` (the vault convention the wiki index links to). `import_wiki` **silently skips** a page with no id — the same silent staleness through another door. Rather than refuse an id-less draft (a dead end for the reader routine, which drafts new pages), `_commit_wiki` stamps `id: YYYYMMDDhhmmss` via `_gen_wiki_id` (monotonic: a `:file all` batch filed in the same second cannot collide, which would make import_wiki treat two pages as one) and `_ensure_id` (written by hand, not `yaml.safe_dump`, which would quote a pure-digit string — the vault uses it unquoted). A draft that already carries an id keeps it; a page whose id already **exists** is refused as an edit, not clobbered (edits go through the vault + a re-import, not a second file).
-- **The staleness is loud, with a one-command fix.** Filing into the wiki sets a marker — `~/.cfc/wiki_reindex_needed`, a *file* (survives the session, no schema change, lives where cfc's runtime state already does; path derived from `db.DB_PATH` so a redirected db redirects it). `commands._wiki_filed_note` sets it and says so on `:file`; `_print_wiki_stale` shows it on `:outbox` and `:wiki` so the state survives leaving the session. `:updatedb` now **re-imports the wiki** (`import_wiki.run_import`, extracted from `main()` for exactly this) before the embed step, reports new/updated/skipped-no-id, and clears the marker. The reindex is deliberately kept out of per-turn auto-embed — it is the explicit half of the loop Cas chose ("move, then explicit `:updatedb`"), and auto-embed is chat-scoped.
+- **The id is stamped at approval, by code, never by the model.** A wiki page is keyed by its frontmatter id and named `<id>.md` (the vault convention the wiki index links to). `import_wiki` **silently skips** a page with no id — the same silent staleness through another door. Rather than refuse an id-less draft (a dead end for the reader routine, which drafts new pages), `_commit_wiki` stamps `id: YYYYMMDDhhmmss` via `_gen_wiki_id` (monotonic: a `/file all` batch filed in the same second cannot collide, which would make import_wiki treat two pages as one) and `_ensure_id` (written by hand, not `yaml.safe_dump`, which would quote a pure-digit string — the vault uses it unquoted). A draft that already carries an id keeps it; a page whose id already **exists** is refused as an edit, not clobbered (edits go through the vault + a re-import, not a second file).
+- **The staleness is loud, with a one-command fix.** Filing into the wiki sets a marker — `~/.cfc/wiki_reindex_needed`, a *file* (survives the session, no schema change, lives where cfc's runtime state already does; path derived from `db.DB_PATH` so a redirected db redirects it). `commands._wiki_filed_note` sets it and says so on `/file`; `_print_wiki_stale` shows it on `/list outbox` and `/wiki` so the state survives leaving the session. `/update db` now **re-imports the wiki** (`import_wiki.run_import`, extracted from `main()` for exactly this) before the embed step, reports new/updated/skipped-no-id, and clears the marker. The reindex is deliberately kept out of per-turn auto-embed — it is the explicit half of the loop Cas chose ("move, then explicit `/update db`"), and auto-embed is chat-scoped.
 
 `Proposal` carries `into_wiki` / `wiki_id` / `needs_id` so the command layer knows to flag staleness and the id isn't invented twice. `_reject_wiki` is gone; `test_mover.py`'s three "refused outright" assertions inverted to "filable + flagged + id-stamped + no-clobber". Verified against the real config, not just the test vault.
 
 ### Details that are load-bearing
 
-- **Verdicts are computed at list time.** `:outbox` shows what `:file 1` *will* do before you type it — a review step that doesn't show you the consequence isn't a review step.
+- **Verdicts are computed at list time.** `/list outbox` shows what `/file 1` *will* do before you type it — a review step that doesn't show you the consequence isn't a review step.
 - **`commit()` re-plans before it writes.** The list you're looking at may be minutes old and nothing guarantees the tree hasn't changed under it. The plan-time check drew the screen; this is the one that guards the write. A test covers the race (target appears between plan and commit).
 - **Write-then-unlink, in that order.** A crash in between leaves *both* copies, which is recoverable by hand; the reverse order can lose the file outright. The write itself is temp file + `os.replace` like everything else here.
 - **`destination:` is stripped on the way out**, everything else in the frontmatter preserved. The suggestion has been carried out, so leaving it behind leaves a stale instruction in a filed document — and one a later sweep could act on twice. The mover is not otherwise an editor: it does not add provenance keys or touch the body.
@@ -653,14 +653,14 @@ and it breaks property 3 of the mover's own charter.** The refusal cannot simply
 be deleted — what replaces it has to be as strong. It is git:
 
 - The journal is inside the vault repo, so an overwrite is inspectable
-  (`:wiki diff journal`) and revertable (`git checkout`).
+  (`/wiki diff journal`) and revertable (`git checkout`).
 - **That only holds if the corpus was clean beforehand.** Against a dirty
   journal the diff mixes cfc's move with hand edits and there is no commit to
   return to — so `_journal_guard_reason` refuses the move unless
   `wikigit.status(JOURNAL)` is empty. **The clean check is the undo path**, not
   a tidiness preference.
-- Checked at **plan time** (so `:outbox` shows the refusal before you type
-  `:file`) and **again inside `commit`** — the list may be minutes old, and the
+- Checked at **plan time** (so `/list outbox` shows the refusal before you type
+  `/file`) and **again inside `commit`** — the list may be minutes old, and the
   second one is what guards the write. Same split as everywhere else here.
 - **Fails closed.** If git can't be consulted, the move is refused rather than
   performed unrecoverably. Note this is the *opposite* direction from
@@ -747,7 +747,7 @@ digit-string is exposed to this same trap.**
 
 ### Declining, and where the reason lives
 
-`:file <n> decline [why]` moves a draft to `LOSER_DIR/<corpus>` and stamps
+`/file <n> decline [why]` moves a draft to `LOSER_DIR/<corpus>` and stamps
 `declined:` / `declined_reason:` into its own frontmatter. `drop` is the same
 call with no reason, kept because it reads right when there is nothing to say.
 
@@ -765,13 +765,13 @@ call with no reason, kept because it reads right when there is nothing to say.
 - **The reason is quoted and escaped.** It is free text typed at a prompt; an
   unquoted colon would make the block unparseable and cost the file its entire
   frontmatter, silently.
-- **No new command verb** — it is an argument to `:file`, so it inherits the
+- **No new command verb** — it is an argument to `/file`, so it inherits the
   numbering already on screen and the v0.8 `/` flip stays a pure prefix change.
-  A `:decline` would have been a verb the taxonomy has no slot for.
+  A `/decline` would have been a verb the taxonomy has no slot for.
 
 **The outbox's own readme is reserved** (`mover.is_reserved`, matching
 `NN readme.md`). It has no destination and never will, so it sat permanently at
-the top of `:outbox` reading `REFUSED — no destination`, and `:file 1 drop`
+the top of `/list outbox` reading `REFUSED — no destination`, and `/file 1 drop`
 would bin the folder's own documentation. Same shape as
 `tools.reserved_write_reason`: a named rule beside containment, not a widening
 of it. Name-based rather than "has no frontmatter", because a *malformed*
@@ -779,8 +779,8 @@ proposal — one where the model forgot the key — must stay visible and would 
 identical. `plan()` refuses it as well as `list_proposals` skipping it, since
 `plan` is reachable directly.
 
-**`:file` and `:file … decline` reprint the outbox.** Filing removes an entry, so
-every number after it shifts — a stale list on screen means the next `:file 3` is
+**`/file` and `/file … decline` reprint the outbox.** Filing removes an entry, so
+every number after it shifts — a stale list on screen means the next `/file 3` is
 a different file than the verdict you just read. Not cosmetic.
 
 ### Empty completions, and what `interactive` is actually for
@@ -805,20 +805,20 @@ The empty-completion re-roll above rescues a *transient* hiccup. It cannot rescu
 
 - **`ROUTINE_MODELS` (config) is a curated list of models vetted for unattended runs, and `runner.default_routine_model()` returns its first entry**, falling back to `MODEL` when unset so an old config still runs. **This is the load-bearing half.** A scheduled `--run-due` passes `model=None`, so before this it inherited `MODEL` — which is the *interactive chat* default and may be the very model that stalls (it was: the config default is `glm-5.2:thinking`). An unattended job silently running on the chat default is the hole.
 - **A routine can pin its own model** (`model:` frontmatter, optional), and `runner.effective_model(routine, caller_model)` is the single resolver: **routine pin › caller's model › vetted default.** The pin wins over everything because it's a deliberate, persisted choice attached to the task — without it, *every* scheduled routine could only ever run on `default_routine_model()` (the same one model), which is what "no routine model selection" meant. `do_routine` and `run_routine` both go through `effective_model`, so the model the warning names is always the model that runs. The field is kept an **opaque string in `routines.py`** — that module imports only `context`/`paths`/`yaml` and must not learn `config.MODELS`; vetting the pin against `ROUTINE_MODELS` is the REPL's/runner's job. Unset is omitted from `to_markdown` (not written as `model: ''`), so a hand-authored routine stays minimal and byte-stable.
-- **On-command `:routine` nudges (y/n)** in `do_routine` when the *effective* model isn't in `ROUTINE_MODELS` — the pin if there is one, else the session model. It's a soft nudge, not a block — a thinking model is runnable by choice. `:routine new` offers a model pick (blank = no pin) with the same `select_model` resolver and the same nudge.
+- **On-command `/routine` nudges (y/n)** in `do_routine` when the *effective* model isn't in `ROUTINE_MODELS` — the pin if there is one, else the session model. It's a soft nudge, not a block — a thinking model is runnable by choice. `/routine new` offers a model pick (blank = no pin) with the same `select_model` resolver and the same nudge.
 - **Membership, not thinking-detection, is deliberate.** The only signal for "is this a thinking model" is the `:thinking` id suffix — a provider string convention, same brittleness class as the wording matches — and it miscalibrates (`deepseek-v4-pro:thinking` is fine). The list is the judgement; the code trusts it and guesses nothing. Empty/unset list ⇒ no nudge, `MODEL` default, exactly as before.
 - **A failed run now records `(elapsed, session N)` in its log line, like the `ok` line does.** Before, only successful runs logged their session id; a failure logged just the reason, so on the scheduled path (no terminal) the transcript of the run you most want to open was unfindable. This is also what made three *distinct* failed sessions look like a repeated "session #77" — the terminal reported each correctly, but the durable log carried no session id to tell them apart, so cross-checking against it collapsed them.
 
-### Forgiving `:model` (v0.6.1)
+### Forgiving `/model` (v0.6.1)
 
-`:model` used to set whatever string you typed, verbatim. A one-character slip — `moonshotai/kimi-2.6:thinking` for `…kimi-k2.6…` — went through and came back as an opaque provider 400 a turn later, indistinguishable from a real fault. `commands.resolve_model` (pure) maps a loose query against the pool of `MODELS ∪ ROUTINE_MODELS`; `select_model` is the thin I/O shell over it, wired into `main.py`'s `:model` dispatch.
+`/model` used to set whatever string you typed, verbatim. A one-character slip — `moonshotai/kimi-2.6:thinking` for `…kimi-k2.6…` — went through and came back as an opaque provider 400 a turn later, indistinguishable from a real fault. `commands.resolve_model` (pure) maps a loose query against the pool of `MODELS ∪ ROUTINE_MODELS`; `select_model` is the thin I/O shell over it, wired into `main.py`'s `/model` dispatch.
 
 - **Tiers:** exact id → switch silently (unchanged behaviour); one substring match → confirm `did you mean X?`; several → a **numbered pick**; no substring hit → a fuzzy nearest (`difflib`) that catches the typo above; nothing recognisable → set the raw query with a dim note, so an unlisted model stays reachable but a typo can't pass as a deliberate choice.
 - **Numbered pick, not an arrow-key dialog.** There is no arrow-key selection widget in the codebase — the hub picker is numbered `input()` too — and one quick model switch doesn't justify importing a full-screen prompt_toolkit dialog. Matching the existing idiom keeps it inline in the REPL and out of invariant #4's way.
 - **It matches configured lists only, never a live catalogue.** cfc has no model list from the provider, and an unrecognised full id is still honoured (the `'none'` tier), so this narrows nothing — it only *offers* help when a query is loose or wrong.
-- **Pure core / I/O shell is the testable split**, the same shape as the mover and the routines: `resolve_model` is pinned exhaustively in `tests/test_model.py` without a TTY, and `select_model` is exercised with a scripted `input()`. Inherited by private chat for free — it's the same `:model` dispatch, and it persists nothing.
+- **Pure core / I/O shell is the testable split**, the same shape as the mover and the routines: `resolve_model` is pinned exhaustively in `tests/test_model.py` without a TTY, and `select_model` is exercised with a scripted `input()`. Inherited by private chat for free — it's the same `/model` dispatch, and it persists nothing.
 
-**Auto-revert on a rejected model.** `select_model`'s `'none'` tier deliberately *sets* an unlisted id (the pool is not exhaustive), but it also **persists** it, so before this a nonsense name 400ed on every turn and survived reopening the session — a blind error you found only by running `:models` and not seeing it selected. The `:model` dispatch now arms `revert_model` (in `run_session`) whenever it switches to an id **not in `known_models()`**, remembering the model you were on. `run_session.revert_bad_model()` fires on the first turn that raises `httpx.HTTPError` on *either* path: it restores the previous model, `set_session_model`s it back, and prints `provider rejected 'X' — switched back to Y` in place of the raw error.
+**Auto-revert on a rejected model.** `select_model`'s `'none'` tier deliberately *sets* an unlisted id (the pool is not exhaustive), but it also **persists** it, so before this a nonsense name 400ed on every turn and survived reopening the session — a blind error you found only by running `/list models` and not seeing it selected. The `/model` dispatch now arms `revert_model` (in `run_session`) whenever it switches to an id **not in `known_models()`**, remembering the model you were on. `run_session.revert_bad_model()` fires on the first turn that raises `httpx.HTTPError` on *either* path: it restores the previous model, `set_session_model`s it back, and prints `provider rejected 'X' — switched back to Y` in place of the raw error.
 
 - **The scope is what removes the magic.** It is armed only on a *just-set unverified* model, so it needs **no "is this a model-not-found 400?" wording match** — any error on that first turn is treated as a bad id. A turn that returns without raising (even an empty completion — the model still *answered*) sets `revert_model = None`, so a valid unlisted model is never reverted later on a transient hiccup, and a known model is never armed at all. Re-selecting the same id doesn't arm either.
 - **Both paths, one helper.** The tool path (`agent_turn`) and the stream path (`stream_response`) both call `revert_bad_model()` in their `except httpx.HTTPError` and both disarm on success — the "two paths must end a turn identically" invariant, applied to the failure exit too. `tests/test_model_revert.py` drives `run_session` with a stubbed stream and pins all three: revert on a bad id, *no* revert for a known model's transient error, and disarm-after-a-working-turn. Inherited by private chat for free — same dispatch, and the reverted model lands in the throwaway db like everything else.
@@ -908,7 +908,7 @@ real bug, and a heartbeat has to fire when the REPL is closed.
 
 ---
 
-## The vault repo: `:wiki`
+## The vault repo: `/wiki`
 
 `wikigit.py` + `show_wiki_status`/`show_wiki_diff`/`do_wiki_commit`. The vault
 is a git repo (v0.2); this is the REPL's window onto it. **Same shape as
@@ -923,10 +923,10 @@ right answer, so it is code.
      granularity  folder (default) | file
 ```
 
-**The grammar is `:wiki <action> <scope> <granularity>` (v0.7-prep).** Scope
+**The grammar is `/wiki <action> <scope> <granularity>` (v0.7-prep).** Scope
 picks the corpus, granularity picks whole-folder vs pick-one-file. Both are
 optional and default to the wiki corpus, folder-wide, so the short forms
-(`:wiki diff`, `:wiki commit <msg>`) mean exactly what they did before. This is
+(`/wiki diff`, `/wiki commit <msg>`) mean exactly what they did before. This is
 the shape v0.7's tiered-memory review inherits — a new corpus is one registry
 entry (`wikigit.scope_dir`), not a new branch.
 
@@ -943,7 +943,7 @@ entry (`wikigit.scope_dir`), not a new branch.
   pathspec. That is the per-file containment the top `BACKLOG` entry asked for:
   inspect one file's diff, commit *that* one, not the whole set. `commit`'s
   message is prompted right after the pick when it wasn't on the line.
-- **`:wiki commit vault` asks `(y/n)`** at folder granularity — it is the
+- **`/wiki commit vault` asks `(y/n)`** at folder granularity — it is the
   whole-repo sweep that once committed 202 files in one stroke. A per-file vault
   commit is already narrow, so it doesn't prompt.
 - **A commit message may not begin with a scope or granularity keyword**
@@ -991,7 +991,7 @@ untouched**; the launcher is what the desktop shortcut runs.
 The problem it solves is an asymmetry, not an inconvenience. Everything
 memory-shaped assumes LM Studio is up with bge-m3 loaded, and **none of it says
 so when it isn't**: auto-embed is best-effort and warns quietly by design,
-`:recall` returns nothing, and "nothing" is indistinguishable from "memory has no
+`/recall` returns nothing, and "nothing" is indistinguishable from "memory has no
 answer" — the same silent-failure shape standing decision #4 flags for zero-hit
 recall. One line at launch turns it into an event.
 
@@ -1034,7 +1034,7 @@ test.
 
 ---
 
-## `:attach` completion had silently stopped working
+## `/add` completion had silently stopped working
 
 Worth recording as a failure mode, not just a fix. `complete.py` wired itself
 into **readline**. Input then moved to `prompt_toolkit`, which implements its own
@@ -1085,7 +1085,7 @@ loudly:
 
 | written by | parsed by | what breaks if they drift |
 |---|---|---|
-| `commands.py`'s `:remember` marker | `db._MARKER_RE` | recall markers stop parsing |
+| `commands.py`'s `/remember` marker | `db._MARKER_RE` | recall markers stop parsing |
 | `commands.py` / `import_anthropic.py` markers | `backfill.is_litter` | markers get embedded as content |
 | `routines.append_log`'s line | `routines.last_run` | `on_failure` reads the wrong status |
 | `tools.write_file`'s success line | `tools.written_path` | the run log says a run wrote nothing |
@@ -1121,50 +1121,232 @@ If you add a fifth, add it to this table.
 
 ---
 
-## Standing decision: the command taxonomy (v0.8, recorded early)
+## The command surface (v0.8) — landed, and what changed on the way
 
-Recorded **ahead of** the work that implements it, on purpose. v0.8 flips the
-command prefix from `:` to `/` and reworks prompt/persona/trait attachment behind
-one `/add`. The *verb spine* it settles on is a decision every command added
-between now and then has to respect — otherwise the flip stops being a pure
-prefix change and turns into a rename of the ones that guessed a different verb.
+Recorded early as a standing decision, then built. **Where the built thing
+differs from what was recorded, the built thing is right** — the decisions were
+written before the work precisely so they could be revised once the work was
+thought through, and three of them were, on 2026-07-25.
 
-Today the surface is `:`-prefixed and this taxonomy is **not yet built** —
-`:prompt`, `:persona`, `:attach`, `:forget`, `:export` are the live names. What
-is settled is which verb each *kind* of command gets once the flip lands:
+```
+/verb [kind] [target] [message]
+```
 
-- **`/add`** — attach something cfc already owns: a prompt, a persona, a trait.
-  Internal. (Replaces `:prompt` / `:persona`.)
-- **`/attach`** — bring in something external: a picture, a document, a file.
-  Today's `:attach`. The split from `/add` is the point — internal vs external.
-- **`/connect`** — reserved for connections (external services). Nothing uses it
-  yet; it is held so nothing else claims it.
-- **`/remove`** — the universal detach. Every attachable feature sheds through
-  this one verb, not a per-feature `:unpersona`.
-- **`/delete`** — memory removal, sibling of `/remember` and `/recall`. Today's
-  `:forget` becomes this.
-- **`/import` / `/export`** — cfc sessions in and out. Today's `:export`.
+*kind* is which pool or corpus, optional wherever it can be resolved. *target* is
+a name, a number or a path. *message* is free text, always last and always the
+rest of the line. Two rules hold everywhere and four commands lean on them: **a
+bare integer is a chat id**, and **`#n` is an attachment**.
 
-**The rule that makes it load-bearing: a command added before v0.8 ships is named
-by the verb it will carry *after* the flip** (still `:`-prefixed for now). A
-command added as `:unfoo` is one the flip can't mechanically rewrite; a command
-added under the right verb becomes `/`-prefixed for free.
+Twenty-one verbs, in `parse.VERBS`. The word **scope** is retired from the
+command vocabulary — it already means the read/write jail in `context.py` and
+`paths.py` (`ScopeError`), and the drafts had it carrying three unrelated
+meanings. Say *kind*.
 
-Two design points settled with it — detail in `ROADMAP_PRIVATE.md` and the
-`99 outbox/v0.8 build draft.md`:
+### What reversed, and why
 
-- **`/add` and `/remove` take a bare form and an explicit form.** Bare
-  (`/add relax`) resolves a name across the three pools by priority
-  (System > Persona > Trait); explicit (`/add trait relax`) names the kind. The
-  bare-name priority and the *assembly* order of the final system message are the
-  **same sequence but two independent decisions** — one governs which pool a name
-  collision fills, the other where each layer lands in the prompt. They only
-  happen to agree; don't collapse them into one.
-- **No `/swap` in v0.8.** `/add` overwrites the singular layers (system prompt,
-  persona) and appends to the plural one (traits); `/remove` peels. Swap is
-  redundant where unambiguous and ambiguous where it isn't (which trait?), and
-  earns a version later only if "replace A with B in one keystroke" proves to be
-  a daily move.
+- **`/attach` collapsed into `/add`.** The recorded decision split internal
+  (`/add`) from external (`/attach`). The argument shape carries that
+  distinction perfectly well — a path-shaped fragment is a file, a bare name is
+  a pool — and `/remove` had already been accepted as universal across both. If
+  remove can span them, so can add.
+- **`:forget` became `/remove excerpts`, not `/delete`.** The line is not
+  memory-versus-everything-else; it is **whether retyping the command gets it
+  back**. `:forget` never deleted anything — `:remember` *attached* those
+  excerpts and dropping them is a detach. It also removed a collision the drafts
+  had created, where bare `/delete` meant both "delete this conversation" and
+  "drop the excerpts". A confirm prompt would have caught it, and that is the
+  worst place in a surface to put an ambiguity.
+- **The dispatcher rewrite went first, not last.** The draft deferred it as
+  "adjacent, optional" and kept the flip a pure prefix change. That was
+  backwards: the spec *is* a parser spec, and implementing verb/kind/target
+  fifteen times inside a `startswith` chain is how a surface stops fitting in
+  anyone's head. `parse(line) → Cmd` plus a verb→handler table is smaller than
+  what `main.py` carried, and bare `/list`, bare `/delete` and a uniform
+  `/status` fall out of it instead of each being hand-rolled.
+
+### `parse.py`, and the trap it closes structurally
+
+Dispatch was a chain of `user.startswith(":foo")` tests, and its correctness
+depended on the order the tests were written in. `":attached".startswith(":attach")`
+is true, so `/status` had to be tested first or it read as attaching a file
+called "ed" — patched with a comment rather than structurally, and it comes back
+every time a command is added whose name prefixes another. `:routines` had the
+same bug in a worse form: it matched the bare `/routine` prefix, indexed `[1]` of
+a one-element split, and took the app down with an `IndexError`, which is why the
+old test carried a load-bearing trailing space. **Exact verb matching cannot have
+either bug.**
+
+- **`Cmd.tail(i)` re-splits the raw string** rather than joining `args`. A commit
+  message and a session title own their spacing; joining collapses runs of
+  spaces and nothing would notice.
+- **`Cmd.int_arg` returns a default instead of raising.** `/title abc` reached a
+  bare `int()` and took the whole REPL down. A typo should cost a line of output.
+- **The prefix is one constant**, which is what made the flip touch no handler.
+  `LEGACY_PREFIX` is accepted for one version and sets `Cmd.legacy`, so the REPL
+  nudges **once per session** — a correction printed after every line is one that
+  stops being read, and the command runs either way. A migration that breaks what
+  it is migrating teaches only that the upgrade was a mistake.
+- **An unrecognised verb still falls through to the model**, exactly as an
+  unmatched `startswith` did. cfc does not claim the whole prefix namespace.
+  This is *why* `RETIRED` exists: without it, `/list prompts` would be **sent to the
+  model as a chat message** — an API call and a confused answer in place of a
+  one-line correction. It echoes the prefix you typed, since "/prompts is now …"
+  names a command that never existed under either prefix.
+
+**Three lists have to agree** — the handler table, `parse.VERBS`, and `RETIRED`.
+That is the drift hazard this document already has a table for, so it is
+*checked*: `run_session` asserts `set(HANDLERS) == set(VERBS)` at session start,
+and `tests/test_parse.py` pins the rest (no alias collides with a verb, every
+retired verb points at a live one, nothing in `RESERVED` is spent).
+
+**The `[:remember …]` marker keeps its colon and is not part of this surface.**
+It is a persisted storage format, written by `commands.py` and parsed by
+`db._MARKER_RE` and `backfill._MARKER_LINE`. Flipping it would have silently
+stopped every existing marker row from parsing — a false negative in exactly the
+shape the producer/parser table exists to name. When you sweep prose for a
+prefix, the storage formats are not prose.
+
+### `pools.py` — one mechanism for three pools
+
+Prompts, personas and traits were already the same thing on disk: a folder of
+`.md` files where **the filename is the identity**. `commands.py` held three
+near-identical copies of the list-and-load code, and traits would have been a
+fourth. They are now one `Pool` table.
+
+- **`assemble.py` was extracted first, on purpose.** Traits mirror prompts and
+  personas exactly, so any other storage shape for traits would have
+  reintroduced the duplication at the moment it was being paid off. A combined
+  traits file would also need a parser, and that hazard has its own table here.
+  One file per trait needs no parser and no id: **the file is the id.**
+- **`Pool.dir()` reads `configured` at call time and is the single seam.**
+  `golden.py` and `test_complete.py` re-point pools there rather than patching
+  `config`, which would miss anything that read the value at import — the same
+  lesson `test_routines` records for the routine dirs.
+- **`pools.stem` normalises the two spellings, in one place.**
+  `sessions.system_prompt_name` holds the *filename* (`relax.md`) because that is
+  what it has always held and the hub renders it; a pool resolves the *stem*
+  (`relax`). Those two are compared constantly — the collision walk is exactly
+  "is this pool already carrying that name" — and comparing them raw meant the
+  walk **silently never advanced**, so `/add relax` filled the system prompt
+  forever. Found by driving it, not by reading it.
+- **A pool name containing `#` is refused**, and reported where the pool is
+  *listed*. `#n` is the attachment namespace. Swallowing it would leave a file
+  sitting in the folder that never resolves, with nothing said.
+
+### The resolver, and the one thing it must not do
+
+One resolver, shared by `/add` and `/remove`: pure core in `pools.py`
+(`match` / `match_active` / `fill`), thin I/O shell in `commands.py`
+(`resolve_layer` / `resolve_attached`). Same split as
+`resolve_model`/`select_model`, so matching is testable without a terminal.
+
+- **Tiers don't mix.** Exact beats prefix beats substring, and only the
+  strongest tier that found anything is returned — so typing a name in full
+  always does what it says, even when it is a prefix of three other names.
+- **It never judges under ambiguity.** Two different names matching equally well
+  is a numbered pick, not a decision. A resolver that guessed would be making a
+  choice the user cannot see, which is the same failure the retrieval floor is
+  set to avoid. The pick is a numbered `input()`, matching the hub picker,
+  `select_model` and `_pick_change` — a full-screen dialog fights invariant #4,
+  settled at v0.6.1.
+- **The confirmation reports what it picked** (`added Relaxed — Trait`). On a
+  partial or a case-fold, that report *is* how you learn what happened.
+- **A failure names the forms and the pools it searched**, so "typed it wrong"
+  and "the thing is broken" stay distinguishable — the shape
+  `Routine.validate()` already uses.
+- **`/add` searches what the pools hold; `/remove` searches what the session
+  carries.** Deliberately not the same set: naming a real prompt you never
+  attached must fail rather than succeed at nothing.
+- **Bare-name priority is System > Persona > Trait, and it is resolution order,
+  not assembly order.** They are the same sequence and two independent
+  decisions — `assemble.py` owns where each layer lands in the prompt, `pools.PRIORITY`
+  owns which pool a name collision fills. They only happen to agree. The
+  collision walk (repeat `/add relax` and it steps down the pools) is emergent:
+  allowed to work, never advertised.
+
+### Traits
+
+`TRAITS_DIR`, one `.md` per trait, and a `traits` JSON column on `sessions` via
+the existing on-connect `ALTER TABLE`-guarded-by-`OperationalError` pattern.
+
+- **Names are stored, never bodies.** Bodies are re-read from the pool every
+  turn, so editing a trait file changes what every session carrying that name
+  sends. The same reason a routine keeps `prompt:` as a reference instead of
+  inlining it.
+- **A name whose file has gone is skipped in the assembly and named in
+  `/status`.** A warning on every turn is one that gets trained out; the screen
+  that answers "what is this session carrying" is where the gap belongs.
+- **Singular layers overwrite, traits append in attach order** — not sorted,
+  because attach order is the only order the user can see and control. Re-adding
+  an active trait is a clear no-op, not a duplicate: two copies of a trait is not
+  twice the instruction, it is a bug that reads as emphasis.
+- **Chat-scoped**, exactly as prompts and personas already are. `traits_persistence`
+  is a later knob if it is ever wanted; three storage scopes wearing one name is
+  how one of them rots untested.
+
+### Two things the spec would have dropped, and doesn't
+
+`/status` absorbs eight bare commands, which is most of the cut. Two of them
+carried something a names-only screen would have lost, so both are kept:
+
+- **`/status <kind>` prints the layer's body.** Bare `:prompt` was the only way
+  to read an attached prompt without opening the file.
+- **Bare `/tools` keeps the three-switch diagnostic** (master, session, model).
+  `/status` gets one line; "why isn't this working" still deserves one command
+  rather than three guesses.
+
+The general rule: a bare settings verb reports its own state. It costs nothing —
+the verb exists for `on|off` anyway — and it means `/status` never has to be the
+*only* way to learn something.
+
+### Two honest exceptions to the grammar
+
+A grammar that claims to be total and isn't is worse than one with two named
+exceptions.
+
+1. **`/file <n> decline [why]`** keeps target-then-action. It inherits the
+   numbering already on screen, and `/decline` would be a verb the taxonomy has
+   no slot for. Settled at v0.7.
+2. **`/wiki`** carries its own `folder|file` slot — the one command whose object
+   has a sub-granularity.
+
+### Short model names are display-only
+
+`ui.short_model` trims `zai-org/glm-5.2:thinking` to `glm-5.2:thinking` **at the
+moment of printing**. The full id is what goes on the wire, into the sessions
+table, and into the exact `in` checks against `TOOLS_MODELS`, `MODEL_LIMITS` and
+`ROUTINE_MODELS`. Store or send the short form and tool calling silently stops
+firing while the context bar goes uncoloured, with no error anywhere. So there is
+exactly one of these and nothing keeps its result. Input already accepts the
+short form — `resolve_model` matches substrings.
+
+### Private chat inherits all of it, with no branch
+
+The test that the design is right: the surface is dispatch plus session state,
+both of which already run through the session's connection. Active traits are
+session state in a throwaway in-memory db; `/new p` opens a nested private
+session using the same connection swap the hub's `p` uses. **There is no
+`if private` anywhere in this version** — `test_private` pins the new column's
+negative (a trait attaches in a private chat and the real db never hears about
+it), because invariant #10 says a new disk-writing path owes exactly that.
+
+### Deliberately left for later
+
+- **`/swap`** — redundant where unambiguous, ambiguous where it isn't (*which*
+  trait?). Earns a version only if "replace A with B in one keystroke" proves to
+  be a daily move.
+- **`/import`** — the verb is held, not spent. There is nothing to import back.
+- **`traits_persistence`** — built if wanted, not on spec.
+- **Unifying the three session fields** (`system_prompt_name`, `persona_name`,
+  `traits`) into one active-layers structure. `/remove` being universal is easier
+  against one structure than three parallel fields, and `assemble.py` is where it
+  would happen. v0.8 keeps three fields; `pools.active_layers` is the seam that
+  already flattens them for every reader. Known fork, not a surprise.
+- **A chat management screen** — takes `/title` and rename/merge/archive with it.
+  `/title` stays until that screen exists: losing the only way to rename a chat
+  is not a trade.
+- **Removing `LEGACY_PREFIX` and `RETIRED`** — next minor. Both are one constant
+  and one dict; deleting them is the whole job.
 
 ## Load-bearing invariants (don't break these)
 
@@ -1190,7 +1372,15 @@ Two design points settled with it — detail in `ROADMAP_PRIVATE.md` and the
     a model has no clock and a scheduled run is a fresh process. Inference from
     the document — "the last entry is Thursday, so write Friday" — is
     self-consistent and therefore silently wrong forever after one missed run.
-13. **A delete reaches the index that points at what was deleted.** `chunks`/`vec_chunks` have no foreign keys, so `delete_session`/`delete_message` cascade in code — index rows first, vectors before chunks, a vector-delete failure raising rather than half-completing. Leaving them behind is not one bug but three: deleted content still searchable, orphaned rows, and — because SQLite reuses rowids — stale chunks silently re-attaching to unrelated live messages. `tests/test_schema.py` pins all three.
+13. **The command surface is three lists that must agree**, and they are
+    checked rather than maintained: `run_session` asserts its handler table
+    equals `parse.VERBS`, and `test_parse` pins that no alias collides with a
+    verb, every `RETIRED` verb points at a live one, and nothing `RESERVED` is
+    spent. An unrecognised verb falls through **to the model**, so a verb that
+    is documented and absent from the table is not an error message — it is a
+    chat message and an API call. This is also why retiring a verb means putting
+    it in `RETIRED`, not deleting it.
+14. **A delete reaches the index that points at what was deleted.** `chunks`/`vec_chunks` have no foreign keys, so `delete_session`/`delete_message` cascade in code — index rows first, vectors before chunks, a vector-delete failure raising rather than half-completing. Leaving them behind is not one bug but three: deleted content still searchable, orphaned rows, and — because SQLite reuses rowids — stale chunks silently re-attaching to unrelated live messages. `tests/test_schema.py` pins all three.
 
 ---
 
@@ -1199,19 +1389,26 @@ Two design points settled with it — detail in `ROADMAP_PRIVATE.md` and the
 `tests/golden.py` is a **characterization** harness, not unit tests: it pins the REPL's exact stdout for every no-API command over a fixture DB, so a refactor meant to change nothing is proven to. `record` re-baselines (inspect the diff first — it exists to catch the changes you *didn't* intend). It compiles from source (wipes `__pycache__`) because a same-second edit + same-size change can reuse stale bytecode and lie about a refactor's safety.
 
 **The lesson below generalised once already, and the second instance is bigger
-than the first.** `:config`, `:models` and `:tools` print `MODELS`,
+than the first.** `/config`, `/list models` and `/tools` print `MODELS`,
 `TOOLS_MODELS`, `MODEL` and `API_BASE` straight into the baseline, so adding a
 model to your own config failed `check` on lines that say nothing whatever about
-the code. Scrubbing was the wrong tool — `:models` renders a rich table whose
+the code. Scrubbing was the wrong tool — `/list models` renders a rich table whose
 column width is the longest id, so the *layout* is config-derived too. They are
 **pinned to fixture values** in `capture()` instead, exactly as `DB_PATH` and
 `VAULT_PATH` are. `test_wikigit` had the same bug in miniature: it asserted "an
 unconfigured corpus is refused" against whatever the machine's config said, so
 configuring `JOURNAL_DIR` broke it. Both now force the value they test.
 
-**`SCRUB` is what keeps the baseline a property of the code and nothing else.** Timestamps, addresses, `$HOME` and the repo root are normalised on *both* sides at compare time — so adding a rule fixes an existing baseline without re-recording, and `record` is only needed to stop the raw value living in the tracked file. The rule that earned this paragraph: `:config` prints the last 4 of the API key, so **rotating the key failed `check` on a line that says nothing about the code**. Not a leak — it is exactly what a provider dashboard shows — but a tripwire that fires on something the code cannot cause is a tripwire that gets rubber-stamped, and this harness is the one that has to be trusted after a refactor. It scrubs only the `...abcd` form: with no key configured the line reads `not set`, which still diffs against `<KEY>`, because a config that lost its key is a real finding. Generalise it — anything a baseline pins that lives in `config.py` rather than in the source is the same bug.
+**The v0.8 script drives the paths that print and act on nothing** — `/delete`
+and `/update` with no kind, `/add` with no match, `/remove` with nothing
+attached, a retired verb, `/title abc`. Those are the ones a rename quietly
+breaks: a command that stops recognising its own argument still exits cleanly and
+still prints *something*, so nothing fails. 213 → 290 lines, re-baselined once,
+at the end of the version rather than per block.
 
-Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s retrieval, `:export`'s file output, the picker, `:routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the two budgets, every call answered on an interrupt, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written, the YAML-octal trigger trap, the cadence placeholders and the catch-up cap), `test_mover` (destination refused not guessed, plan/commit race, atomicity, the journal's git guard in both directions and its fail-closed case, the reserved readme, decline preserving hand-written frontmatter), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `:export` still runs, write_file refused, the `db_on` truth table), `test_schedule` (the six not-due rules, same-day catch-up, `on_failure` both ways, the retry bound, a corrupt log causes no run storm, the tick lock, and weekly due-ness: calendar-anchored, catch-up after a missed Monday, a failed run not counting as absorbed), `test_model`, `test_model_revert`. 20 suites. None need an API key.
+**`SCRUB` is what keeps the baseline a property of the code and nothing else.** Timestamps, addresses, `$HOME` and the repo root are normalised on *both* sides at compare time — so adding a rule fixes an existing baseline without re-recording, and `record` is only needed to stop the raw value living in the tracked file. The rule that earned this paragraph: `/config` prints the last 4 of the API key, so **rotating the key failed `check` on a line that says nothing about the code**. Not a leak — it is exactly what a provider dashboard shows — but a tripwire that fires on something the code cannot cause is a tripwire that gets rubber-stamped, and this harness is the one that has to be trusted after a refactor. It scrubs only the `...abcd` form: with no key configured the line reads `not set`, which still diffs against `<KEY>`, because a config that lost its key is a real finding. Generalise it — anything a baseline pins that lives in `config.py` rather than in the source is the same bug.
+
+Does **not** cover: the chat turn against a real API, `/recall`/`/remember`'s retrieval, `/export`'s file output, the picker, `/routine` — verified by hand. (`test_private` does drive `run_session` with a stubbed stream, so the turn's *persistence* side is covered even though the API side isn't.) The splash's *rendered* output is also hand-verified; `test_splash` pins the compositor's arithmetic and the key-read discipline, but what it looks like on screen is a human check. Unit suites: `test_paths` (jail incl. write scope, and that a relative refusal says so), `test_tools` (incl. the run log closed to writes, and `written_path` by round-trip), `test_gate` (approval≠bypass, no auto-approve exists), `test_agent` (loop + replay + interrupt safety, the two budgets, every call answered on an interrupt, the `touched` collector), `test_attach`, `test_schema` (migration idempotency, marker parse, the delete cascade + the stale-chunk repair), `test_litter` (marker/litter coupling), `test_chunk` (sizing, boundary seeking at both edges, pathological input terminates, the message-boundary invariant), `test_routines` (file round-trip, unsaveable scope overlap, run log survives failure and names what was written, the YAML-octal trigger trap, the cadence placeholders and the catch-up cap), `test_mover` (destination refused not guessed, plan/commit race, atomicity, the journal's git guard in both directions and its fail-closed case, the reserved readme, decline preserving hand-written frontmatter), `test_empty` (the ask-vs-re-roll split, and its bound), `test_wikigit` (scope containment under a dirty index, the `-z` parse, no push), `test_preflight` (the dimension guard, never hangs, never blocks), `test_complete` (vault-before-repo, and the jail holds), `test_splash` (aspect survives the fit, box-average not nearest, the grid measured in cells not characters, unbuffered key read, bad asset never blocks the boot), `test_hub` (deny-list not allow-list, colour thresholds from one place, freshness buckets, the reasoning elision keeps both ends), `test_private` (real db untouched after a private turn against a control that writes, auto-embed/auto-export skipped, explicit `/export` still runs, write_file refused, the `db_on` truth table), `test_schedule` (the six not-due rules, same-day catch-up, `on_failure` both ways, the retry bound, a corrupt log causes no run storm, the tick lock, and weekly due-ness: calendar-anchored, catch-up after a missed Monday, a failed run not counting as absorbed), `test_model`, `test_model_revert`, `test_parse` (the grammar, the tail's spacing, and that the three verb lists agree), `test_pools` (the pools as one mechanism, and that a session stores trait *names* so editing a file changes what it sends), `test_resolve` (tiers don't mix, the collision walk against the filename/stem trap, ambiguity is asked not guessed, `/remove` searches what is attached), `test_assemble` (layer order, and that an empty layer is an absent one). 24 suites. None need an API key.
 
 `test_schedule` passes `now` in and writes the run log by hand, on purpose: the scheduler's decisions are pure functions of (routine file, run log, now), and a scheduler you can only test by waiting until 03:00 is a scheduler nobody tests. Its assertions are mostly negatives — a job that fires twice, or retries a permanent failure ninety times a day, costs real money while nobody is watching.
 
@@ -1225,15 +1422,18 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 
 | Module | Holds |
 |---|---|
-| `main.py` | hub loop (`repl`), session loop (`run_session`), command dispatch, live session state |
-| `commands.py` | every `:` command; the approval gate; `print_context_bar` |
+| `main.py` | hub loop (`repl`), session loop (`run_session`), the verb→handler table, live session state |
+| `parse.py` | the grammar: `parse(line) → Cmd`, `PREFIX`/`LEGACY_PREFIX`, `VERBS`, `ALIASES`, `RETIRED`, `RESERVED`, `looks_like_path` |
+| `pools.py` | the three pools (prompt/persona/trait): dirs, loading, the shared name resolver, `stem`, `active_layers` |
+| `assemble.py` | the system layers of a request, in order. Bodies in, messages out |
+| `commands.py` | what each command does; `show_status`/`show_list`; the resolver's I/O shell; the approval gate; `print_context_bar` |
 | `agent.py` | the tool-calling turn (`agent_turn`, `render_answer`) |
 | `tools.py` | read-only tools + dispatcher + `describe` (for the gate) |
 | `paths.py` | the jail: `path_guard`, containment + deny list |
 | `api.py` | `stream_response` (streaming chat + live reasoning panel, returns `(text, usage, reasoning)`), `call_api` (non-streaming: titles, agent), per-phase timeouts (`_timeout`), provider error extraction |
 | `db.py` | connection, schema/migrations, every query, `load_history` + orphan drop |
 | `hub.py` | session browser (`list_sessions`, everything) + picker (`recent_chats`/`pick_session`, chats only) + routine freshness, all from one `_session_table()` |
-| `complete.py` | Tab completion for `:attach`, scoped to roots |
+| `complete.py` | Tab completion for `/add`, `/remove`, `/routine`, `/list`. Shares `looks_like_path` with dispatch |
 | `export.py` | one Markdown file per session → Obsidian vault (overwrite on re-export) |
 | `backup.py` | rolling snapshots via SQLite online-backup API, integrity-checked, 6h-throttled, keep 10 |
 | `context.py` | `ToolContext`: read roots, write roots, gated/interactive. `for_chat` / `for_routine` |
@@ -1246,23 +1446,40 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
 | `launch.sh` | what the desktop shortcut runs: repo + venv + preflight, then `main.py` |
 | `run-due.sh` | what the OS scheduler runs: repo + venv + preflight, then `main.py --run-due`. Nothing interactive |
 | `dev/bake_splash.py` | image → `assets/splash_<name>.raw`. Dev-time only; the one thing needing Pillow |
-| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `read_input` (prompt_toolkit line editor), `set_completer` |
+| `ui.py` | shared Console + turn palette + `_speaker_panel`/`human_panel`/`ai_reasoning_panel`/`ai_answer_panel`, `make_bar`, `make_snippet`, `short_model` (display only), `read_input` (prompt_toolkit line editor), `set_completer` |
 | `splash.py` | the launch screen: baked pixel art composited under the title, asset rotation, Enter/Esc gate. Depends on `ui`, not the reverse |
 | memory | `import_wiki.py` (+`import_anthropic.py`), `chunk.py` (`chunk_new`), `embed.py`, `backfill.py` (`embed_new`, `update_index`), `search.py`, `recall.py` |
-| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*` (incl. `TOOLS_MAX_CALLS_PER_TURN` and `TOOLS_MAX_TURN_RESULT_CHARS`, the turn's two budgets), `ROUTINE_*` (incl. `ROUTINE_MAX_CALLS_PER_TURN`), `MOVE_ROOTS`, `WIKI_DIR`, `JOURNAL_DIR`, `LOSER_DIR`, `STREAM_USAGE`, `API_READ_TIMEOUT`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona dirs — **gitignored** |
+| `config.py` | keys/bases, `EMBED_*`, `AUTO_EMBED`, `DATABASE_ACTIVE` (private-chat db default), `MODEL(S)`, `MODEL_LIMITS`, `*_ROOTS`, deny-extra, `TOOLS_*` (incl. `TOOLS_MAX_CALLS_PER_TURN` and `TOOLS_MAX_TURN_RESULT_CHARS`, the turn's two budgets), `ROUTINE_*` (incl. `ROUTINE_MAX_CALLS_PER_TURN`), `MOVE_ROOTS`, `WIKI_DIR`, `JOURNAL_DIR`, `LOSER_DIR`, `STREAM_USAGE`, `API_READ_TIMEOUT`, `AUTO_EXPORT`, `SPLASH_ART`, `CONTEXT_*_MAX`, vault/prompt/persona/**trait** dirs — **gitignored** |
 
 ---
 
 ## Current state & open threads
 
-- **Just landed (v0.7, "tiered memory"):** the journal's approve step and its
+- **Just landed (v0.8, "the command surface"):** a rework of the surface, with
+  the prompt/persona/trait composition system as the vehicle rather than the
+  headline — success measured in verbs removed. Thirty-three verbs to
+  twenty-one, `:` to `/`, and `/add`/`/remove`/`/status`/`/list` absorbing
+  nineteen commands between them. Nine blocks, in the order the brief set, and
+  the reordering it argued for (dispatcher first) was the right call: the flip
+  in block 8 touched no handler. Two bugs surfaced, both quiet: the collision
+  walk compared a stored filename against a resolved stem and so **silently
+  never advanced**, and the prose sweep initially renamed the persisted
+  `[:remember …]` marker, which would have stopped every existing marker row
+  parsing. Two things the spec would have dropped are kept (`/status <kind>`
+  prints a body, bare `/tools` keeps its diagnostic). **Not done here:** the
+  surface has been driven end to end from a scripted stdin and by the golden
+  harness, but not yet used in anger for a day — the shape of `/status` and
+  whether the bare-name walk is pleasant or surprising in practice are judgement
+  calls that want real use. `LEGACY_PREFIX` and `RETIRED` come out next minor.
+
+- **Before that (v0.7, "tiered memory"):** the journal's approve step and its
   cadence. Most of the drafting half already existed **outside the repo** —
   three routines and three prompts Cas had written in the vault — so this
   version is the cfc side: `99 outbox/journal/` as a proposal source (the drafts
-  were invisible to `:outbox` before), overwrite-under-git as the replacement
+  were invisible to `/list outbox` before), overwrite-under-git as the replacement
   for the mover's exists-refusal, `trigger: weekly HHMM` meaning "a finished
   week is unabsorbed" rather than "on Mondays", computed dates injected so
-  nothing is inferred, and `:file <n> decline [why]`. Four bugs surfaced on the
+  nothing is inferred, and `/file <n> decline [why]`. Four bugs surfaced on the
   way and all four were the quiet kind: a missing comma had concatenated two
   `TOOLS_MODELS` entries into one nonexistent id, `trigger: 0300` was being read
   as octal 192, a failed weekly run marked its week absorbed, and the golden
@@ -1307,27 +1524,27 @@ Does **not** cover: the chat turn against a real API, `:recall`/`:remember`'s re
   runs against an in-memory db and leaves nothing on disk — see the Private chat
   section for why the chokepoint is the connection and not a flag. Auto-embed,
   auto-export and title generation are off; model file-writes are refused
-  (empty write roots); an explicit `:export` is the one thing that reaches disk.
-  A separate read axis — `:database on|off`, config `DATABASE_ACTIVE` (default
-  off in private) — gates `:recall`/`:remember`. `tests/test_private.py` pins
+  (empty write roots); an explicit `/export` is the one thing that reaches disk.
+  A separate read axis — `/database on|off`, config `DATABASE_ACTIVE` (default
+  off in private) — gates `/recall`/`/remember`. `tests/test_private.py` pins
   the negative. **Not done here:** the interactive `p` flow and the banner are
   hand-verified by Cas; the tests cover persistence, not the terminal render.
 - **Before that (v0.4, "the screens"):** the pixel-art splash, the filtered
   hub/chat screens, and the context-bar colours. See `CHANGELOG.md`.
 - **Before that (v0.3, "the shell"):** the parts around the app rather than in
-  it. `:wiki` (status/diff/commit over the vault repo, scoped to the wiki
+  it. `/wiki` (status/diff/commit over the vault repo, scoped to the wiki
   corpus); `launch.sh` + `preflight.py` (the embedder is checked, and started,
-  before cfc opens); and the `:attach` completion rework — which turned up that
+  before cfc opens); and the `/add` completion rework — which turned up that
   completion **had not been running at all** since prompt_toolkit replaced
   `input()`, because `complete.py` only ever wired into readline. Three sections
   above cover each. `MOUSE_INPUT` added (default off; on in Cas's config, to be
   judged in use). Not yet done in this version: nothing outstanding, but the
   `lms server start` path is unverified by hand — see the launcher section.
 - **Before that (v0.2, "retrieval you can trust"):** the floor rebuilt as a lint filter at 1.08 after the 1.024 provenance bug was traced (see Retrieval tuning — the short version is that 1.024 was an Anthropic-corpus number wearing a wiki label, and nothing had regressed); `search()`'s over-fetch window now widens until it is provably deep enough, instead of a flat `k*4` that could return **zero** wiki hits purely because the window filled with chat chunks; `chunk.py` seeks to word boundaries at both edges, with the corpus re-chunked and re-embedded; `tests/test_chunk.py` added. The vault also became a git repo this session — that is infrastructure, not cfc code, and lives at `<vault>/.git` → `~/vaults/wiki.git` via a `gitdir:` pointer.
-- **Before that:** routines, sessions 2 **and 3** of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `:routine` / `:routine new` / `:routine <name>`, the run log, and `test_routines`. Then `mover.py` + `:outbox` / `:file`, verified end to end: a throwaway routine proposes a file into the outbox, `:file` re-validates the destination and moves it. **The routines handover is now fully discharged.** The scheduler is the next piece and is deferred by design, not forgotten — `run_routine` is already the entry point it will call.
-- **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`:remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `:updatedb` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
+- **Before that:** routines, sessions 2 **and 3** of 3 (see `CHANGELOG.md`). `routines.py` + `runner.py` + `/routine` / `/routine new` / `/routine <name>`, the run log, and `test_routines`. Then `mover.py` + `/list outbox` / `/file`, verified end to end: a throwaway routine proposes a file into the outbox, `/file` re-validates the destination and moves it. **The routines handover is now fully discharged.** The scheduler is the next piece and is deferred by design, not forgotten — `run_routine` is already the entry point it will call.
+- **Before that:** the write substrate (`context.py`, `write_file`, `TOOLS_AUTO_APPROVE` deleted) and the wiki-DB migration (see `CHANGELOG.md` for the step-by-step). Recall now runs over a distilled Obsidian **wiki** instead of the Anthropic export: embeddings moved to self-hosted `bge-m3` (LM Studio, `EMBED_*`); `import_wiki.py` + a `source` column on chunks; `MAX_DISTANCE` re-measured to **1.024** on the wiki corpus; `search`/`recall`/`/remember` repointed wiki-only with id citations; a fresh wiki-only `chat.db` (old one archived to `~/.cfc/chat-archive-pre-wiki-20260719.db`); and per-turn **auto-embed** + `/update db` so the growing chat log indexes as `source='chat'` for a future hybrid. Before that: colored speaker panels on both turn paths, reasoning on the tool path, `prompt_toolkit` input editor, thinking-model reasoning + empty-completion retry.
 - **Tool-path reasoning is middle-elided** (`agent.REASONING_HEAD_LINES`/`REASONING_TAIL_LINES`, 6+10) rather than printed in full. A tool turn prints one panel per loop iteration, so a verbose thinking model could push its own conclusion off the top of the scrollback. Head *and* tail, not just tail: the opening lines are usually "what am I about to do", which is the part worth reading beside the tool call it explains. Nothing is lost that was ever kept — reasoning is presentation-only on both paths.
 - **Unblocked (v0.2):** recall was returning nothing for good queries; the floor is fixed and the discrepancy is explained (see Retrieval tuning). A memory-pass routine is no longer blocked on it. **One caveat survives and is not fixed:** zero hits and "nothing worth reporting" still produce **identical output**, so a nightly digest would look like it was working while doing nothing. A routine built on recall should fail loudly on zero hits rather than assume the floor protects it.
 - **Backlog (parked, DB-flavored):** the dangling `session_id` is **solved and repaired** (2026-07-23) — it was never `import_anthropic.py` and was never moot on the wiki db; see the index-is-downstream section. What remains parked is the *structural* fix: real `ON DELETE CASCADE`, which SQLite cannot add without rebuilding the table, and the duplicated vector-delete in `import_wiki.clear_chunks_for_message`. Both belong to the DB-layer rework.
 - **DB-layer rework is anticipated** — treat the chunk/vector schema as in flux. `TARGET_TOKENS`/`OVERLAP`/`CHARS_PER_TOK` are naive (char-based); the design note "SQLite stays the source of truth, sqlite-vec is an index over it" is the intended shape.
-- **Constraints that are choices, not bugs:** streaming off under tools; tool calling needs a model in `TOOLS_MODELS` (verified against nano-gpt, not assumed); `:grep` and history search are substring (`LIKE`), FTS5 a possible upgrade; sessions are linear (no branching).
+- **Constraints that are choices, not bugs:** streaming off under tools; tool calling needs a model in `TOOLS_MODELS` (verified against nano-gpt, not assumed); `/search` and history search are substring (`LIKE`), FTS5 a possible upgrade; sessions are linear (no branching).
