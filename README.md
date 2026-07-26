@@ -138,12 +138,29 @@ For **Windows Terminal** instead of the plain console — better fonts, better
 colours, box-drawing characters that render:
 
 ```
-wt.exe -p Ubuntu wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
+wt.exe -p "Command Prompt" -- C:\Windows\System32\wsl.exe -d Ubuntu --cd ~/projects/cfc -- ./launch.sh
 ```
+
+Two things about this command that aren't obvious and will bite you if you
+"simplify" them back to the intuitive version:
+
+- **`-p "Command Prompt"`, not `-p Ubuntu`.** The `Ubuntu` profile is
+  WSL-backed and does its own internal distro activation; pairing it with an
+  explicit `wsl.exe -d Ubuntu` in the same commandline makes the two lookups
+  collide and fail with `WSL_E_DISTRO_NOT_FOUND`. Any non-WSL profile works
+  here — it only supplies terminal chrome, not what actually runs.
+- **The `--` is load-bearing.** `wt.exe` parses its own arguments first and
+  will strip quoting meant for the command after it if `--` isn't there to
+  stop that parsing.
 
 If a window closes instantly, that's the console exiting with the process —
 `launch.sh` holds it open on a non-zero exit, so anything that vanishes silently
 exited cleanly.
+
+`launch.sh` sets `COLORTERM=truecolor` itself when `WT_SESSION` shows it's
+really running under Windows Terminal — the shortcut execs the script
+directly, so `.bashrc` never runs and would otherwise leave color detection
+falling back to 256-colour, which bands the splash.
 
 ## The hub
 

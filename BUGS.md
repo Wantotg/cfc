@@ -22,6 +22,33 @@ now; migrate them if it ever matters which list they're on.
 
 ---
 
+## The plain-console Windows shortcut still bands the splash
+
+**Found:** 2026-07-22, reported by Cas. Fixed for the Windows Terminal
+shortcut (see `CHANGELOG.md`, 2026-07-26); this entry is the other one.
+
+**Symptom:** `wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"`
+(no Windows Terminal in front of it) draws the splash background at visibly
+degraded colour depth. The Windows Terminal shortcut in `README.md` draws it
+correctly.
+
+**Why this one wasn't chased down:** `bash -lc` here is a login shell, so
+`~/.bashrc`'s own unconditional `export COLORTERM=truecolor` (not part of this
+repo) already fires — unlike the Windows Terminal shortcut, which needed
+`launch.sh` to set it. So this shortcut's problem is plausibly the opposite
+of that one: truecolor is being asserted onto a console that may not
+genuinely support it (legacy conhost), producing the same banding symptom
+from the other direction. Whether that's really conhost, or Windows 11's
+default-terminal-host delegation silently substituting something else, was
+never measured for this path.
+
+**Not urgent:** the Windows Terminal shortcut is the documented entry path.
+If this one gets revisited, the fix is almost certainly gating `~/.bashrc`'s
+`COLORTERM` export on `WT_SESSION` the same way `launch.sh` now does — but
+that's a personal dotfile change, not something to encode in this repo.
+
+---
+
 ## A provider 400 on tool turns, cause not yet established
 
 **Found:** 2026-07-23, reported by Cas. Two candidate causes were fixed in v0.5

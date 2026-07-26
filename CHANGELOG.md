@@ -23,6 +23,62 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-26 — Fix the Windows shortcut splash quality and wt.exe launch failure
+Both desktop shortcuts were broken as one story: the shortcut in the wrong
+terminal worked, the shortcut in the right terminal didn't launch. Root-caused
+both with measurements rather than guesses; fixed launch.sh and the shortcut
+target, no application code touched.
+- Files: launch.sh
+- Status: shipped
+- Commit: pending
+
+**The splash bands because `launch.sh` runs before `.bashrc` ever does.** The
+shortcut execs `launch.sh` directly via its shebang — no login shell, no rc
+file — so `COLORTERM` is unset even when the real terminal is Windows
+Terminal, which is genuinely truecolor-capable. Rich then falls back to
+256-colour detection from `TERM=xterm-256color` alone, and `splash._resize`'s
+box-average resample bands on a 256-colour palette exactly as its own
+docstring predicts for a non-truecolor console.
+
+Measured, not assumed, through the actual shortcut-invocation path (a
+throwaway `diag.sh` printing `COLORTERM`/`TERM`/`WT_SESSION`/
+`rich.console.Console().color_system`, deleted after use):
+
+| | COLORTERM | color_system |
+|---|---|---|
+| shortcut (bare exec, before fix) | *(unset)* | `256` |
+| shortcut (bare exec, after fix) | `truecolor` | `truecolor` |
+
+`WT_SESSION` is set by Windows Terminal itself and survives through `wsl.exe`
+regardless of login/non-login shell — confirmed present in the bare-exec
+shortcut path — so it's a safe signal that the terminal really can render
+truecolor, unlike forcing `COLORTERM=truecolor` unconditionally (which would
+produce garbage on a genuinely non-truecolor console, e.g. legacy conhost
+without Windows Terminal in front of it). `launch.sh` now exports it only when
+`WT_SESSION` is present and `COLORTERM` isn't already set.
+
+**The `wt.exe` launch failure was a WSL profile collision, not a cfc bug.**
+`wt.exe -p Ubuntu -- wsl.exe -d Ubuntu ...` pairs a WSL-backed Windows
+Terminal profile (which does its own internal distro activation) with a
+manually specified `wsl.exe -d Ubuntu` override; the two lookups collide and
+the manual one fails with `WSL_E_DISTRO_NOT_FOUND`. Fix: front the explicit
+`wsl.exe` commandline with a non-WSL profile instead (`-p "Command Prompt"`)
+— tab chrome is cosmetic and doesn't affect what actually runs. Also needed
+`--` before the trailing commandline, since `wt.exe` parses its own argument
+line before handing the remainder to `CreateProcess`, and will otherwise
+strip quoting meant for the inner command.
+
+**Not fixed, and machine-specific rather than a repo defect:** the *other*
+shortcut (bare `wsl.exe -d Ubuntu --cd ~ -- bash -lc "..."`, no Windows
+Terminal) still bands. That one *does* run a login shell, so `~/.bashrc`'s
+own unconditional `export COLORTERM=truecolor` (line ~126, not part of this
+repo) fires — but in whatever console actually hosts that shortcut, forcing
+truecolor may be the same lie in the other direction: asserting a capability
+the host can't actually render. Whether that console is legacy conhost or
+gets silently upgraded by Windows 11's default-terminal-host delegation
+wasn't established, and isn't worth chasing — the Windows Terminal shortcut
+above is the documented, working entry path.
+
 ## 2026-07-26 — Fix four defects from the 0.8 testing pass
 Four unrelated things that were all wrong rather than merely owed, from Cas's
 `00 inbox/testing 0.8` scratchpad. No new claims — the v0.8.1 half of that list.

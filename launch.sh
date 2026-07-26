@@ -15,6 +15,17 @@
 
 set -u   # not -e: a failing preflight must not stop cfc from opening.
 
+# A bare, non-login exec (the shortcut path) never sources .bashrc, so
+# COLORTERM is unset even though the real terminal is Windows Terminal —
+# rich then under-detects 256-color and splash._resize's box-average
+# resample bands. WT_SESSION is set by Windows Terminal itself and survives
+# through wsl.exe regardless of shell type, so it's a safe signal that the
+# terminal really is truecolor-capable (unlike forcing this unconditionally,
+# which would produce garbage on legacy conhost).
+if [ -n "${WT_SESSION:-}" ] && [ -z "${COLORTERM:-}" ]; then
+    export COLORTERM=truecolor
+fi
+
 # The repo is wherever this script lives, resolved through symlinks so the
 # shortcut can point at a link in ~/bin if that's tidier.
 SCRIPT="${BASH_SOURCE[0]}"
