@@ -151,7 +151,8 @@ Current configuration:
   Session model: glm-5.2
   Auto-export:   on
   Stream usage:  on
-  Vault path:    <ROOT>/tests/_fixture_vault
+  Vault root:    <ROOT>/tests/_fixture_vault
+  Export path:   <ROOT>/tests/_fixture_vault
   Prompts dir:   <ROOT>/tests/_fixture_prompts
   Quick models:  glm-5.2, fixture/tool-model
 

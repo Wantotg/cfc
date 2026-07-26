@@ -39,6 +39,13 @@ ALIASES = {
     "h": "help",
     "?": "help",
     "db": "database",
+    # A plural the hand types by reflex, because the command lists several of
+    # them. Worth a line here rather than nothing: an unrecognised verb is not
+    # an error, it falls through to the model (see run_session), so `/routines`
+    # cost an API call and a confused answer about routines. The other verbs
+    # were checked for the same trap — the rest of the plurals people reach for
+    # (`prompts`, `models`, `tags`) are already caught by RETIRED.
+    "routines": "routine",
 }
 
 

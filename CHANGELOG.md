@@ -23,6 +23,112 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-26 — v0.8.2: the embedder fails fast, and four papercuts from the testing pass
+Everything here came out of Cas's 0.8.1 testing pass. Two were defects and the
+rest were polish; nothing new is claimed, which is the point of a patch.
+- Files: embed.py, search.py, recall.py, commands.py, parse.py, ui.py,
+  config.example.py, tests/test_embed.py, tests/test_model.py,
+  tests/test_hub.py, tests/test_parse.py, tests/golden.py
+- Status: shipped
+- Commit: pending
+
+**`/recall` with the embedding server off took four minutes to say so.**
+`embed._post` passed a single `timeout=60` to httpx — which sets *connect*,
+*read*, *write* and *pool* to the same value. Those measure different things:
+"is anything there" against "is it finished yet". One number has to serve the
+slower of the two, so every one of four attempts sat out the full read budget
+just to discover nothing was listening. Split now: **connect 5s, read 60s**, so
+a big import keeps the patience it needs and a dead server is found in seconds.
+Measured end to end against a closed port: **11.1s, down from ~240s.** The live
+endpoint answers in 0.18s, so the connect budget is generous by 27×.
+
+**And a refused connection is no longer retried like a busy one.** A 429 or a
+503 is a transient and waiting is the right answer; nothing listening on the
+port is a *state*, and asking four times gets the same answer four times. Two
+budgets: `_RETRIES = 4` for a server that is there, `_DOWN_RETRIES = 2` for one
+that isn't — two rather than one because a call can catch a restart. The old
+loop also slept on its way out, backing off after the final attempt before
+raising; it doesn't now.
+
+**The spinner says something.** A spinner alone cannot distinguish "thinking"
+from "nothing is listening", which is what made an honest wait read as a hang.
+`embed_texts` takes an optional `on_retry` callback, threaded through `search`
+and `recall`, and the interactive commands pass one. It is a callback rather
+than a print because **embed.py has no console and must not grow one** —
+routines and imports run headless. Same shape as `agent_turn`'s `touched`
+collector, for the same reason: the signature stays honest about who cares.
+
+**Ctrl-C during a recall no longer takes the app with it.** `do_recall` caught
+`Exception`; `KeyboardInterrupt` derives from `BaseException`, so it escaped the
+`Live` context and the session loop. All three spinner sites now catch it and
+return to the prompt — `/recall`, `/remember` and `/update db`. The last one
+says the index can be finished by running it again, which is true and worth
+saying: `backfill.embed_new` commits per batch and re-derives its work list from
+chunks lacking vectors, so an interrupted index is partial, not corrupt.
+Verified by sending a real SIGINT mid-call rather than raising one.
+
+**An unrecognised model now offers the near misses.** `/model minimax 3` used to
+print "setting it anyway", 400 on the next turn and auto-revert. It lists what
+you probably meant, with `[enter]` to force the raw query through anyway —
+forcing has to stay possible, because `MODELS` is not exhaustive and a valid
+unlisted id is a legitimate thing to type. This closes the "should `/model` be
+stricter?" question `BACKLOG.md` parked for Cas, and neither of the two options
+that entry offered is what he chose.
+
+`suggest_models` is separate from `resolve_model` and looser (0.6 vs 0.7),
+because a suggestion is offered rather than acted on. Two strategies, because
+difflib alone misses the obvious case: `minimax 3` folds to `minimax3` and
+scores below any usable cutoff against `minimaxminimaxm3` — a short query
+against a long id always does — but the word `minimax` is a plain substring of
+every minimax id. So words first, difflib's near-misses second. The cutoff was
+measured over the eight ids in the live `MODELS`: real near-misses land at
+0.67–0.69, pure noise reaches 0.47, and 0.6 sits in the gap with room on both
+sides. **An empty list stays a real answer** — `shanhaig` resembles nothing in
+the pool and still passes through, because a picker that invents a suggestion
+for input matching nothing is one people stop reading.
+
+**`/routines` reached the model.** It wasn't an alias, and an unrecognised verb
+doesn't error — it falls through to the model, so the plural cost an API call
+and a confused answer. One line. `tests/test_parse.py` used `/routines` as its
+example of the prefix trap (`/tagfoo` is not `/tag`); the guard is kept and its
+example moved to `/helper`, since a deliberate alias is the opposite of an
+accidental prefix match.
+
+**`VAULT_PATH` is not the vault, and now something is.** Chasing "`/list
+routine` prints the whole mount path" turned up that there is no vault-root
+setting at all: `ROUTINE_DIR`, `WIKI_DIR`, `JOURNAL_DIR` and `MOVE_ROOTS` are
+each configured independently with a `<vault>/…` comment describing a root that
+existed only in the docs, and `VAULT_PATH` — which `/config` labelled "Vault
+path:" — is the *export destination*, on this machine not even inside the vault.
+New `VAULT_ROOT`, **display only**, read with `getattr` so a config written
+before today keeps working, and empty means "print paths in full". `/config`
+now prints both lines under their real names.
+
+`ui.vault_relative` does the trimming, next to `format_ts` and for the same
+reason — `ui.py` is the bottom of the dependency graph, so it takes the root as
+an argument rather than importing config. It shortens relative to the vault's
+*parent*, keeping the vault's own name, and **leaves a path outside the root
+alone**: a directory configured somewhere unexpected should look different
+rather than be trimmed until it reads as local.
+
+**Testing.** A new `tests/test_embed.py` (16 assertions) fakes httpx wholesale
+rather than pointing at a closed port — eleven seconds per run, and the OS
+decides whether a dead port refuses or drops, while what is being tested is our
+classification. It pins the timeouts *as a pair* rather than as two numbers, so
+retuning stays free and merging them back into one does not. Both halves were
+confirmed to fail with the fix disabled: 2 assertions on the merged timeout, 4
+on the removed dead-server branch. `test_model.py` gained the near-miss list and
+all four of its exits, `test_hub.py` gained `vault_relative` beside `format_ts`.
+
+The golden baseline moved by exactly two lines, both intended (`Vault path:` →
+`Vault root:` + `Export path:`), and `VAULT_ROOT` is now **pinned to the fixture
+vault** in `golden.py`. That is not hypothetical tidiness: unpinned, the
+baseline said `(not set)` and would have failed the moment Cas filled his config
+in — the same class as the API key and the model lists, a `check` failure on a
+line that says nothing about the source.
+
+---
+
 ## 2026-07-26 — Fix the Windows shortcut splash quality and wt.exe launch failure
 Both desktop shortcuts were broken as one story: the shortcut in the wrong
 terminal worked, the shortcut in the right terminal didn't launch. Root-caused
@@ -30,7 +136,7 @@ both with measurements rather than guesses; fixed launch.sh and the shortcut
 target, no application code touched.
 - Files: launch.sh
 - Status: shipped
-- Commit: pending
+- Commit: 203f8a8
 
 **The splash bands because `launch.sh` runs before `.bashrc` ever does.** The
 shortcut execs `launch.sh` directly via its shebang — no login shell, no rc

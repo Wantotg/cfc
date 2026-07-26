@@ -12,6 +12,7 @@
 import difflib
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from rich.live import Live
@@ -22,6 +23,12 @@ from rich.table import Table
 from rich.text import Text
 
 from config import API_BASE, API_KEY, MODEL, VAULT_PATH, AUTO_EXPORT
+# Display only, and optional: a config written before 0.8.2 doesn't have it, and
+# an empty value means "print paths in full". Read with getattr rather than
+# imported by name so an older config.py keeps working untouched — config.py is
+# gitignored, so upgrading is a hand edit and must never be mandatory.
+import config as _config
+VAULT_ROOT = getattr(_config, "VAULT_ROOT", "")
 
 try:
     from config import MODELS
@@ -89,7 +96,7 @@ except ImportError:
 
 from ui import (console, context_style, context_thresholds, make_bar,
                 short_model,
-                make_snippet)
+                make_snippet, vault_relative)
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
                 list_attachments, delete_message)
 from parse import PREFIX
@@ -376,11 +383,109 @@ def resolve_model(query, pool=None):
     return ("none", None)
 
 
+# Looser than resolve_model's 0.7, because a suggestion is only ever offered,
+# never acted on. Measured over the eight ids in Cas's MODELS (2026-07-26):
+# real near-misses land at 0.67 ('minimax 3') and 0.69 ('deepseek pro'), while
+# pure noise ('zzzznothing') reaches 0.47 against `glm-5.2:thinking` — difflib
+# finds *something* for almost any input, which is why this can't just be 0.
+# 0.6 sits in the gap with room on both sides rather than shaving one edge.
+# Re-measure against a different MODELS list before trusting the number: like
+# every tuned constant here, half of what it measures is the corpus.
+_SUGGEST_CUTOFF = 0.6
+_SUGGEST_MAX    = 5
+
+
+def suggest_models(query, pool=None):
+    """Loose candidates for a query that `resolve_model` matched to nothing.
+
+    Pure, like `resolve_model`, and separate from it on purpose: that function
+    decides what a query *is*, and its 0.7 cutoff is deliberately tight because
+    everything it returns gets acted on. This one only decides what to *offer*,
+    so it can afford to be generous — the worst case is an extra line on screen,
+    and the user is choosing from the list either way.
+
+    **Two strategies, because difflib alone misses the common typo.** Cas's
+    `minimax 3` folds to `minimax3`, which scores far below any usable cutoff
+    against `minimaxminimaxm3` — a short query against a long id always does,
+    since difflib measures similarity over the whole string. But the word he
+    typed, `minimax`, is a plain substring of every minimax id. So: match the
+    longest words first, then union in difflib's near-misses for the case where
+    no whole word survived the typo. Config order is preserved, so the list
+    reads the same way `/list models` does — which is why `minimax-m3:thinking`
+    comes before `minimax-m3` rather than the other way round.
+
+    **An empty list is a real answer** and the caller must keep honouring it: a
+    query with no near miss (`shanhaig`, which is not a typo of anything in the
+    pool) still passes through to the old "setting it anyway" path. Inventing a
+    suggestion for input that resembles nothing is how a picker teaches people
+    to stop reading it.
+    """
+    pool = known_models() if pool is None else pool
+    nq = _norm(query)
+    if not nq or not pool:
+        return []
+    hits = []
+    words = sorted((_norm(w) for w in re.split(r"[^0-9A-Za-z]+", query) if w),
+                   key=len, reverse=True)
+    for w in words[:2]:
+        if len(w) < 3:          # 'm3' matches half the world; not a signal
+            continue
+        hits.extend(m for m in pool if w in _norm(m) and m not in hits)
+    norms = {_norm(m): m for m in pool}
+    for c in difflib.get_close_matches(nq, list(norms), n=_SUGGEST_MAX,
+                                       cutoff=_SUGGEST_CUTOFF):
+        if norms[c] not in hits:
+            hits.append(norms[c])
+    return hits[:_SUGGEST_MAX]
+
+
+def _model_labels(options):
+    """Display names for a list of model ids — short form where it stays
+    unambiguous, full id where it wouldn't. Nobody types the vendor prefix and
+    it doubles the length of every line, but two vendors shipping the same
+    model name is exactly the case a picker exists for, and a list with the
+    same word twice is worse than a long one."""
+    short = [short_model(m) for m in options]
+    return options if len(set(short)) != len(short) else short
+
+
 def _confirm_model(model):
     """Enter (empty) or y confirms; anything else cancels."""
-    ans = input(f"  did you mean {model}? "
-                f"[Enter] yes / [n] no: ").strip().lower()
+    ans = input(f"  did you mean {short_model(model)}? "
+                f"[enter] yes / [n] no: ").strip().lower()
     return ans in ("", "y", "yes")
+
+
+def _offer_models(query, options):
+    """A query that matched nothing, with near misses to choose from.
+
+    Returns a model id, or the raw query when the user pushes it through, or
+    None if they cancelled. **Forcing it through has to stay possible** —
+    `MODELS` is not exhaustive and a valid unlisted id is a legitimate thing to
+    type, which is why this is a suggestion rather than the rejection the
+    backlog originally proposed. It just stops being the *silent* default: the
+    typo case is now one keypress instead of a provider 400 and an auto-revert.
+    """
+    console.print(f'  "{query}" is not a recognized model. Did you mean:')
+    for i, label in enumerate(_model_labels(options), 1):
+        console.print(f"    [{i}] {label}")
+    raw = input(f'  pick a number, [enter] to use "{query}" anyway, '
+                f'or [c] to cancel: ').strip().lower()
+    if not raw:
+        console.print(f"  '{query}' isn't in your configured models — "
+                      f"setting it anyway", style="dim")
+        return query
+    if raw in ("c", "cancel"):
+        return None
+    try:
+        idx = int(raw)
+    except ValueError:
+        console.print("  not a number — cancelled", style="dim")
+        return None
+    if 1 <= idx <= len(options):
+        return options[idx - 1]
+    console.print("  out of range — cancelled", style="dim")
+    return None
 
 
 def _pick_model(query, options):
@@ -420,6 +525,9 @@ def select_model(query):
         return data if _confirm_model(data) else None
     if kind == "many":
         return _pick_model(query, data)
+    near = suggest_models(query)
+    if near:
+        return _offer_models(query, near)
     console.print(f"  '{query}' isn't in your configured models — "
                   f"setting it anyway", style="dim")
     return query
@@ -459,7 +567,11 @@ def show_config(current_model):
                   f"{'on' if AUTO_EXPORT else 'off'}")
     console.print(f"  Stream usage:  "
                   f"{'on' if STREAM_USAGE else 'off'}")
-    console.print(f"  Vault path:    {VAULT_PATH}")
+    # This said "Vault path" and pointed at VAULT_PATH, which is the *export
+    # destination* — a different folder entirely, and on this machine not even
+    # under the vault. Two lines now, each named for what it actually holds.
+    console.print(f"  Vault root:    {VAULT_ROOT or '(not set)'}")
+    console.print(f"  Export path:   {VAULT_PATH}")
     console.print(f"  Prompts dir:   {get_prompts_dir()}")
     if MODELS:
         console.print(f"  Quick models:  "
@@ -990,6 +1102,19 @@ def memory_unavailable(err):
                   "chunks/vec_chunks table.\n")
 
 
+def embed_retry_note(attempt, attempts, detail):
+    """Say something when an embedding call is being retried.
+
+    Handed to `embed_texts(on_retry=...)` by the interactive memory commands.
+    A spinner cannot distinguish "thinking" from "nothing is listening", which
+    is the whole reason a slow embedder read as a hang. Ctrl-C is named because
+    it is the only way out while the call blocks — the REPL is not reading
+    input, so there is no command to type.
+    """
+    console.print(f"  [dim]no answer from the embedder yet — retry "
+                  f"{attempt + 1} of {attempts} · Ctrl-C to cancel[/dim]")
+
+
 def do_recall(query, k=MEMORY_K):
     """Grounded, cited answer synthesised from past conversations.
     Prints only — deliberately has no effect on the live session."""
@@ -1006,7 +1131,11 @@ def do_recall(query, k=MEMORY_K):
             console=console,
             refresh_per_second=8,
         ):
-            answer, hits = recall(str(DB_PATH), query, k=k)
+            answer, hits = recall(str(DB_PATH), query, k=k,
+                                  on_retry=embed_retry_note)
+    except KeyboardInterrupt:
+        console.print("\n[dim]recall cancelled.[/dim]\n")
+        return
     except Exception as e:
         console.print(f"\n[recall failed] {e}\n")
         return
@@ -1075,7 +1204,11 @@ def do_remember(conn, session_id, history, injected, query,
             console=console,
             refresh_per_second=8,
         ):
-            hits = search(str(DB_PATH), query, k=k, provider="wiki")
+            hits = search(str(DB_PATH), query, k=k, provider="wiki",
+                          on_retry=embed_retry_note)
+    except KeyboardInterrupt:
+        console.print("\n[dim]memory search cancelled.[/dim]\n")
+        return
     except Exception as e:
         console.print(f"\n[memory search failed] {e}\n")
         return
@@ -1197,6 +1330,12 @@ def do_updatedb(arg=""):
             console=console, refresh_per_second=8,
         ):
             made, added = update_index(str(DB_PATH))
+    except KeyboardInterrupt:
+        # Chunks and vectors are committed as they go, so an interrupted index
+        # is partial, not corrupt — running it again picks up where it stopped.
+        console.print("\n[dim]index update cancelled — run /updatedb again to "
+                      "finish.[/dim]\n")
+        return
     except Exception as e:
         console.print(f"\n[updatedb failed] {e}\n")
         return
@@ -1613,7 +1752,7 @@ def show_routines():
         return
 
     console.print()
-    console.print(f"Routines ({routine_dir()})")
+    console.print(f"Routines ({vault_relative(routine_dir(), VAULT_ROOT)})")
     if not found and not bad:
         console.print("  (none yet — '/routine new' to make one)", style="dim")
         console.print()

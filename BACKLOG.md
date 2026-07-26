@@ -8,6 +8,68 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
+## ~~`/routines` isn't an alias, so it reaches the model.~~ — FIXED (v0.8.2, 2026-07-26)
+
+**Fixed:** one line in `parse.ALIASES`. The other verbs were checked for the
+same trap while it was open — the remaining plurals a hand reaches for
+(`prompts`, `models`, `tags`) are already caught by `RETIRED`, which is due for
+deletion in v0.9. **Worth a thought when it goes:** those words stop being
+commands and become prose again, so `/models` will start reaching the model
+exactly the way `/routines` did. This entry is the argument for promoting a
+couple of them to aliases rather than simply deleting the dict.
+
+Also note `tests/test_parse.py` used `/routines` as its example of the prefix
+trap (`":attached".startswith(":attach")`). The guard is kept; its example moved
+to `/helper`, because a deliberate alias is the opposite of the accidental
+prefix match it was guarding against.
+
+Original report below.
+
+**Found:** 2026-07-26, Cas's 0.8.1 testing pass.
+Description: `parse.ALIASES` has three entries and `routines` is not one of
+them, so `/routines` is an unrecognised verb — which by invariant 13 is not an
+error message but a **fall-through to the model**. Typing the plural costs an
+API call and returns a confused answer about routines rather than the list.
+Working as designed and still the wrong outcome for an obvious plural.
+Suggestion: one line in `ALIASES`. Worth a glance at the other verbs for plurals
+a hand reaches for by reflex while it's open.
+
+## ~~`/list routine` prints the vault's absolute path.~~ — FIXED (v0.8.2, 2026-07-26)
+
+**Fixed, and it turned up something bigger than the display.** This entry said
+to decide once whether cfc shows paths relative to `VAULT_PATH`. It can't:
+**`VAULT_PATH` is the export destination, not the vault** — on Cas's machine
+`/mnt/c/Users/disse/backup/cfc/cfc_chat_backup`, not under the vault at all —
+and `/config` was labelling it "Vault path:". There was no vault-root setting
+anywhere. `ROUTINE_DIR`, `WIKI_DIR`, `JOURNAL_DIR` and `MOVE_ROOTS` are each
+configured independently, every one of them commented `<vault>/…`, describing a
+root that existed in the documentation and nowhere in the code.
+
+So: a new **`VAULT_ROOT`**, display-only, read with `getattr` so an older
+`config.py` keeps working, empty meaning "print in full". `ui.vault_relative`
+does the trimming — one implementation, as this entry asked, living next to
+`format_ts` because `ui.py` is the bottom of the dependency graph and takes the
+root as an argument rather than importing config. `/config` prints both lines
+under their real names now.
+
+**Still only used in one place**, deliberately. Every other path cfc prints was
+left alone rather than swept: some of them are the answer to "where exactly is
+this", where the full path is the point. The helper is there when a site wants
+it.
+
+Original report below.
+
+**Found:** 2026-07-26, Cas's 0.8.1 testing pass.
+Description: the header reads
+`Routines (/mnt/c/Users/disse/cooking for cats/06 metadata/routines)` — the
+whole WSL mount prefix for a path whose only informative part is the tail. Cas
+asked for `(/cooking for cats/06 metadata/routines)`.
+Suggestion: display vault-relative. Note this is display only and there is more
+than one such header — decide once whether cfc shows paths relative to
+`VAULT_PATH` generally, and if so put the shortener somewhere shared rather than
+formatting at each site. A second copy of "trim the prefix" is how one gets fixed
+and the other doesn't.
+
 ## Three timestamp sites still print UTC. v0.8.1, 26-07-2026
 **Found:** 2026-07-26, fixing the hub's clock (`CHANGELOG.md`). `ui.format_ts`
 now converts, and `hub.py` was its only caller — these three read the db
@@ -91,13 +153,55 @@ first turn that errors on it backs out to the model you were on, with
 valid unlisted model is untouched. See `main.py:revert_bad_model` /
 `tests/test_model_revert.py`.
 
-**Still open, and now genuinely optional — should `:model` be stricter?**
-`select_model` still *sets* an unrecognised id (with a dim note); the auto-revert
-just means you're no longer stranded on it. Tightening selection itself (reject
-unless in `MODELS`, or a stricter fuzzy cutoff) is a **design decision for Cas**,
-not a defect — and the pressure to make it is lower now that the failure
-self-corrects. Parked until he calls it. `'deepseek pro'` / `'shanhaig'` below
-are typos that also missed the fuzzy cutoff.
+**Should `:model` be stricter? — CALLED BY CAS, BUILT IN v0.8.2 (2026-07-26).**
+Shipped as described below, with two notes worth keeping. The suggestion list
+is a **separate function from `resolve_model`** and a looser one (0.6 against
+0.7), because a suggestion is offered rather than acted on — and it needs two
+strategies, since difflib alone scores `minimax3` below any usable cutoff
+against `minimaxminimaxm3`. The `[esc]` half of the ask was **not** built: see
+the note at the end of this entry.
+
+
+Neither of the two options this entry offered. Rather than rejecting an
+unrecognised id or silently setting it, **show the near misses and let the
+unrecognised one through on a deliberate keypress**:
+
+```
+"minimax 3" is not a recognized model. Did you mean:
+  [1] minimax-m3
+  [2] minimax-m3:thinking
+Press [enter] to use "minimax 3" anyway
+```
+
+That keeps the escape hatch a valid-but-unlisted model needs — which is why
+strict rejection was never right — while making the typo case one keystroke
+instead of a 400 and an auto-revert. The auto-revert stays as the backstop for
+what gets through.
+
+Two wording fixes ride with it, same testing pass:
+- The existing confirm reads
+  `did you mean deepseek/deepseek-v4-pro? [Enter] yes / [n] no:`. Drop the
+  vendor prefix — nobody types it and it doubles the length of the line — and
+  make the decline key `[esc]` rather than `[n]`, so the two prompts agree
+  about how you back out.
+- Lowercase `[enter]` consistently.
+
+**`[esc]` is still open, and it is not a wording change.** The vendor prefix is
+gone and `[enter]` is lowercased, but every prompt in cfc is built on plain
+`input()`, which reads a *line* — it cannot see a bare Esc at all. Detecting one
+needs a keypress reader, and Esc is the ambiguous key to pick for it: terminals
+send it as the prefix of every arrow key, so a bare Esc is only distinguishable
+by a timeout. So the decline key is still `[c]`/`[n]`.
+
+Worth doing properly or not at all, because the value is **consistency across
+every prompt**, not this one: the hub picker, `/file`, `/wiki`'s pickers and the
+model prompts should all back out the same way. That makes it a v0.9-or-later
+job with `read_input` in `ui.py`, and it has to respect the standing decision
+that prompt_toolkit and rich never drive the terminal at once. Recorded here so
+the ask isn't lost.
+
+`'deepseek pro'` / `'shanhaig'` below are typos that also missed the fuzzy
+cutoff; the numbered list is what they should have got.
 
 Original report below.
 
@@ -125,6 +229,19 @@ notes whose `created:` date is covered by that run move to a processed folder.
 Deliberately not the model's job (it has a right answer) and deliberately not
 part of v0.7, which had enough moving parts.
 
+**Cas's call (2026-07-26): manual trigger first, `/clear notes`.** Not the
+automatic post-run move above, and the reason is the one thing that entry
+missed — **`00 inbox/notes` is read by more than one routine**, so "covered by
+that run" isn't ownership. The first routine to finish would move notes the
+second one hasn't read yet, and the second would then be silently short of
+input, which is exactly this project's worst failure shape. A human command
+sidesteps the whole question: by the time you type it, the loop and the script
+have already dealt with the outbox, so nothing is still owed the notes.
+`notes` needs no qualifier — the inbox one is the only one that means anything.
+Leaves open, and worth deciding when it's built: what `/clear` does with a note
+no routine ever read, and whether "clear" moves or deletes (it should move —
+`LOSER_DIR` set the precedent that a discarded thing keeps its body).
+
 ## Obsidian's template syntax and cfc's placeholders are both "{{ }}". 0.8-adjacent, 24-07-2026
 **Found:** 2026-07-24, adding the cadence placeholders.
 Description: `runner.PLACEHOLDERS` substitutes `{{date}}`, `{{dates}}`,
@@ -137,6 +254,15 @@ would then write today's date into a new note where the placeholder belongs.
 Suggestion: an escape (`\{{date}}`), or confine substitution to a marked region.
 Don't build it on spec — the failure is visible the first time it happens and
 the fix is one line. Recorded so it isn't a surprise.
+
+**Cas's call (2026-07-26): change the vault, not the code.** The Obsidian
+properties are there to be inspected, not templated, so converting them to plain
+text is a small one-time edit of a handful of markdown files and it removes the
+collision at the source. Cheaper than an escape syntax nobody would remember,
+and it belongs to the vault repo rather than this one — `cfc ships the
+mechanism, the vault ships the words`. **cfc's side of this is nothing**, which
+is the point: leave `PLACEHOLDERS` exact-matching as it is. Keep the entry until
+the vault edit has actually happened, because until then the trap is live.
 
 ## ":file" takes a number, not a title. 0.7 leftover, 24-07-2026
 **Found:** Cas's 0.6.2 testing pass.

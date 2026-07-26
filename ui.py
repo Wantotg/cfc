@@ -10,6 +10,7 @@
 # cycle.
 import datetime
 import sys
+from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -83,6 +84,34 @@ def format_ts(iso_str):
     if dt.tzinfo is not None:
         dt = dt.astimezone()
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def vault_relative(path, root):
+    """A vault path for *display*, without its machine-specific prefix.
+
+        /mnt/c/Users/disse/cooking for cats/06 metadata/routines
+        →                 /cooking for cats/06 metadata/routines
+
+    Relative to the vault's **parent**, not the vault itself, so the vault's own
+    name survives — on a machine with more than one vault, which folder you are
+    looking at is the informative half and the WSL mount point is the noise.
+
+    A path that is *not* inside the vault comes back unchanged, deliberately. A
+    routine directory configured somewhere else should look different from one
+    in the vault; trimming it to look local would hide exactly the surprise
+    worth seeing.
+
+    Takes the root as an argument rather than reading `config.VAULT_PATH`,
+    because this module imports no other cfc module and is the bottom of the
+    dependency graph — see `format_ts` above, which takes the same shape for
+    the same reason. Display only: never build a real path out of this.
+    """
+    if not root:
+        return str(path)          # unset is a valid answer: print it in full
+    try:
+        return "/" + str(Path(str(path)).relative_to(Path(str(root)).parent))
+    except (ValueError, OSError):
+        return str(path)
 
 
 # Context-usage thresholds, as a percentage of the model's claimed limit.

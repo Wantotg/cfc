@@ -27,37 +27,68 @@ except Exception:
 
 EMBED_DIM   = 1024
 _BATCH      = 100          # well under the 2048 cap; keeps requests small
-_TIMEOUT    = 60.0
-_RETRIES    = 4
 
-def _post(batch):
+# Two timeouts, not one. httpx's single `timeout=` sets connect, read, write and
+# pool to the same value, and those measure different things: "is anything
+# there" against "is it finished yet". One number has to serve the slower of the
+# two, which is why a dead server used to cost four minutes — every attempt sat
+# out the full 60s read budget just to discover nothing was listening.
+_CONNECT_TIMEOUT = 5.0     # a server on localhost answers in milliseconds
+_READ_TIMEOUT    = 60.0    # a 100-chunk batch, or a cold model load, legitimately takes this
+
+# Two retry budgets, for the same reason. A 429 or a 503 is a transient and
+# waiting is the correct response to it. A refused connection is a *state*:
+# asking again gets the same answer, so ask twice (in case of a restart mid-call)
+# and then stop rather than four times.
+_RETRIES      = 4
+_DOWN_RETRIES = 2
+
+def _post(batch, on_retry=None):
+    """One embeddings request, with retries.
+
+    `on_retry(attempt, attempts, detail)` is called after a failed attempt when
+    another is coming — the callback exists because embed.py has no console and
+    must not grow one: routines and imports run headless, so who says something
+    about a slow embedder is the caller's business, not this module's.
+    """
     import httpx  # lazy: only needed for the live call
     url = EMBED_BASE.rstrip("/") + "/embeddings"
     headers = {"Authorization": f"Bearer {EMBED_KEY}", "Content-Type": "application/json"}
     payload = {"model": EMBED_MODEL, "input": batch}
-    last = None
-    for attempt in range(_RETRIES):
+    timeout = httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT)
+    last, attempt, attempts = None, 0, _RETRIES
+    while attempt < attempts:
         try:
-            r = httpx.post(url, headers=headers, json=payload, timeout=_TIMEOUT)
+            r = httpx.post(url, headers=headers, json=payload, timeout=timeout)
             if r.status_code in (429, 500, 502, 503):
                 last = f"{r.status_code}: {r.text[:200]}"
-                time.sleep(2 ** attempt)   # exponential backoff
-                continue
-            r.raise_for_status()
-            data = r.json()["data"]
-            # preserve input order (API returns index field, but usually in-order)
-            data = sorted(data, key=lambda d: d.get("index", 0))
-            return [d["embedding"] for d in data]
+            else:
+                r.raise_for_status()
+                data = r.json()["data"]
+                # preserve input order (API returns index field, but usually in-order)
+                data = sorted(data, key=lambda d: d.get("index", 0))
+                return [d["embedding"] for d in data]
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            last = (f"no connection to {EMBED_BASE} ({type(e).__name__}) "
+                    f"— is the embedding server running?")
+            attempts = min(attempts, _DOWN_RETRIES)
         except httpx.HTTPError as e:
             last = str(e)
-            time.sleep(2 ** attempt)
-    raise RuntimeError(f"embeddings request failed after {_RETRIES} tries: {last}")
+        attempt += 1
+        if attempt >= attempts:
+            break                          # don't sleep on the way out
+        if on_retry:
+            on_retry(attempt, attempts, last)
+        time.sleep(2 ** (attempt - 1))     # exponential backoff
+    raise RuntimeError(
+        f"embeddings request failed after {attempt} "
+        f"{'try' if attempt == 1 else 'tries'}: {last}")
 
-def embed_texts(texts):
+def embed_texts(texts, on_retry=None):
     """Embed a list of strings, batching under the hood. Returns list of vectors."""
     out = []
     for i in range(0, len(texts), _BATCH):
-        out.extend(_post(texts[i:i+_BATCH]))
+        out.extend(_post(texts[i:i+_BATCH], on_retry=on_retry))
     return out
 
 if __name__ == "__main__":

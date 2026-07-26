@@ -78,10 +78,15 @@ def _connect(db_path):
     return db
 
 def search(db_path, query, k=8, kind=None, provider=None,
-           max_distance=MAX_DISTANCE):
-    """max_distance=None disables the relevance cutoff (returns raw KNN)."""
+           max_distance=MAX_DISTANCE, on_retry=None):
+    """max_distance=None disables the relevance cutoff (returns raw KNN).
+
+    on_retry is passed straight to embed_texts — see embed._post. It exists so
+    an interactive caller can say something while a slow or absent embedding
+    server is being retried; headless callers pass nothing and stay silent.
+    """
     db = _connect(db_path)
-    qvec = embed_texts([query])[0]
+    qvec = embed_texts([query], on_retry=on_retry)[0]
     qblob = struct.pack(f"{len(qvec)}f", *qvec)
 
     # sqlite-vec KNN must run as its own step, THEN join to metadata: vec0 MATCH

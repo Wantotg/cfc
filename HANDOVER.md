@@ -229,6 +229,19 @@ human interrupts it, and a routine has no human. `max_calls` is a parameter and
 deliberately not on `ToolContext`: that object is the permission boundary, and a
 call count is capacity, not permission.
 
+**`embed.py`'s two timeouts are not the same quantity either, and this pair is
+the one that bit.** `httpx`'s single `timeout=` sets *connect*, *read*, *write*
+and *pool* alike, so one number has to serve the slower quantity — and a
+`timeout=60` meant every attempt against a dead embedding server waited out the
+full read budget just to learn nothing was listening. Four attempts of that is
+the ~240s `/recall` hang. Connect is 5s (the live endpoint answers in 0.18s);
+read stays 60s, because a 100-chunk batch or a cold model load legitimately
+needs it. **The retry budgets are split for the same reason the timeouts are:**
+a 429 is a transient and waiting helps, a refused connection is a *state* and
+asking four times gets one answer four times. `_DOWN_RETRIES = 2` rather than 1
+only so a call can catch a restart. `tests/test_embed.py` pins the timeouts **as
+a pair**, not as two numbers — retuning stays free, merging does not.
+
 **The two read timeouts are not the same quantity, so don't unify them.**
 `call_api` reads for 600s because non-streaming means no bytes arrive until the
 whole completion is done — a thinking model inside a tool loop is legitimately
@@ -236,6 +249,20 @@ silent for minutes. `stream_response` reads for 300s, but httpx resets that cloc
 per chunk, so it bounds the *gap between deltas*. Title generation gets 60s
 because it swallows every exception, and a hung title on the long timeout would be
 ten minutes of silence followed by `(untitled)`.
+
+**`_SUGGEST_CUTOFF = 0.6` was measured on a MODELS list, and that is half of
+what it measures.** The model near-miss picker's difflib cutoff, looser than
+`resolve_model`'s 0.7 because a suggestion is only offered, never acted on.
+Over the eight ids in Cas's `MODELS` (2026-07-26): real near-misses land at 0.67
+(`minimax 3`) and 0.69 (`deepseek pro`), pure noise (`zzzznothing`) reaches 0.47
+against `glm-5.2:thinking`. 0.6 sits in that gap with room on both sides rather
+than shaving one edge — difflib finds *something* for almost any input, which is
+why the floor can't be 0. **Re-measure against a different MODELS list before
+trusting it**, exactly as `MAX_DISTANCE` must be re-measured against a different
+corpus. Note also that difflib is the *second* strategy: a word-substring pass
+runs first, because a short query against a long id scores below any usable
+cutoff (`minimax3` vs `minimaxminimaxm3`) while the word `minimax` is a plain
+substring of every minimax id.
 
 **Context colours are opinionated; the percentages aren't.** `ui.context_style` is
 the single mapping read by the bar, the hub column and the post-turn nudge — they

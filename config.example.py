@@ -4,8 +4,24 @@ API_KEY  = ""   # paste your key here
 MODEL    = "zai-org/glm-5.2:thinking"                    # pick a model your plan supports
 RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /recall (grounded synthesis)
 
-# Path to a folder inside your Obsidian vault where chats will be exported
+# Path to a folder inside your Obsidian vault where chats will be exported.
+# Despite the name this is the *export destination*, not the vault itself —
+# see VAULT_ROOT below, which is the vault.
 VAULT_PATH = "PLACEHOLDER"
+
+# The vault's top folder. **Display only** — cfc never builds a path from this
+# and no behaviour depends on it. Every real path is configured on its own line
+# further down (ROUTINE_DIR, WIKI_DIR, JOURNAL_DIR, MOVE_ROOTS …); this exists
+# so what gets *printed* can drop the machine-specific prefix. On WSL that
+# prefix is most of the line and none of the information:
+#
+#   /mnt/c/Users/you/my vault/06 metadata/routines
+#   →               /my vault/06 metadata/routines
+#
+# Leave it "" and paths print in full, which is also what happens to any path
+# that resolves outside it — a directory configured somewhere unexpected should
+# look different, not be trimmed until it looks local.
+VAULT_ROOT = ""             # e.g. "/mnt/c/Users/you/my vault"
 
 # Automatically export session to Obsidian when you leave it
 AUTO_EXPORT = True

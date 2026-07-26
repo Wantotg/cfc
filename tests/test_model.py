@@ -166,6 +166,47 @@ def main():
     ok("...but flagged, so a typo isn't mistaken for intent",
        "isn't in your configured models" in out, out)
 
+    print("\n--- suggest_models: the near-miss list, offered not acted on ---")
+    # The case from Cas's 0.8.1 testing pass. difflib alone scores 'minimax3'
+    # against 'minimaxminimaxm3' below any usable cutoff — a short query
+    # against a long id always does — so the word-substring pass is what
+    # actually finds these. Losing it would empty the list silently.
+    s = commands.suggest_models("minimax 3", pool=POOL)
+    ok("'minimax 3' offers the minimax ids", s == ["minimax/minimax-m3"], s)
+    s = commands.suggest_models("deepseek pro", pool=POOL)
+    ok("'deepseek pro' offers both deepseek ids",
+       set(s) == {"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro:thinking"}, s)
+    ok("suggestions keep config order, like /list models",
+       commands.suggest_models("glm", pool=POOL)
+       == ["zai-org/glm-5.2:thinking", "zai-org/glm-5.2"])
+    # An empty list is a real answer, and the caller depends on it: no near
+    # miss means the query still passes through as an unlisted model. A picker
+    # that invents a suggestion for input resembling nothing is one people
+    # stop reading.
+    ok("input resembling nothing offers nothing",
+       commands.suggest_models("zzzznothing", pool=POOL) == [],
+       commands.suggest_models("zzzznothing", pool=POOL))
+    ok("a two-character word is not a signal",
+       commands.suggest_models("m3", pool=POOL) == [],
+       "'m3' is a substring of half the world")
+    ok("an empty pool suggests nothing", commands.suggest_models("glm", pool=[]) == [])
+
+    print("\n--- select_model: the near-miss offer, all four exits ---")
+    res, out = run_select("minimax 3", POOL, ["1"])
+    ok("picking a number returns the FULL id, not the display name",
+       res == "minimax/minimax-m3", res)
+    ok("...and the list shows the short name, which is what people read",
+       "[1] minimax-m3" in out, out)
+    res, out = run_select("minimax 3", POOL, [""])
+    ok("enter forces the raw query through — MODELS is not exhaustive",
+       res == "minimax 3", res)
+    ok("...still flagged, so a typo isn't mistaken for intent",
+       "isn't in your configured models" in out, out)
+    res, _ = run_select("minimax 3", POOL, ["c"])
+    ok("'c' cancels", res is None, res)
+    res, _ = run_select("minimax 3", POOL, ["9"])
+    ok("out of range cancels rather than guessing", res is None, res)
+
     print("\n--- select_model: no configured models, no fuss ---")
     res, out = run_select("anything/at-all", [], [])
     ok("an empty pool passes the query through untouched",

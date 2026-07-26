@@ -66,7 +66,7 @@ Then edit `config.py`. The ones you must set:
 |---|---|
 | `API_KEY` / `API_BASE` | your provider |
 | `MODELS` / `MODEL_LIMITS` | the models your plan supports, and their context sizes |
-| `VAULT_PATH` | where exported chats are written |
+| `VAULT_PATH` | where exported chats are written. Despite the name this is the export folder, not the vault — see `VAULT_ROOT` below |
 | `PROMPTS_DIR` / `PERSONAS_DIR` / `TRAITS_DIR` | your prompt, persona and trait folders |
 | `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` | the embedding endpoint; falls back to the chat provider's hosted `bge-m3` |
 
@@ -74,6 +74,7 @@ Worth knowing about:
 
 | | |
 |---|---|
+| `VAULT_ROOT` | your vault's top folder. Display only — cfc never builds a path from it, it just trims the machine's prefix off paths it prints. Leave empty for full paths |
 | `AUTO_EMBED` | index new chat messages after each turn (default on) |
 | `SPLASH_ART` | a name from `assets/`, a list to pick from, or `"*"` for all (default `"*"`) |
 | `CONTEXT_GREEN_MAX` / `CONTEXT_ORANGE_MAX` | when the context bar turns orange and red, as a percent of the model's claimed limit (default 15 / 35) |

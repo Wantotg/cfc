@@ -60,10 +60,16 @@ def main():
     ok("':attached' is its own verb, not an attach of 'ed'",
        p("/attached").verb == "attached")
     ok("':attach' is unaffected", p("/attach ~/notes.md").verb == "attach")
-    ok("':routines' does not run the routine dispatcher",
-       p("/routines").verb == "routines",
+    ok("':helper' does not run help",
+       p("/helper").verb == "helper",
        "the old chain needed a trailing space in the test to avoid an "
        "IndexError that took the app down")
+    # This was ':routines' until 0.8.2, when 'routines' became a deliberate
+    # alias for 'routine' (see the alias section below). The trap this line
+    # guards is a *word that happens to start with a verb* being swallowed by
+    # it; an alias is the opposite — an intended mapping, declared in one
+    # place. Moved to a word that must never become an alias so the guard keeps
+    # meaning what it says.
     ok("':tagfoo' is not ':tag'", p("/tagfoo").verb == "tagfoo")
     ok("':dbfoo' is not ':db'", p("/dbfoo").verb == "dbfoo")
 
@@ -72,6 +78,9 @@ def main():
     ok("'h' aliases help", p("/h").verb == "help")
     ok("'?' aliases help", p("/?").verb == "help")
     ok("'db' aliases database", p("/db off").verb == "database")
+    ok("'routines' aliases routine", p("/routines").verb == "routine",
+       "an unrecognised verb falls through to the model, so the plural cost "
+       "an API call and a confused answer rather than an error")
     ok("an alias keeps its arguments", p("/db off").raw == "off")
     ok("every alias target is a plain word",
        all(v.isalpha() for v in ALIASES.values()), ALIASES)

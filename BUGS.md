@@ -22,6 +22,88 @@ now; migrate them if it ever matters which list they're on.
 
 ---
 
+## ~~`/recall` and `/remember` hang for minutes when the embedding server is down~~ — FIXED (v0.8.2, 2026-07-26)
+
+**Fixed:** connect and read are two timeouts now, not one — 5s and 60s — so a
+dead server is found in **11.1s instead of ~240s** while a big import keeps the
+patience it needs. A refused connection also stops being retried like a busy
+one: 2 attempts rather than 4, because nothing listening on the port is a state
+and asking again gets the same answer. And the spinner says something, via an
+`on_retry` callback threaded through `search`/`recall` — a callback rather than
+a print, because `embed.py` has no console and must not grow one. Pinned in
+`tests/test_embed.py`, which pins the two timeouts **as a pair** so merging them
+back into one number fails a test. See `CHANGELOG.md`.
+
+Original report below.
+
+**Found:** 2026-07-26, Cas's 0.8.1 testing pass (`00 inbox/0.8.1 testing.md`).
+
+**Symptom:** with `EMBED_BASE` configured but LM Studio's server off, `/recall`
+and `/remember` sit on a spinning `Recalling...` for minutes and then fail.
+Reported as "the spinner keeps spinning", which is what an honest four-minute
+wait looks like from the outside.
+
+**Cause, read off the code rather than guessed.** `embed._post` retries
+`_RETRIES = 4` times with `timeout=_TIMEOUT` (60s) and `time.sleep(2 ** attempt)`
+between them. A single `timeout=` float sets httpx's *connect*, *read*, *write*
+and *pool* timeouts to the same value, so a connection that hangs rather than
+refuses costs the full 60s **per attempt** — 4×60s plus 1+2+4s of backoff, ~4
+minutes, before `do_recall`'s `except Exception` prints `[recall failed]`.
+
+**Two things are wrong, and they are different.** The *budget* is one: four
+minutes is not a wait anybody sits through. The *shape* is the other: nothing is
+printed between the first attempt and the last, so a wait that is working as
+designed is indistinguishable from a hang. Both halves are the fix; raising the
+timeout floor alone just makes it fail faster and still silently.
+
+**Note the retry loop is not wrong for the case it was written for** — a busy or
+rate-limited endpoint, where waiting longer genuinely helps. A refused
+connection is a *state*, not a transient, and retrying it four times asks the
+same question four times. The two cases are distinguishable at the exception.
+
+**Not the fix:** caching preflight's launch-time verdict and refusing before the
+call. `preflight.py` already knows at startup, but the server can come up
+mid-session and a cached "down" would then be wrong in the silent direction.
+v0.9 puts the live check behind one shared state function; until then the call
+itself is the check.
+
+Pairs with the entry below — the message that says "still trying" is only
+honest if the interrupt it advertises works.
+
+---
+
+## ~~Ctrl-C during a recall crashes the app~~ — FIXED (v0.8.2, 2026-07-26)
+
+**Fixed:** all three spinner sites catch `KeyboardInterrupt` explicitly and
+return to the prompt — `/recall`, `/remember` and `/update db`. Swept rather
+than fixed at the one site, as this entry asked. Verified with a real SIGINT
+mid-call, not a raised exception.
+
+**The remaining member of the class is the interrupt at the approval prompt**
+(the provider-400 entry below), which is a different fix: there the damage is a
+half-answered tool-call batch, not a lost process. Left where it is.
+
+Original report below.
+
+**Found:** 2026-07-26, Cas's 0.8.1 testing pass, while interrupting the wait above.
+
+**Symptom:** Ctrl-C while `Recalling...` is on screen exits cfc rather than
+cancelling the command and returning to the prompt.
+
+**Cause is exact and one line.** `commands.do_recall` wraps the call in
+`try/except Exception` (`commands.py:1010`). `KeyboardInterrupt` derives from
+`BaseException`, **not** `Exception`, so it is not caught — it escapes the
+`rich.Live` context and the session loop and takes the process with it.
+
+**The class, not the incident:** this is the third time an interrupt at a
+blocking point has done damage (see the provider-400 entry below, where Ctrl-C
+at the approval prompt leaves a tool-call batch half-answered). An interrupt is a
+normal way to leave a long operation and every blocking point owes it a clean
+exit. Worth sweeping the other `except Exception` guards around long calls at the
+same time rather than fixing this one site.
+
+---
+
 ## The plain-console Windows shortcut still bands the splash
 
 **Found:** 2026-07-22, reported by Cas. Fixed for the Windows Terminal
@@ -104,16 +186,28 @@ cut off mid-sentence is that, not the provider being terse.
 
 ---
 
-## Both desktop shortcuts are broken, and it is one story
+## ~~Both desktop shortcuts are broken, and it is one story~~ — HALF FIXED (2026-07-26)
 
-**Found:** 2026-07-22 (the splash) and 2026-07-26 (the `wt.exe` error), both
-flagged by Cas — the second in `00 inbox/testing 0.8`. Filed together on
-2026-07-26 because they are the same problem seen twice: **the shortcut that
-works launches in the wrong terminal, and the shortcut that uses the right
-terminal doesn't launch.** Cas stopped using both shortly after they were added.
+**The Windows Terminal shortcut works.** Both halves were root-caused by
+measurement rather than guessing; see `CHANGELOG.md`, 2026-07-26, and the
+handover note in `00 inbox/CFC_Shortcuts_Handover.md` for the full trail.
 
-Neither is urgent — `launch.sh` from an Ubuntu terminal is fine — but this is
-the *designed* entry path, and the one a non-Cas user would take.
+- **Part 2, the `wt.exe` launch failure — FIXED.** It was a Windows Terminal
+  profile collision, not a quoting problem as this entry originally claimed:
+  `-p Ubuntu` does its own distro activation and collides with an explicit
+  `wsl.exe -d Ubuntu` after `--`. Any non-WSL profile fixes it. Working target
+  is in `README.md`.
+- **Part 1, the splash banding — FIXED for this shortcut, and the diagnosis
+  below was wrong about why.** It was never the console host: the shortcut execs
+  `launch.sh` straight off its shebang, so `.bashrc` never runs and `COLORTERM`
+  is unset even under Windows Terminal, which *is* truecolor. `launch.sh` now
+  sets it when `WT_SESSION` is present.
+
+**Still open:** the bare `wsl.exe` shortcut, which has the opposite problem and
+is a dotfile question rather than a repo one. It is the entry at the top of this
+file. The original text below is kept because its reasoning about the resample
+is still correct, and its confident wrong guess about the console host is worth
+seeing next to what turned out to be true.
 
 ### 1. `wsl.exe` directly → low-quality splash background
 

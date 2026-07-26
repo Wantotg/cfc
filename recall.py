@@ -46,11 +46,12 @@ def build_context(hits):
         )
     return "\n\n---\n\n".join(blocks)
 
-def recall(db_path, question, k=8, kind=None, provider="wiki"):
+def recall(db_path, question, k=8, kind=None, provider="wiki", on_retry=None):
     # provider='wiki' keeps recall grounded in the wiki even once the chat log
     # accumulates its own (source='chat') chunks. Pass provider=None for all.
     import httpx
-    hits = search(db_path, question, k=k, kind=kind, provider=provider)
+    hits = search(db_path, question, k=k, kind=kind, provider=provider,
+                  on_retry=on_retry)
     if not hits:
         return "No relevant excerpts found in memory.", []
     context = build_context(hits)

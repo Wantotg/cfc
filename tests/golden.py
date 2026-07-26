@@ -335,6 +335,19 @@ def capture():
         assert_not_real_vault(getattr(sys.modules[name], "VAULT_PATH"),
                               f"{name}.VAULT_PATH")
 
+    # Pin VAULT_ROOT for the same reason, and the reason is not hypothetical:
+    # :config prints it, it is display-only, and it lands in config.py by hand.
+    # Left unpinned, the baseline says `(not set)` today and fails the day Cas
+    # fills his in — a `check` failure on a line that says nothing about the
+    # source. Exactly the bug that earned the SCRUB paragraph in HANDOVER.md.
+    # Pinned to the fixture vault's parent so the shortening is *exercised*
+    # rather than skipped: an empty root returns paths untouched, which would
+    # leave ui.vault_relative uncovered here.
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
+            if hasattr(mod, "VAULT_ROOT"):
+                setattr(mod, "VAULT_ROOT", str(FIXTURE_VAULT))
+
     # Pin AUTO_EXPORT on rather than reading it from config. The script's :q
     # takes the export path only when it's true, so leaving it to config would
     # mean the baseline covers a different amount of code on different

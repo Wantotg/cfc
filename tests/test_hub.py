@@ -6,6 +6,7 @@ test_hub.py — the v0.4 screens: what the picker shows, and in what colour.
 
 Four properties, each one a thing that fails quietly rather than loudly:
 
+
 **The picker hides routine runs and wiki pages; `:list` does not.** Seven of
 twenty hub rows were routine transcripts and the wiki was about to take the
 rest. But hiding is the dangerous direction — so the filter is a *deny list*,
@@ -24,6 +25,14 @@ problem.
 **The reasoning elision keeps both ends.** Middle-elided, not truncated: on the
 tool path the opening lines say what the model is about to do, which is the part
 worth reading next to the tool call it explains.
+
+Plus `ui.py`'s two display conversions, which live here because the hub is what
+made them necessary. `format_ts` converts a stored timestamp to local time —
+the hub stacks Recent chats (UTC, from the db) directly above Routines (local,
+from the run log), so an unconverted string put two adjacent panels two hours
+apart. `vault_relative` trims the machine's mount prefix off a printed path.
+Both are **display only**: nothing may store or reopen what they return, and
+the assertions that matter are the ones about what they leave alone.
 """
 import sqlite3
 import sys
@@ -194,6 +203,29 @@ def main():
        format_ts("2026-07-26 20:30:00") == "2026-07-26 20:30")
     ok("an unparseable value survives rather than raising",
        format_ts("not a timestamp") == "not a timestamp")
+
+    print("\n--- vault paths are shown without the machine's prefix ---")
+    # ui.vault_relative's sibling property to format_ts: a display conversion
+    # that must not be mistaken for a real one. Nothing may build a path out of
+    # what this returns, which is why the interesting assertions are the two
+    # about *not* shortening.
+    from ui import vault_relative
+    root = "/mnt/c/Users/you/my vault"
+    ok("a path under the root loses the mount prefix, keeps the vault name",
+       vault_relative(f"{root}/06 metadata/routines", root)
+       == "/my vault/06 metadata/routines",
+       vault_relative(f"{root}/06 metadata/routines", root))
+    ok("a trailing slash on the root changes nothing",
+       vault_relative(f"{root}/06 metadata", root + "/") == "/my vault/06 metadata")
+    # Both directions of "leave it alone", and both are the point. A directory
+    # configured outside the vault should *look* different rather than be
+    # trimmed until it reads as local; and an unset root is a valid config, not
+    # an error to paper over.
+    ok("a path outside the root is left in full",
+       vault_relative("/home/you/elsewhere/routines", root)
+       == "/home/you/elsewhere/routines")
+    ok("an unset root leaves every path in full",
+       vault_relative(f"{root}/06 metadata", "") == f"{root}/06 metadata")
 
     print("\n--- routine freshness ---")
     now = datetime.datetime.now()
