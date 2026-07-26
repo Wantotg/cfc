@@ -505,7 +505,7 @@ attachable feature now costs no new verb.
 - **Private chat inherits all of it with no `if private` branch** — the test that
   the design holds. `/new p` starts one from inside a session.
 
-> *(note-shaped hole for Cas) Roadmap gives me rerolling energy *why not start again and do it right from the ground up, now that you know what to do?* I don't know what I'm doing. Feature complete first, before looking back or ahead.*
+> *(note-shaped hole for Cas) Roadmap gives me rerolling energy "why not start again and do it right from the ground up, now that you know what to do?" I don't know what I'm doing. Feature complete first, before looking back or ahead.*
 
 ```
 ฅ^•ﻌ•^ฅ 'Re-roll! Re-roll! Re-roll!'
