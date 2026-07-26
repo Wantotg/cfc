@@ -77,34 +77,86 @@ cut off mid-sentence is that, not the provider being terse.
 
 ---
 
-## The desktop shortcut renders a low-quality splash background
+## Both desktop shortcuts are broken, and it is one story
 
-**Found:** 2026-07-22, flagged by Cas.
+**Found:** 2026-07-22 (the splash) and 2026-07-26 (the `wt.exe` error), both
+flagged by Cas — the second in `00 inbox/testing 0.8`. Filed together on
+2026-07-26 because they are the same problem seen twice: **the shortcut that
+works launches in the wrong terminal, and the shortcut that uses the right
+terminal doesn't launch.** Cas stopped using both shortly after they were added.
 
-Launching cfc from the **desktop shortcut** shows the splash with a visibly
-low-quality background image. Launching the *same build* from an Ubuntu terminal
-(`launch.sh`, or `python main.py`) shows the real, high-quality one. So the app
-works and is reachable — it just doesn't look right on its *designed* entry
-path, which is the one a non-Cas user would take.
+Neither is urgent — `launch.sh` from an Ubuntu terminal is fine — but this is
+the *designed* entry path, and the one a non-Cas user would take.
 
-Not diagnosed yet. Leading hypothesis, from how the splash is drawn: the art is
-truecolor box-average resampling sized to the terminal at render time
-(`splash.py`), and it needs both truecolor and the terminal's real dimensions.
-A shortcut-spawned terminal that reports a smaller size, or that falls back to
-256-colour because `COLORTERM`/`TERM` aren't set the way an interactive login
-shell sets them, would degrade the image in exactly this way while the
-interactive terminal looks fine.
+### 1. `wsl.exe` directly → low-quality splash background
 
-Where to look:
-- `launch.sh` — what terminal the shortcut spawns, and whether it inherits
-  `COLORTERM=truecolor` / a sane `TERM`. An interactive login shell sets these;
-  a bare shortcut invocation may not.
-- `splash.py` — the resampling path and how it reads terminal size and colour
-  depth. Confirm it's degrading gracefully rather than mis-detecting.
+```
+C:\Windows\System32\wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
+```
 
-Cheap to confirm: launch from the shortcut and print `COLORTERM`, `TERM` and the
-detected `console.size` before the splash draws; compare to the Ubuntu-terminal
-values. If truecolor or the size differs, that's the cause and the fix is in
-`launch.sh`, not the renderer.
+Opens, runs, and draws the splash with a visibly low-quality background. The
+same build from an Ubuntu terminal draws the real one.
 
-Not urgent — the app opens and runs; only the launch screen looks wrong.
+**Mechanism, and it is no longer a guess about which half is at fault.**
+`wsl.exe` invoked with no terminal of its own gets the **legacy console host**
+(conhost), which is not truecolor and does not set `COLORTERM`. Rich then falls
+back to 256 colours — and `splash._resize` is a **box-average** resample whose
+own docstring records the trade: averaging pushes colours outside the baked
+40-colour palette, which is *"invisible on truecolor"*. On a 256-colour console
+it is the opposite of invisible: neighbouring averaged pixels quantize onto the
+same slot and the gradient bands. So the degradation is colour depth, not
+terminal size, and it is caused by the resample being correct for the terminal
+it was designed against.
+
+**This means the fix is the shortcut, not `launch.sh` and not the renderer** —
+the earlier note in this file guessed `launch.sh`, which was wrong. And
+`launch.sh` must **not** force `COLORTERM=truecolor`: conhost genuinely cannot
+render 24-bit escapes, so claiming it can trades banding for garbage. Launch in
+Windows Terminal instead, which is what shortcut 2 was trying to do.
+
+**Still a hypothesis until measured**, and the measurement is two minutes:
+launch from the shortcut and print `COLORTERM`, `TERM` and
+`rich.console.Console().color_system` before the splash draws. Compare against
+the Ubuntu terminal. If `color_system` is `256` or `standard` there and
+`truecolor` here, that is the cause.
+
+### 2. `wt.exe` → `0x80070002`, file not found
+
+```
+C:\Users\disse\AppData\Local\Microsoft\WindowsApps\wt.exe -p Ubuntu wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
+
+[error 2147942402 (0x80070002) when launching `"wsl.exe -d Ubuntu --cd ~ -- bash -lc ~/projects/cfc/launch.sh"']
+The system cannot find the file specified.
+```
+
+**Quoting, not cfc.** Note what the error quotes back: the *entire* remainder as
+one string, with the inner quotes around `~/projects/cfc/launch.sh` **gone**.
+Windows Terminal parses its own command line first — it strips those quotes and
+hands the whole thing to CreateProcess as a single executable name, which of
+course does not exist. `wt` needs `--` to stop parsing and treat what follows as
+a command line (it also treats `;` as a command separator, which is worth
+knowing before any argument grows one).
+
+Two candidate forms, both untested from this side — no Windows shell here:
+
+```
+wt.exe -p Ubuntu -- wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"
+wt.exe -p Ubuntu -- wsl.exe -d Ubuntu --cd ~ -- ~/projects/cfc/launch.sh
+```
+
+**Prefer the second.** It has no quotes left to lose, and `bash -lc` was never
+needed: `launch.sh` is executable, carries a shebang, and its header says it
+assumes nothing about the working directory or a login shell — which is exactly
+so that it can be invoked bare.
+
+**If shortcut 2 works, shortcut 1's splash problem is moot** rather than fixed:
+Windows Terminal is truecolor, so the resample lands as designed. Worth saying
+because it means the two entries close together or not at all — and worth
+checking `color_system` from the fixed shortcut to confirm the mechanism above
+rather than just observing that it looks better.
+
+Related, for v0.9: this is a silent degradation with a real cause and a real
+fix, which is the shape `HANDOVER.md` says to make visible. `preflight.py`
+already runs on every launch and v0.9 is rewiring it for the traffic light —
+a "this terminal is 256-colour, the splash will band" line belongs there, added
+with that work rather than just before it.

@@ -330,10 +330,20 @@ def resolve_model(query, pool=None):
       ('many',  [ids])  several candidates — let the user pick
       ('none',  None)   nothing recognisable; caller may use the raw query
 
-    Tiers: exact id wins outright; else substring matches on the folded form;
-    else a fuzzy nearest, which is what turns a one-character slip like
-    'moonshotai/kimi-2.6:thinking' into 'did you mean …kimi-k2.6…' instead of
-    an opaque provider 400."""
+    Tiers: exact id wins outright; then an exact **bare name**; else substring
+    matches on the folded form; else a fuzzy nearest, which is what turns a
+    one-character slip like 'moonshotai/kimi-2.6:thinking' into 'did you mean
+    …kimi-k2.6…' instead of an opaque provider 400.
+
+    **The bare-name tier is why `deepseek-v4-pro` stopped opening a picker.**
+    Ids here are `vendor/model`, and nobody types the vendor — but only the full
+    id counted as exact, so a name that *was* a whole model name fell through to
+    the substring tier and matched three (`…-v4-pro`, `…-v4-pro:thinking`,
+    `…-v4-pro-cheaper:thinking`). An exact name beats a prefix of a longer name;
+    typing `glm-5.2` now means the non-thinking one rather than a question.
+    Ambiguity is still possible — two vendors shipping the same model name give
+    two hits — and that falls through to the picker, which is what the picker is
+    for."""
     pool = known_models() if pool is None else pool
     q = query.strip()
     for m in pool:
@@ -342,6 +352,15 @@ def resolve_model(query, pool=None):
     nq = _norm(q)
     if not nq:
         return ("none", None)
+    # The segment after the last '/', folded. Split before folding: `_norm`
+    # eats the slash, so `deepseek/deepseek-v4-pro` would otherwise fold to
+    # `deepseekdeepseekv4pro` and never equal what anyone types.
+    bare = {}
+    for m in pool:
+        bare.setdefault(_norm(m.rsplit("/", 1)[-1]), []).append(m)
+    named = bare.get(nq, [])
+    if len(named) == 1:
+        return ("exact", named[0])
     subs = [m for m in pool if nq in _norm(m)]
     if len(subs) == 1:
         return ("one", subs[0])

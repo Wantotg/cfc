@@ -342,6 +342,31 @@ you sweep for a prefix, storage formats are not prose.
 
 ---
 
+## Two time bases, and one conversion point
+
+**`db.py` is the only module that stores UTC.** `new_session` and `save_message`
+write `datetime.now(timezone.utc).isoformat()`. Everything else — `routines`,
+`schedule`, `runner`, `mover`, `backup`, `hub._freshness` — writes and compares
+**local naive** time. That split is not going away casually; the db's offsets are
+the correct thing to store and the rest is correct for what it does.
+
+So **`ui.format_ts` is the conversion point**, and it converts only when the
+value carries an offset. A naive timestamp is left alone deliberately: assuming
+UTC would move the one set of times that was already right. Anything new that
+prints a db timestamp goes through `format_ts`; anything new that *stores* one
+should store an offset.
+
+This was live and quiet until v0.8.1 — the hub stacks Recent chats (db, UTC)
+directly above Routines (run log, local), so the two panels ran two hours apart
+on the same screen and neither looked wrong on its own. **The golden harness
+cannot catch this class**: `SCRUB` normalises timestamps on both sides, so a
+timezone bug is invisible there by construction. It is pinned in
+`tests/test_hub.py` against an offset computed five hours from the host's, since
+a test written against a literal `+00:00` passes without the conversion on a
+UTC machine.
+
+Still raw, and in `BACKLOG.md`: `export.py` and the two `[:10]` date labels.
+
 ## The environment
 
 - WSL2/Ubuntu on Windows. Vault on `/mnt/c`, reached Linux→Windows (fast); never

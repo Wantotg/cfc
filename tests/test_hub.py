@@ -104,6 +104,50 @@ def main():
     ok("a NULL provider still shows as a chat",
        "Provider is NULL" in titles, titles)
 
+    print("\n--- the picker returns the id you typed, and only a listed one ---")
+    # There is one numbering in the app now. The picker used to show 1..n, so a
+    # row read as "3" was typed at `/delete chat 3`, where 3 is an id — and in
+    # this very fixture id 3 is the wiki page. Typing a real-but-unlisted id
+    # must be refused rather than resumed: `recent_chats` filtered it out, so
+    # opening it would resume something the user was not looking at.
+    import builtins
+    import contextlib
+    import io
+
+    def pick(*typed):
+        """Drive pick_session with a scripted keyboard. Returns its value."""
+        feed = iter(typed)
+        real_input = builtins.input
+        builtins.input = lambda *a, **k: next(feed)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return hub.pick_session(conn)
+        finally:
+            builtins.input = real_input
+
+    # No routine rows: the folder is a vault path and this test isn't about it.
+    import routines as _routines
+    _saved_dir = _routines.routine_dir
+    _routines.routine_dir = lambda: tmp / "no-routines"
+    try:
+        ok("typing a listed chat id resumes that id", pick("4") == 4)
+        ok("the newest chat's id works too", pick("1") == 1)
+        ok("the wiki page's id (3) is refused, not opened",
+           pick("3", "1") == 1)
+        ok("the routine run's id (2) is refused, not opened",
+           pick("2", "1") == 1)
+        ok("an id that doesn't exist is refused", pick("99", "1") == 1)
+        # 2 is a live session id, and under the old 1..n scheme "2" was a valid
+        # row. It must no longer be read as "the second row".
+        ok("a positional 1..n guess no longer selects by position",
+           pick("2", "q") == "quit")
+        ok("'n' still means new", pick("n") is None)
+        ok("'p' still means private", pick("p") == "private")
+        ok("'q' still quits", pick("q") == "quit")
+        ok("garbage reprompts rather than raising", pick("banana", "q") == "quit")
+    finally:
+        _routines.routine_dir = _saved_dir
+
     print("\n--- the Ctx column ---")
     from ui import context_style, context_thresholds
     green_max, orange_max = context_thresholds()
@@ -125,8 +169,33 @@ def main():
     ok("no tokens at all -> em dash",
        hub._context_cell("unknown-model", 0, 0).plain == "—")
 
-    print("\n--- routine freshness ---")
+    print("\n--- timestamps are shown in local time ---")
+    # `db.py` stores UTC; every other module writes local naive time. The hub
+    # prints both — Recent chats from the db, Routines from the run log — one
+    # panel above the other, so an unconverted UTC string put two adjacent
+    # panels two hours apart. The golden harness cannot catch this: SCRUB
+    # normalises timestamps on both sides, so it is invisible there.
     import datetime
+    from ui import format_ts
+
+    # Built against an offset five hours from *this* machine's, so the
+    # assertion has teeth in every timezone including UTC itself. A test using
+    # a literal '+00:00' would pass without the conversion on a UTC box.
+    local_off = datetime.datetime.now().astimezone().utcoffset()
+    far = datetime.timezone(local_off + datetime.timedelta(hours=5))
+    wall = datetime.datetime(2026, 7, 26, 20, 30, tzinfo=far)
+    ok("an offset-carrying timestamp is converted to local",
+       format_ts(wall.isoformat()) == "2026-07-26 15:30",
+       format_ts(wall.isoformat()))
+
+    # Naive means local here, in every module that writes one. Assuming UTC
+    # would move the one set of times that was already right.
+    ok("a naive timestamp is left exactly as it is",
+       format_ts("2026-07-26 20:30:00") == "2026-07-26 20:30")
+    ok("an unparseable value survives rather than raising",
+       format_ts("not a timestamp") == "not a timestamp")
+
+    print("\n--- routine freshness ---")
     now = datetime.datetime.now()
 
     def at(hours_ago):

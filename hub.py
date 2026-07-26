@@ -37,9 +37,12 @@ HUB_ROUTINES = 5   # routines on the picker
 # Not a chat: excluded from the picker, still visible in `:list`.
 _NON_CHAT = (PROVIDER_WIKI, PROVIDER_ROUTINE)
 
-# Everything the flexible three don't get: #, Updated, Msgs, Ctx, plus Rich's
-# per-column padding and the vertical rules.
-_CHROME = 3 + 17 + 4 + 7 + (7 * 2) + 8
+# Everything the flexible three don't get: ID, Latest message, Msgs, Ctx, plus
+# Rich's per-column padding and the vertical rules. The ID column is 4 wide for
+# every view now — it used to be declared 3 here and then widened to 4 in
+# `list_sessions`/`show_recent_chats` *after* `_widths()` had already divided up
+# the terminal, so those two tables were quietly one column over budget.
+_CHROME = 4 + 17 + 4 + 7 + (7 * 2) + 8
 
 _TITLE_MIN = 20     # below this a title stops being recognisable
 _TITLE_ENOUGH = 50  # past this, slack is worth more to Prompt/Persona
@@ -91,8 +94,8 @@ def _session_table(title):
     which is worse than a truncated one you can still read."""
     title_w, prompt_w, persona_w = _widths()
     table = Table(title=title, border_style="dim")
-    table.add_column("#", style="cyan", justify="right", width=3)
-    table.add_column("Updated", width=17)
+    table.add_column("ID", style="cyan", justify="right", width=4)
+    table.add_column("Latest message", width=17)
     table.add_column("Msgs", justify="right", width=4)
     table.add_column("Ctx", justify="right", width=7)
     table.add_column("Title", no_wrap=True, overflow="ellipsis",
@@ -153,14 +156,21 @@ def _context_cell(model, tok_in, tok_out):
     return Text(f"{pct:.1f}%", style=context_style(pct))
 
 
-def _add_rows(table, rows, numbering):
-    """`numbering` is 'id' for /list (open it by that number) or 'index' for the
-    picker (1..n against what's on screen). They are different numbers and
-    conflating them is how you open the wrong session."""
-    for i, (sid, title, ts, msg_count, prompt_name, persona_name,
-            model, tok_in, tok_out) in enumerate(rows, 1):
+def _add_rows(table, rows):
+    """Every view numbers by **session id**, and there is no second numbering.
+
+    There used to be: `/list` showed ids, the picker showed 1..n against what
+    was on screen, and this function took a `numbering` argument to serve both.
+    The comment here warned that they were different numbers and that
+    conflating them was how you opened the wrong session — which is exactly
+    what happened, from the other side. A row read off the picker as "7" was
+    typed at `/delete chat 7`, where 7 is an id, and that is a destructive
+    command. One number everywhere costs a little more typing and removes the
+    class."""
+    for (sid, title, ts, msg_count, prompt_name, persona_name,
+         model, tok_in, tok_out) in rows:
         table.add_row(
-            str(sid if numbering == "id" else i),
+            str(sid),
             format_ts(ts),
             str(msg_count),
             _context_cell(model, tok_in, tok_out),
@@ -180,9 +190,7 @@ def list_sessions(conn):
         return
 
     table = _session_table("Sessions")
-    table.columns[0].header = "ID"
-    table.columns[0].width = 4
-    _add_rows(table, rows, numbering="id")
+    _add_rows(table, rows)
     console.print(table)
     console.print()
 
@@ -285,19 +293,15 @@ def show_recent_chats(conn):
 
     Deliberately the same rows as `pick_session` (`recent_chats`), not a second
     query: "which conversations do I have" must have one answer whether it is
-    asked from the hub or from a session. It numbers by **id**, unlike the
-    picker, because there is nothing here to pick — the number you would type
-    next is `:export chat 12`, and the picker's positional 1..n would send it
-    to the wrong session.
+    asked from the hub or from a session — and since the picker started
+    numbering by id too, the same numbers as well.
     """
     rows = recent_chats(conn)
     if not rows:
         console.print("No chats yet.")
         return
     table = _session_table("Recent chats")
-    table.columns[0].header = "ID"
-    table.columns[0].width = 4
-    _add_rows(table, rows, numbering="id")
+    _add_rows(table, rows)
     console.print(table)
     console.print()
 
@@ -317,15 +321,22 @@ def pick_session(conn):
         return None
 
     table = _session_table("Recent chats")
-    _add_rows(table, rows, numbering="index")
+    _add_rows(table, rows)
     console.print(table)
     console.print()
     if routines:
         _print_routines(routines)
-    console.print("Type a number to resume, 'n' for new "
+    console.print("Type a chat ID to resume, 'n' for new "
                   "session, 'p' for private, 'q' to quit.")
     console.print("'/list sessions' inside a session shows every session, "
                   "routine runs included.", style="dim")
+
+    # The ids actually on screen. An id that exists but isn't listed is
+    # refused rather than opened: the picker's rows are filtered to chats
+    # (`recent_chats`), so accepting any id would let a wiki page or a routine
+    # transcript be resumed as a conversation — and the number would have come
+    # from somewhere other than what the user was looking at.
+    listed = {row[0] for row in rows}
 
     while True:
         choice = input("\n> ").strip().lower()
@@ -337,10 +348,11 @@ def pick_session(conn):
             return "private"
         try:
             idx = int(choice)
-            if 1 <= idx <= len(rows):
-                return rows[idx - 1][0]
-            console.print(f"Enter a number between 1 and "
-                          f"{len(rows)}.")
         except ValueError:
-            console.print("Type a number, 'n' for new, 'p' for "
+            console.print("Type a chat ID, 'n' for new, 'p' for "
                           "private, or 'q' to quit.")
+            continue
+        if idx in listed:
+            return idx
+        console.print("That isn't one of the IDs listed. "
+                      "'/list sessions' inside a session shows every one.")

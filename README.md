@@ -147,7 +147,7 @@ exited cleanly.
 
 ## The hub
 
-Past the splash is the hub: your 10 most recent **chats** — id, last update,
+Past the splash is the hub: your 10 most recent **chats** — id, latest message,
 message count, context usage, title, prompt and persona — and below them your
 routines, with a traffic light on when each last ran (green under a day, orange
 under two, red beyond, dim for never). Routine transcripts and wiki pages are
@@ -155,10 +155,15 @@ kept off this list; `/list sessions` inside a session shows every session there 
 
 | Key | Action |
 |-----|--------|
-| number | Open that session |
+| chat id | Open that chat — the number in the **ID** column |
 | `n` | New session |
 | `p` | New **private** chat |
 | `q` | Quit |
+
+The number you type is the session id, the same one `/delete chat 7` and
+`/export chat 7` take. There is no second numbering anywhere: an id that isn't
+on the list is refused rather than opened, since the hub shows chats only and
+resuming a wiki page as a conversation is not a thing you meant to do.
 
 The hub is home base. `/q` inside a session comes back here rather than quitting,
 so the program only exits from the hub. The splash does not reappear on the way

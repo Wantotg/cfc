@@ -511,6 +511,51 @@ attachable feature now costs no new verb.
 ฅ^•ﻌ•^ฅ 'Re-roll! Re-roll! Re-roll!'
 ``` 
 
+## v0.8.1 — Four things that were simply wrong — **complete, 2026-07-26**
+
+A patch release out of the v0.8 testing pass, and the first one where the list
+came from a scratchpad kept *while using the thing* rather than from reading the
+code. Nothing new: four defects, each of which looked fine in isolation and was
+wrong the moment you compared it to something next to it. The rest of that
+scratchpad adds claims and waits for v0.9.
+
+- **The clock was two hours out, and two panels on one screen disagreed.**
+  `db.py` is the only module that stores UTC; routines, the scheduler, the mover
+  and the backup rotation all store local time. The hub stacks Recent chats
+  (from the db) directly above Routines (from the run log), so the two panels ran
+  two hours apart — and neither looked wrong on its own, which is why it survived
+  eight versions. One conversion point now, `ui.format_ts`, converting only when
+  the stored value carries an offset: a naive timestamp is left alone, because
+  assuming UTC would move the one set of times that was already right.
+- **One numbering, everywhere.** The picker counted rows 1..n while `/list`,
+  `/delete chat` and `/export chat` take a session id. The code even carried a
+  comment warning that these were different numbers and that conflating them was
+  how you opened the wrong session — which is exactly what happened, from the
+  other direction: a row read as "3" typed at `/delete chat 3`, a command that
+  destroys data. The picker shows and accepts ids now, and an id that exists but
+  isn't listed is refused rather than resumed, since the hub shows chats only.
+- **The token bar's empty state read as full.** The trough was `░`, which is a
+  *fill* character — two dozen of them look like a bar with something in it, so a
+  session 0.1% into a million-token context appeared meaningfully used. The
+  arithmetic was right the whole time; only the empty state lied. Now bracketed
+  whitespace, which cannot be misread.
+- **An exact model name no longer opens a picker.** Model ids are
+  `vendor/model` and nobody types the vendor, but only the full id counted as
+  exact — so `deepseek-v4-pro`, which *is* a whole model name, matched three
+  things and asked which one. An exact name now beats a prefix of a longer name,
+  so `glm-5.2` means the non-thinking one rather than a question. Two vendors
+  shipping the same model name still get the picker, which is what it's for.
+
+Also here, and the reason this is a patch rather than a footnote: **the desktop
+shortcuts are diagnosed.** Both were broken and it is one story — the shortcut
+that works launches in the legacy Windows console, which isn't truecolor, and the
+splash's box-average resample is only clean *on* truecolor by its own design; the
+shortcut that would use Windows Terminal was losing its quotes before it ever
+started. Written up in `BUGS.md` with the corrected command line. Not closed:
+that needs a Windows shell, and it stays open until it has actually run.
+
+> *(note-shaped hole for Cas)*
+
 ## v0.9 — The connection
 
 ## v1.0 — Hardening, and a decision

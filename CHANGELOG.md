@@ -23,6 +23,68 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-26 — Fix four defects from the 0.8 testing pass
+Four unrelated things that were all wrong rather than merely owed, from Cas's
+`00 inbox/testing 0.8` scratchpad. No new claims — the v0.8.1 half of that list.
+- Files: ui.py, hub.py, commands.py, tests/test_hub.py, tests/test_model.py,
+  tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+**The clock was two hours out, and two panels on one screen disagreed.**
+`db.py` is the only module that stores UTC (`new_session`, `save_message` write
+`datetime.now(timezone.utc)`); routines, the scheduler, the mover, the backup
+rotation and `hub._freshness` all write local naive time. `ui.format_ts` parsed
+the stored string and formatted it **without converting**, so every session
+timestamp printed in UTC — and since the hub stacks Recent chats (from the db)
+directly above Routines (from the run log), the two panels ran two hours apart
+in the Netherlands. Now converted when the value carries an offset, and left
+alone when it is naive, because everything naive here is already local and
+assuming UTC would move the one set of times that was right.
+
+The golden harness cannot catch this — `SCRUB` normalises timestamps on both
+sides — so it is pinned in `tests/test_hub.py` instead, against an offset
+computed five hours from *this* machine's. A test written against a literal
+`+00:00` passes without the conversion on a UTC box.
+
+**The token bar's empty state read as full.** The trough was `░` (U+2591 LIGHT
+SHADE), which is a *fill* character; twenty-four of them look like a bar with
+something in it, so a session 0.1% into a 1M context appeared meaningfully
+used. Reported as "the bar starts out 1/6 full" — the 1/6 was the widget's
+share of the terminal width, and the arithmetic was correct throughout. Only
+the empty state lied. Now `[████        ]`: whitespace cannot be misread as
+fill, and the brackets keep the one thing `░` was good for, which is showing
+where the end of the bar is.
+
+**One numbering, everywhere.** The picker numbered rows 1..n while `/list`,
+`/delete chat` and `/export chat` all take a session id. `hub._add_rows`
+carried a comment warning that these were different numbers and that conflating
+them was how you opened the wrong session — which is what happened, from the
+other side: a row read off the picker as "3" typed at `/delete chat 3`, where
+3 is an id, and that command destroys data. The picker now shows and accepts
+ids, the `numbering=` fork is gone, and an id that exists but **isn't listed**
+is refused rather than resumed — the picker's rows are filtered to chats, so
+accepting any id would let a wiki page or a routine transcript open as a
+conversation. Four assertions confirmed to fail with that check removed.
+
+Two smaller things fell out of it. The `#` column became `ID` for every view,
+which fixed a latent width bug: it was declared 3 in `_CHROME` and then widened
+to 4 in `list_sessions`/`show_recent_chats` *after* `_widths()` had already
+divided up the terminal, so those two tables were quietly one column over
+budget. And `Updated` is now `Latest message`, which is what the column has
+always actually meant.
+
+**An exact model name no longer opens a picker.** Ids are `vendor/model` and
+nobody types the vendor, but only the full id counted as exact — so
+`deepseek-v4-pro`, which *is* a whole model name, fell through to the substring
+tier and matched three (`…-v4-pro`, `…-v4-pro:thinking`,
+`…-v4-pro-cheaper:thinking`). `resolve_model` gained a bare-name tier between
+exact and substring: the segment after the last `/`, folded. Split before
+folding, since `_norm` eats the slash. An exact name beats a prefix of a longer
+name, so `glm-5.2` now means the non-thinking one rather than a question, and
+two vendors shipping one model name still falls through to the picker — which
+is what the picker is for.
+
 ## 2026-07-25 — Rewrite the handover for a reader who has the repo
 `HANDOVER.md` was written for a model working *without* the source — Claude App,
 or any session with no file access — so it re-described a great deal that is now
@@ -69,7 +131,7 @@ detail. It doesn't, deliberately: on mechanism, the code wins. Changed in both
 in this commit).
 - Files: HANDOVER.md (new), HANDOVER-legacy.md (was HANDOVER.md), README.md, CLAUDE.example.md
 - Status: shipped
-- Commit: pending
+- Commit: 93585e2
 
 ## 2026-07-25 — Documentation for v0.8
 `README.md` and `HANDOVER.md` rewritten together, as they are coupled. README's

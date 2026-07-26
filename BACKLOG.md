@@ -8,6 +8,28 @@ CLAUDE.md is for how the project works; this is for what's still owed.
 
 ---
 
+## Three timestamp sites still print UTC. v0.8.1, 26-07-2026
+**Found:** 2026-07-26, fixing the hub's clock (`CHANGELOG.md`). `ui.format_ts`
+now converts, and `hub.py` was its only caller — these three read the db
+directly and were left alone rather than swept, because two of them are
+arguably correct and the third is a one-day edge.
+Description:
+- **`export.py:186`** writes the message timestamp into the exported markdown as
+  the raw stored ISO string, offset and all. Defensible: an export is a data
+  file and an unambiguous absolute timestamp is the right thing in one. It is
+  also the only place in the vault that isn't local time, which is the argument
+  the other way.
+- **`export.py:108`** takes `created_at[:10]` for the export filename's date
+  part. A session created after 22:00 local gets tomorrow's date in its
+  filename.
+- **`commands.py:1022` and `recall.py:40`** take `(created_at or "")[:10]` for
+  the date label on a recall excerpt. Same one-day edge, display only.
+Not urgent, and the first one may be a decision rather than a fix. Deliberately
+not swept: `format_ts` returns `YYYY-MM-DD HH:MM`, so none of the three can just
+call it — the two `[:10]` sites want a date and `export.py` wants a full
+timestamp, so this is three small decisions and not one substitution.
+See `HANDOVER.md`, "Two time bases, and one conversion point".
+
 ## ~~":wiki commit <message>" commits all changes, even when inspecting a specific diff.~~ — FIXED (2026-07-24)
 
 **Fixed:** `:wiki` grew a `<action> <scope> <granularity>` grammar. Granularity

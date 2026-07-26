@@ -85,9 +85,34 @@ def main():
     ok("an exact id resolves outright",
        commands.resolve_model("zai-org/glm-5.2", POOL) == ("exact",
                                                            "zai-org/glm-5.2"))
+    # Case and spacing still don't matter — and this now lands on 'exact'
+    # rather than 'one', because `minimax-m3` is the model's whole name and not
+    # merely a substring of it. Nobody types the vendor, so a bare name that
+    # matches a whole model name switches with no question asked.
     ok("case and spacing don't matter",
-       commands.resolve_model("MiniMax M3", POOL) == ("one",
+       commands.resolve_model("MiniMax M3", POOL) == ("exact",
                                                       "minimax/minimax-m3"))
+
+    # The report this tier exists for: `deepseek-v4-pro` opened a numbered
+    # picker of three, because only the full `vendor/model` id counted as exact
+    # and the substring tier matched every id containing the name.
+    ok("a bare model name is exact, not a picker",
+       commands.resolve_model("deepseek-v4-pro", POOL) == (
+           "exact", "deepseek/deepseek-v4-pro"))
+    ok("...and does not lose to its own :thinking sibling",
+       commands.resolve_model("glm-5.2", POOL) == ("exact",
+                                                   "zai-org/glm-5.2"))
+    ok("the :thinking sibling is still nameable in full",
+       commands.resolve_model("glm-5.2:thinking", POOL) == (
+           "exact", "zai-org/glm-5.2:thinking"))
+
+    # Two vendors, one model name: the tier must decline rather than pick a
+    # side. It falls through to the substring tier, which is the picker.
+    two_vendors = ["alpha/gpt-9", "beta/gpt-9"]
+    kind, data = commands.resolve_model("gpt-9", two_vendors)
+    ok("a bare name shipped by two vendors goes to the picker",
+       kind == "many" and sorted(data) == two_vendors, (kind, data))
+
     ok("a unique substring is a single candidate",
        commands.resolve_model("minimax", POOL) == ("one",
                                                    "minimax/minimax-m3"))

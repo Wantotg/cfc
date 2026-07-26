@@ -60,12 +60,29 @@ def human_panel(text):
 
 
 def format_ts(iso_str):
-    """Convert ISO timestamp to readable YYYY-MM-DD HH:MM."""
+    """An ISO timestamp as readable **local** `YYYY-MM-DD HH:MM`.
+
+    It converts when the value carries a UTC offset, and that is the whole
+    point of the function. `db.py` is the only module in the codebase that
+    stores UTC — `new_session` and `save_message` write
+    `datetime.now(timezone.utc).isoformat()`. Routines, the scheduler, the
+    mover and the backup rotation all write local naive time. Formatting the
+    stored string without converting printed every session two hours off in
+    the Netherlands, and put the hub's *Recent chats* panel and its *Routines*
+    panel — one directly above the other, on the same screen — in two
+    different time bases.
+
+    A **naive** timestamp is left exactly as it is, rather than being assumed
+    to be UTC. Everything naive here is already local, so attaching a zone to
+    it would move the one set of times that was right.
+    """
     try:
         dt = datetime.datetime.fromisoformat(iso_str)
-        return dt.strftime("%Y-%m-%d %H:%M")
     except Exception:
         return iso_str
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 # Context-usage thresholds, as a percentage of the model's claimed limit.
@@ -120,13 +137,25 @@ def make_bar(pct, width=24, ctx=None, limit=None):
     """Build a styled progress bar as a Rich Text.
 
     Colour comes from context_style, so it matches the hub's token column and
-    the post-turn nudge without repeating the thresholds."""
+    the post-turn nudge without repeating the thresholds.
+
+    **The trough is bracketed whitespace, not a shade block.** It used to be
+    `░` (U+2591 LIGHT SHADE), which is a *fill* character — twenty-four of them
+    read as a bar with something in it, so a session 0.1% into a 1M context
+    looked meaningfully used. The report was "the bar starts out 1/6 full",
+    and the arithmetic was right the whole time; only the empty state lied.
+    Whitespace cannot be misread as fill, and the brackets keep what `░` was
+    genuinely good for — showing where the end of the bar is, so a short run of
+    blocks is legible as a fraction of something.
+    """
     filled = int(width * pct / 100)
     fill_style = context_style(pct)
 
     bar = Text()
+    bar.append("[", style="dim")
     bar.append("█" * filled, style=fill_style)
-    bar.append("░" * (width - filled), style="dim")
+    bar.append(" " * (width - filled))
+    bar.append("]", style="dim")
     if ctx is not None and limit is not None:
         bar.append(f"  {ctx:,} / {limit:,} tokens "
                    f"({pct:.1f}%)")
