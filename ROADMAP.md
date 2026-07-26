@@ -605,8 +605,10 @@ path:" since v0.1, is the export destination and isn't inside the vault at all.
 `VAULT_ROOT` now exists, display-only, and `/config` names both for what they
 are.
 
-> *(note-shaped hole for Cas)*
-
+> *(note-shaped hole for Cas) cleaning up known issues and bugs, fixing my dreadful version naming, again. Tying loose ends before getting tangled again.*
+``` 
+ฅᨐฅ "praise Ziu"
+``` 
 ---
 
 ## v0.9 — The connection
