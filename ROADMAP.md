@@ -558,6 +558,57 @@ that needs a Windows shell, and it stays open until it has actually run.
 ```
 ⚞^. .^⚟ “The bureaucracy is expanding to meet the needs of the expanding bureaucracy.”
 ``` 
+## v0.8.2 — The embedder answers, or says why — **complete, 2026-07-26**
+
+The second patch off a scratchpad, and the pattern is now the point: both v0.8.1
+and this one came from notes taken *while using cfc*, not from reading the code.
+Two defects and four papercuts. Nothing new is claimed, which is what makes it a
+patch.
+
+- **`/recall` took four minutes to admit the embedding server was off.** One
+  number was answering two different questions. httpx's `timeout=` sets
+  *connect*, *read*, *write* and *pool* alike, and those measure "is anything
+  there" against "is it finished yet" — so a single `timeout=60` made every one
+  of four attempts wait out the full read budget just to discover nothing was
+  listening. Connect is 5s now and read stays 60s: **11.1s instead of ~240s**,
+  while a hundred-chunk import keeps the patience it genuinely needs. The live
+  endpoint answers in 0.18s, so the short budget has 27× headroom.
+- **A dead server stopped being retried like a busy one.** A 429 is a transient
+  and waiting is the right answer; nothing listening on a port is a *state*, and
+  asking four times gets one answer four times. Two budgets, two attempts rather
+  than one only because a call can catch a restart.
+- **And the spinner says so.** A spinner alone cannot distinguish "thinking"
+  from "nothing is there", which is exactly what made an honest wait read as a
+  hang. It's a callback rather than a print, because `embed.py` has no console
+  and must not grow one — routines and imports run headless.
+- **Ctrl-C during a recall exited cfc.** `KeyboardInterrupt` isn't an
+  `Exception`, so a guard catching the latter never saw it, and it escaped the
+  spinner and the session loop. Fixed at all three spinner sites rather than the
+  one that was reported.
+- **An unrecognised model offers the near misses.** `/model minimax 3` used to
+  print "setting it anyway", 400 on the next turn, and auto-revert. It lists
+  what you probably meant, with `[enter]` to force the raw name through anyway —
+  because `MODELS` is not exhaustive and a valid unlisted id is a legitimate
+  thing to type. This closes a question `BACKLOG.md` had been holding since
+  v0.6.2, and closes it with neither of the two options that entry offered.
+- **`/routines` was reaching the model.** An unrecognised verb doesn't error —
+  it falls through as prose — so the plural cost an API call and a confused
+  answer about routines. One line.
+
+Also here, and larger than the display fix that found it: **`VAULT_PATH` is not
+the vault.** Chasing "`/list routine` prints the whole mount path" turned up that
+there was no vault-root setting anywhere in cfc. `ROUTINE_DIR`, `WIKI_DIR`,
+`JOURNAL_DIR` and `MOVE_ROOTS` are each configured separately, every one of them
+commented `<vault>/…`, describing a root that existed in the documentation and
+nowhere in the code — while `VAULT_PATH`, which `/config` had labelled "Vault
+path:" since v0.1, is the export destination and isn't inside the vault at all.
+`VAULT_ROOT` now exists, display-only, and `/config` names both for what they
+are.
+
+> *(note-shaped hole for Cas)*
+
+---
+
 ## v0.9 — The connection
 
 ## v1.0 — Hardening, and a decision

@@ -30,7 +30,7 @@ rest were polish; nothing new is claimed, which is the point of a patch.
   config.example.py, tests/test_embed.py, tests/test_model.py,
   tests/test_hub.py, tests/test_parse.py, tests/golden.py
 - Status: shipped
-- Commit: pending
+- Commit: a26877b
 
 **`/recall` with the embedding server off took four minutes to say so.**
 `embed._post` passed a single `timeout=60` to httpx — which sets *connect*,
