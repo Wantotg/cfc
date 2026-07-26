@@ -554,8 +554,10 @@ shortcut that would use Windows Terminal was losing its quotes before it ever
 started. Written up in `BUGS.md` with the corrected command line. Not closed:
 that needs a Windows shell, and it stays open until it has actually run.
 
-> *(note-shaped hole for Cas)*
-
+> *(note-shaped hole for Cas) some more quality of life improvements and fixes that have 0.9 in mind.* 
+```
+⚞^. .^⚟ “The bureaucracy is expanding to meet the needs of the expanding bureaucracy.”
+``` 
 ## v0.9 — The connection
 
 ## v1.0 — Hardening, and a decision
