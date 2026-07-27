@@ -384,29 +384,30 @@ def ensure(say=_say, fix=True):
 
     acted = False       # did we actually change anything worth re-probing for?
 
-    # **Red is where cfc stops, and it stops on purpose.** LM Studio cannot be
-    # started from WSL — measured 2026-07-27, three ways, all failing with the
-    # app genuinely quit:
+    # **Red still tries, and the reason it tries is a correction.** An earlier
+    # v0.9 commit returned here, on the strength of measuring three ways to
+    # start LM Studio from WSL and watching all three fail (2026-07-27, app
+    # genuinely quit):
     #
     #   lms server start          → "Timed out waiting for LM Studio daemon to
-    #                                start" after 62s. `lms` wakes a background
-    #                                daemon that only exists once the GUI has
-    #                                run, and there is no headless flag.
-    #   cmd.exe /c start "…exe"   → returns 0 immediately, nothing launches.
-    #   direct exec of the .exe   → no process, no output, nothing launches.
+    #                                start" after 62s
+    #   cmd.exe /c start "…exe"   → returns 0 immediately, nothing launches
+    #   direct exec of the .exe   → no process, no output, nothing launches
     #
-    # So the old comment on `LMS_TIMEOUT` ("a cold `server start` has to bring
-    # up the app") was an assumption nobody had tested, and it was wrong.
+    # Cas then reported that the desktop shortcut *used to* bring LM Studio up,
+    # which that early return had removed. The likely mechanism is the one the
+    # measurement missed: when `lms` cannot reach a daemon, `server_state`
+    # returns `(None, None)` rather than `(False, …)`, so the old code skipped
+    # the server-start branch entirely and fell through to **`lms load`** — a
+    # different command with a 180s budget, and the one candidate never tested
+    # cold. `lms server start` may simply never have been what worked.
     #
-    # A button that half-works is worse than one that says it can't — and
-    # specifically so here, because reporting an action we did not complete
-    # would be a lie told by the one feature whose entire purpose is reporting
-    # state truthfully. Red prints the instruction and returns.
+    # So the sequence below runs at red as it always did. What is new is that
+    # it says what it is doing and how long it may take, rather than either
+    # promising or refusing. **Unresolved and parked** — see `BUGS.md`.
     if state == NOT_RUNNING:
-        say("fail", "LM Studio is not running, and cfc cannot start it from WSL")
-        say("info", "start LM Studio on Windows, then run /connect embedding "
-                    "again — it will do the rest.")
-        return False
+        say("warn", "LM Studio is not running — trying to wake it. This is the "
+                    "slow path and may not work from WSL.")
 
     running, port = server_state(cli)
 
@@ -460,7 +461,13 @@ def ensure(say=_say, fix=True):
             return True
 
     say("fail", f"embedder not answering — {detail}")
-    if not acted:
+    if state == NOT_RUNNING:
+        # We tried and it did not come up. Say the one thing that always works
+        # rather than leaving it at "failed" — this is the state a human can
+        # clear in five seconds if they are told to.
+        say("info", "start LM Studio on Windows, then run /connect embedding "
+                    "again — everything after that, cfc can do.")
+    elif not acted:
         say("info", f"server is up on port {port} and {model} is loaded, so "
                     "this is not a startup problem.")
     say("info", "cfc will start; /recall and auto-embed will not work.")

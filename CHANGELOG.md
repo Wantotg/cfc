@@ -23,6 +23,34 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Undo the red-path early return, and demote a claim I overstated
+Cas tested the connection light end to end (green with LM Studio up, red at
+launch and at the hub with it quit, `/connect embedding` working) and reported
+one loss: **the desktop shortcut used to start LM Studio, and no longer does.**
+
+That is a regression this version introduced. The earlier commit today returned
+as soon as it saw "LM Studio not running", on the strength of measuring three
+ways to start it from WSL and watching all three fail. The early return removed
+a path the old code reached **by accident**: when `lms` cannot contact a daemon,
+`server_state` returns `(None, None)` rather than `(False, …)`, so the old
+`ensure()` skipped the server-start branch entirely and fell through to
+`lms load` — a different command, a 180s budget rather than 90s, and the one
+thing never tried cold. `lms server start` may never have been what worked.
+
+So red attempts the sequence again, says it is trying and that it may not work,
+and ends with the instruction to start LM Studio by hand. Nothing is worse than
+before v0.9.
+
+**The write-up was the real error.** "LM Studio cannot be started from WSL" went
+into `HANDOVER.md` under *Rejected designs*, which is the section whose whole
+function is to stop the next person trying. Three failures in one afternoon do
+not establish impossibility about something that has been observed working. It
+is now an open question in `BUGS.md` with the measurements, the untested
+candidate, and the one command that would settle it.
+- Files: preflight.py, ui.py, tests/test_connection.py, HANDOVER.md, BUGS.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — LEGACY_PREFIX and RETIRED come out, and the old words become aliases
 The `:` prefix was accepted for one version with a once-per-session nudge, and
 it was self-removing by design: deleting the constant is all it took. A `:` line
@@ -60,7 +88,7 @@ replaced by the commands actually running.
   tests/test_parse.py, tests/test_empty.py, tests/test_model_revert.py,
   tests/test_private.py, tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: bfa1f40
 
 ## 2026-07-27 — Recall says which kind of nothing it found
 Three outcomes used to produce one silence, and only one of them meant "memory

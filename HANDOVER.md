@@ -213,17 +213,14 @@ they lose. Reopening one needs a new argument, not a fresh eye.
 - **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates
   against its own `MOVE_ROOTS` precisely because it is not the model. The
   separation is the design; the two tuples are independent.
-- **Starting LM Studio from WSL.** The obvious completion of `/connect
-  embedding`, and it cannot be done. Measured 2026-07-27 with the app genuinely
-  quit, three ways: `lms server start` waits 62s and fails with "Timed out
-  waiting for LM Studio daemon to start" — it wakes a background daemon that
-  only exists once the GUI has run, and there is no headless flag on the
-  command; `cmd.exe /c start "…LM Studio.exe"` returns 0 immediately and
-  launches nothing; a direct exec of the .exe produces no process and no
-  output. **The `LMS_TIMEOUT` comment claiming "a cold `server start` has to
-  bring up the app" was an assumption nobody had tested, and it was wrong.**
-  So red prints an instruction and returns in 0.8s instead of failing for 62.
-  Reopening this needs a new mechanism, not another attempt at these three.
+- **~~Starting LM Studio from WSL~~ — not a rejected design, an open question.
+  Moved to `BUGS.md`.** This entry claimed it was impossible on the strength of
+  three failed attempts, and Cas then reported that the desktop shortcut used to
+  do it. Three measurements failing is not proof of impossibility when the
+  thing has been observed working; see `BUGS.md` for what was measured and the
+  untested candidate. Recorded here because "we tried it and it can't be done"
+  is exactly the kind of note that stops the next person trying, and it was
+  written after one afternoon.
 - **Tightening the retrieval floor.** See the constants below. The signal isn't there.
 - **A tighter model-is-thinking check than list membership.** The only available
   signal is the `:thinking` id suffix, and it miscalibrates —

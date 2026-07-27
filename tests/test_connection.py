@@ -82,20 +82,15 @@ def test_rendering_round_trip():
         mark, style, text = ui.connection_light(state)
         assert mark and style and text, f"{state} renders empty"
         # The light exists to say what to do *next*, so every non-connected
-        # state owes an action. A colour alone is a puzzle. `hosted` is the one
-        # state whose next step is not a cfc command — nothing here can start
-        # someone else's endpoint — so what it owes is saying that, and this
-        # test insists on it rather than exempting the state and forgetting.
-        # Two states owe an instruction rather than a command, because cfc
-        # genuinely cannot fix them: a hosted endpoint is someone else's, and
-        # LM Studio cannot be launched from WSL (measured — see
-        # preflight.ensure). Naming a command that cannot work would be worse
-        # than saying so, and this test insists on the honest wording rather
-        # than exempting the states and forgetting why.
+        # state owes an action. A colour alone is a puzzle.
+        # `hosted` is the one state that owes an instruction rather than a
+        # command: a remote endpoint is someone else's to start, and naming a
+        # command that cannot help would be worse than saying so. Every other
+        # non-connected state names `/connect embedding` — including
+        # `not running`, where whether cfc can wake LM Studio is unresolved
+        # rather than known-impossible (see BUGS.md).
         if state == preflight.HOSTED:
             assert "not cfc's to start" in text, text
-        elif state == preflight.NOT_RUNNING:
-            assert "start it on Windows" in text, text
         elif state != preflight.CONNECTED:
             assert "/connect" in text, f"{state} does not name the fix: {text}"
     print(f"  ok  {len(preflight.STATES)} states render")
