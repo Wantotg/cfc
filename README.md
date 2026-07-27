@@ -676,7 +676,9 @@ shows as *entirely rewritten* with no visible change.
 - Sessions are linear — no branching. Single user, local machine.
 
 Known rough edges are in `BACKLOG.md`; things that are outright broken are in
-`BUGS.md`.
+`BUGS.md`. Both hold **open entries only** — once something is fixed, its entry
+moves to `legacy/` whole, with the original report intact, and `CHANGELOG.md`
+records what shipped.
 
 ## Tests
 

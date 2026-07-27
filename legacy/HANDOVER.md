@@ -1,6 +1,8 @@
 # cfc — technical handover (frozen at v0.8)
 
-> **Superseded by `HANDOVER.md` and no longer updated.** Frozen 2026-07-25.
+> **Superseded by [`../HANDOVER.md`](../HANDOVER.md) and no longer updated.**
+> Frozen 2026-07-25; moved here from `HANDOVER-legacy.md` at the repo root on
+> 2026-07-27, unchanged apart from this line.
 > Written when the reader was a model working *without* the repo — Claude App, or
 > a session with no file access — so it re-describes a great deal that you can now
 > simply go and read. It is kept because the long-form reasoning behind most of

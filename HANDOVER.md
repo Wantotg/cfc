@@ -8,7 +8,7 @@ nothing failed while they were live.
 **If this file and the code disagree, the code is right and this file is stale.**
 Say so rather than working around it.
 
-Its predecessor, `HANDOVER-legacy.md`, is frozen at v0.8 and no longer updated.
+Its predecessor, `legacy/HANDOVER.md`, is frozen at v0.8 and no longer updated.
 It was written for a model working *without* the source, so it re-describes
 things you can just go and look at — but it holds the long-form reasoning behind
 most of what is summarised here. Go there when a one-liner below isn't enough.
@@ -21,8 +21,26 @@ most of what is summarised here. Go there when a one-liner below isn't enough.
 | `CHANGELOG.md` | what shipped, with the reasoning. Newest first. Log every shipped change in the same commit |
 | `BACKLOG.md` | deferred and still working. **Read it before touching the memory layer** |
 | `BUGS.md` | broken and known |
+| `legacy/` | the closed entries of both, frozen whole. **A closed entry moves here and leaves no stub** — see below |
 | `ROADMAP.md` | Cas's. Propose, don't edit. `ROADMAP_PRIVATE.md` (gitignored) holds the forward plan |
 | `CLAUDE.md` | who you're working with and the repo rules |
+
+**The archive rule, changed 2026-07-27.** A closed `BUGS.md`/`BACKLOG.md` entry
+used to leave a struck-through stub behind with its fix date. It doesn't any
+more: it moves to `legacy/`, whole, and the live file holds open entries only.
+The old rule is why those two files reached 283 and 897 lines with three and
+five live entries between them, and an unreadable list is one nobody checks.
+
+Two things hold it up and both are load-bearing. **`CHANGELOG.md` is the index**
+— every shipped fix is logged there in the same commit, so nothing needs the
+archive to answer "was this fixed, and why that way". And **the archive keeps
+the original report**, which `CHANGELOG.md` never carried; the symptom as first
+written is frequently the valuable half, and sometimes its *wrong* premise is
+the finding (`MAX_DISTANCE`, below). That is what makes it an archive rather
+than a delete, and it is the reason `legacy/` is tracked in git rather than
+gitignored — a gitignored archive is invisible to clones, outside every backup,
+and destroyed by a fresh checkout, which is the same argument that killed
+`inbox/` at the repo root.
 
 ## Shape
 
@@ -439,10 +457,13 @@ because patching config misses anything that read the value at import.
 
 ## Open threads
 
-- **v0.8 has not been used in anger for a day.** The surface is driven end to end
-  by the golden harness, but whether `/status`'s shape and the bare-name collision
-  walk are pleasant or surprising in practice is a judgement call wanting real use.
-  `LEGACY_PREFIX` and `RETIRED` come out next minor — one constant and one dict.
+- **v0.8.2 has had one clean play-test** (Cas, 2026-07-27): every previously
+  reported issue fixed, nothing new, and the model fallback behaved. What that
+  pass does *not* cover is a broken id that is in `MODELS` — the auto-revert
+  arms only for ids it doesn't recognise, so the case it was built for is the
+  case it misses. See `BACKLOG.md`. Sustained use is still the open half of this
+  thread. `LEGACY_PREFIX` and `RETIRED` come out next minor — one constant and
+  one dict.
 - **The first *scheduled* routine run still hasn't happened** (v0.7's ST/MT jobs
   are waiting on a real tick). Read the first scheduled outputs rather than
   trusting the prompts.

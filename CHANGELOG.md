@@ -23,6 +23,50 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Split the closed entries out of BUGS.md and BACKLOG.md
+`BUGS.md` was 283 lines holding three live entries and `BACKLOG.md` was 897
+holding five; the rest was struck-through history, each entry carrying its full
+original report. A list nobody can read is a list nobody checks, and it was
+blocking the v1.0 documentation pass. Same move the roadmap already made: the
+working file holds what's live, the history lives elsewhere.
+
+Both files were moved into `legacy/` **unedited** and new ones written with the
+open entries only. Archive rather than delete, because `CHANGELOG.md` carries
+every fix and its reasoning but **not the original report** — and the symptom as
+first written is frequently the valuable half, sometimes for its wrong premise
+(`MAX_DISTANCE`). Tracked in git rather than gitignored, for the reason
+`HANDOVER.md` already gives against `inbox/` at the repo root: a gitignored file
+in the repo is invisible to clones, outside every backup, and destroyed by a
+fresh checkout.
+
+This is a **rule change, not a tidy**, so the rule moved with it — a closed
+entry now leaves no stub behind, and that is written into both files' headers
+and `HANDOVER.md` in this commit rather than left as folklore.
+
+Two entries changed state while being carried across, both recorded in the new
+files: *retire the `:`-command `startswith` chain* **closes on inspection** —
+v0.8's `parse.py` already did it, `main.py` has zero `startswith(":` and asserts
+`set(HANDLERS) == set(VERBS)` — and *model selection is too generous* was cut
+down to the `[esc]` remnant that is actually still open. Decisions Cas made on
+the v0.9 draft were written into the entries they belong to rather than kept in
+the draft: localise all three UTC timestamp sites, arm the model auto-revert on
+every switch, check `TOOLS_MODELS`/`MODEL_LIMITS` against `known_models()` at
+startup, and let the provider 400 close on absence if it doesn't recur.
+`HANDOVER-legacy.md` moved to `legacy/HANDOVER.md` in the same pass — same kind
+of document, and it was the last frozen file at the repo root. `legacy/README.md`
+says what the folder is, since GitHub renders it in the listing.
+
+Also recorded, from Cas's v0.8.2 play-test the same day: everything previously
+reported fixed, nothing new, no provider 400. That starts the absence-watch on
+the 400 rather than leaving it to begin at the tag. It explicitly does **not**
+cover the model auto-revert's open case — the pass exercised an id *not* in
+`MODELS`, which is the path that already worked.
+- Files: BUGS.md, BACKLOG.md, HANDOVER.md, README.md, legacy/BUGS.md,
+  legacy/BACKLOG.md, legacy/HANDOVER.md (was HANDOVER-legacy.md),
+  legacy/README.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-26 — v0.8.2: the embedder fails fast, and four papercuts from the testing pass
 Everything here came out of Cas's 0.8.1 testing pass. Two were defects and the
 rest were polish; nothing new is claimed, which is the point of a patch.
