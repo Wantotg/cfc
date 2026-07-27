@@ -730,9 +730,9 @@ next person trying. It removed a capability Cas relied on, and he noticed within
 the hour. Three failures are not proof of impossibility about something that has
 been observed working.
 
-*[Cas's note goes here.] Added some, fixed some, broke some, fixed them again, ready to playtest to test weird things*
+>*[Cas's note goes here.] Added some, fixed some, broke some, fixed them again, ready to playtest to test weird things*
 ```
-/•᷅‎‎•᷄\੭ "I"m not a cat, I'm a database."
+/•᷅•᷄\੭ "I"m not a cat, I'm a database."
 ```
 
 ## v1.0 — Hardening, and a decision
