@@ -284,10 +284,71 @@ you>
 you> Don't know how to update 'wombat'. Updatable: db.
 you> Session #1 titled: Renamed By Golden
 you> /title | /title <session id> | /title <session id> <new title>
-you> : is now / — try /help. The old prefix works for this version.
-:prompts is now /list prompts
-you> :tokens is now /status
-you> :grep is now /search <word>
-you> :forget is now /remove excerpts
-you> :detach is now /remove #<n>
+you>
+Available prompts (<ROOT>/tests/_fixture_prompts):
+
+  alpha                     alpha
+  beta                      beta
+
+you>           Available models
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Model              ┃ Status      ┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ glm-5.2            │ <-- current │
+│ fixture/tool-model │             │
+└────────────────────┴─────────────┘
+
+you>       All tags
+┏━━━━━━━━┳━━━━━━━━━━┓
+┃ Tag    ┃ Sessions ┃
+┡━━━━━━━━╇━━━━━━━━━━┩
+│ memory │        1 │
+│ python │        1 │
+│ wsl    │        0 │
+└────────┴──────────┘
+
+you>
+Session #1  ·  glm-5.2  ·  Renamed By Golden
+  System prompt   alpha
+  Persona         not set
+  Traits          none
+  Attached        nothing
+  Tags            memory
+  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Database        on
+  Context         8 tokens
+  Last turn       0 in · 8 out
+
+you>
+Session #1  ·  glm-5.2  ·  Renamed By Golden
+  System prompt   alpha
+  Persona         not set
+  Traits          none
+  Attached        nothing
+  Tags            memory
+  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Database        on
+  Context         8 tokens
+  Last turn       0 in · 8 out
+
+you>
+Outbox (/mnt/c/Users/disse/cooking for cats/99 outbox)
+  1. lt memory.md  —  Long term memory   [journal]
+     REPLACES /mnt/c/Users/disse/cooking for cats/03 resources/journal/lt memory.md
+  2. mt memory.md  —  Medium term memory   [journal]
+     REPLACES /mnt/c/Users/disse/cooking for cats/03 resources/journal/mt memory.md
+
+  2 of 2 can be filed
+  /file <n> | /file all | /file <n> decline [why]
+
+you>
+Found 2 match(es) in 1 session(s):
+
+Session #1  "Renamed By Golden"
+  [you] what did we decide about the vector db?
+  [ai] We chose sqlite-vec for the vector store.
+
+you>
+Nothing injected in this session to forget.
+
 you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]

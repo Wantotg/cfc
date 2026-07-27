@@ -19,7 +19,7 @@ This file is how you use it.
 - **Everything local** — one SQLite file, fully queryable, rolling backups
 - **Private chat** — `p` at the hub. Same client, in-memory, leaves nothing on
   disk: no transcript, no index, no title, invisible to the hub
-- **One command grammar** — `/verb [kind] [target] [message]`, twenty-one verbs.
+- **One command grammar** — `/verb [kind] [target] [message]`, twenty-two verbs.
   `/add` attaches anything, `/remove` takes it off, `/status` says what's on,
   `/list` says what exists
 - **System prompts, personas and traits** — Markdown files you edit in Obsidian.
@@ -357,11 +357,13 @@ target-then-action so it inherits the numbering already on screen; and `/wiki`
 carries an extra `folder|file` slot, being the one command whose object has a
 sub-granularity.
 
-**Coming from the `:` commands?** They still work for this version, with a
-one-line note the first time you use one in a session. Verbs that were retired
-rather than renamed tell you what replaced them — typing `:prompts` prints
-"`/list prompts`" — instead of being sent to the model as a chat message. Both go
-away next minor version.
+**Coming from the `:` commands?** The old prefix is gone as of v0.9 — a `:` line
+is ordinary text and goes to the model, as it did before v0.8. The old *words*
+did not go with it: `/prompts`, `/models`, `/tags`, `/tokens`, `/attach`,
+`/grep`, `/forget` and the rest are real aliases now rather than corrections, so
+they run the command instead of telling you its new name. `/detach` is the one
+exception, because its replacement `/remove #<n>` takes a different kind of
+argument.
 
 ### Input
 

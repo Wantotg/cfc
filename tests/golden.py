@@ -126,13 +126,20 @@ SCRIPT = [
     f"{PREFIX}update wombat",
     f"{PREFIX}title 1 Renamed By Golden",
     f"{PREFIX}title abc",
-    # Retired verbs are corrected, not sent to the model. Every one of these
-    # would otherwise cost an API call and return a confused answer.
-    ":prompts",
-    ":tokens",
-    ":grep vector",
-    ":forget",
-    ":detach 1",
+    # The v0.8 taxonomy's old words are now real aliases, not corrections
+    # (v0.9 deleted RETIRED). Every one of these would otherwise fall through
+    # to the model, costing an API call and returning a confused answer — which
+    # is exactly what `/routines` did until v0.8.2. `detach` is deliberately not
+    # among them: its replacement takes `#<n>`, a different argument shape, so
+    # no alias can carry it. See parse.ALIASES.
+    f"{PREFIX}prompts",
+    f"{PREFIX}models",
+    f"{PREFIX}tags",
+    f"{PREFIX}tokens",
+    f"{PREFIX}attached",
+    f"{PREFIX}outbox",
+    f"{PREFIX}grep vector",
+    f"{PREFIX}forget",
     f"{PREFIX}q",
 ]
 

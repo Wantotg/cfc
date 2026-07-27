@@ -85,7 +85,7 @@ def main_():
     main.safe_export = lambda *a, **k: exports.append(1)
     main.AUTO_EXPORT = True   # force the control's export path on, deterministically
 
-    script = ":tools off\nhello\n:q\n"
+    script = "/tools off\nhello\n/q\n"
 
     print("\n--- a normal chat: writes to disk (the control) ---")
     real_sid = dbmod.new_session(real, title="normal")
@@ -140,7 +140,7 @@ def main_():
     # export_session is the explicit path (not safe_export); spy on it too.
     calls = []
     main.export_session = lambda conn, target, quiet=False: calls.append(target)
-    drive(priv2, p2, private=True, keys=":tools off\nhello\n:export\n:q\n")
+    drive(priv2, p2, private=True, keys="/tools off\nhello\n/export\n/q\n")
     ok("typing :export runs an export in a private chat", calls == [p2], calls)
     ok("...while auto-export on :q still does not", exports == [], exports)
     priv2.close()
@@ -162,19 +162,19 @@ def main_():
             main.DATABASE_ACTIVE = saved
         return list(recalls), out
 
-    r, out = recall_run(True, ":recall who is cas\n:q\n", db_active=False)
+    r, out = recall_run(True, "/recall who is cas\n/q\n", db_active=False)
     ok("a private chat seals recall by default", r == [], r)
     ok("...and says the database is off", "Database is off" in out, out[-200:])
 
-    r, _ = recall_run(True, ":database on\n:recall who is cas\n:q\n",
+    r, _ = recall_run(True, "/database on\n/recall who is cas\n/q\n",
                       db_active=False)
-    ok(":database on opens recall in a private chat", r == ["who is cas"], r)
+    ok("/database on opens recall in a private chat", r == ["who is cas"], r)
 
-    r, _ = recall_run(True, ":recall who is cas\n:q\n", db_active=True)
+    r, _ = recall_run(True, "/recall who is cas\n/q\n", db_active=True)
     ok("DATABASE_ACTIVE=True lets a private chat recall from the start",
        r == ["who is cas"], r)
 
-    r, _ = recall_run(False, ":recall who is cas\n:q\n")
+    r, _ = recall_run(False, "/recall who is cas\n/q\n")
     ok("a normal chat recalls by default", r == ["who is cas"], r)
 
     print("\n--- model file-writes are blocked in a private chat ---")

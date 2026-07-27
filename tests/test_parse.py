@@ -23,8 +23,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
-from parse import (parse, Cmd, PREFIX, LEGACY_PREFIX, ALIASES,
-                   RETIRED, VERBS, RESERVED)
+from parse import parse, Cmd, PREFIX, ALIASES, VERBS, RESERVED
 
 PASS, FAIL = [], []
 
@@ -57,9 +56,19 @@ def main():
     # ":attached".startswith(":attach") is true, so the old chain had to test
     # :attached first and said so in a comment. Nothing declares that order;
     # it comes back every time a command is added whose name prefixes another.
-    ok("':attached' is its own verb, not an attach of 'ed'",
-       p("/attached").verb == "attached")
-    ok("':attach' is unaffected", p("/attach ~/notes.md").verb == "attach")
+    # `/attached` is an alias for `/status` as of v0.9, so what this pins now
+    # is that exact matching still keeps it away from `/attach` — the alias
+    # resolves it, the prefix chain never sees it, and neither reading is an
+    # "attach of 'ed'".
+    ok("'/attached' does not become an attach of 'ed'",
+       p("/attached").verb == "status" and p("/attached").args == ())
+    # Both are aliases now, and they resolve to *different* verbs with the
+    # argument intact — which is a stronger demonstration of exact matching
+    # than the original: a prefix chain would have to be told these apart, and
+    # a dict cannot get them wrong.
+    c = p("/attach ~/notes.md")
+    ok("'/attach' is unaffected by '/attached'",
+       (c.verb, c.args) == ("add", ("~/notes.md",)), (c.verb, c.args))
     ok("':helper' does not run help",
        p("/helper").verb == "helper",
        "the old chain needed a trailing space in the test to avoid an "
@@ -82,8 +91,15 @@ def main():
        "an unrecognised verb falls through to the model, so the plural cost "
        "an API call and a confused answer rather than an error")
     ok("an alias keeps its arguments", p("/db off").raw == "off")
-    ok("every alias target is a plain word",
-       all(v.isalpha() for v in ALIASES.values()), ALIASES)
+    # An alias value may be a phrase (`models` → `list models`), which is what
+    # let the RETIRED entries become real synonyms instead of corrections. What
+    # must hold is that the *verb* it starts with is real; the words after it
+    # are ordinary arguments.
+    ok("every alias starts with a live verb",
+       all(v.split()[0] in VERBS for v in ALIASES.values()),
+       [v for v in ALIASES.values() if v.split()[0] not in VERBS])
+    ok("a phrase alias expands into arguments",
+       (p("/models").verb, p("/models").args) == ("list", ("models",)))
 
     print("\n--- arguments ---")
     c = p("/wiki commit journal file a message")
@@ -124,45 +140,57 @@ def main():
        and parse("!add relax", prefix="!").verb == "add",
        "the v0.8 flip is this constant, not thirty-five edits")
     ok("a prefix that isn't current doesn't parse",
-       parse("%add relax", prefix="!", legacy=None) is None)
+       parse("%add relax", prefix="!") is None)
 
-    print("\n--- the retired prefix, for one version ---")
-    ok("the old prefix still runs the command",
-       parse(f"{LEGACY_PREFIX}add relax").verb == "add",
-       "a migration that breaks what it migrates teaches only that the "
-       "upgrade was a mistake")
-    ok("...and is flagged as legacy so the REPL can say so",
-       parse(f"{LEGACY_PREFIX}add relax").legacy is True)
-    ok("the current prefix is not flagged",
-       parse(f"{PREFIX}add relax").legacy is False)
-    ok("the legacy prefix can be switched off in one place",
-       parse(f"{LEGACY_PREFIX}add relax", legacy=None) is None,
-       "removing it next minor is deleting a constant")
-    ok("the two prefixes are different characters",
-       PREFIX != LEGACY_PREFIX, (PREFIX, LEGACY_PREFIX))
+    print("\n--- the retired prefix is gone (v0.9) ---")
+    # It was self-removing by design: one version of accepting `:` with a
+    # once-per-session nudge, then delete the constant. A `:` line is prose
+    # again, which is what it was before v0.8.
+    ok("the old prefix no longer parses as a command",
+       parse(":add relax") is None,
+       "it goes to the model as text, exactly as it did before v0.8")
     ok("Cmd is immutable", isinstance(p("/help"), Cmd)
        and _frozen(p("/help")),
        "handlers receive the parse, they don't edit it")
 
-    print("\n--- the surface: three lists that have to agree ---")
+    print("\n--- the surface: two lists that have to agree ---")
     ok("twenty-two verbs", len(VERBS) == 22, len(VERBS))
     ok("no verb is listed twice", len(set(VERBS)) == len(VERBS))
-    ok("every retired verb points at a live one",
-       all(r.split()[0] in VERBS for r in RETIRED.values()),
-       [r for r in RETIRED.values() if r.split()[0] not in VERBS])
-    ok("no retired verb is also a live one",
-       not (set(RETIRED) & set(VERBS)), set(RETIRED) & set(VERBS))
     ok("no alias collides with a live verb",
        not (set(ALIASES) & set(VERBS)), set(ALIASES) & set(VERBS))
     ok("every alias resolves to a live verb",
-       all(v in VERBS for v in ALIASES.values()), ALIASES)
+       all(v.split()[0] in VERBS for v in ALIASES.values()),
+       [v for v in ALIASES.values() if v.split()[0] not in VERBS])
     ok("nothing reserved is spent",
        not (set(RESERVED) & set(VERBS)), set(RESERVED) & set(VERBS))
-    # main.py asserts its handler table equals VERBS at session start; this is
-    # the same guarantee from the other side, without needing a session.
-    ok("a retired verb still parses, so the REPL can correct it",
-       parse(f"{PREFIX}prompts").verb == "prompts",
-       "otherwise it falls through and is sent to the model as a message")
+
+    print("\n--- the promoted plurals: RETIRED's job, done by ALIASES ---")
+    # RETIRED used to catch these. Deleting it without promoting them would
+    # have turned each one back into prose — and an unrecognised verb is not an
+    # error, it is an API call and a confused answer. This is the whole reason
+    # the deletion and the promotion had to be one change.
+    for typed, verb, args in (
+            ("models", "list", ("models",)),
+            ("prompts", "list", ("prompts",)),
+            ("personas", "list", ("personas",)),
+            ("tags", "list", ("tags",)),
+            ("outbox", "list", ("outbox",)),
+            ("updatedb", "update", ("db",)),
+            ("tokens", "status", ()),
+            ("attached", "status", ()),
+    ):
+        c = parse(f"{PREFIX}{typed}")
+        ok(f"/{typed} is a command, not a message",
+           c is not None and (c.verb, c.args) == (verb, args),
+           c and (c.verb, c.args))
+    # A phrase alias must still carry the user's own arguments after the ones
+    # it inserted, or `/prompts` would work and `/grep foo` would lose `foo`.
+    c = parse(f"{PREFIX}grep hello world")
+    ok("a renamed verb keeps its arguments",
+       (c.verb, c.args) == ("search", ("hello", "world")), (c.verb, c.args))
+    c = parse(f"{PREFIX}prompts extra")
+    ok("a phrase alias puts its own words first",
+       (c.verb, c.args) == ("list", ("prompts", "extra")), (c.verb, c.args))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

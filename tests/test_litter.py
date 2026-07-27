@@ -55,7 +55,7 @@ def tool_use_marker(name):
 def main():
     print("--- markers the source writes are litter ---")
     rm = remember_marker("what did we decide about chunking", 8)
-    ok(":remember marker is litter", is_litter(rm), rm)
+    ok("/remember marker is litter", is_litter(rm), rm)
 
     tu = tool_use_marker("read_file")
     ok("tool_use marker is litter", is_litter(tu), tu)

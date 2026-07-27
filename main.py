@@ -38,8 +38,7 @@ except ImportError:
 from splash import splash
 from rich.text import Text
 
-from parse import (parse, looks_like_path, RETIRED, VERBS,
-                   PREFIX, LEGACY_PREFIX)
+from parse import parse, looks_like_path, VERBS, PREFIX
 from assemble import assemble_system
 from pools import bodies as pool_bodies, pool as pool_of, stem
 
@@ -181,10 +180,6 @@ def run_session(conn, session_id, private=False):
     # the same dispatch, and a private chat's throwaway db takes the revert the
     # same way, persisting nothing real either way.
     revert_model = None
-    # The old prefix still works for one version. Said once per session, not
-    # once per command: a correction printed after every line is one that stops
-    # being read, and the command it corrects ran anyway.
-    said_legacy = False
     system_prompt = get_system_prompt(conn, session_id)
     system_prompt_name = get_system_prompt_name(
         conn, session_id
@@ -826,28 +821,10 @@ def run_session(conn, session_id, private=False):
 
         cmd = parse(user)
         if cmd is not None:
-            if cmd.legacy and not said_legacy:
-                said_legacy = True
-                console.print(f"{LEGACY_PREFIX} is now {PREFIX} — try "
-                              f"{PREFIX}help. The old prefix works for this "
-                              f"version.", style="dim")
             handler = HANDLERS.get(cmd.verb)
             if handler is not None:
                 if handler(cmd) is _LEAVE:
                     break
-                continue
-            replacement = RETIRED.get(cmd.verb)
-            if replacement:
-                # A verb the taxonomy retired. Say what replaced it and stop:
-                # falling through would *send it to the model* as a chat
-                # message, which is an API call and a confusing answer in
-                # place of a one-line correction.
-                # Echo the prefix they actually typed: printing "/prompts is
-                # now …" at someone who typed ":prompts" names a command that
-                # never existed under either prefix.
-                typed = LEGACY_PREFIX if cmd.legacy else PREFIX
-                console.print(f"{typed}{cmd.verb} is now "
-                              f"{PREFIX}{replacement}", style="dim")
                 continue
             # An unrecognised verb is not a command; it goes to the model,
             # exactly as an unmatched startswith did. cfc does not claim the

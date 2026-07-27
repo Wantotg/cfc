@@ -82,7 +82,7 @@ def main_():
         return ("an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
     main.stream_response = raise_for_bad
 
-    text = drive(conn, sid, ":tools off\n:model shanhaig\nhello\n:model\n:q\n")
+    text = drive(conn, sid, "/tools off\n/model shanhaig\nhello\n/model\n/q\n")
     ok("the error names the rejected model and the revert target",
        "provider rejected 'shanhaig'" in text
        and "switched back to good-model" in text, text)
@@ -98,7 +98,7 @@ def main_():
     # previous model to fall back to and a transient prints raw.
     main.stream_response = lambda messages, model=None: (
         (_ for _ in ()).throw(httpx.HTTPError("upstream 503")))
-    text2 = drive(conn, sid2, ":tools off\nhello\n:q\n")
+    text2 = drive(conn, sid2, "/tools off\nhello\n/q\n")
     ok("an unswitched session's error is shown raw", "upstream 503" in text2, text2)
     ok("...and does not trigger a revert",
        "switched back" not in text2, text2)
@@ -115,7 +115,7 @@ def main_():
     main.known_models = lambda: ["good-model", "broken-but-listed"]
     main.stream_response = lambda messages, model=None: (
         (_ for _ in ()).throw(httpx.HTTPError("no such model: broken-but-listed")))
-    text4 = drive(conn, sid4, ":tools off\n:model broken-but-listed\nhello\n:q\n")
+    text4 = drive(conn, sid4, "/tools off\n/model broken-but-listed\nhello\n/q\n")
     ok("a listed-but-dead model is reverted",
        "provider rejected 'broken-but-listed'" in text4
        and "switched back to good-model" in text4, text4)
@@ -137,7 +137,7 @@ def main_():
 
     # Switch to an unlisted-but-VALID model: turn 1 succeeds (disarms), turn 2
     # errors and must print raw rather than reverting a model that just worked.
-    text3 = drive(conn, sid3, ":tools off\n:model custom-x\nhello\nhello\n:q\n")
+    text3 = drive(conn, sid3, "/tools off\n/model custom-x\nhello\nhello\n/q\n")
     ok("a working unlisted model is not reverted on a later error",
        "switched back" not in text3 and "upstream 500" in text3, text3)
     ok("...and stays selected", dbmod.get_session_model(conn, sid3) == "custom-x",

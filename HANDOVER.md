@@ -59,7 +59,7 @@ must end a turn identically** — see invariant 6.
 | Module | Holds |
 |---|---|
 | `main.py` | hub loop, session loop, verb→handler table, live session state |
-| `parse.py` | the grammar: `parse(line) → Cmd`, `VERBS`/`ALIASES`/`RETIRED`/`RESERVED` |
+| `parse.py` | the grammar: `parse(line) → Cmd`, `VERBS`/`ALIASES`/`RESERVED` |
 | `commands.py` | what each verb does, the approval gate, the resolver's I/O shell |
 | `pools.py` / `assemble.py` | the three pools (prompt/persona/trait) / how they become system messages |
 | `agent.py` | the tool-calling turn |
@@ -135,12 +135,18 @@ Settled. Argue with them only with a reason, and say that you are.
     a scheduled run is a fresh process. Inferring from the document — "the last
     entry is Thursday, so write Friday" — is self-consistent and therefore
     silently wrong forever after one missed run.
-13. **The command surface is three lists that must agree**, and they are checked
+13. **The command surface is two lists that must agree**, and they are checked
     rather than maintained: `run_session` asserts its handler table equals
     `parse.VERBS`. An unrecognised verb falls through **to the model** — so a verb
     that is documented but missing from the table isn't an error message, it's an
-    API call and a confused answer. Retiring a verb means putting it in `RETIRED`,
-    not deleting it.
+    API call and a confused answer. **Retiring a word therefore means aliasing
+    it, not deleting it.** `RETIRED` was a third list until v0.9; deleting it
+    without moving its entries into `ALIASES` would have turned `/models` and
+    `/prompts` back into prose, which is an API call each. An `ALIASES` value may
+    be a *phrase* (`models` → `list models`) precisely so a retired word can map
+    to a command that takes arguments. The one word with no alias is `detach`,
+    whose replacement `/remove #<n>` changes the argument's shape — that is the
+    bar for letting a word go.
 14. **A delete reaches the index that points at what was deleted.**
     `chunks`/`vec_chunks` have no foreign keys, so the cascade is in code: index
     rows first, vectors before chunks, a vector-delete failure raising rather than
@@ -533,8 +539,7 @@ because patching config misses anything that read the value at import.
   pass does *not* cover is a broken id that is in `MODELS` — the auto-revert
   arms only for ids it doesn't recognise, so the case it was built for is the
   case it misses. See `BACKLOG.md`. Sustained use is still the open half of this
-  thread. `LEGACY_PREFIX` and `RETIRED` come out next minor — one constant and
-  one dict.
+  thread.
 - **The first *scheduled* routine run still hasn't happened** (v0.7's ST/MT jobs
   are waiting on a real tick). Read the first scheduled outputs rather than
   trusting the prompts.

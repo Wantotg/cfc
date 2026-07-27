@@ -24,37 +24,77 @@ from dataclasses import dataclass
 # The command prefix. It is one constant on purpose: flipping it in v0.8 was a
 # change to the grammar and not to a single handler.
 #
-# `LEGACY_PREFIX` is accepted for one version and then removed. A `:` command
-# still runs, and `Cmd.legacy` tells the REPL to say so — once per session, not
-# once per command, because a correction repeated forty times is one that stops
-# being read. Self-removing rather than an undocumented dialect kept alive
-# forever: delete the constant and `:add` becomes ordinary prose again.
+# The `:` prefix was accepted for one version (v0.8) with a once-per-session
+# nudge, and removed in v0.9 as designed. It was self-removing on purpose:
+# deleting the constant is all it took, and `:add` is ordinary prose again.
 PREFIX = "/"
-LEGACY_PREFIX = ":"
 
 # Typed verb → canonical verb. Kept here rather than in the dispatch table so
 # completion and dispatch agree on the whole surface by construction; two lists
 # of aliases is how one of them goes stale.
+# **A value may be a phrase, not just a verb.** `models` has to become `list
+# models`, and without that an alias can only rename a verb — which is why the
+# plurals lived in `RETIRED` instead, borrowing a deprecation table to do a
+# synonym's job. When `RETIRED` was deleted they would have become prose again
+# and fallen through *to the model*, costing an API call and a confused answer:
+# exactly what `/routines` did until v0.8.2. So the deletion and this promotion
+# are one change, not two.
+#
+# Expansion happens once, in `parse`, and the user's own arguments are appended
+# after it — so `/grep foo` is `/search foo` and nothing has to know that `grep`
+# was ever a word.
 ALIASES = {
     "h": "help",
     "?": "help",
     "db": "database",
-    # A plural the hand types by reflex, because the command lists several of
-    # them. Worth a line here rather than nothing: an unrecognised verb is not
-    # an error, it falls through to the model (see run_session), so `/routines`
-    # cost an API call and a confused answer about routines. The other verbs
-    # were checked for the same trap — the rest of the plurals people reach for
-    # (`prompts`, `models`, `tags`) are already caught by RETIRED.
+    # Plurals the hand types by reflex, because the command lists several of
+    # them. An unrecognised verb is not an error — it falls through to the
+    # model (see run_session) — so a missing line here is an API call, not a
+    # "no such command".
     "routines": "routine",
+    "models": "list models",
+    "prompts": "list prompts",
+    "personas": "list personas",
+    "traits": "list traits",
+    "tags": "list tags",
+    "sessions": "list sessions",
+    "chats": "list chats",
+    "outbox": "list outbox",
+    # Singulars that read as questions about the current session. These were in
+    # `RETIRED` pointing at `/status`, and they are worth keeping as real
+    # synonyms rather than corrections: "what prompt am I on" is a thing to ask,
+    # not a mistake to be told off for.
+    "prompt": "status",
+    "persona": "status",
+    "attached": "status",
+    "tokens": "status",
+    # Verb renames where the argument carries over untouched.
+    "grep": "search",
+    "updatedb": "update db",
+    "taglist": "list tags",
+    "attach": "add",
+    "tag": "add tag",
+    "untag": "remove tag",
+    "forget": "remove excerpts",
+    # **`detach` is deliberately absent, and it is the only one.** Its
+    # replacement is `/remove #<n>` — the `#` is the attachment namespace, so
+    # the argument changes shape and no verb-level alias can carry `1` across
+    # to `#1`. `/remove 1` would look for a *pool item named "1"*. The choices
+    # were to widen `/remove` to accept a bare number (changing a deliberate
+    # namespace to rescue a retired word) or to let this one go. It goes: it
+    # had its version of correction, and it is the only member of the retired
+    # set whose replacement is not the same command under a different name.
 }
 
 
 # The whole surface, in the order `/help` groups them. This is the canonical
 # list: `main.py` asserts its handler table matches, so a verb added to one and
 # not the other fails at import rather than at the moment someone types it.
-# Three lists that have to agree (the table, this, and `RETIRED`) is exactly the
-# drift `HANDOVER.md` names as a recurring hazard — so they are checked, not
-# maintained by hand.
+# Two lists that have to agree (the table and this) is exactly the drift
+# `HANDOVER.md` names as a recurring hazard — so they are checked, not
+# maintained by hand. `RETIRED` was the third until v0.9; its live entries
+# moved into `ALIASES` above rather than simply going away, because a deleted
+# correction is a word that falls through to the model.
 VERBS = (
     "help", "list", "status", "config", "search",     # ask
     "add", "remove",                                  # context
@@ -72,31 +112,6 @@ VERBS = (
 # precisely for this, which is the reservation working as intended.
 RESERVED = ("start", "launch", "swap", "continue", "refresh", "import")
 
-# Verbs the taxonomy retired, and what replaced them. Kept for one minor
-# version so muscle memory costs a line of help rather than an API call — an
-# unrecognised verb falls through to the model, so without this `:prompts`
-# would be *sent to it* as a chat message. Self-removing, like the old-prefix
-# nudge: delete the map and the words become ordinary prose again.
-RETIRED = {
-    "prompts": "list prompts",
-    "prompt": "status  (or add <name> to attach one)",
-    "personas": "list personas",
-    "persona": "status  (or add <name> to attach one)",
-    "attach": "add <path>",
-    "attached": "status",
-    "detach": "remove #<n>",
-    "forget": "remove excerpts",
-    "tag": "add tag <name>",
-    "untag": "remove tag <name>",
-    "tags": "status",
-    "taglist": "list tags",
-    "grep": "search <word>",
-    "updatedb": "update db",
-    "tokens": "status",
-    "models": "list models",
-    "outbox": "list outbox",
-}
-
 
 @dataclass(frozen=True)
 class Cmd:
@@ -110,7 +125,6 @@ class Cmd:
     verb: str
     raw: str
     args: tuple
-    legacy: bool = False
 
     def arg(self, i, default=""):
         """Token `i` after the verb, or `default` if the line stopped short."""
@@ -140,36 +154,40 @@ class Cmd:
             return default
 
 
-def parse(line, prefix=PREFIX, legacy=LEGACY_PREFIX):
+def parse(line, prefix=PREFIX):
     """A `Cmd`, or None if this line isn't a command.
 
     None means "not addressed to us" — the caller sends it to the model. A
     bare prefix with nothing after it is also None: `/` on its own is a typo,
     and treating it as a verb named "" would need a special case in the table.
 
-    `legacy` is the retired prefix. It parses identically and sets
-    `Cmd.legacy`, so the REPL can nudge without the command failing — a
-    migration that breaks the thing it is migrating teaches only that the
-    upgrade was a mistake.
+    The `:` prefix is gone as of v0.9 — a `:` line is prose and goes to the
+    model, which is what it was before v0.8 and what the migration promised.
     """
     line = (line or "").strip()
-    was_legacy = False
-    if line.startswith(prefix):
-        body = line[len(prefix):].strip()
-    elif legacy and line.startswith(legacy):
-        body, was_legacy = line[len(legacy):].strip(), True
-    else:
+    if not line.startswith(prefix):
         return None
+    body = line[len(prefix):].strip()
     if not body:
         return None
     verb, _, raw = body.partition(" ")
     verb = verb.lower()
     raw = raw.strip()
+    # An alias may expand to a phrase (`models` → `list models`), in which case
+    # the extra words become the leading arguments and anything the user typed
+    # follows them. Done here rather than in the dispatch table so completion
+    # and dispatch see one surface: two places that expand aliases is how they
+    # come to disagree about a single line.
+    expansion = ALIASES.get(verb, verb)
+    if " " in expansion:
+        verb, _, extra = expansion.partition(" ")
+        raw = f"{extra.strip()} {raw}".strip()
+    else:
+        verb = expansion
     return Cmd(
-        verb=ALIASES.get(verb, verb),
+        verb=verb,
         raw=raw,
         args=tuple(raw.split()),
-        legacy=was_legacy,
     )
 
 

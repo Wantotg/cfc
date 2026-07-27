@@ -61,7 +61,7 @@ def main_():
     def drive(interactive, keys):
         """Run one session to completion with a stubbed, always-empty stream.
 
-        ':tools off' comes first in every script: the session defaults to
+        '/tools off' comes first in every script: the session defaults to
         tools ON, which takes agent_turn instead of the streaming path and
         never reaches the handler under test. That cost a confusing round of
         "why is this zero attempts".
@@ -85,7 +85,7 @@ def main_():
     expected = main.EMPTY_COMPLETION_RETRIES + 1
 
     print("\n--- no human: re-roll a bounded number of times, then give up ---")
-    n, out = drive(False, ":tools off\nhello\n:q\n")
+    n, out = drive(False, "/tools off\nhello\n/q\n")
     ok(f"tries {expected} times in total", n == expected, n)
     ok("says why it is retrying", "no human to ask" in out, out[-400:])
     ok("gives up loudly rather than silently", "gave up after" in out,
@@ -96,26 +96,26 @@ def main_():
                     "AND TRIM(content)=''").fetchone()[0] == 0)
 
     print("\n--- a human: ask, and honour the answer ---")
-    n, out = drive(True, ":tools off\nhello\ny\nn\n:q\n")
+    n, out = drive(True, "/tools off\nhello\ny\nn\n/q\n")
     ok("asks the human", "retry?" in out)
     ok("'y' re-rolls once, 'n' stops", n == 2, n)
     ok("...and does not use the unattended path",
        "no human to ask" not in out)
 
-    n, _ = drive(True, ":tools off\nhello\nn\n:q\n")
+    n, _ = drive(True, "/tools off\nhello\nn\n/q\n")
     ok("an immediate 'n' costs exactly one call", n == 1, n)
 
-    n, out = drive(True, ":tools off\nhello\n")
+    n, out = drive(True, "/tools off\nhello\n")
     ok("EOF at the prompt is read as 'no', not a crash", n == 1, n)
 
     print("\n--- the bound is the constant, not a magic number ---")
     saved = main.EMPTY_COMPLETION_RETRIES
     try:
         main.EMPTY_COMPLETION_RETRIES = 4
-        n, _ = drive(False, ":tools off\nhello\n:q\n")
+        n, _ = drive(False, "/tools off\nhello\n/q\n")
         ok("raising the constant raises the attempts", n == 5, n)
         main.EMPTY_COMPLETION_RETRIES = 0
-        n, _ = drive(False, ":tools off\nhello\n:q\n")
+        n, _ = drive(False, "/tools off\nhello\n/q\n")
         ok("zero retries means one attempt", n == 1, n)
     finally:
         main.EMPTY_COMPLETION_RETRIES = saved

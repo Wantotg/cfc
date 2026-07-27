@@ -103,8 +103,8 @@ def main():
        not any("routine:" in t for t in titles), titles)
     ok("wiki pages are out of the picker", "A wiki page" not in titles, titles)
     ok("real chats survive", "A real chat" in titles and "Another chat" in titles)
-    ok(":list still shows the routine run", any("routine:" in t for t in everything))
-    ok(":list still shows the wiki page", "A wiki page" in everything)
+    ok("/list still shows the routine run", any("routine:" in t for t in everything))
+    ok("/list still shows the wiki page", "A wiki page" in everything)
 
     # The whole point of a deny list. An allow list would hide both of these,
     # and hiding a real conversation is the failure that cannot be noticed.

@@ -973,7 +973,7 @@ _CORE_COMMANDS = [
     ("Alt+Enter", "insert a newline  (Enter sends)"),
 ]
 
-# The whole surface: twenty-one verbs, grouped by what they are for. The
+# The whole surface: twenty-two verbs, grouped by what they are for. The
 # grammar line above them is what makes this a list you can hold in your head
 # rather than a table you re-read — every command is verb, then kind, then
 # target, then free text.

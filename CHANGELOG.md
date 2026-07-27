@@ -23,6 +23,45 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — LEGACY_PREFIX and RETIRED come out, and the old words become aliases
+The `:` prefix was accepted for one version with a once-per-session nudge, and
+it was self-removing by design: deleting the constant is all it took. A `:` line
+is ordinary text again and goes to the model, exactly as before v0.8.
+
+**The deletion and the promotion had to be one commit, and this is the whole
+point of the entry.** `RETIRED` was what caught `/models`, `/prompts`, `/tags`
+and a dozen more. Deleting it would have turned each of them back into prose —
+and an unrecognised verb is not an error message, it **falls through to the
+model**, costing an API call and returning a confused answer. That is precisely
+what `/routines` did until v0.8.2 fixed it with one line in `ALIASES`. So the
+retired words moved into `ALIASES` in the same change that removed the dict, and
+they are now real synonyms rather than corrections: `/prompts` lists prompts
+instead of printing the name of the command that lists prompts.
+
+That needed one grammar change: **an `ALIASES` value may be a phrase.**
+`models` has to become `list models`, which a verb-for-verb alias cannot
+express — which is why these lived in a deprecation table doing a synonym's job
+in the first place. `parse` expands the phrase once and appends the user's own
+arguments after it, so `/grep foo` is `/search foo` and nothing downstream knows
+`grep` was ever a word.
+
+**`detach` is the one word let go, and the bar it failed is worth recording.**
+Its replacement is `/remove #<n>` — the `#` is the attachment namespace — so the
+argument changes shape and no verb-level alias can carry `1` across to `#1`.
+Widening `/remove` to accept a bare number would have changed a deliberate
+namespace to rescue a retired word. It had its version of correction.
+
+Three test files were still driving the REPL with `:` commands, which now go to
+the model — so the golden harness was attempting real API calls and hanging.
+That is the same class the change is about, caught in the tests rather than in
+use. The baseline moves 293 → 354 lines: the retired-verb corrections are
+replaced by the commands actually running.
+- Files: parse.py, main.py, commands.py, README.md, HANDOVER.md,
+  tests/test_parse.py, tests/test_empty.py, tests/test_model_revert.py,
+  tests/test_private.py, tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Recall says which kind of nothing it found
 Three outcomes used to produce one silence, and only one of them meant "memory
 has no answer". The embedder never answering, nothing being indexed, and a real
@@ -68,7 +107,7 @@ thing.
 - Files: embed.py, search.py, recall.py, commands.py,
   tests/test_memory_states.py, HANDOVER.md, README.md
 - Status: shipped
-- Commit: pending
+- Commit: 4d1a9ab
 
 ## 2026-07-27 — The connection says which state it is in
 v0.9's first two blocks, and they are one job: cfc now reports the state of its

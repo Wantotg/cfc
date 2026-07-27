@@ -242,7 +242,7 @@ def main():
     got = completions(f"{PREFIX}list ")
     ok("a bare Tab lists every kind", "sessions" in got and "chats" in got, got)
 
-    print("\n--- ':routine' completion ---")
+    print("\n--- '/routine' completion ---")
     with tempfile.TemporaryDirectory() as tmp:
         with Routines(tmp):
             got = completions(f"{PREFIX}routine ")
@@ -264,7 +264,7 @@ def main():
                got[:2] == ["wiki-maintainer", "Wiki Maintainer Suggest"], got)
 
             got = completions(f"{PREFIX}routine ne")
-            ok("':routine new' is offered", got == ["new"], got)
+            ok("'/routine new' is offered", got == ["new"], got)
 
             # A routine you can't run is the one you're most likely reaching
             # for — to fix it. Hiding it would read as it having been deleted.
@@ -273,7 +273,7 @@ def main():
                completions(f"{PREFIX}routine zz"))
 
     ok("a line that isn't a completable command is inert",
-       completions(":help") == [], completions(":help"))
+       completions("/help") == [], completions("/help"))
 
     print("\n--- the readline half still exists for the input() path ---")
     src = (ROOT / "complete.py").read_text()
