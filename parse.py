@@ -62,15 +62,15 @@ VERBS = (
     "export",                                         # data
     "recall", "remember", "update",                   # memory
     "new", "q", "title",                              # session
-    "model", "tools", "database",                     # settings
+    "model", "tools", "database", "connect",          # settings
     "wiki", "routine", "file",                        # feature areas
 )
 
 # Verbs held but deliberately unspent. Reserving costs nothing; spending one
 # does, which is why `:routine name` stayed `/routine name` rather than becoming
-# `/start name`.
-RESERVED = ("connect", "start", "launch", "swap", "continue", "refresh",
-            "import")
+# `/start name`. `connect` was spent in v0.9 — it had been held since v0.8
+# precisely for this, which is the reservation working as intended.
+RESERVED = ("start", "launch", "swap", "continue", "refresh", "import")
 
 # Verbs the taxonomy retired, and what replaced them. Kept for one minor
 # version so muscle memory costs a line of help rather than an API call — an

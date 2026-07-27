@@ -148,6 +148,16 @@ Settled. Argue with them only with a reason, and say that you are.
 15. **"Chat" means both chats.** Every feature is specified for private chat too.
     The one exception is privacy itself, and there you refuse and leave the private
     half unbuilt rather than ship a half-private one. See `CLAUDE.md`.
+16. **The connection light renders `preflight.connection_state()` and never
+    forms an opinion.** The hub's light, `/connect embedding` and the launch
+    report are three renderings of one function. A light that decides for itself
+    can disagree with the thing it describes, and the failure is **green over a
+    dead server** — the one output nobody double-checks, because it is precisely
+    the reassurance that stops you checking. This is affordable rather than
+    aspirational: a real embedding call is 0.16s, so the light asks live on every
+    hub render and there is no cache anywhere, hence no staleness to reason
+    about. It also reports the *process* state only where it measured one —
+    `DOWN` exists so "LM Studio is running, its server isn't" is never a guess.
 
 ## Two rules that generated most of the above
 
@@ -260,6 +270,20 @@ asking four times gets one answer four times. `_DOWN_RETRIES = 2` rather than 1
 only so a call can catch a restart. `tests/test_embed.py` pins the timeouts **as
 a pair**, not as two numbers — retuning stays free, merging does not.
 
+**`preflight.py` learned the same lesson one layer up, and the measurement is
+what bought the traffic light.** `PROBE_CONNECT = 0.5` / `PROBE_READ = 8.0`
+replaced a single `PROBE_TIMEOUT = 8.0` for exactly `embed.py`'s reason — one
+number has to serve the slower quantity, so a *dead* port cost the full read
+budget to learn nothing was listening. Measured 2026-07-27 on Cas's machine: a
+live local embedder answers a real `/embeddings` POST in **0.157s**; `lms server
+status` and `lms ps` are ~0.33s; `tasklist.exe` is ~0.15s; a dead local port on
+WSL **hangs rather than refusing**, so it costs exactly the connect timeout.
+Those numbers are the argument for the light having no cache at all — 0.16s
+healthy and 0.5s broken is cheap enough to ask on every hub render, and an
+answer you can always re-ask is one you never have to age. **Re-measure before
+raising either**, and keep them a pair; `tests/test_connection.py` pins the
+relationship, not the values.
+
 **The two read timeouts are not the same quantity, so don't unify them.**
 `call_api` reads for 600s because non-streaming means no bytes arrive until the
 whole completion is done — a thinking model inside a tool loop is legitimately
@@ -308,6 +332,15 @@ way: a regex quietly stops matching, nothing raises, and the feature returns
 | `routines.append_log`'s line | `routines.last_run` | `on_failure` reads the wrong status |
 | `routines.append_log`'s status word | `routines.last_success` | a weekly routine's week is marked absorbed, or never is |
 | `tools.write_file`'s success line | `tools.written_path` | the run log says the run wrote nothing |
+| `preflight.STATES` | `ui.CONNECTION_STYLE` | a connection state with no colour renders as a blank light |
+
+The sixth row is a producer/parser pair **across a module boundary that cannot
+be closed**: `ui.py` imports no cfc module by decision 6, so it cannot import
+the state constants it maps. It is pinned by round-trip in
+`tests/test_connection.py` — every state must have a rendering and every
+rendering a state — and an unmapped state degrades to a dim `?` rather than
+raising, because taking the hub down over a decorative light is the worse
+failure of the two.
 
 Same class, provider-side: `agent._is_empty_completion_400` and
 `runner.looks_unclear()` match on wording nobody controls. Both are deliberately
@@ -467,9 +500,13 @@ because patching config misses anything that read the value at import.
 - **The first *scheduled* routine run still hasn't happened** (v0.7's ST/MT jobs
   are waiting on a real tick). Read the first scheduled outputs rather than
   trusting the prompts.
-- **`preflight.py`'s two fix paths are unproven** — `lms server start` and
-  `lms load` have never fired, because Cas keeps LM Studio up with the server on.
-  Quitting it entirely and launching is the test.
+- **`preflight.py`'s two fix paths are still unproven** — `lms server start` and
+  `lms load` have never fired, because Cas keeps LM Studio up with the server
+  on. v0.9 made them reachable from inside the app (`/connect embedding`) and
+  gave the red/orange distinction real measurements behind it, but **reachable
+  is not proven**: the acceptance test is quitting LM Studio entirely and
+  launching cold, and until that has been run this stays open. Do not let the
+  light's existence be mistaken for evidence that the fixer works.
 - **A provider 400 on tool turns is open** — `BUGS.md`. Two candidate causes were
   fixed in v0.5; whether either was *the* one is unproven.
 - **Zero recall hits and "nothing worth reporting" still produce identical output.**

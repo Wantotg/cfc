@@ -162,6 +162,45 @@ def context_style(pct):
     return "green"
 
 
+# The connection light's rendering, keyed by the state strings `preflight.py`
+# returns. **Deliberately here and not there**, for the reason `context_style`
+# is here: one mapping read by every consumer, rather than three literals a
+# refactor away from disagreeing. This module imports no cfc module, so the
+# keys are plain strings — a producer/parser pair across a boundary, which is
+# the recurring hazard `HANDOVER.md` tabulates, and it is pinned by round-trip
+# in `tests/test_connection.py`: every state preflight can return must have a
+# row here. Adding a state without a rendering fails that test rather than
+# rendering a blank light.
+#
+# The wording says what to *do*, not what is wrong. "no server" as a bare label
+# is a diagnosis nobody asked for; "run /connect embedding" is the next move.
+CONNECTION_STYLE = {
+    "connected":   ("●", "green",   "embedder connected"),
+    "no server":   ("●", "orange3", "LM Studio is up, embedder is not — "
+                                    "/connect embedding"),
+    "not running": ("●", "red",     "LM Studio is not running — "
+                                    "/connect embedding"),
+    "down":        ("●", "red",     "embedder not answering — "
+                                    "/connect embedding"),
+    # No `/connect` here, and that is the honest answer rather than an
+    # omission: a hosted endpoint is not something cfc can start, so offering a
+    # command that cannot help would be worse than saying so.
+    "hosted":      ("●", "orange3", "hosted embedder unreachable — "
+                                    "not cfc's to start"),
+}
+
+
+def connection_light(state):
+    """(mark, style, text) for a connection state. The single source.
+
+    An unknown state renders as a dim question mark rather than raising: a
+    light is decoration on someone else's screen, and taking the hub down
+    because a new state string appeared is a worse failure than showing that we
+    don't recognise it. The test is what stops one shipping.
+    """
+    return CONNECTION_STYLE.get(state, ("?", "dim", f"connection: {state}"))
+
+
 def make_bar(pct, width=24, ctx=None, limit=None):
     """Build a styled progress bar as a Rich Text.
 

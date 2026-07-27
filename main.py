@@ -79,6 +79,7 @@ from commands import (
     show_routines, create_routine, do_routine,
     show_outbox, do_file,
     show_wiki_status, show_wiki_diff, do_wiki_commit,
+    connect_embedding, connect_status,
     print_session_header, print_core_commands, print_help,
 )
 
@@ -687,6 +688,25 @@ def run_session(conn, session_id, private=False):
         else:
             console.print("Usage: /tools | /tools on | /tools off")
 
+    def h_connect(cmd):
+        """`/connect [embedding]` — the connection, from wherever it starts.
+
+        Works identically in a private chat, and that is not an accident worth
+        skipping over: the connection is a property of the machine, not of the
+        session, and every path here either reads local process state or talks
+        to the embedding endpoint cfc already uses. Nothing is written down and
+        nothing new is phoned home, so the private half needs no special case —
+        which is what "chat means both chats" looks like when it comes free.
+        """
+        target = cmd.arg(0).lower()
+        if not target:
+            connect_status()
+        elif target in ("embedding", "embedder", "embeddings"):
+            connect_embedding()
+        else:
+            console.print(f"Unknown connect target '{target}'. "
+                          "Targets: embedding")
+
     # --- The two absorbing verbs ---
 
     def h_status(cmd):
@@ -737,7 +757,7 @@ def run_session(conn, session_id, private=False):
     # command: it falls through to the model, exactly as an unmatched
     # `startswith` did. Aliases (`h`, `?`, `db`) are resolved by the parser, so
     # this table holds canonical verbs only.
-    # The command surface: twenty-one verbs. Anything not here is not a
+    # The command surface: twenty-two verbs. Anything not here is not a
     # command — it goes to the model. Aliases (`h`, `?`, `db`) and retired
     # verbs are the parser's business, so this table holds live verbs only.
     HANDLERS = {
@@ -766,6 +786,7 @@ def run_session(conn, session_id, private=False):
         "model": h_model,
         "tools": h_tools,
         "database": h_database,
+        "connect": h_connect,
         # feature areas
         "wiki": h_wiki,
         "routine": h_routine,

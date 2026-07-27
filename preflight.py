@@ -21,8 +21,20 @@ the thing it is protecting against.
 Talks to LM Studio through its `lms` CLI, which has `--json` on the two
 commands that matter — parsed, not scraped. Only stdlib plus httpx (already a
 cfc dependency); no rich, so a broken UI import can't stop the app opening.
+
+**It is also the one place that answers "what state is the connection in".**
+`connection_state()` is read by three callers — this file's own launch report,
+the hub's traffic light, and `/connect embedding` — and the rule is that they
+*render* its answer and never form one of their own. A light that decides for
+itself is a second opinion, and the failure mode of a second opinion here is
+green over a dead server: the one output nobody double-checks, because it is
+the reassurance that stops you checking. Everything below the fixer is
+read-only and cheap enough to ask on every hub render (see the timings on
+`PROBE_CONNECT`), which is what removes the temptation to cache an answer and
+then have to reason about how stale it is.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,19 +46,57 @@ from urllib.parse import urlparse
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-# Short. This is a liveness check on a local process, not a workload — every
-# second here is a second of staring at a terminal that hasn't opened yet.
-# embed.py's own 60s timeout and 4 retries are right for a real batch and
-# wrong for this.
-PROBE_TIMEOUT = 8.0
+# **Connect and read are two different quantities, and they are pinned as a
+# pair** — the same lesson `embed.py` learned in v0.8.2, one layer up. httpx's
+# single `timeout=` sets both, so one number has to serve the slower one, and
+# the old `PROBE_TIMEOUT = 8.0` therefore made a *dead* port cost the full read
+# budget just to learn nothing was listening. Measured on this machine
+# (2026-07-27): a live local embedder answers a real /embeddings POST in
+# **0.157s**, and a dead local port on WSL hangs rather than refusing, so it
+# costs exactly the connect timeout.
+#
+# That measurement is what makes the hub's light affordable — 0.16s healthy,
+# 0.5s when the server is gone — so there is no cache anywhere in this file and
+# no staleness to reason about. **Re-measure before raising either number**, and
+# keep them a pair: merging them back into one is the bug, not the tuning.
+PROBE_CONNECT = 0.5     # a local port answers instantly or is not there
+PROBE_READ = 8.0        # a cold model load legitimately needs this
 LMS_TIMEOUT = 90        # a cold `server start` has to bring up the app
 LOAD_TIMEOUT = 180      # loading a model off disk, possibly cold cache
+PS_TIMEOUT = 10         # a process listing; it either answers at once or is broken
+
+# The connection's states. Strings rather than an enum because `ui.py` maps them
+# to a colour and must not import this module (it imports no cfc module at all),
+# so this is a producer/parser pair across a module boundary — the recurring
+# hazard `HANDOVER.md` tabulates. It is pinned by round-trip in
+# `tests/test_connection.py`: every constant here must have a rendering there.
+#
+# The four failure states are deliberately not one "down". We report the process
+# state only when we actually measured it — claiming "LM Studio is running, its
+# server isn't" without having looked is the kind of confident wrong answer this
+# whole feature exists to stop.
+CONNECTED = "connected"        # a real embedding call just worked
+NO_SERVER = "no server"        # LM Studio is running; embeddings don't answer
+NOT_RUNNING = "not running"    # LM Studio is not running at all
+DOWN = "down"                  # embeddings don't answer and we can't tell why
+HOSTED = "hosted"              # not a local embedder; not ours to start
+STATES = (CONNECTED, NO_SERVER, NOT_RUNNING, DOWN, HOSTED)
 
 GREEN, YELLOW, RED, DIM, RESET = (
     "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m")
 
+# Levels a step can report at, and this file's own rendering of them. `ensure()`
+# takes a `say` callback rather than printing directly, because it is run both
+# by `launch.sh` (before rich exists, and deliberately without importing it) and
+# by `/connect embedding` (inside a session, where raw ANSI beside rich panels
+# looks like a bug). Same move as `embed.py`'s `on_retry` in v0.8.2: a callback,
+# not a console, because this module must not grow one.
+_MARKS = {"ok": ("✓", GREEN), "warn": ("…", YELLOW),
+          "fail": ("✗", RED), "info": (" ", DIM)}
 
-def _say(mark, msg, colour=""):
+
+def _say(level, msg):
+    mark, colour = _MARKS.get(level, (" ", ""))
     print(f"  {colour}{mark}{RESET} {msg}", flush=True)
 
 
@@ -82,7 +132,7 @@ def is_local(base):
     return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
 
 
-def probe(timeout=PROBE_TIMEOUT):
+def probe(connect=PROBE_CONNECT, read=PROBE_READ):
     """One real embedding request. Returns (ok, detail).
 
     Deliberately an /embeddings POST and not a GET on /v1/list models: the model
@@ -90,6 +140,8 @@ def probe(timeout=PROBE_TIMEOUT):
     model is unloaded and the thing cfc needs still fails. Test what you need,
     not a proxy for it — this is the same call `embed_texts` makes, minus the
     batching and the retries.
+
+    Two timeouts, never one. See `PROBE_CONNECT`.
     """
     base, model, key = embed_target()
     try:
@@ -104,7 +156,7 @@ def probe(timeout=PROBE_TIMEOUT):
             headers={"Authorization": f"Bearer {key}",
                      "Content-Type": "application/json"},
             json={"model": model, "input": ["preflight"]},
-            timeout=timeout,
+            timeout=httpx.Timeout(read, connect=connect),
         )
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
@@ -174,38 +226,158 @@ def loaded_keys(cli):
         return set()
 
 
-def ensure():
-    """Check, and fix what can be fixed. Returns True if embedding works.
+def app_running():
+    """True / False / None — is the LM Studio *application* up?
 
-    The order is: probe first, diagnose only on failure. The happy path is one
-    HTTP round trip to a local process — everything below the first branch is
-    the cost of things being broken, which is where it belongs.
+    `None` means we could not find out, and it is a real third answer rather
+    than a pessimistic False. The whole point of separating red from orange is
+    to tell you which thing to go and start; guessing that from a process
+    listing we never managed to read would be the confident-wrong-answer shape
+    this module exists to remove.
+
+    On WSL the app is a Windows process, so this crosses the interop boundary to
+    `tasklist.exe` (~0.15s). On a native Linux install it is an ordinary process
+    and `pgrep` answers. Neither is asked to be clever: absence of the tool is
+    None, not False.
     """
-    base, model, _ = embed_target()
-    print(f"{DIM}  embedder: {base}{RESET}", flush=True)
+    if os.name == "nt" or Path("/mnt/c/Windows").exists():
+        exe = shutil.which("tasklist.exe") or "/mnt/c/Windows/System32/tasklist.exe"
+        if not Path(exe).exists():
+            return None
+        try:
+            p = subprocess.run(
+                [exe, "/FI", "IMAGENAME eq LM Studio.exe", "/NH"],
+                capture_output=True, text=True, timeout=PS_TIMEOUT)
+        except Exception:
+            return None
+        if p.returncode != 0:
+            return None
+        # tasklist says "INFO: No tasks are running…" rather than printing
+        # nothing, so match on the image name and not on emptiness.
+        return "LM Studio.exe" in p.stdout
 
+    if not shutil.which("pgrep"):
+        return None
+    try:
+        p = subprocess.run(["pgrep", "-f", "LM Studio"],
+                           capture_output=True, text=True, timeout=PS_TIMEOUT)
+    except Exception:
+        return None
+    return p.returncode == 0
+
+
+def connection_state():
+    """(state, detail) — the single answer. One of `STATES`.
+
+    **Every consumer renders this and none of them re-decides it.** The launch
+    report, the hub's traffic light and `/connect embedding` all land here; if a
+    fourth caller appears that forms its own opinion, that is the drift the
+    whole design is against.
+
+    Cheap by construction: the happy path is one real embedding call (~0.16s
+    measured) and nothing else. The process listing is only reached once we
+    already know something is wrong, which is where the cost belongs.
+    """
+    base, _, _ = embed_target()
     ok, detail = probe()
     if ok:
-        _say("✓", f"embedder ready — {detail}", GREEN)
-        return True
-
+        return CONNECTED, detail
+    # A hosted endpoint is not ours to start, so it never gets a red light
+    # telling you to launch an app that has nothing to do with it.
     if not is_local(base):
-        _say("✗", f"hosted embedder unreachable — {detail}", RED)
-        _say(" ", "not something the launcher can start; memory will be "
-                  "degraded.", DIM)
+        return HOSTED, detail
+    running = app_running()
+    if running is True:
+        return NO_SERVER, detail
+    if running is False:
+        return NOT_RUNNING, detail
+    return DOWN, detail
+
+
+def terminal_report():
+    """(ok, detail) — will this console render the splash as it was baked?
+
+    The splash background is a box-average resample, which pushes colours off
+    the baked 40-colour palette; that is invisible on truecolor and bands
+    visibly at 256. So a degraded terminal produces a worse-looking app with no
+    error anywhere — `HANDOVER.md`'s "prefer the failure that is visible", in
+    the one place cfc had left it silent.
+
+    **Fails in the safe direction.** A false positive is loud and
+    self-correcting: you are looking at a good splash while being told it will
+    band, and you ignore the line. A false negative is exactly today's
+    behaviour, which is already understood. So it warns on doubt.
+
+    rich is imported here and nowhere else in this file, inside a try — this
+    module must stay launchable when the UI stack is broken, since it runs
+    before the app does.
+    """
+    colorterm = os.environ.get("COLORTERM", "")
+    term = os.environ.get("TERM", "")
+    try:
+        from rich.console import Console
+        console = Console()
+        system, is_terminal = console.color_system, console.is_terminal
+    except Exception as e:
+        return True, f"could not ask rich ({type(e).__name__})"
+    detail = (f"COLORTERM={colorterm or '(unset)'} TERM={term or '(unset)'} "
+              f"rich={system or '(none)'}")
+    # Not a terminal at all — piped, redirected, or under a test. rich reports
+    # `color_system=None` there, which is not a degraded terminal; there is no
+    # splash to band, so there is nothing to warn about. Without this the
+    # warning fires on every non-interactive run, and a line that cries wolf in
+    # a log is a line that gets filtered out of the one place it's true.
+    if not is_terminal:
+        return True, detail + " (not a terminal)"
+    return system == "truecolor", detail
+
+
+def ensure(say=_say, fix=True):
+    """Check, and fix what can be fixed. Returns True if embedding works.
+
+    `say(level, msg)` with level in `_MARKS` — the caller owns the rendering, so
+    `launch.sh` gets raw ANSI and `/connect embedding` gets rich. `fix=False`
+    reports without touching anything.
+
+    The order is: ask `connection_state()` first, act only on its answer. The
+    happy path is one HTTP round trip to a local process; everything below the
+    first branch is the cost of things being broken, which is where it belongs.
+    """
+    base, model, _ = embed_target()
+    state, detail = connection_state()
+
+    if state == CONNECTED:
+        say("ok", f"embedder ready — {detail}")
+        return True
+    if state == HOSTED:
+        say("fail", f"hosted embedder unreachable — {detail}")
+        say("info", "not something cfc can start; memory will be degraded.")
+        return False
+    if not fix:
+        say("fail", f"embedder not answering — {detail}")
         return False
 
     cli = find_lms()
     if not cli:
-        _say("✗", f"embedder down and no `lms` CLI found — {detail}", RED)
-        _say(" ", "start LM Studio by hand, or set LMS_CLI in config.py.", DIM)
+        say("fail", f"embedder down and no `lms` CLI found — {detail}")
+        say("info", "start LM Studio by hand, or set LMS_CLI in config.py.")
         return False
 
-    running, port = server_state(cli)
     acted = False       # did we actually change anything worth re-probing for?
 
-    if running is False:
-        _say("…", "LM Studio server is off — starting it", YELLOW)
+    # Red: the application itself is down. `lms server start` brings it up on a
+    # cold machine — which is why there is no separate "launch the GUI" step
+    # here. Starting a Windows GUI app across the interop boundary would be a
+    # second mechanism doing the first one's job, and a launch that half-works
+    # would report an action it did not complete into the one feature whose
+    # entire purpose is reporting state truthfully.
+    if state == NOT_RUNNING:
+        say("warn", "LM Studio is not running — starting it (this is the slow one)")
+
+    running, port = server_state(cli)
+
+    if running is not True:
+        say("warn", "LM Studio server is off — starting it")
         want = urlparse(base).port or 1233
         # --bind 0.0.0.0 is LM Studio's "serve on local network" toggle. The
         # handover records it as required, and it costs nothing to be explicit
@@ -213,42 +385,40 @@ def ensure():
         started, out = _lms(cli, "server", "start", "-p", str(want),
                             "--bind", "0.0.0.0")
         if not started:
-            _say("✗", f"could not start the server: {out.strip()[:160]}", RED)
+            say("fail", f"could not start the server: {out.strip()[:160]}")
             return False
         acted = True
-        ok, detail = probe(timeout=20)
+        ok, detail = probe(read=20)
         if ok:
-            _say("✓", f"embedder ready — {detail}", GREEN)
+            say("ok", f"embedder ready — {detail}")
             return True
 
     if model not in loaded_keys(cli):
-        _say("…", f"server up, {model} not loaded — loading it", YELLOW)
+        say("warn", f"server up, {model} not loaded — loading it")
         # -y because without it `lms load` drops into an interactive picker
         # when the key is ambiguous, and a launcher that stops to ask a
         # question is a launcher that hangs behind a splash screen.
         got, out = _lms(cli, "load", "-y", model, timeout=LOAD_TIMEOUT)
         if not got:
-            _say("✗", f"could not load {model}: {out.strip()[:160]}", RED)
+            say("fail", f"could not load {model}: {out.strip()[:160]}")
             return False
         acted = True
         time.sleep(1.0)     # the model is loaded slightly before it serves
 
     # Only re-probe if something was actually changed. When the server is up
     # and the model is loaded and it *still* doesn't answer, a second probe
-    # tests nothing and costs another timeout — and on WSL a dead local port
-    # hangs until the timeout rather than refusing, so that is 20 wasted
-    # seconds in front of an app that hasn't opened yet.
+    # tests nothing and costs another timeout.
     if acted:
-        ok, detail = probe(timeout=20)
+        ok, detail = probe(read=20)
         if ok:
-            _say("✓", f"embedder ready — {detail}", GREEN)
+            say("ok", f"embedder ready — {detail}")
             return True
 
-    _say("✗", f"embedder not answering — {detail}", RED)
+    say("fail", f"embedder not answering — {detail}")
     if not acted:
-        _say(" ", f"server is up on port {port} and {model} is loaded, so "
-                  "this is not a startup problem.", DIM)
-    _say(" ", "cfc will start; /recall and auto-embed will not work.", DIM)
+        say("info", f"server is up on port {port} and {model} is loaded, so "
+                    "this is not a startup problem.")
+    say("info", "cfc will start; /recall and auto-embed will not work.")
     return False
 
 
@@ -256,5 +426,12 @@ if __name__ == "__main__":
     # Always exit 0. The exit code is not a gate — launch.sh starts cfc either
     # way, and a non-zero status here would make `set -e` in some future
     # wrapper silently turn a degraded embedder into a refusal to launch.
+    base, _, _ = embed_target()
+    print(f"{DIM}  embedder: {base}{RESET}", flush=True)
     ensure()
+    term_ok, term_detail = terminal_report()
+    if not term_ok:
+        _say("warn", "this terminal is not truecolor — the splash will band")
+        _say("info", f"{term_detail}. Launch from Windows Terminal for the "
+                     "real thing; see README.")
     sys.exit(0)

@@ -23,6 +23,73 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — The connection says which state it is in
+v0.9's first two blocks, and they are one job: cfc now reports the state of its
+embedder instead of degrading quietly into "memory has nothing on that".
+
+**One state function, three renderings.** `preflight.connection_state()` returns
+one of five states and every consumer renders it — the launch report, the hub's
+new traffic light, and the new `/connect embedding`. The failure being designed
+against is a **green light over a dead server**, which is the one output nobody
+double-checks, so the rule is that no consumer forms its own opinion. Recorded
+as standing decision 16.
+
+**The measurement is what made a live light possible.** A real `/embeddings`
+POST answers in 0.157s, so `preflight.probe` was split into `PROBE_CONNECT=0.5`
+/ `PROBE_READ=8.0` — the same connect-vs-read lesson `embed.py` learned in
+v0.8.2, one layer up. That drops a dead local port from 8s to 0.5s, which is
+what makes asking on every hub render affordable: **there is no cache anywhere
+in this feature**, so there is no staleness to reason about and no age to
+display.
+
+Red and orange are separated by an actual process check (`tasklist.exe` on WSL,
+`pgrep` otherwise, ~0.15s), and there is a fifth state — `DOWN` — for when that
+check could not be read. Claiming "LM Studio is running, its server isn't"
+without having looked would be the confident wrong answer this whole feature
+exists to remove. `HOSTED` never shows a red light telling you to start an
+application that has nothing to do with your endpoint.
+
+`/connect embedding` calls `preflight.ensure()` rather than reimplementing it;
+`ensure` grew a `say(level, msg)` callback so the same code prints raw ANSI
+under `launch.sh` and rich inside a session — the same move as `embed.py`'s
+`on_retry`, because preflight has no console and must not grow one. No separate
+"launch the GUI" path: `lms server start` already brings the app up cold, and a
+second mechanism doing the first one's job would be able to report an action it
+did not complete, into the one feature whose purpose is reporting truthfully.
+
+**Preflight also says when the splash will band** — `COLORTERM`, `TERM` and
+rich's `color_system`, with a warning when they don't add up. Fails in the safe
+direction: a false positive is loud and self-correcting, a false negative is
+today's behaviour. It stays quiet when there is no terminal at all, so it can't
+cry wolf in a log. `launch.sh` still must not force `COLORTERM=truecolor` —
+conhost cannot render 24-bit escapes and claiming it can trades banding for
+garbage.
+
+`connect` came out of `parse.RESERVED`, where it had been held since v0.8 for
+exactly this. `ui.CONNECTION_STYLE` is the single mapping from state to colour,
+and because `ui.py` imports no cfc module it is a producer/parser pair across a
+boundary that cannot be closed — **the sixth row of the recurring-hazard
+table**, pinned by round-trip in the new `tests/test_connection.py` rather than
+against literals. An unmapped state degrades to a dim `?`; taking the hub down
+over a decorative light is the worse failure.
+
+Two defects were found by driving it rather than reading it, which is the habit
+that keeps earning: `ui.console` is `Console(markup=False)`, so `[green]●[/green]`
+printed its own tags verbatim — every styled line here is a `Text` — and bare
+`/connect` offered to fix a connection that was already green.
+
+**Neither block is closed by this commit.** `preflight.py`'s two fix paths are
+still unproven — the acceptance test is quitting LM Studio entirely and
+launching cold — and the splash warning has not been seen firing from the bare
+`wsl.exe` shortcut. Both stay open in `HANDOVER.md` and `BUGS.md` respectively,
+because closing a defect on unverified work is the mistake those files exist to
+prevent.
+- Files: preflight.py, ui.py, hub.py, parse.py, main.py, commands.py,
+  tests/test_connection.py, tests/test_parse.py, tests/test_preflight.py,
+  tests/golden_baseline.txt, HANDOVER.md, README.md, BUGS.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Split the closed entries out of BUGS.md and BACKLOG.md
 `BUGS.md` was 283 lines holding three live entries and `BACKLOG.md` was 897
 holding five; the rest was struck-through history, each entry carrying its full
@@ -65,7 +132,7 @@ cover the model auto-revert's open case — the pass exercised an id *not* in
   legacy/BACKLOG.md, legacy/HANDOVER.md (was HANDOVER-legacy.md),
   legacy/README.md
 - Status: shipped
-- Commit: pending
+- Commit: a1901dc
 
 ## 2026-07-26 — v0.8.2: the embedder fails fast, and four papercuts from the testing pass
 Everything here came out of Cas's 0.8.1 testing pass. Two were defects and the

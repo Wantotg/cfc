@@ -1,8 +1,13 @@
-# Backlog — frozen archive
+# Backlog — archive
 
-**Frozen 2026-07-27, at the v0.9 archive split.** This is `BACKLOG.md` as it
-stood immediately before the split, kept whole. The live file is
+**Everything below the split line is `BACKLOG.md` as it stood on 2026-07-27,
+immediately before the v0.9 archive split, kept whole.** The live file is
 [`../BACKLOG.md`](../BACKLOG.md), which holds open entries only.
+
+**This file is not closed.** It is where a closed entry goes from now on:
+newest at the top, directly under this header, moved whole rather than
+summarised. "Archive" is the ongoing rule, not a one-time snapshot — the
+original text below is what's frozen, not the file.
 
 It is kept rather than deleted for one specific reason: `CHANGELOG.md` carries
 every fix and its reasoning, but **not the original report**, and the symptom as

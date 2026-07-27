@@ -21,9 +21,10 @@
 import datetime
 
 from rich.table import Table
+from rich.text import Text
 
 from db import PROVIDER_ROUTINE, PROVIDER_WIKI
-from ui import console, context_style, format_ts
+from ui import connection_light, console, context_style, format_ts
 
 # Columns are Tags- and Model-free on purpose. Both were near-permanently empty
 # (a tag is rare, and Model only ever printed when a session overrode the
@@ -306,6 +307,44 @@ def show_recent_chats(conn):
     console.print()
 
 
+def print_connection(state=None):
+    """The traffic light. One line, above the picker's prompt.
+
+    **It renders `preflight.connection_state()` and never forms its own
+    opinion.** That is the whole design and it is the reason this function is
+    four lines: a light that decided anything for itself could disagree with
+    the thing it describes, and the failure mode is green over a dead server —
+    the one output nobody double-checks, because it is what stops you checking.
+
+    Asking costs ~0.16s when the embedder is up and ~0.5s when it is gone (see
+    `preflight.PROBE_CONNECT`), which is what makes a live answer affordable and
+    a cache unnecessary. `state` is injectable so a test can drive every
+    rendering without a server.
+
+    Import is local: `preflight` shells out to `lms` and `tasklist`, and hub.py
+    is imported by the golden harness, which must not acquire a subprocess
+    dependency at import time.
+    """
+    if state is None:
+        from preflight import connection_state
+        state, _ = connection_state()
+    mark, style, text = connection_light(state)
+    # `ui.console` is `Console(markup=False)` — chat content must never be
+    # reinterpreted as markup — so a styled line is built as a Text, never as
+    # square brackets in a string. Found by driving it: the bracket form prints
+    # the tags verbatim, which is exactly the kind of thing a test asserting on
+    # the mapping would have passed straight through.
+    # The mark carries the colour; the words stay at normal weight. `Text(...,
+    # style=)` would tint the whole line, because append inherits the base
+    # style — which makes a healthy connection a green sentence and a broken
+    # one a red paragraph. The dot is the signal, the sentence is the content.
+    line = Text()
+    line.append(mark, style=style)
+    line.append(f" {text}")
+    console.print(line)
+    return state
+
+
 def pick_session(conn):
     """Show recent chats and routine health, and let the user pick one or
     start new."""
@@ -316,6 +355,7 @@ def pick_session(conn):
     if not rows:
         if routines:
             _print_routines(routines)
+        print_connection()
         console.print("\nNo sessions yet. Starting a new "
                       "one.\n")
         return None
@@ -326,6 +366,7 @@ def pick_session(conn):
     console.print()
     if routines:
         _print_routines(routines)
+    print_connection()
     console.print("Type a chat ID to resume, 'n' for new "
                   "session, 'p' for private, 'q' to quit.")
     console.print("'/list sessions' inside a session shows every session, "

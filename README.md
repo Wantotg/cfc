@@ -113,6 +113,40 @@ If the server is off it starts it; if the model isn't loaded it loads it; if it
 can't fix things it says why and **starts cfc anyway**. Chat is fine without an
 embedder.
 
+It also checks whether your terminal can render the splash as it was drawn, and
+says so when it can't:
+
+```
+  … this terminal is not truecolor — the splash will band
+    COLORTERM=(unset) TERM=xterm-256color rich=256. Launch from Windows
+    Terminal for the real thing; see README.
+```
+
+That is the whole of a real, previously silent problem: the splash background is
+resampled in a way that looks right on truecolor and visibly bands at 256
+colours, with no error anywhere. See [A Windows shortcut](#a-windows-shortcut).
+
+### The connection, from inside the app
+
+The hub shows a light for the same check, asked fresh every time you land there:
+
+```
+● embedder connected
+● LM Studio is up, embedder is not — /connect embedding
+● LM Studio is not running — /connect embedding
+```
+
+`/connect embedding` walks as much of the loop as it can from wherever it
+starts: launches the server, loads the model, verifies. One command whichever
+colour you're looking at — there's nothing to type twice, and if you started LM
+Studio by hand in the meantime it just lands on green. Bare `/connect` reports
+without changing anything.
+
+The light and the launch check are the **same function**, not two opinions about
+the same thing. That matters more than it sounds: the failure worth designing
+against is a green light over a dead server, because a green light is exactly
+what stops you checking.
+
 An alias, if you want one:
 
 ```bash
@@ -297,6 +331,8 @@ it back**. `/remove` never destroys anything.
 | `/tools` | Whether tools are active, and which switch is blocking |
 | `/tools on` / `/tools off` | Toggle tools for this session |
 | `/database on` / `/database off` | Enable or disable `/recall` and `/remember` here (alias `/db`) |
+| `/connect` | Where the embedder stands, and what can be connected |
+| `/connect embedding` | Start LM Studio and its server if they aren't up, and verify |
 
 **wiki, routines, filing**
 

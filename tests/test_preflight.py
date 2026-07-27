@@ -93,18 +93,18 @@ class Stub:
 def main():
     print("\n--- the dimension guard ---")
     with Stub(dim=1024):
-        good, detail = preflight.probe(timeout=5)
+        good, detail = preflight.probe(read=5)
         ok("a 1024-d embedder passes", good, detail)
         ok("...and the detail names the width", "1024" in detail, detail)
 
     with Stub(dim=768):
-        good, detail = preflight.probe(timeout=5)
+        good, detail = preflight.probe(read=5)
         ok("a 768-d embedder is REFUSED, not accepted", not good, detail)
         ok("...and the reason names vec_chunks",
            "1024" in detail and "vec_chunks" in detail, detail)
 
     with Stub(status=503):
-        good, detail = preflight.probe(timeout=5)
+        good, detail = preflight.probe(read=5)
         ok("a 5xx is a failure, not a crash", not good, detail)
         ok("...carrying the status code", "503" in detail, detail)
 
@@ -114,7 +114,7 @@ def main():
         # Port 1 on loopback: nothing can be listening, and it is refused
         # rather than routed, so this stays fast on every platform.
         preflight.embed_target = lambda: ("http://127.0.0.1:1/v1", "m", "k")
-        good, detail = preflight.probe(timeout=3)
+        good, detail = preflight.probe(read=3)
         ok("a dead endpoint returns False rather than raising", not good, detail)
         ok("...with a usable reason", bool(detail.strip()), detail)
     finally:

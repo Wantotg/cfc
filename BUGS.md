@@ -60,7 +60,17 @@ If this one gets revisited, the fix is almost certainly gating `~/.bashrc`'s
 `COLORTERM` export on `WT_SESSION` the same way `launch.sh` now does — but
 that's a personal dotfile change, not something to encode in this repo.
 
-**cfc's whole share of this, carried forward from the closed shortcuts entry:**
+**cfc's share shipped in v0.9, and this entry stays open until it is seen
+working.** `preflight.terminal_report()` now prints `COLORTERM`, `TERM` and
+rich's `color_system` and says "this terminal is not truecolor — the splash will
+band" when they don't add up. That is the whole of what this repo can do; the
+remaining fix is a dotfile. **It has not been run from the bare `wsl.exe`
+shortcut yet** — the acceptance test is launching from that shortcut and
+checking the line appears — and closing a defect on unverified work is the
+mistake this file exists to prevent. Close it when the warning has actually
+fired there.
+
+**The original reasoning, carried forward from the closed shortcuts entry:**
 this is a silent degradation with a real cause and a real fix, which is the
 shape `HANDOVER.md` says to make visible. `preflight.py` already runs on every
 launch and v0.9 is rewiring it for the connection light — a "this terminal is

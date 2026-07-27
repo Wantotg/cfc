@@ -72,6 +72,8 @@ chats · sessions · outbox
     /model name             switch model  (/list models to see them)
     /tools on|off           toggle tools for this session
     /database on|off        toggle recall & remember this session
+    /connect                where the embedder stands
+    /connect embedding      start LM Studio and its server if needed
 
   wiki, routines, filing
     /wiki                   wiki repo status

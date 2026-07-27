@@ -976,6 +976,8 @@ _ALL_COMMANDS = [
         (f"{PREFIX}model name", f"switch model  ({PREFIX}list models to see them)"),
         (f"{PREFIX}tools on|off", "toggle tools for this session"),
         (f"{PREFIX}database on|off", "toggle recall & remember this session"),
+        (f"{PREFIX}connect", "where the embedder stands"),
+        (f"{PREFIX}connect embedding", "start LM Studio and its server if needed"),
     ]),
     ("wiki, routines, filing", [
         (f"{PREFIX}wiki", "wiki repo status"),
@@ -1010,7 +1012,7 @@ def print_core_commands():
 def print_help():
     """`:help` — everything, grouped, under one grammar line.
 
-    Twenty-one verbs rather than the old forty-seven forms. The grammar line is
+    Twenty-two verbs rather than the old forty-seven forms. The grammar line is
     the point of the exercise: once every command is verb → kind → target →
     free text, the list is something you read once instead of a table you come
     back to.
@@ -2506,3 +2508,84 @@ def _wiki_commit_file(scope, message):
     console.print(f"  committed 1 change in {where} ({pick.path}) — "
                   f"{short} {subject}", style="green")
     console.print("  local only — this repo has no remote", style="dim")
+
+
+# --- /connect -------------------------------------------------------------
+
+# How `preflight`'s levels render inside a session. preflight.py has no console
+# and must not grow one — it takes a `say(level, msg)` callback instead, exactly
+# as embed.py takes `on_retry`, so the same code prints raw ANSI under
+# `launch.sh` and rich in here.
+_CONNECT_STYLE = {"ok": ("✓", "green"), "warn": ("…", "orange3"),
+                  "fail": ("✗", "red"), "info": (" ", "dim")}
+
+
+def _connect_say(level, msg):
+    # Text rather than markup: `ui.console` is `Console(markup=False)`, so
+    # `[green]x[/green]` in a string prints the tags themselves.
+    mark, style = _CONNECT_STYLE.get(level, (" ", "dim"))
+    line = Text("  ")
+    line.append(mark, style=style)
+    line.append(f" {msg}", style="dim" if level == "info" else "")
+    console.print(line)
+
+
+def connect_embedding():
+    """`/connect embedding` — walk as much of the connection loop as we can.
+
+    One command, however far down it has to start. Red (LM Studio not running)
+    and orange (running, server off) differ only in how much of the same loop
+    runs, so there is no reason to make you type it twice or pick the right
+    variant — and if LM Studio was started by hand between launching cfc and
+    typing this, the first probe simply lands on green.
+
+    This is `preflight.ensure()`, which is the same function `launch.sh` runs.
+    **Not a reimplementation of it**: a second copy of the fix-up sequence would
+    be a second thing to keep true, and the failure when they disagree is the
+    command reporting a connection the app cannot actually use.
+
+    Imported inside the function because preflight shells out to `lms` and
+    `tasklist`, and importing commands.py must not pull that in.
+    """
+    import preflight
+
+    base, model, _ = preflight.embed_target()
+    console.print(f"  embedder: {base}", style="dim", highlight=False)
+    ok = preflight.ensure(say=_connect_say)
+    if ok:
+        return True
+    # The honest failure. `ensure` has already said what broke and what it
+    # tried; adding a second opinion here would be the drift this feature is
+    # against. All that is owed is the thing a human can do next.
+    if not preflight.find_lms():
+        console.print("  start LM Studio yourself, then run /connect embedding "
+                      "again.", style="dim")
+    return False
+
+
+def connect_status():
+    """Bare `/connect` — say where things stand and what can be connected.
+
+    Deliberately not a synonym for `/connect embedding`. `connect` is a verb
+    with room in it (`RESERVED` held it for a reason), and a bare form that
+    silently means "the only target that exists today" is one that changes
+    meaning the day a second target lands. Naming the target stays required;
+    this tells you the targets.
+    """
+    import preflight
+    from ui import connection_light
+
+    state, detail = preflight.connection_state()
+    mark, style, text = connection_light(state)
+    line = Text("  ")
+    line.append(mark, style=style)
+    line.append(f" {text}")
+    console.print(line)
+    console.print(f"  {detail}", style="dim", highlight=False)
+    console.print("  targets: embedding", style="dim")
+    # Only offer the fix when there is something to fix. "run /connect
+    # embedding to fix it" under a green light is the small, constant kind of
+    # wrong that teaches you to stop reading the line.
+    if state != preflight.CONNECTED:
+        console.print(f"  {PREFIX}connect embedding tries to fix it.",
+                      style="dim")

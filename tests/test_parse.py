@@ -145,7 +145,7 @@ def main():
        "handlers receive the parse, they don't edit it")
 
     print("\n--- the surface: three lists that have to agree ---")
-    ok("twenty-one verbs", len(VERBS) == 21, len(VERBS))
+    ok("twenty-two verbs", len(VERBS) == 22, len(VERBS))
     ok("no verb is listed twice", len(set(VERBS)) == len(VERBS))
     ok("every retired verb points at a live one",
        all(r.split()[0] in VERBS for r in RETIRED.values()),
