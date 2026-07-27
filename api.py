@@ -70,6 +70,46 @@ def _timeout(read):
     )
 
 
+def wire_messages(messages):
+    """The conversation in the shape the provider is sent, not the shape we keep.
+
+    **One transform today**, and it is the surviving suspect for the provider
+    400 on tool turns (`BUGS.md`). `agent.py` normalises a missing `content` to
+    `""` on the assistant message that carries `tool_calls`, because our own
+    `history`, `save_message` and the renderer all expect the key to exist.
+    Some OpenAI-compatible providers want that field **absent** on a tool-call
+    message and reject the replay on the next request — which fits the reported
+    symptom exactly: tool turns only, size-independent, and every subsequent
+    message in the session failing rather than just the one.
+
+    **It lives here rather than at the call sites, and that is the design.**
+    Two paths replay history to a provider — `agent_turn`'s loop and the
+    streaming path — and the streaming one is easy to forget precisely because
+    it does not use tools: a session that made tool calls and then switched to
+    a non-tools model replays those same messages through `stream_response`.
+    A transform each caller has to remember is one a caller will not. At the
+    wire boundary there is nothing to remember.
+
+    **It never mutates the input.** `history` is what gets persisted and
+    replayed, and standing decision 2 lives in it — every tool call keeping
+    exactly one result. Editing those dicts in place to fix a wire format would
+    reach back into the record of the conversation. New dicts, always.
+
+    Note this drops the key rather than sending `null`. Absent is what the
+    OpenAI schema means by "no content"; `None` is a third state that some
+    providers accept and others reject, and there is no reason to pick the
+    riskier of two spellings of the same thing.
+    """
+    out = []
+    for m in messages:
+        if (m.get("role") == "assistant"
+                and m.get("tool_calls")
+                and not (m.get("content") or "").strip()):
+            m = {k: v for k, v in m.items() if k != "content"}
+        out.append(m)
+    return out
+
+
 def call_api(messages, model=None, tools=None, read_timeout=None):
     """Non-streaming API call. Used for title generation and the agent loop.
 
@@ -80,7 +120,7 @@ def call_api(messages, model=None, tools=None, read_timeout=None):
     model = model or MODEL
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": wire_messages(messages),
         "stream": False,
     }
     if tools:
@@ -156,7 +196,7 @@ def stream_response(messages, model=None):
 
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": wire_messages(messages),
         "stream": True,
     }
     if STREAM_USAGE:

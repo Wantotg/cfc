@@ -158,18 +158,26 @@ the interrupt path can no longer poison a session, and there is nothing left of
 this theory to build. If it recurs on a turn where nothing was cancelled, that
 falsifies it outright and is a genuinely new finding.
 
-**The suspect nothing has addressed yet.** `agent.py` normalises a missing
-`content` to `""` on the assistant message carrying `tool_calls`. Some
-OpenAI-compatible providers want that field null or absent rather than an empty
-string, and reject the replay on the next call. Also size-independent, also
-tool-turns-only.
+**The last suspect was addressed in v0.9, and nothing was confirmed by it.**
+`agent.py` normalises a missing `content` to `""` on the assistant message
+carrying `tool_calls`; some OpenAI-compatible providers want that field absent
+and reject the replay on the next call. Size-independent, tool-turns-only, and
+it fits the symptom — every *subsequent* message failing rather than the one.
 
-It is **not** a one-character change, and the next session should know that
-going in: the normalised value is read three lines later by `save_message` and
-again at the render. The fix keeps it for persistence and rendering while the
-*API payload* omits the key — which means `history` and the request stop being
-literally the same object on this path. `history` is what gets replayed, and
-standing decision 2 lives there, so it wants a test.
+The fix is `api.wire_messages`, and where it lives is the whole of it. The
+normalised value is read three lines later by `save_message` and again at the
+render, so it has to stay in `history` — which means `history` and the request
+are no longer the same object on this path. The transform therefore sits at the
+**wire boundary inside `api.py`**, applied by `call_api` and `stream_response`
+alike, rather than at either call site. Both paths replay history, and the
+streaming one is the easy one to forget precisely because it has no tools: a
+session that made tool calls and then switched to a non-tools model replays
+those same messages through it. It never mutates its input, because standing
+decision 2 lives in `history`. Pinned in `tests/test_wire.py`.
+
+**This changes nothing about the entry's status.** There is no reproduction, so
+there is no test that the fix *works* — only that the change is what it claims.
+The suspect is now spent, which means the list of things left to try is empty.
 
 **What to capture when it next fires.** The whole error line — the provider's
 message is verbatim in it, and cfc's own request shape is appended:
@@ -184,6 +192,13 @@ low call number with a small token estimate means the conversation's *shape* is
 being rejected, which after v0.5 would be a real finding rather than the known
 bug. Note `api._error_detail` truncates the body at 800 characters; a message
 cut off mid-sentence is that, not the provider being terse.
+
+**All three were driven on 2026-07-27 and they fire.** `_request_shape` renders
+the rider; `_error_detail` truncates at 800 as described; and
+`_is_empty_completion_400` still recognises the empty-response 400 while letting
+a context-overflow 400 through to the raise path — the fail-safe direction that
+makes matching on a provider's wording tolerable. Confirmed rather than rebuilt,
+as this entry asked.
 
 **The absence-watch has started.** Cas play-tested v0.8.2 on 2026-07-27: every
 previously reported issue fixed, nothing new, and no 400. That is one clean

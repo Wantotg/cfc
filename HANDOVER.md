@@ -182,6 +182,16 @@ wording or from a count, is the recurring hazard rebuilt: it works until someone
 improves a sentence. If you find yourself inferring which failure happened,
 you are at the wrong end of it.
 
+**A format the provider needs and we don't goes at the wire boundary, not at the
+call site.** `api.wire_messages` drops an empty `content` from a tool-call
+message on the way out, while `history` keeps it for persistence and rendering.
+It lives inside `call_api`/`stream_response` rather than in `agent_turn`,
+because *both* paths replay history and the streaming one is the easy one to
+miss — it has no tools, so it looks like it cannot carry a tool-call message,
+and it can: a session that made tool calls and then switched to a non-tools
+model replays exactly those. A transform each caller must remember is one a
+caller will not.
+
 **Prefer the failure that is visible.** Nearly every bug in the Scars section is
 a silent false negative: nothing raised, something just quietly returned "there's
 nothing here", which is indistinguishable from the truthful answer. When you add
@@ -561,8 +571,14 @@ because patching config misses anything that read the value at import.
   (1.71s vs 0.15s). The branch is kept because JIT is a setting rather than a
   guarantee. What replaces this thread is ordinary use: the light has never
   been watched over a working day.
-- **A provider 400 on tool turns is open** — `BUGS.md`. Two candidate causes were
-  fixed in v0.5; whether either was *the* one is unproven.
+- **A provider 400 on tool turns is open, and the list of things to try is now
+  empty** — `BUGS.md`. Two candidate causes were fixed in v0.5, the surviving
+  interrupt theory got its structural fix, and v0.9 spent the last suspect
+  (`api.wire_messages`). None of that is confirmation: there is no reproduction,
+  so there is no test that any of it *worked*. It closes on the next occurrence
+  settling it, or on absence across the 0.9 → 1.0 window — a weaker claim than
+  "fixed", and v1.0's note has to say which one happened rather than let an
+  empty `BUGS.md` imply the stronger one.
 - **Zero recall hits are now three distinguishable outcomes** (v0.9): the
   embedder never answered (`embed.EmbedUnavailable`), nothing is indexed
   (`search.why_empty` → `EMPTY_INDEX`), or the corpus was searched and missed.

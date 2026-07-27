@@ -23,6 +23,44 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Spend the last provider-400 suspect, at the wire boundary
+`agent.py` normalises a missing `content` to `""` on the assistant message
+carrying `tool_calls`, because `history`, `save_message` and the renderer all
+expect the key. Some OpenAI-compatible providers want it **absent** and reject
+the replay on the next request — which fits the reported symptom exactly: tool
+turns only, size-independent, and every *subsequent* message failing rather than
+the one that misbehaved.
+
+**Where the fix lives is the whole of it.** The normalised value has to stay in
+`history`, so `history` and the request are no longer the same object on this
+path. The transform is therefore `api.wire_messages`, applied inside `call_api`
+and `stream_response` — at the wire boundary, not at either call site. Both
+paths replay history, and the streaming one is the easy one to forget precisely
+*because* it has no tools: a session that made tool calls and then switched to a
+non-tools model replays those same messages through it. A transform a caller has
+to remember is one a caller will not.
+
+It never mutates its input. Standing decision 2 lives in `history` — every tool
+call keeping exactly one result — and a wire-format fix that edited those dicts
+in place would reach back into the record of the conversation. It drops the key
+rather than sending `null`, because absent is what the schema means by "no
+content" and `null` is a third state some providers reject.
+
+`tests/test_wire.py` pins the transform and, more importantly, pins that the
+input is untouched. **There is no test that the fix works, and there cannot be:
+the bug has no reproduction.** What this buys is that the list of things left to
+try is now empty, which is a different and more honest position than a fix.
+
+The diagnostics `BUGS.md` specifies were **confirmed rather than rebuilt**, as
+that entry asked: `_request_shape` renders its rider, `_error_detail` truncates
+at 800 characters as documented, and `_is_empty_completion_400` still recognises
+the empty-response 400 while letting a context-overflow 400 through to the raise
+path — the fail-safe direction that makes matching on a provider's wording
+tolerable at all.
+- Files: api.py, tests/test_wire.py, BUGS.md, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — The last three timestamp sites read local time
 `db.py` is the only module that stores UTC, and three sites still read the
 stored string directly: `export.py`'s filename date, `export.py`'s per-message
@@ -53,7 +91,7 @@ survived.
 - Files: ui.py, export.py, commands.py, recall.py, tests/test_hub.py,
   HANDOVER.md, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: f0c3c17
 
 ## 2026-07-27 — Undo the red-path early return, and demote a claim I overstated
 Cas tested the connection light end to end (green with LM Studio up, red at
