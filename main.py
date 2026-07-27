@@ -61,6 +61,7 @@ from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
 from api import stream_response, generate_title, EMPTY_COMPLETION_RETRIES
 from backup import safe_backup
+import errorlog
 from complete import install as install_completion, make_completer
 from export import export_session, safe_export
 from hub import list_sessions, pick_session
@@ -162,6 +163,13 @@ def run_session(conn, session_id, private=False):
     # asks anyone anything.
     chat_ctx = chat_context(private=private)
     injected = []          # blocks added by /remember, newest last
+    # Turns cancelled in this session. `BUGS.md` asks whether anything was
+    # interrupted when a provider 400 fires — the surviving theory for that bug
+    # is an interrupt mid-batch — and nothing tracked it before. Counted rather
+    # than flagged: same cost, and "three" and "one" are not the same finding.
+    # Only *turn* interrupts count; a cancelled memory search never reached the
+    # provider, so including it would dilute the one signal this exists for.
+    turns_interrupted = 0
     tools_on = True        # session toggle; the master switch still gates it
     # Whether /recall/:remember/:updatedb may reach the wiki this session. A
     # normal chat: on. A private chat: DATABASE_ACTIVE (default off), so memory
@@ -256,6 +264,28 @@ def run_session(conn, session_id, private=False):
                       f"{current_model}\n")
         return True
 
+    def handle_turn_error(e):
+        """What both turn paths do with an HTTP error: record it, then decide
+        how to render it. In that order, and the order is the fix.
+
+        `revert_bad_model()` prints `provider rejected 'X' — switched back to Y`
+        **instead of** the provider's words, so before this existed the one
+        error line `BUGS.md` asks to be captured was discarded exactly when a
+        model switch preceded it — and "I switched model and the next turn
+        400ed" is an ordinary session, not an exotic one. Two things that are
+        each correct alone; the log records what happened and the console
+        decides what to show, and neither reads the other.
+
+        One function called from both `except httpx.HTTPError` sites rather
+        than two `log_error(e)` calls: standing decision 7 exists because these
+        two paths drifted once already, and a hand-placed pair is that drift
+        pre-made.
+        """
+        errorlog.log_error(e, session_id=session_id, model=current_model,
+                           interrupted=turns_interrupted, private=private)
+        if not revert_bad_model():
+            console.print(f"\n[error] {e}\n")
+
     # --- Command handlers ---
     #
     # One nested function per verb, reached through HANDLERS below. Each takes
@@ -294,7 +324,7 @@ def run_session(conn, session_id, private=False):
     def h_new(cmd):
         nonlocal session_id, history, injected, current_title, current_model
         nonlocal system_prompt, system_prompt_name, persona, persona_name
-        nonlocal trait_names
+        nonlocal trait_names, turns_interrupted
         # `:new p` — a private chat from inside a session, joining `p` at the
         # hub. It **nests** rather than replacing this session: a private chat
         # is a side trip, and coming back to what you were doing is the point.
@@ -320,6 +350,7 @@ def run_session(conn, session_id, private=False):
         session_id = new_session(conn)
         history = []
         injected = []
+        turns_interrupted = 0
         current_title = "(untitled)"
         current_model = MODEL
         system_prompt = None
@@ -869,11 +900,11 @@ def run_session(conn, session_id, private=False):
                                        conn, session_id, ctx=chat_ctx)
                 except KeyboardInterrupt:
                     console.print("\n[tool turn cancelled]\n")
+                    turns_interrupted += 1
                     final = None
                     break
                 except httpx.HTTPError as e:
-                    if not revert_bad_model():
-                        console.print(f"\n[error] {e}\n")
+                    handle_turn_error(e)
                     final = None
                     break
                 revert_model = None   # the model answered — it's real; disarm
@@ -920,11 +951,11 @@ def run_session(conn, session_id, private=False):
                 )
             except KeyboardInterrupt:
                 console.print("\n[streaming cancelled]\n")
+                turns_interrupted += 1
                 assistant = ""
                 break
             except httpx.HTTPError as e:
-                if not revert_bad_model():
-                    console.print(f"\n[error] {e}\n")
+                handle_turn_error(e)
                 assistant = ""
                 break
             revert_model = None   # a response came back — the model is real
@@ -998,6 +1029,11 @@ if __name__ == "__main__":
     # in repl(): repl() is called directly by tests/golden.py, which must not
     # write snapshots of its fixture into the real backup directory.
     safe_backup()
+    # One line per launch, for the same reason and in the same place. This is
+    # what makes an *empty* errors.log mean "never written" rather than "no
+    # errors" — the two are otherwise the same artefact, and the second is the
+    # claim the whole log exists to be able to make. See errorlog.py.
+    errorlog.log_launch()
     # Once per launch, deliberately not inside repl(): returning from a session
     # to the hub must not re-show it. It also has to finish before repl() reads
     # any input — the splash is safe under invariant #4 only because nothing is

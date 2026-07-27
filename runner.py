@@ -26,8 +26,11 @@ import datetime
 import re
 import traceback
 
+import httpx
+
 from agent import LIMIT_MESSAGE, TURN_RESULT_CHARS, agent_turn
 from api import EMPTY_COMPLETION_RETRIES
+import errorlog
 from db import PROVIDER_ROUTINE, new_session, save_message
 import routines
 from routines import RoutineError, append_log, last_run, load_routine
@@ -429,6 +432,26 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
                      f"[routine failed]\n\n{traceback.format_exc()}",
                      model=model)
         conn.commit()
+        # Provider errors *only*, and they go to errors.log in addition to the
+        # run log rather than instead of it. The two are not two copies of one
+        # fact: `append_log` writes a per-routine **status** that `on_failure`,
+        # `last_run` and the hub's freshness column read, while errors.log is
+        # the human's evidence trail for one specific bug across time. Deleting
+        # either would break a reader the other doesn't have.
+        #
+        # Narrowed to `httpx.HTTPError` because this handler is deliberately
+        # broad — logging everything it catches would quietly turn errors.log
+        # from "provider errors" into "things that killed a turn", and the file
+        # is only worth reading if what is *not* in it means something.
+        #
+        # Routines are included at all because `BUGS.md`'s entry is a
+        # **tool-turn** bug and routines are the heaviest tool users in the
+        # system, running unattended on a schedule. An absence-watch with a
+        # hole exactly where the tool turns happen is not a watch. A routine is
+        # never private, so there is nothing to gate.
+        if isinstance(e, httpx.HTTPError):
+            errorlog.log_error(e, session_id=session_id, model=model,
+                               where=f"routine {routine.id}")
         detail = f"{type(e).__name__}: {e}"
         elapsed = (datetime.datetime.now() - started).total_seconds()
         # The session id goes in the *log*, not just the terminal — a failed

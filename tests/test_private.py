@@ -48,6 +48,26 @@ def count_msgs(conn):
     return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 
 
+def _never_raises(errorlog):
+    """Point the log at a path that cannot exist and check both writers return
+    False instead of propagating. Verified by breaking it, which is the habit
+    that caught the journal's git guard: an exception swallowed by a bare
+    `except` is indistinguishable from one that never happened until you make
+    one happen."""
+    from pathlib import Path as _P
+    keep = errorlog.LOG_PATH
+    try:
+        # A directory component that is a regular file — mkdir and open both
+        # fail, and neither is allowed to reach the caller mid-turn.
+        errorlog.LOG_PATH = _P("/etc/passwd/nope/errors.log")
+        return (errorlog.log_launch() is False
+                and errorlog.log_error(Exception("x"), session_id=1) is False)
+    except Exception:      # noqa: BLE001 — the thing under test is that this is unreachable
+        return False
+    finally:
+        errorlog.LOG_PATH = keep
+
+
 def drive(conn, sid, private, keys):
     """Run one session to completion. `:tools off` takes the streaming path
     rather than agent_turn; the stubbed stream returns a real answer so the turn
@@ -190,6 +210,53 @@ def main_():
         "write_file", {"path": str(tmp / "x.md"), "content": "hi"}, priv_ctx)
     ok("write_file is refused before it runs",
        refusal is not None and "writing is not enabled" in refusal, refusal)
+
+    print("\n--- the provider error log is a fourth escape path; it is shut ---")
+    # v0.9.1 added ~/.cfc/errors.log, which opens a file *by path* and so
+    # bypasses the in-memory connection exactly as auto-embed and auto-export
+    # do. What makes it worse than those two is its payload:
+    # `api._error_detail` carries up to 800 characters of the **provider's own
+    # body**, and providers echo request fragments back inside a 400. So the
+    # negative here is not just "no line was written" but "the conversation's
+    # words are not in that file" — asserted against a marker planted in the
+    # error itself, because a test that only counts lines passes while leaking.
+    import httpx
+    import errorlog
+
+    errorlog.LOG_PATH = tmp / "errors.log"
+    assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the real log"
+    SECRET = "zx-private-payload-must-not-land"
+
+    def boom(messages, model=None):
+        raise httpx.HTTPError(f"HTTP 400 from https://x/v1: {SECRET}")
+
+    main.stream_response = boom
+
+    # The control first, for the usual reason: an assertion that cannot fail is
+    # not a test, and "the file has no line in it" is the passing state of a
+    # logger that was never called at all.
+    err_sid = dbmod.new_session(real, title="errors")
+    drive(real, err_sid, private=False, keys=script)
+    logged = errorlog.LOG_PATH.read_text() if errorlog.LOG_PATH.exists() else ""
+    ok("a normal chat records a provider error", "error" in logged, logged[-200:])
+    ok("...with the provider's own words", SECRET in logged, logged[-200:])
+
+    before_log = logged
+    priv2 = dbmod.db(":memory:")
+    priv2_sid = dbmod.new_session(priv2, title="(untitled)")
+    drive(priv2, priv2_sid, private=True, keys=script)
+    priv2.close()
+    after_log = errorlog.LOG_PATH.read_text()
+    ok("a private chat records nothing", after_log == before_log,
+       after_log[len(before_log):][:200])
+    ok("...and log_error refuses it at the write, not at the call site",
+       errorlog.log_error(Exception(SECRET), session_id=1, private=True) is False)
+
+    # The launch line is what makes an empty log mean "never written" rather
+    # than "no errors" — the distinction the whole absence-watch rests on.
+    ok("a launch line is written outside any session", errorlog.log_launch() is True)
+    ok("...and logging never raises, whatever the path is",
+       _never_raises(errorlog))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

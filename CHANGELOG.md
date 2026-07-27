@@ -23,6 +23,52 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Somewhere for a provider error to land
+`BUGS.md`'s surviving entry closes either when the next 400 settles it or on
+absence across the 0.9 → 1.0 window, and both need the error line to still exist
+when someone looks. Until now the only place it existed was the scrollback — on
+a tool turn, the kind that fills a screen. `errorlog.py` appends the whole line
+to `~/.cfc/errors.log` with the session, the model, and how many turns were
+cancelled in that session, which `BUGS.md` asks for and nothing tracked.
+
+Three things this is really made of, none of them the file write:
+
+**The error is recorded before anything decides how to render it.** A defect
+found while planning v0.9.1: `revert_bad_model()` prints `provider rejected 'X'
+— switched back to Y` *instead of* the provider's words, so the one line we want
+was discarded exactly when a model switch preceded the failure — an ordinary
+session, not an exotic one. Both turn paths now call one nested
+`handle_turn_error`, which logs and then lets the console decide. One helper and
+not two `log_error(e)` calls, because standing decision 7 exists precisely
+because these two paths drifted once already.
+
+**A launch writes a line.** Otherwise "the log is empty" and "cfc has never
+managed to write to the log" are the same artefact — this project's signature
+failure shape aimed at the mechanism built to catch it. With the launch line, an
+empty file means *never written*, which is audibly different from *no errors*.
+
+**A private chat writes nothing, and the refusal is at the write.**
+`api._error_detail` carries up to 800 characters of the provider's body and
+providers echo request fragments back inside a 400, so this is a **fourth** path
+out of a private session — invariant 10 named three. Gated inside `log_error`
+rather than at the call sites: a caller that forgets is the failure the gate
+exists to prevent. `tests/test_private.py` pins it with a marker planted in the
+error text, so "no line was written" and "the words did not leak" are separate
+assertions; verified by disabling the gate and watching both fail.
+
+Routines log too, narrowed to `httpx.HTTPError`. The bug is a *tool-turn* bug
+and routines are the heaviest tool users in the system, so excluding them puts
+the hole exactly where the tool turns are. `append_log` is unchanged and is not
+a duplicate of this — it is a per-routine status that `on_failure`, `last_run`
+and the hub read; errors.log is one human's evidence trail across time.
+
+Nothing parses errors.log, deliberately: the recurring hazard is a producer here
+and a parser elsewhere, and the way not to add a seventh row to that table is
+not to create the pair.
+- Files: errorlog.py (new), main.py, runner.py, tests/test_private.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — v0.9 ships: cold start settled, and the roadmap body moves over
 Cas ran the case that had never once been exercised — the desktop shortcut on a
 genuinely cold machine — and **red worked**: the branch ran, `lms server start`

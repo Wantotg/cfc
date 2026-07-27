@@ -73,6 +73,7 @@ must end a turn identically** — see invariant 6.
 | `schedule.py` | what is due, the tick lock, the `--run-due` entry point |
 | `mover.py` | filing a proposal out of the outbox; destination re-validation; the journal's git guard |
 | `wikigit.py` | the vault repo: status/diff/commit, scoped to a corpus. Owns no console |
+| `errorlog.py` | `~/.cfc/errors.log`: provider errors + a line per launch. **Imports no cfc module, never raises, nothing private** |
 | `ui.py` | shared Console, palette, panels, `read_input`. **Imports no other cfc module** |
 | memory | `import_wiki` → `chunk` → `embed`/`backfill` → `search` → `recall` |
 | `config.py` | every deployment knob. **Gitignored** — `config.example.py` is the tracked copy |
@@ -122,10 +123,19 @@ Settled. Argue with them only with a reason, and say that you are.
 10. **A private chat's isolation is the connection, not a flag.** It runs against
     `db(":memory:")`, so every `conn`-driven write — including the ones
     `agent_turn` makes on its own — is already a no-op against disk. `private=True`
-    gates only the three paths that *escape* the connection: auto-embed (opens
-    `DB_PATH` directly), auto-export (writes to the vault), and model file-writes
-    (empty write roots). A new disk-writing path either goes through `conn` or
-    silently defeats this, and owes `tests/test_private.py` a negative.
+    gates only the paths that *escape* the connection: auto-embed (opens
+    `DB_PATH` directly), auto-export (writes to the vault), model file-writes
+    (empty write roots), and — added v0.9.1 — the provider error log, which
+    opens `~/.cfc/errors.log` by path. A new disk-writing path either goes
+    through `conn` or silently defeats this, and owes `tests/test_private.py` a
+    negative. **The fourth one is the one to learn the shape from:** its gate
+    lives inside `errorlog.log_error`, at the write, not at either call site,
+    because a caller that forgets is exactly the failure being prevented. And
+    its negative is *two* assertions — no line was written, **and** a marker
+    planted in the error text is absent from the file — because the payload is
+    up to 800 characters of the provider's own body (`api._error_detail`) and
+    providers echo request fragments back inside a 400. A test that only counts
+    lines passes while leaking.
 11. **A move that overwrites a live file requires a verified undo.** Journal
     filing is the only such path; it is allowed only against a git-clean corpus,
     checked at plan time *and* inside `commit`, and **fails closed** when git
@@ -524,9 +534,21 @@ vault in a different time base from the rest of the vault is itself the trap.
   is closed to `write_file` separately, because containment alone admits it and a
   model can decide to tidy its own audit trail without being asked.
 - The vault is a git repo (`<vault>/.git` → `~/vaults/wiki.git` via a `gitdir:`
-  pointer). It has **no remote**, and `wikigit.py` says so after every commit — a
-  push that silently no-ops today is one that silently starts working the day a
-  remote appears.
+  pointer). **It has a remote as of 2026-07-27** — `origin` is a *private*
+  GitHub repo (`cfc-vault-cas`), `main` tracks `origin/main`, and the ext4-only
+  history that v1.0 called out as the most urgent chore in the project is no
+  longer the exposure it was.
+- **cfc has not caught up with that, and the mismatch is live.** `wikigit.py`
+  still issues no `push` and no `remote` — that part is a standing choice, not a
+  bug, and `tests/test_wikigit.py` pins it. What *is* wrong is the sentence
+  `commands.py` prints after every commit (two sites, `_wiki_commit_folder` and
+  `_wiki_commit_file`): `local only — this repo has no remote`. The clause after
+  the dash is false. The effect isn't reassurance-over-a-broken-thing, which is
+  this project's usual hazard — it is the opposite and still bad: an unpushed
+  commit really is local only, so the warning's *conclusion* survives while its
+  *reason* tells you there is nothing you could do about it, which is now the
+  one useful thought it should be provoking. `wikigit.py`'s module header and
+  `README.md`'s vault-git section carry the same stale claim.
 - Embeddings come from a **separate endpoint** to chat: self-hosted `bge-m3` on LM
   Studio. `networkingMode=mirrored` means localhost reaches the Windows host; the
   old NAT gateway IP no longer resolves at all, and don't put one back — a stale
@@ -587,7 +609,10 @@ because patching config misses anything that read the value at import.
   so there is no test that any of it *worked*. It closes on the next occurrence
   settling it, or on absence across the 0.9 → 1.0 window — a weaker claim than
   "fixed", and v1.0's note has to say which one happened rather than let an
-  empty `BUGS.md` imply the stronger one.
+  empty `BUGS.md` imply the stronger one. **v0.9.1 made the watch real**:
+  `errorlog.py` captures the error line the moment it fires, so neither closing
+  route now depends on a human reading scrollback in time. Its blind spots
+  (private chats, non-`httpx` exceptions) are in `BUGS.md` with the entry.
 - **Zero recall hits are now three distinguishable outcomes** (v0.9): the
   embedder never answered (`embed.EmbedUnavailable`), nothing is indexed
   (`search.why_empty` → `EMPTY_INDEX`), or the corpus was searched and missed.

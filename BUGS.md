@@ -157,6 +157,30 @@ previously reported issue fixed, nothing new, and no 400. That is one clean
 pass, not a window — but it is the first datapoint, and it means the count
 starts here rather than at the 0.9 tag.
 
+**The evidence no longer depends on anyone noticing (v0.9.1).** Everything the
+paragraph above asks for is now appended to `~/.cfc/errors.log` when it happens:
+the whole error line with `_request_shape`'s rider, the model, the session, and
+how many turns were cancelled in that session — the last of which nothing
+tracked before, and which is the field that tests the surviving interrupt
+theory. Before this, the only copy was the scrollback of a tool turn, so one
+long turn later the evidence was gone. It also survives a model switch, which it
+previously did not: `revert_bad_model()` printed its own line *instead of* the
+provider's, so the one case where a 400 is most likely was the one case with
+nothing kept.
+
+**Two blind spots, stated rather than discovered at the gate.** A **private
+chat** logs nothing, deliberately — the payload includes up to 800 characters of
+provider body and that is the one thing a private chat promises never reaches
+disk (invariant 10). And errors.log is narrowed to `httpx.HTTPError`, so a 400
+arriving as some other exception type would miss it. Routines *are* covered,
+which matters here because this is a tool-turn bug and routines are the heaviest
+tool users.
+
+**Reading it: a launch writes a line too.** So an empty file means cfc has never
+written to it, which is a different fact from "no errors" — that distinction is
+the whole basis of closing this entry on absence, and without it the two are the
+same artefact.
+
 **How this entry is allowed to close, decided 2026-07-27 rather than at the
 gate.** Nothing identified remains to fix, so it cannot be closed by fixing it.
 It closes one of three ways: the next occurrence's error line settles it; it
