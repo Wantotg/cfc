@@ -295,6 +295,14 @@ answer you can always re-ask is one you never have to age. **Re-measure before
 raising either**, and keep them a pair; `tests/test_connection.py` pins the
 relationship, not the values.
 
+**`PROBE_READ = 8.0` is not slack, and this is what it is for.** LM Studio
+JIT-loads a model when a request names it, so the first probe after a restart
+pays the load inside the read budget: 1.71s for bge-m3, measured with the model
+explicitly unloaded. Cutting the read timeout to something that "looks like
+plenty for a local call" would turn every cold start into a confident red light
+over a working embedder. A larger model would need more, which is the number to
+re-measure — not the healthy 0.157s, which is never the constraint.
+
 **The two read timeouts are not the same quantity, so don't unify them.**
 `call_api` reads for 600s because non-streaming means no bytes arrive until the
 whole completion is done — a thinking model inside a tool loop is legitimately
@@ -511,14 +519,16 @@ because patching config misses anything that read the value at import.
 - **The first *scheduled* routine run still hasn't happened** (v0.7's ST/MT jobs
   are waiting on a real tick). Read the first scheduled outputs rather than
   trusting the prompts.
-- **`preflight.py`'s fix paths: one is now closed by measurement, one is still
-  open.** The cold-start acceptance test was run on 2026-07-27 with LM Studio
-  genuinely quit, and it **failed** — see "Starting LM Studio from WSL" in
-  Rejected designs. That is the closure: red is not fixable from here, and the
-  code now says so instead of trying. **`lms server start` and `lms load`
-  against a *running* LM Studio with its server off — the orange path — have
-  still never fired.** That is the remaining test, and it is the more common
-  case of the two.
+- **`preflight.py`'s fix paths are no longer an open thread — all three states
+  were driven on 2026-07-27.** Red **failed** and is now closed by measurement
+  (see "Starting LM Studio from WSL" in Rejected designs): it is not fixable
+  from WSL and the code says so instead of trying. Orange **worked** — `lms
+  server start` fired for the first time and took it to green in 1.4s. And
+  `lms load` turns out to be **near-unreachable**: LM Studio JIT-loads on
+  demand, so an unloaded model does not fail the probe, it just makes it slow
+  (1.71s vs 0.15s). The branch is kept because JIT is a setting rather than a
+  guarantee. What replaces this thread is ordinary use: the light has never
+  been watched over a working day.
 - **A provider 400 on tool turns is open** — `BUGS.md`. Two candidate causes were
   fixed in v0.5; whether either was *the* one is unproven.
 - **Zero recall hits and "nothing worth reporting" still produce identical output.**

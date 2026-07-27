@@ -136,10 +136,15 @@ def probe(connect=PROBE_CONNECT, read=PROBE_READ):
     """One real embedding request. Returns (ok, detail).
 
     Deliberately an /embeddings POST and not a GET on /v1/list models: the model
-    list reports what LM Studio has on *disk*, so it answers happily while the
-    model is unloaded and the thing cfc needs still fails. Test what you need,
-    not a proxy for it — this is the same call `embed_texts` makes, minus the
-    batching and the retries.
+    list reports what LM Studio has on *disk*, so it answers about storage while
+    the thing cfc needs may still fail. Test what you need, not a proxy for it —
+    this is the same call `embed_texts` makes, minus the batching and retries.
+
+    A side effect worth knowing rather than discovering: because this is the
+    real call, it **JIT-loads the model** the way any other request would. So a
+    probe against a freshly restarted server is slow (1.71s measured) rather
+    than failing, and the answer it gives is the true one — the embedder does
+    work, it just had to wake up first.
 
     Two timeouts, never one. See `PROBE_CONNECT`.
     """
@@ -422,6 +427,17 @@ def ensure(say=_say, fix=True):
             say("ok", f"embedder ready — {detail}")
             return True
 
+    # **Rarely reached, and kept deliberately.** LM Studio JIT-loads a model
+    # when a request names it, so an unloaded model does not fail the probe —
+    # measured 2026-07-27: with the model unloaded, `connection_state()` still
+    # returned CONNECTED, taking 1.71s instead of 0.15s because the POST itself
+    # did the loading. So in the normal configuration this branch never fires.
+    #
+    # It stays because JIT loading is a *setting*, not a guarantee, and the
+    # branch is the correct fallback when it is off. What that measurement
+    # really pins down is `PROBE_READ`: a cold load happens inside the read
+    # budget, so 8.0s is not slack, it is the thing that stops a first probe
+    # after a restart reporting a false "down".
     if model not in loaded_keys(cli):
         say("warn", f"server up, {model} not loaded — loading it")
         # -y because without it `lms load` drops into an interactive picker

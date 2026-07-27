@@ -98,11 +98,23 @@ stderr — so every failure reported `could not start the server: ` with nothing
 after it while the real message sat in a pipe nobody read. Success still returns
 stdout (callers parse JSON from it); failure now returns stderr.
 
-**Still open:** `lms server start` and `lms load` against a *running* LM Studio
-with its server off — the orange path, and the more common of the two — have
-never fired. And the splash warning has not been seen from the bare `wsl.exe`
-shortcut. Both stay open in `HANDOVER.md` and `BUGS.md`, because closing a
-defect on unverified work is the mistake those files exist to prevent.
+**Then the orange path was driven too, and all three states are now proven.**
+With LM Studio running and its server stopped, `lms server start` fired for the
+first time since it was written and took the connection to green in 1.4s.
+
+`lms load` turned out to be **near-unreachable**, which is a better answer than
+the test was looking for: LM Studio JIT-loads a model when a request names it,
+so with the model explicitly unloaded the probe still succeeded — it just took
+**1.71s instead of 0.15s**, because the POST did the loading. The branch is kept
+(JIT is a setting, not a guarantee), and what that measurement really pins is
+`PROBE_READ`: a cold load happens *inside* the read budget, so 8.0s is not slack
+— it is what stops the first probe after a restart reporting a confident red
+light over a working embedder.
+
+That closes the `preflight.py` open thread that had been in `HANDOVER.md` since
+v0.7. **Still open:** the splash warning has not been seen firing from the bare
+`wsl.exe` shortcut, so its `BUGS.md` entry stays open — closing a defect on
+unverified work is the mistake that file exists to prevent.
 - Files: preflight.py, ui.py, hub.py, parse.py, main.py, commands.py,
   tests/test_connection.py, tests/test_parse.py, tests/test_preflight.py,
   tests/golden_baseline.txt, HANDOVER.md, README.md, BUGS.md
