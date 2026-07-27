@@ -1,15 +1,13 @@
-# cfc — Cooking for Cats
+# cfc — cooking for cats
 
 A terminal AI chat client in Python. It talks to any OpenAI-compatible API (built
 against [nano-gpt](https://nano-gpt.com)), keeps every conversation in a local
 SQLite file, answers questions from a semantic index over an Obsidian wiki, and
 runs unattended tasks against a narrow, declared slice of your filesystem.
 
-The name comes from a book cover. It means nothing, intentionally.
-
 Why things are built the way they are — invariants, rejected designs, the
 reasoning behind the non-obvious choices — is in [`HANDOVER.md`](HANDOVER.md).
-This file is how you use it.
+This file is how you use cooking for cats.
 
 ## What it does
 
