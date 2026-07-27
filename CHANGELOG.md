@@ -23,6 +23,37 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — `/remove excerpts` drops every block, so the hint stops lying
+Reported by Cas against the hint `/remember` prints itself, which is the worst
+place for a command to be wrong. The code path was intact and the report pointed
+somewhere else, so this was settled by reading rather than reproducing:
+`injected.append` happens in exactly one place, once per `do_remember`, and each
+call builds exactly one envelope with one closing boundary line. **Two closing
+lines is therefore necessarily two `/remember` calls**, which is what the
+testing note described — so the single-block case could not have been broken,
+and `do_forget` popping one of two was the whole of it.
+
+That made it a legibility question rather than a bug in the pop, and Cas's call
+was to make the command match its hint rather than shrink the hint: `(ephemeral
+— /remove excerpts to drop)` reads as *all of them*, and nobody injects two
+blocks meaning to keep one. `do_forget` now clears the list and removes every
+block from `history` by identity, and says how many it dropped.
+
+Worth keeping in view: the failure this fixes was **silent and in the direction
+that costs money** — dropped excerpts leave the screen, surviving ones are
+invisible until the model quotes something you thought you had removed. There is
+no signal that it happened. `/status`'s live count stays and is now the only
+place the number lives.
+
+Also re-recorded `tests/golden_baseline.txt`: the help line changed, and the
+diff carried an unrelated hunk (the outbox's two journal proposals had been
+filed since the last record). That second hunk is the `config.py` baseline scar
+in a new place — a baseline pinning the environment rather than the source — and
+is written up in `BACKLOG.md` rather than fixed here.
+- Files: commands.py, tests/golden_baseline.txt, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Somewhere for a provider error to land
 `BUGS.md`'s surviving entry closes either when the next 400 settles it or on
 absence across the 0.9 → 1.0 window, and both need the error line to still exist
@@ -67,7 +98,7 @@ and a parser elsewhere, and the way not to add a seventh row to that table is
 not to create the pair.
 - Files: errorlog.py (new), main.py, runner.py, tests/test_private.py
 - Status: shipped
-- Commit: pending
+- Commit: 7fa831d
 
 ## 2026-07-27 — v0.9 ships: cold start settled, and the roadmap body moves over
 Cas ran the case that had never once been exercised — the desktop shortcut on a

@@ -999,7 +999,7 @@ _ALL_COMMANDS = [
         (f"{PREFIX}remove persona", "take off whatever persona is on"),
         (f"{PREFIX}remove #1", "detach attachment #1"),
         (f"{PREFIX}remove tag python", "untag"),
-        (f"{PREFIX}remove excerpts", "drop the last injected recall block"),
+        (f"{PREFIX}remove excerpts", "drop every injected recall block"),
     ]),
     ("destroy", [
         (f"{PREFIX}delete chat", "delete this conversation (with confirm)"),
@@ -1390,23 +1390,41 @@ def do_remember(conn, session_id, history, injected, query,
 
 
 def do_forget(history, injected):
-    """Drop the most recently injected block from the live context.
+    """Drop **every** injected block from the live context.
 
     Removes by identity, so it works regardless of what has been appended
     since. The DB marker stays: the injection did happen, and changing your
     mind later doesn't unmake the history.
+
+    All of them rather than the newest one, decided by Cas 2026-07-27. It used
+    to pop exactly one, which was defensible and was not what anyone read it
+    as: `do_remember` prints `(ephemeral — /remove excerpts to drop)` and that
+    hint reads as *all of them*. Two `/remember` calls then left the older set
+    sitting in front of the model after a `/remove` that looked like it had
+    cleaned up — and the surviving half is invisible until the model quotes
+    something you thought you had removed, which is the silent direction and the
+    one that costs money. Nobody injects two blocks meaning to keep one, so the
+    command matches the hint rather than the hint being made smaller.
+
+    `/status` keeps the live count (`print_session_header`), and is now the only
+    place the number lives — worth knowing if this ever grows a "drop just the
+    last one" variant.
     """
     if not injected:
         console.print("\nNothing injected in this session "
                       "to forget.\n")
         return
-    block = injected.pop()
-    for i, m in enumerate(history):
-        if m is block:
-            del history[i]
-            break
-    console.print(f"\nDropped the last injected block. "
-                  f"{len(injected)} still in context.\n")
+    # Identity, not index: `history` keeps growing and removing an earlier block
+    # by position would shift every one after it. Building the survivors is
+    # cheaper to read than deleting in place while iterating, and `history` is
+    # mutated rather than rebound because the caller holds the same list.
+    dropped = len(injected)
+    doomed = {id(b) for b in injected}
+    history[:] = [m for m in history if id(m) not in doomed]
+    injected.clear()
+    console.print(f"\nDropped {dropped} injected block"
+                  f"{'s' if dropped != 1 else ''}. "
+                  f"Nothing recalled is still in context.\n")
 
 
 def do_updatedb(arg=""):

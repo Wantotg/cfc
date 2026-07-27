@@ -48,7 +48,7 @@ chats · sessions · outbox
     /remove persona         take off whatever persona is on
     /remove #1              detach attachment #1
     /remove tag python      untag
-    /remove excerpts        drop the last injected recall block
+    /remove excerpts        drop every injected recall block
 
   destroy
     /delete chat            delete this conversation (with confirm)
@@ -333,13 +333,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
 
 you>
 Outbox (/mnt/c/Users/disse/cooking for cats/99 outbox)
-  1. lt memory.md  —  Long term memory   [journal]
-     REPLACES /mnt/c/Users/disse/cooking for cats/03 resources/journal/lt memory.md
-  2. mt memory.md  —  Medium term memory   [journal]
-     REPLACES /mnt/c/Users/disse/cooking for cats/03 resources/journal/mt memory.md
-
-  2 of 2 can be filed
-  /file <n> | /file all | /file <n> decline [why]
+  (nothing pending)
 
 you>
 Found 2 match(es) in 1 session(s):
