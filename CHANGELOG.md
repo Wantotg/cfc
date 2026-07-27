@@ -46,7 +46,7 @@ did: it offered `n`, `p` and `q` and never mentioned that `new`, `private` and
 `quit` also worked.
 - Files: hub.py, tests/test_hub.py, HANDOVER.md, README.md
 - Status: shipped
-- Commit: pending
+- Commit: eb19924
 
 ## 2026-07-27 — Spend the last provider-400 suspect, at the wire boundary
 `agent.py` normalises a missing `content` to `""` on the assistant message
@@ -542,7 +542,7 @@ Four unrelated things that were all wrong rather than merely owed, from Cas's
 - Files: ui.py, hub.py, commands.py, tests/test_hub.py, tests/test_model.py,
   tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: a8b7e8f
 
 **The clock was two hours out, and two panels on one screen disagreed.**
 `db.py` is the only module that stores UTC (`new_session`, `save_message` write
