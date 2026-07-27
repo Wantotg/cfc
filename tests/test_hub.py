@@ -313,10 +313,56 @@ def main():
            for n in marked for kw in n.keywords if kw.arg == "provider"))
 
     conn.close()
+    test_format_date_localises()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
     return 1 if FAIL else 0
+
+def test_format_date_localises():
+    """`ui.format_date` — the three `[:10]` sites Block 9 replaced.
+
+    `db.py` is the only module that stores UTC, so slicing the first ten
+    characters off `created_at` reads the *stored* date: a session created after
+    22:00 local is filed and labelled under tomorrow. Silent, off by one, and
+    only in the evenings.
+
+    **Pinned against an offset computed from the host's, never a literal.**
+    A test written against `+00:00` passes on a UTC machine whether or not the
+    conversion exists — which is exactly how the two-hour hub bug survived. Same
+    trick as the `format_ts` test above, and for the same reason.
+    """
+    import datetime as _dt
+    from ui import format_date, format_ts
+
+    print("\n--- format_date reads the local date, not the stored one ---")
+    # Five hours the other side of wherever this is running, so the date must
+    # differ from a naive slice for at least one instant of the day.
+    here = _dt.datetime.now().astimezone().utcoffset() or _dt.timedelta(0)
+    far = _dt.timezone(here + _dt.timedelta(hours=-5))
+
+    # An instant that is late evening locally and already tomorrow in the
+    # stored zone — the exact shape of the bug.
+    local_now = _dt.datetime(2026, 3, 14, 23, 30, tzinfo=_dt.datetime.now().astimezone().tzinfo)
+    stored = local_now.astimezone(_dt.timezone.utc).isoformat()
+    ok("the local date wins over the stored one",
+       format_date(stored) == "2026-03-14", (stored, format_date(stored)))
+    ok("...and a naive [:10] slice is what would have been wrong",
+       format_date(stored) == format_ts(stored)[:10],
+       (format_date(stored), format_ts(stored)))
+
+    # A naive timestamp is left alone: everything naive in this codebase is
+    # already local, so attaching a zone would move the times that were right.
+    ok("a naive timestamp is not shifted",
+       format_date("2026-03-14T23:30:00") == "2026-03-14")
+    # And the two helpers must agree, or a filename and its own header drift.
+    aware = _dt.datetime(2026, 7, 1, 12, 0, tzinfo=far).isoformat()
+    ok("format_date is format_ts's date half",
+       format_date(aware) == format_ts(aware)[:10],
+       (format_date(aware), format_ts(aware)))
+    ok("junk degrades to the old slice rather than raising",
+       format_date("not a date") == "not a date"[:10])
 
 
 if __name__ == "__main__":

@@ -86,6 +86,36 @@ def format_ts(iso_str):
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+def format_date(iso_str):
+    """The **local** date of an ISO timestamp, as `YYYY-MM-DD`.
+
+    Beside `format_ts` and for the same reason, because the callers want
+    different things from the same stored value: `format_ts` returns
+    `YYYY-MM-DD HH:MM`, so a site that only wants a date cannot just call it —
+    which is exactly why three sites went on slicing `created_at[:10]` after
+    `format_ts` landed and stayed in UTC.
+
+    `[:10]` is not a cheap version of this. It reads the date off the *stored*
+    string, which `db.py` writes in UTC, so a session created after 22:00 local
+    is filed and labelled under **tomorrow**. Silent, off by one, and only in
+    the evenings — the kind of wrong that looks like a misremembered date rather
+    than a bug.
+
+    A naive timestamp is left as-is, exactly as `format_ts` leaves it: naive
+    values in this codebase are already local, and attaching a zone would move
+    the one set of times that was right.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(iso_str)
+    except Exception:
+        # Not a timestamp we understand. Hand back the first ten characters,
+        # which is what the callers did before and is right for a bare date.
+        return (iso_str or "")[:10]
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+    return dt.strftime("%Y-%m-%d")
+
+
 def vault_relative(path, root):
     """A vault path for *display*, without its machine-specific prefix.
 

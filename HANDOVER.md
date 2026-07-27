@@ -484,7 +484,18 @@ timezone bug is invisible there by construction. It is pinned in
 a test written against a literal `+00:00` passes without the conversion on a
 UTC machine.
 
-Still raw, and in `BACKLOG.md`: `export.py` and the two `[:10]` date labels.
+**All three raw sites were converted in v0.9**, and the shape of the fix is a
+second helper rather than a call to the first: `format_ts` returns
+`YYYY-MM-DD HH:MM`, so a site that only wants a date could not simply call it —
+which is precisely why three `created_at[:10]` slices survived the v0.8.1 fix.
+`ui.format_date` is that date half, beside it, at the bottom of the graph.
+
+`[:10]` was never a cheap `format_date`. It reads the date off the **stored**
+string, so a session created after 22:00 local was filed and labelled under
+tomorrow. Confirmed live rather than reasoned about: session #24 on Cas's own
+db stores `2026-07-19` and is locally `2026-07-20`. Cas's call (2026-07-27) was
+to localise all three including `export.py`'s full timestamp — an export in the
+vault in a different time base from the rest of the vault is itself the trap.
 
 ## The environment
 

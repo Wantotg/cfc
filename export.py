@@ -11,7 +11,7 @@ from pathlib import Path
 
 from config import VAULT_PATH
 
-from ui import console
+from ui import console, format_date, format_ts
 from db import get_session_tags
 
 
@@ -105,7 +105,11 @@ def export_session(conn, session_id, quiet=False):
         c for c in title if c not in bad_chars
     ).strip() or "untitled"
 
-    date_part = created_at[:10] if created_at else "unknown"
+    # The **local** date, not the stored one. `created_at` is UTC (db.py is the
+    # only module that stores it), so slicing `[:10]` filed a session created
+    # after 22:00 local under tomorrow's date — silent, off by one, and only in
+    # the evenings.
+    date_part = format_date(created_at) if created_at else "unknown"
     filename = f"{date_part}_Session-{sid}_{safe_title}.md"
 
     vault = Path(VAULT_PATH).expanduser()
@@ -183,7 +187,11 @@ def export_session(conn, session_id, quiet=False):
             label = role.capitalize()
 
         lines.append(f"## {label}")
-        lines.append(f"*{created}*")
+        # Local time, like everything else in the vault. Cas's call
+        # (2026-07-27): an export is a data file and an absolute timestamp is
+        # defensible in one, but it was the only thing in the vault in a
+        # different time base, and that inconsistency is itself the trap.
+        lines.append(f"*{format_ts(created)}*")
         lines.append("")
         lines.append(content)
         lines.append("")

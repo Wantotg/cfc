@@ -23,6 +23,38 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — The last three timestamp sites read local time
+`db.py` is the only module that stores UTC, and three sites still read the
+stored string directly: `export.py`'s filename date, `export.py`'s per-message
+timestamp, and the recall excerpt's date label in `commands.py` and `recall.py`.
+
+They survived v0.8.1's fix for a specific reason worth keeping: `format_ts`
+returns `YYYY-MM-DD HH:MM`, so a site that wants only a date **cannot call it**
+— which is why they went on slicing `created_at[:10]`. The fix is therefore a
+second helper and not a substitution: `ui.format_date`, beside `format_ts`, one
+implementation at the bottom of the dependency graph, taking its input rather
+than importing config. Same shape as `ui.vault_relative` in v0.8.2.
+
+`[:10]` was never a cheap version of this — it reads the **stored** date, so a
+session created after 22:00 local was filed and labelled under tomorrow. Silent,
+off by one, and only in the evenings, which reads as a misremembered date rather
+than a bug. Confirmed live rather than reasoned about: session #24 on the real
+db stores `2026-07-19` and is locally `2026-07-20`.
+
+Cas's call (2026-07-27) was to localise all three, `export.py`'s full timestamp
+included. An export is a data file and an absolute timestamp is defensible in
+one, but it was the only thing in the vault in a different time base, and that
+inconsistency is itself the trap.
+
+Pinned in `tests/test_hub.py` **against an offset computed from the host's**,
+never a literal — a test written against `+00:00` passes on a UTC machine
+whether or not the conversion exists, which is exactly how the two-hour hub bug
+survived.
+- Files: ui.py, export.py, commands.py, recall.py, tests/test_hub.py,
+  HANDOVER.md, BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Undo the red-path early return, and demote a claim I overstated
 Cas tested the connection light end to end (green with LM Studio up, red at
 launch and at the hub with it quit, `/connect embedding` working) and reported
@@ -49,7 +81,7 @@ is now an open question in `BUGS.md` with the measurements, the untested
 candidate, and the one command that would settle it.
 - Files: preflight.py, ui.py, tests/test_connection.py, HANDOVER.md, BUGS.md
 - Status: shipped
-- Commit: pending
+- Commit: 30ca264
 
 ## 2026-07-27 — LEGACY_PREFIX and RETIRED come out, and the old words become aliases
 The `:` prefix was accepted for one version with a once-per-session nudge, and

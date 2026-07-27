@@ -10,6 +10,11 @@ excerpts and to say plainly when they don't cover the question — no invention.
 """
 import sys, os, json
 from search import search
+# `ui` is imported for `format_date` alone and imports no cfc module itself, so
+# this stays at the bottom of the dependency graph. The date label was reading
+# `created_at[:10]` off a UTC string, which puts an evening session on the wrong
+# day — see ui.format_date.
+from ui import format_date
 
 try:
     import config
@@ -37,7 +42,7 @@ def build_context(hits):
     blocks = []
     for h in hits:
         tag = " [reasoning]" if h["kind"] == "thinking" else ""
-        date = (h["created_at"] or "")[:10]
+        date = format_date(h["created_at"])
         wid = h.get("source_uuid") or "?"
         datepart = f", {date}" if date else ""
         blocks.append(

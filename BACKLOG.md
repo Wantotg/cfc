@@ -27,40 +27,6 @@ The full entry with all its history is in the archive.
 
 ---
 
-## Three timestamp sites still print UTC. v0.8.1, 26-07-2026
-**Found:** 2026-07-26, fixing the hub's clock (`CHANGELOG.md`). `ui.format_ts`
-now converts, and `hub.py` was its only caller — these three read the db
-directly and were left alone rather than swept, because two of them are
-arguably correct and the third is a one-day edge.
-Description:
-- **`export.py:186`** writes the message timestamp into the exported markdown as
-  the raw stored ISO string, offset and all. Defensible: an export is a data
-  file and an unambiguous absolute timestamp is the right thing in one. It is
-  also the only place in the vault that isn't local time, which is the argument
-  the other way.
-- **`export.py:108`** takes `created_at[:10]` for the export filename's date
-  part. A session created after 22:00 local gets tomorrow's date in its
-  filename.
-- **`commands.py:1022` and `recall.py:40`** take `(created_at or "")[:10]` for
-  the date label on a recall excerpt. Same one-day edge, display only.
-
-Deliberately not swept: `format_ts` returns `YYYY-MM-DD HH:MM`, so none of the
-three can just call it — the two `[:10]` sites want a date and `export.py` wants
-a full timestamp, so this is three small decisions and not one substitution.
-See `HANDOVER.md`, "Two time bases, and one conversion point".
-
-**Cas's call (2026-07-27): localise all three.** The first one was the genuine
-judgement call and it goes the same way as the other two — an export living in
-the vault in a different time base from everything else in the vault is itself
-the trap, and consistency beats the absolute timestamp's precision here.
-
-The two `[:10]` sites want a *date*, so the shape is a `ui.format_date` beside
-`format_ts`: one implementation, at the bottom of the dependency graph, taking
-its input rather than importing config. Same reasoning that produced
-`ui.vault_relative` in v0.8.2. **Any test here needs `test_hub.py`'s trick** —
-an offset computed from the host's rather than a literal `+00:00` — or it passes
-on a UTC machine without the conversion existing.
-
 ## Nothing validates that a model in `MODELS` can be chatted with. Re-opened 2026-07-26
 
 **Found:** 2026-07-15, as `longcat-2.0` is in MODELS but can't chat.

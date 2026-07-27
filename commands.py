@@ -95,6 +95,7 @@ except ImportError:
     TOOLS_MAX_TURN_RESULT_CHARS = 120_000
 
 from ui import (console, context_style, context_thresholds, make_bar,
+                format_date,
                 short_model,
                 make_snippet, vault_relative)
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
@@ -1317,7 +1318,7 @@ def build_envelope(query, hits):
         "",
     ]
     for h in hits:
-        date = (h["created_at"] or "")[:10]
+        date = format_date(h["created_at"])
         wid = h.get("source_uuid") or "?"
         meta = " · ".join(x for x in (f"id {wid}", date, h["kind"]) if x)
         parts.append(f"── {h['session_title']} · {meta} ──")

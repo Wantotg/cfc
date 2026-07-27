@@ -5,9 +5,10 @@ immediately before the v0.9 archive split, kept whole.** The live file is
 [`../BUGS.md`](../BUGS.md), which holds open entries only.
 
 **This file is not closed.** It is where a closed entry goes from now on:
-newest at the top, directly under this header, moved whole rather than
-summarised. "Archive" is the ongoing rule, not a one-time snapshot — the
-original text below is what's frozen, not the file.
+newest at the top, under a *Closed since the split* heading above the snapshot,
+moved whole rather than summarised — see `legacy/BACKLOG.md`, which has one.
+"Archive" is the ongoing rule, not a one-time snapshot: the text below the
+split line is what is frozen, not the file.
 
 It is kept rather than deleted for one specific reason: `CHANGELOG.md` carries
 every fix and its reasoning, but **not the original report**, and the symptom as

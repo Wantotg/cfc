@@ -4,11 +4,6 @@
 immediately before the v0.9 archive split, kept whole.** The live file is
 [`../BACKLOG.md`](../BACKLOG.md), which holds open entries only.
 
-**This file is not closed.** It is where a closed entry goes from now on:
-newest at the top, directly under this header, moved whole rather than
-summarised. "Archive" is the ongoing rule, not a one-time snapshot — the
-original text below is what's frozen, not the file.
-
 It is kept rather than deleted for one specific reason: `CHANGELOG.md` carries
 every fix and its reasoning, but **not the original report**, and the symptom as
 first written is frequently the valuable half — the `MAX_DISTANCE` entry below
@@ -16,6 +11,62 @@ is the case in point, where the report's wrong premise is the finding.
 
 **Nothing below is edited, and nothing below is current.** Read it for the trail
 behind a fix, not for what is still owed.
+
+**This file is not closed.** It is where a closed entry goes from now on:
+newest at the top, in the *Closed since the split* section directly below,
+moved whole rather than summarised. "Archive" is the ongoing rule, not a
+one-time snapshot — the original text below the split line is what is frozen,
+not the file.
+
+---
+
+# Closed since the split
+
+## ~~Three timestamp sites still print UTC~~ — FIXED (v0.9, 2026-07-27)
+
+**Fixed:** all three localised via the new `ui.format_date`, beside `format_ts`. See `CHANGELOG.md`, 2026-07-27. Cas's call was to localise `export.py`'s full timestamp too. Original entry below.
+
+## Three timestamp sites still print UTC. v0.8.1, 26-07-2026
+**Found:** 2026-07-26, fixing the hub's clock (`CHANGELOG.md`). `ui.format_ts`
+now converts, and `hub.py` was its only caller — these three read the db
+directly and were left alone rather than swept, because two of them are
+arguably correct and the third is a one-day edge.
+Description:
+- **`export.py:186`** writes the message timestamp into the exported markdown as
+  the raw stored ISO string, offset and all. Defensible: an export is a data
+  file and an unambiguous absolute timestamp is the right thing in one. It is
+  also the only place in the vault that isn't local time, which is the argument
+  the other way.
+- **`export.py:108`** takes `created_at[:10]` for the export filename's date
+  part. A session created after 22:00 local gets tomorrow's date in its
+  filename.
+- **`commands.py:1022` and `recall.py:40`** take `(created_at or "")[:10]` for
+  the date label on a recall excerpt. Same one-day edge, display only.
+
+Deliberately not swept: `format_ts` returns `YYYY-MM-DD HH:MM`, so none of the
+three can just call it — the two `[:10]` sites want a date and `export.py` wants
+a full timestamp, so this is three small decisions and not one substitution.
+See `HANDOVER.md`, "Two time bases, and one conversion point".
+
+**Cas's call (2026-07-27): localise all three.** The first one was the genuine
+judgement call and it goes the same way as the other two — an export living in
+the vault in a different time base from everything else in the vault is itself
+the trap, and consistency beats the absolute timestamp's precision here.
+
+The two `[:10]` sites want a *date*, so the shape is a `ui.format_date` beside
+`format_ts`: one implementation, at the bottom of the dependency graph, taking
+its input rather than importing config. Same reasoning that produced
+`ui.vault_relative` in v0.8.2. **Any test here needs `test_hub.py`'s trick** —
+an offset computed from the host's rather than a literal `+00:00` — or it passes
+on a UTC machine without the conversion existing.
+
+---
+
+# The pre-split snapshot
+
+Everything from here down is the file as frozen on 2026-07-27. Entries that
+were still *open* at the split appear here too, and their closed versions are
+above — the copy above is the current one.
 
 ---
 
