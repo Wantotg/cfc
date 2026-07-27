@@ -11,13 +11,13 @@ This file is how you use cooking for cats.
 
 ## What it does
 
-- **Chat, with the terminal taken seriously** — pixel-art splash, live Markdown,
+- **Chat, with som upgrades to the terminal** — pixel-art splash, live Markdown,
   colour-coded speaker panels, a live view of thinking models' reasoning, and a
   context-usage bar that colours as the window fills
 - **Everything local** — one SQLite file, fully queryable, rolling backups
 - **Private chat** — `p` at the hub. Same client, in-memory, leaves nothing on
   disk: no transcript, no index, no title, invisible to the hub
-- **One command grammar** — `/verb [kind] [target] [message]`, twenty-two verbs.
+- **Simple commands** — `/verb [kind] [target] [message]`, twenty-two verbs.
   `/add` attaches anything, `/remove` takes it off, `/status` says what's on,
   `/list` says what exists
 - **System prompts, personas and traits** — Markdown files you edit in Obsidian.
