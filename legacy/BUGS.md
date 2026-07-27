@@ -10,6 +10,76 @@ moved whole rather than summarised — see `legacy/BACKLOG.md`, which has one.
 "Archive" is the ongoing rule, not a one-time snapshot: the text below the
 split line is what is frozen, not the file.
 
+---
+
+# Closed since the split
+
+## ~~Cold-starting LM Studio from WSL~~ — FIXED and SETTLED (v0.9, 2026-07-27)
+
+**Settled by Cas the same day, from a genuinely cold machine via the desktop
+shortcut:** the red branch ran, `lms server start` brought LM Studio up, and the
+probe came back green. The capability was never lost to anything but my own
+early return, and restoring the attempt restored it.
+
+**The lesson is the entry, not the fix.** I measured `lms server start` failing
+after 62s from an interactive shell, plus two GUI launch methods doing nothing,
+and wrote "LM Studio cannot be started from WSL" into `HANDOVER.md` under
+*Rejected designs* — the section whose entire function is to stop the next
+person trying. Three failures in one afternoon, about something that had been
+observed working. Cas noticed the loss within the hour.
+
+Still unexplained: why the direct invocation timed out when the launcher's does
+not. It blocks nothing — the path a user takes is the one that works — and
+`lms load -y <model>` from cold remains untried.
+
+Original entry below.
+
+## Cold-starting LM Studio from WSL: it used to work, and now it doesn't
+
+**Found:** 2026-07-27, by Cas, testing v0.9's connection light. **A regression
+introduced during v0.9 and partly undone the same day** — the entry stays open
+because the underlying question is unanswered, not because the code is broken.
+
+**Symptom:** the desktop shortcut used to bring LM Studio up when it wasn't
+running. It no longer does. Cas has the handover from the `cmd` Claude Code
+session that set the shortcuts up and will check what it actually did.
+
+**What was measured** (2026-07-27, LM Studio genuinely quit), all three failing:
+
+| attempt | result |
+|---|---|
+| `lms server start -p 1233 --bind 0.0.0.0` | 62s, then "Timed out waiting for LM Studio daemon to start" |
+| `cmd.exe /c start "" "C:\Program Files\LM Studio\LM Studio.exe"` | returns 0 at once, nothing launches |
+| direct exec of the `.exe` from WSL | no process, no output |
+
+`lms server start --help` has no headless flag; the daemon it waits for appears
+to exist only once the GUI has run.
+
+**Why that measurement was not enough, and this is the lesson.** It was written
+up as "LM Studio cannot be started from WSL" and put in `HANDOVER.md` under
+*Rejected designs* — a note whose whole function is to stop the next person
+trying. Three failures in one afternoon do not establish impossibility about
+something that has been **observed working**. The claim has been demoted to
+this entry.
+
+**The untested candidate, and the likely mechanism.** The early v0.9 code
+returned as soon as it saw "LM Studio not running", which removed a path the
+old code reached by accident: when `lms` cannot contact a daemon,
+`server_state` returns `(None, None)` rather than `(False, …)`, so the old
+`ensure()` **skipped the server-start branch entirely** and fell through to
+`lms load -y <model>` — a different command, with a 180s budget rather than 90s,
+and the one thing never tried against a cold machine. `lms server start` may
+never have been what worked.
+
+**Current behaviour:** the early return is gone. Red attempts the same sequence
+it always did, says it is trying and that it may not work, and finishes with the
+instruction to start LM Studio by hand. So nothing is worse than before v0.9;
+what is missing is the answer.
+
+**To settle it:** quit LM Studio entirely, run `lms load -y
+text-embedding-baai-bge-m3-568m` from WSL by hand, and watch whether the app
+comes up. That is one command and it decides the whole question.
+
 It is kept rather than deleted for one specific reason: `CHANGELOG.md` carries
 every fix and its reasoning, but **not the original report**, and the symptom as
 first written is frequently the valuable half — the `MAX_DISTANCE` entry in

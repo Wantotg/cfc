@@ -611,7 +611,126 @@ are.
 ``` 
 ---
 
-## v0.9 — The connection
+## v0.9 — Say which state you're in — **complete, 2026-07-27**
+
+Planned as *The connection*: three items about the embedder, plus the hub help
+screen and deleting `LEGACY_PREFIX`/`RETIRED`. It shipped as ten, because the
+version was re-scoped around a different goal — **v1.0's window should inherit
+an empty desk, so that its "only fixes, never adds" property is a real claim
+rather than a backlog being cleared.** Every open item across `BUGS.md` and
+`BACKLOG.md` was either fixed or explicitly assigned.
+
+The widening is disciplined by a theme rather than a list, and it is
+`HANDOVER.md`'s *"prefer the failure that is visible"* turned into a version:
+
+> The traffic light, `/connect embedding`, the terminal-capability line, and
+> zero-hit recall are the same sentence — cfc says which state it is in instead
+> of returning a plausible nothing.
+
+- **The connection, as one state machine.** A light on the hub, `/connect
+  embedding`, and the launch check are three renderings of one function,
+  `preflight.connection_state()`. No consumer forms its own opinion, because the
+  failure worth designing against is a **green light over a dead server** — the
+  one output nobody double-checks, since it is precisely the reassurance that
+  stops you checking.
+
+  It has **no cache**, and that came out of measuring rather than assuming: a
+  real embedding call answers in 0.157s, and the 8s that made a live light look
+  unaffordable was `probe` handing one number to httpx, which sets *connect* and
+  *read* alike. Split into 0.5s and 8.0s — the same lesson `embed.py` learned in
+  v0.8.2, one layer up — a dead port costs 0.5s, so the light can just ask. An
+  answer you can always re-ask is one you never have to age.
+
+  Five states, not three. `hosted` never shows a red light telling you to launch
+  an app that has nothing to do with your endpoint, and `down` exists for when
+  the process check itself could not be read — saying "LM Studio is running, its
+  server isn't" without having looked is the confident wrong answer the whole
+  feature exists to delete.
+
+- **The two `preflight.py` fix paths that had never once run.** Open in
+  `HANDOVER.md` since v0.7. All three states were driven: orange took `lms
+  server start` to green in 1.4s, and red worked from a genuinely cold machine.
+  `lms load` turns out to be near-unreachable, because LM Studio JIT-loads on
+  demand — which is what proves `PROBE_READ = 8.0` is load-bearing and not
+  slack: a cold load happens *inside* the read budget, so trimming it would turn
+  every cold start into a confident red light over a working embedder.
+
+- **Preflight says when the splash will band.** `COLORTERM`, `TERM` and rich's
+  `color_system`, with a warning when they don't add up. Fails in the safe
+  direction: the false positive is loud and self-correcting, the false negative
+  is the status quo.
+
+- **Recall says which kind of nothing it found.** Three outcomes used to produce
+  one silence and only one meant "memory has no answer". They are separated at
+  the exception, which is the only place they are cleanly separable — `embed.py`
+  records which failure it saw *while catching it* and raises a type. The test
+  that matters pins an error whose **message** is a perfect copy of the
+  unreachable one and must not be reported as unreachable. A fourth state turned
+  up while reading: an empty index is not a failed search.
+
+- **The tool path offers the retry the streaming path offers.** It used to paint
+  a blank answer panel. The policy is now one function both call, and it takes
+  no argument identifying its caller — a shared helper that branches on who
+  called it is two helpers wearing one name.
+
+- **The model auto-revert arms on every switch.** It armed only for models *not*
+  in `MODELS`, so it skipped the exact case it was built for: a dead id that
+  *is* listed switched cleanly, armed nothing, and 400ed every turn with an
+  error naming no model. Dropping `longcat` in v0.4 deleted the instance and
+  left the class. `MODEL_LIMITS` and `TOOLS_MODELS` are also checked against
+  `known_models()` at startup — a typo there is the genuinely silent one, since
+  tools simply never turn on for a model you believe is covered.
+
+- **`LEGACY_PREFIX` and `RETIRED` come out, and the old words become aliases.**
+  The deletion and the promotion had to be one commit: `RETIRED` was what caught
+  `/models`, `/prompts`, `/tags` and a dozen more, and an unrecognised verb is
+  not an error — it falls through **to the model**, an API call and a confused
+  answer each. That needed a grammar change nobody had anticipated: an alias
+  value may now be a *phrase*, because `models` has to become `list models`,
+  which a verb-for-verb alias cannot express. `detach` is the one word let go,
+  its replacement taking `#<n>` and so changing the argument's shape.
+
+- **Hub help (`h`), generated rather than written.** `HUB_KEYS` is the dispatch
+  *and* the help's source, and the light's legend comes from the same mapping
+  the light renders. A help screen is the artefact nobody re-reads, so the only
+  safe kind is one that cannot be wrong.
+
+- **The last three UTC timestamp sites read local time.** They survived v0.8.1
+  because `format_ts` returns `YYYY-MM-DD HH:MM` and a site wanting only a date
+  could not call it — so the fix is a second helper, `ui.format_date`, not a
+  substitution. `[:10]` was never a cheap version of it: session #24 on the real
+  database stores `2026-07-19` and is locally `2026-07-20`.
+
+- **The archive split.** `BUGS.md` was 283 lines holding three live entries;
+  `BACKLOG.md` 897 holding five. Closed entries now move to `legacy/` whole and
+  leave no stub. Archived rather than deleted because `CHANGELOG.md` carries
+  every fix but never the **original report**, and the symptom as first written
+  is frequently the valuable half — sometimes its *wrong* premise is the finding.
+
+- **The last provider-400 suspect, spent.** `api.wire_messages` drops an empty
+  `content` from a tool-call message at the **wire boundary**, so both replay
+  paths get it and neither has to remember. There is no test that it works and
+  there cannot be: the bug has no reproduction. What it buys is that the list of
+  things left to try is empty, which is a more honest position than a fix.
+
+**What the version taught, which is not in the list above.** Four things the
+plan had wrong were found by building or driving rather than reading: recall's
+"routine half" does not exist, because no routine can reach recall; retiring the
+old command words needed a grammar change; `lms load` is near-unreachable; and
+`launch.sh`'s own comment claiming a cold `server start` brings up the app had
+never been tested. Two live defects turned up that were on no list — four
+`console.print` calls printing their own markup tags, one of them shipped in
+v0.8.2 in the very line that release was named for, and a session in the real
+database misdated by a day.
+
+And one that cost something: `lms server start` failing three times in an
+afternoon was written up as *"LM Studio cannot be started from WSL"* and filed
+under **Rejected designs** — the section whose entire function is to stop the
+next person trying. It removed a capability Cas relied on, and he noticed within
+the hour. Three failures are not proof of impossibility about something that has
+been observed working.
+
+*[Cas's note goes here.]*
 
 ## v1.0 — Hardening, and a decision
 

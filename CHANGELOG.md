@@ -23,6 +23,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — v0.9 ships: cold start settled, and the roadmap body moves over
+Cas ran the case that had never once been exercised — the desktop shortcut on a
+genuinely cold machine — and **red worked**: the branch ran, `lms server start`
+brought LM Studio up, and the probe came back green.
+
+So the `BUGS.md` entry opened this morning closes, and it closes as a mistake of
+mine rather than a defect of cfc's. I measured `lms server start` dying after
+62s from an interactive shell, plus two GUI launch methods doing nothing, and
+wrote "LM Studio cannot be started from WSL" into `HANDOVER.md` under *Rejected
+designs* — the section whose entire function is to stop the next person trying.
+Three failures in one afternoon, about something that had been observed working.
+The early return that came with it removed a capability Cas relied on, and he
+noticed within the hour. Why the direct invocation timed out is still
+unexplained; it blocks nothing, because the path a user takes is the one that
+works.
+
+The v0.9 body moves from `ROADMAP_PRIVATE.md` to `ROADMAP.md` with its
+completion date, per the release order, and the private entry is deleted. It is
+rewritten rather than copied: the planned version was five items called *The
+connection*, and what shipped was ten under *Say which state you're in*. The
+entry says what actually happened, including the four things the plan had wrong
+and the two live defects that were on no list.
+
+`ROADMAP.md`'s note is Cas's and is left as a placeholder.
+- Files: preflight.py, BUGS.md, legacy/BUGS.md, HANDOVER.md, ROADMAP.md,
+  ROADMAP_PRIVATE.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Hub help, generated rather than written
 `h` at the hub prints what can be typed there. The point of the entry is that
 none of it is written down twice.

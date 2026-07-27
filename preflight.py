@@ -384,30 +384,25 @@ def ensure(say=_say, fix=True):
 
     acted = False       # did we actually change anything worth re-probing for?
 
-    # **Red still tries, and the reason it tries is a correction.** An earlier
-    # v0.9 commit returned here, on the strength of measuring three ways to
-    # start LM Studio from WSL and watching all three fail (2026-07-27, app
-    # genuinely quit):
+    # **Red tries, and it works.** Verified 2026-07-27 by Cas, from a genuinely
+    # cold machine via the desktop shortcut: this branch ran, `lms server start`
+    # brought LM Studio up, and the probe came back green.
     #
-    #   lms server start          → "Timed out waiting for LM Studio daemon to
-    #                                start" after 62s
-    #   cmd.exe /c start "…exe"   → returns 0 immediately, nothing launches
-    #   direct exec of the .exe   → no process, no output, nothing launches
+    # That is worth a comment because an earlier commit the same day returned
+    # here instead, on the strength of my measuring `lms server start` from an
+    # interactive shell and watching it die after 62s with "Timed out waiting
+    # for LM Studio daemon to start". It really did fail that way. It also
+    # works from the launcher. **Three failures in one afternoon were not
+    # enough to conclude "impossible" about something that had been observed
+    # working** — the early return removed a capability Cas relied on, and he
+    # noticed within the hour.
     #
-    # Cas then reported that the desktop shortcut *used to* bring LM Studio up,
-    # which that early return had removed. The likely mechanism is the one the
-    # measurement missed: when `lms` cannot reach a daemon, `server_state`
-    # returns `(None, None)` rather than `(False, …)`, so the old code skipped
-    # the server-start branch entirely and fell through to **`lms load`** — a
-    # different command with a 180s budget, and the one candidate never tested
-    # cold. `lms server start` may simply never have been what worked.
-    #
-    # So the sequence below runs at red as it always did. What is new is that
-    # it says what it is doing and how long it may take, rather than either
-    # promising or refusing. **Unresolved and parked** — see `BUGS.md`.
+    # Why the direct invocation failed is still unexplained (see `legacy/BUGS.md`
+    # for what was tried). It does not block anything: the path a user takes is
+    # this one, and this one works.
     if state == NOT_RUNNING:
-        say("warn", "LM Studio is not running — trying to wake it. This is the "
-                    "slow path and may not work from WSL.")
+        say("warn", "LM Studio is not running — starting it. This is the slow "
+                    "path; give it up to a minute.")
 
     running, port = server_state(cli)
 

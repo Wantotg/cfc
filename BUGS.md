@@ -35,54 +35,6 @@ Two things make the move safe rather than lossy, and both have to hold:
 
 ---
 
-## Cold-starting LM Studio from WSL: it used to work, and now it doesn't
-
-**Found:** 2026-07-27, by Cas, testing v0.9's connection light. **A regression
-introduced during v0.9 and partly undone the same day** — the entry stays open
-because the underlying question is unanswered, not because the code is broken.
-
-**Symptom:** the desktop shortcut used to bring LM Studio up when it wasn't
-running. It no longer does. Cas has the handover from the `cmd` Claude Code
-session that set the shortcuts up and will check what it actually did.
-
-**What was measured** (2026-07-27, LM Studio genuinely quit), all three failing:
-
-| attempt | result |
-|---|---|
-| `lms server start -p 1233 --bind 0.0.0.0` | 62s, then "Timed out waiting for LM Studio daemon to start" |
-| `cmd.exe /c start "" "C:\Program Files\LM Studio\LM Studio.exe"` | returns 0 at once, nothing launches |
-| direct exec of the `.exe` from WSL | no process, no output |
-
-`lms server start --help` has no headless flag; the daemon it waits for appears
-to exist only once the GUI has run.
-
-**Why that measurement was not enough, and this is the lesson.** It was written
-up as "LM Studio cannot be started from WSL" and put in `HANDOVER.md` under
-*Rejected designs* — a note whose whole function is to stop the next person
-trying. Three failures in one afternoon do not establish impossibility about
-something that has been **observed working**. The claim has been demoted to
-this entry.
-
-**The untested candidate, and the likely mechanism.** The early v0.9 code
-returned as soon as it saw "LM Studio not running", which removed a path the
-old code reached by accident: when `lms` cannot contact a daemon,
-`server_state` returns `(None, None)` rather than `(False, …)`, so the old
-`ensure()` **skipped the server-start branch entirely** and fell through to
-`lms load -y <model>` — a different command, with a 180s budget rather than 90s,
-and the one thing never tried against a cold machine. `lms server start` may
-never have been what worked.
-
-**Current behaviour:** the early return is gone. Red attempts the same sequence
-it always did, says it is trying and that it may not work, and finishes with the
-instruction to start LM Studio by hand. So nothing is worse than before v0.9;
-what is missing is the answer.
-
-**To settle it:** quit LM Studio entirely, run `lms load -y
-text-embedding-baai-bge-m3-568m` from WSL by hand, and watch whether the app
-comes up. That is one command and it decides the whole question.
-
----
-
 ## The plain-console Windows shortcut still bands the splash
 
 **Found:** 2026-07-22, reported by Cas. Fixed for the Windows Terminal

@@ -230,14 +230,15 @@ they lose. Reopening one needs a new argument, not a fresh eye.
 - **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates
   against its own `MOVE_ROOTS` precisely because it is not the model. The
   separation is the design; the two tuples are independent.
-- **~~Starting LM Studio from WSL~~ — not a rejected design, an open question.
-  Moved to `BUGS.md`.** This entry claimed it was impossible on the strength of
-  three failed attempts, and Cas then reported that the desktop shortcut used to
-  do it. Three measurements failing is not proof of impossibility when the
-  thing has been observed working; see `BUGS.md` for what was measured and the
-  untested candidate. Recorded here because "we tried it and it can't be done"
-  is exactly the kind of note that stops the next person trying, and it was
-  written after one afternoon.
+- **~~Starting LM Studio from WSL~~ — this was never a rejected design, and the
+  mistake is kept here on purpose.** It was written up as impossible after
+  `lms server start` timed out at 62s from an interactive shell and two GUI
+  launch methods did nothing. Cas then ran the real path from a cold machine and
+  it worked first time. **Three failures in one afternoon are not proof of
+  impossibility about something that has been observed working**, and the note
+  had already removed a capability he relied on. This section stops people
+  trying things; an entry here needs to have earned that. Closed in
+  `legacy/BUGS.md`.
 - **Tightening the retrieval floor.** See the constants below. The signal isn't there.
 - **A tighter model-is-thinking check than list membership.** The only available
   signal is the `:thinking` id suffix, and it miscalibrates —
@@ -569,15 +570,16 @@ because patching config misses anything that read the value at import.
   are waiting on a real tick). Read the first scheduled outputs rather than
   trusting the prompts.
 - **`preflight.py`'s fix paths are no longer an open thread — all three states
-  were driven on 2026-07-27.** Red **failed** and is now closed by measurement
-  (see "Starting LM Studio from WSL" in Rejected designs): it is not fixable
-  from WSL and the code says so instead of trying. Orange **worked** — `lms
-  server start` fired for the first time and took it to green in 1.4s. And
-  `lms load` turns out to be **near-unreachable**: LM Studio JIT-loads on
-  demand, so an unloaded model does not fail the probe, it just makes it slow
-  (1.71s vs 0.15s). The branch is kept because JIT is a setting rather than a
-  guarantee. What replaces this thread is ordinary use: the light has never
-  been watched over a working day.
+  were driven on 2026-07-27, two of them by Cas on the real machine.** Orange
+  worked: `lms server start` fired for the first time since it was written and
+  reached green in 1.4s. **Red worked too**, from a genuinely cold machine via
+  the desktop shortcut, which is the case that had never once been exercised.
+  And `lms load` turns out to be **near-unreachable**: LM Studio JIT-loads on
+  demand, so an unloaded model does not fail the probe, it makes it slow (1.71s
+  vs 0.15s) — which is what pins `PROBE_READ` as load-bearing rather than
+  slack. The branch is kept because JIT is a setting, not a guarantee.
+  What replaces this thread is ordinary use: the light has not been watched over
+  a working day.
 - **A provider 400 on tool turns is open, and the list of things to try is now
   empty** — `BUGS.md`. Two candidate causes were fixed in v0.5, the surviving
   interrupt theory got its structural fix, and v0.9 spent the last suspect
