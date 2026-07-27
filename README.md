@@ -136,6 +136,10 @@ The hub shows a light for the same check, asked fresh every time you land there:
 ● LM Studio is not running — /connect embedding
 ```
 
+`h` at the hub prints what can be typed there, the light's legend, and where the
+in-chat commands live. It is generated from the same tables that dispatch the
+keys and colour the light, so it cannot describe a hub cfc doesn't have.
+
 `/connect embedding` walks as much of the loop as it can from wherever it
 starts: starts the server, loads the model, verifies. If you started LM Studio
 by hand in the meantime it just lands on green. Bare `/connect` reports without

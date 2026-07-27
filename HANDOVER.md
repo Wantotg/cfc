@@ -67,7 +67,7 @@ must end a turn identically** — see invariant 6.
 | `paths.py` | the jail: `path_guard`, containment + deny list |
 | `api.py` | streaming and non-streaming calls, per-phase timeouts, provider error extraction |
 | `db.py` | connection, schema/migrations, every query, replay + orphan drop |
-| `hub.py` | session browser, picker, routine freshness |
+| `hub.py` | session browser, picker, `HUB_KEYS` + the help it generates, routine freshness |
 | `context.py` | `ToolContext` — read roots, write roots, gated/interactive |
 | `routines.py` / `runner.py` | the routine object + its file store and run log / executing one |
 | `schedule.py` | what is due, the tick lock, the `--run-due` entry point |
@@ -135,6 +135,13 @@ Settled. Argue with them only with a reason, and say that you are.
     a scheduled run is a fresh process. Inferring from the document — "the last
     entry is Thursday, so write Friday" — is self-consistent and therefore
     silently wrong forever after one missed run.
+13b. **The hub's keys are one table too.** `hub.HUB_KEYS` is the dispatch *and*
+    the source of the `h` help screen, and the light's legend is generated from
+    `ui.CONNECTION_STYLE` — the same mapping the light renders. A help screen is
+    the artefact nobody re-reads, so the only safe kind is one that cannot be
+    wrong; `tests/test_hub.py` fails if a key is dispatched that the help does
+    not describe. The single hand-written line points at `/help`, which is a
+    fact about where the commands are documented rather than a copy of them.
 13. **The command surface is two lists that must agree**, and they are checked
     rather than maintained: `run_session` asserts its handler table equals
     `parse.VERBS`. An unrecognised verb falls through **to the model** — so a verb

@@ -24,7 +24,8 @@ from rich.table import Table
 from rich.text import Text
 
 from db import PROVIDER_ROUTINE, PROVIDER_WIKI
-from ui import connection_light, console, context_style, format_ts
+from ui import (connection_light, CONNECTION_STYLE, console,
+                context_style, format_ts)
 
 # Columns are Tags- and Model-free on purpose. Both were near-permanently empty
 # (a tag is rare, and Model only ever printed when a session overrode the
@@ -345,6 +346,76 @@ def print_connection(state=None):
     return state
 
 
+# What the hub accepts, and what each key means. **One table, read by the
+# dispatch and by the help screen**, because a hand-written help screen is a
+# fourth list with nothing checking it — and the day it disagrees it teaches the
+# wrong command confidently. Invariant 13 keeps the session's three lists in
+# agreement by asserting rather than remembering; this is the same move one
+# level up, and `tests/test_hub.py` fails if a key exists that the help does not
+# describe.
+#
+# A chat id is deliberately not in here. It is not a key, it is data off the
+# screen in front of you, and the help says so in its own line.
+_SHOW_HELP = object()       # print the help and stay at the prompt
+
+HUB_KEYS = (
+    (("n", "new"), None, "start a new chat"),
+    (("p", "private"), "private",
+     "start a private chat — in memory, nothing written to disk"),
+    (("h", "?", "help"), _SHOW_HELP, "this screen"),
+    (("q", "quit"), "quit", "leave cfc"),
+)
+
+# Typed key → what pick_session returns. Built from the table rather than
+# written beside it, so the two cannot disagree.
+_HUB_DISPATCH = {key: value for keys, value, _ in HUB_KEYS for key in keys}
+
+
+def print_hub_help():
+    """`h` at the hub — what can be typed here, derived from what is accepted.
+
+    **Everything on this screen is generated.** The keys come from `HUB_KEYS`,
+    which is also the dispatch, and the light's legend comes from
+    `ui.CONNECTION_STYLE`, which is also what the light renders. A help screen is
+    exactly the artefact nobody re-reads, so the only safe kind is one that
+    cannot be wrong.
+
+    The one hand-written line is the pointer to `/help`, and it is prose because
+    it is a fact about where the session's commands are documented, not a list
+    of them. Repeating twenty-two verbs here would be the fourth list this
+    design exists to avoid.
+    """
+    console.print()
+    console.print("At the hub", style="bold")
+    width = max(len(" / ".join(k)) for k, _, _ in HUB_KEYS) + 2
+    for keys, _, what in HUB_KEYS:
+        line = Text(f"  {' / '.join(keys):<{width}}", style="cyan")
+        line.append(what, style="dim")
+        console.print(line)
+    line = Text(f"  {'<number>':<{width}}", style="cyan")
+    line.append("resume that chat — the ids in the table above", style="dim")
+    console.print(line)
+
+    console.print()
+    console.print("The connection light", style="bold")
+    for state in CONNECTION_STYLE:
+        mark, style, text = connection_light(state)
+        line = Text("  ")
+        line.append(mark, style=style)
+        line.append(f" {text}", style="dim")
+        console.print(line)
+
+    console.print()
+    console.print("Inside a chat", style="bold")
+    # highlight=False: rich's auto-highlighter reads `/help` as a path and
+    # colours the slash separately, which makes the one line about how to type
+    # commands look like a rendering fault.
+    console.print("  Commands start with /. /help lists all of them; "
+                  "/status says what this chat is carrying.",
+                  style="dim", highlight=False)
+    console.print()
+
+
 def pick_session(conn):
     """Show recent chats and routine health, and let the user pick one or
     start new."""
@@ -368,7 +439,7 @@ def pick_session(conn):
         _print_routines(routines)
     print_connection()
     console.print("Type a chat ID to resume, 'n' for new "
-                  "session, 'p' for private, 'q' to quit.")
+                  "session, 'p' for private, 'h' for help, 'q' to quit.")
     console.print("'/list sessions' inside a session shows every session, "
                   "routine runs included.", style="dim")
 
@@ -381,17 +452,20 @@ def pick_session(conn):
 
     while True:
         choice = input("\n> ").strip().lower()
-        if choice == "q":
-            return "quit"
-        if choice in ("n", "new"):
-            return None
-        if choice in ("p", "private"):
-            return "private"
+        # The dispatch *is* `HUB_KEYS`. A key that works and isn't on the help
+        # screen is now impossible rather than merely unlikely.
+        if choice in _HUB_DISPATCH:
+            value = _HUB_DISPATCH[choice]
+            if value is _SHOW_HELP:
+                print_hub_help()
+                continue
+            return value
         try:
             idx = int(choice)
         except ValueError:
-            console.print("Type a chat ID, 'n' for new, 'p' for "
-                          "private, or 'q' to quit.")
+            console.print("Type a chat ID, or one of: "
+                          + ", ".join(k[0] for k, _, _ in HUB_KEYS)
+                          + "  ('h' explains them).")
             continue
         if idx in listed:
             return idx

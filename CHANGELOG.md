@@ -23,6 +23,31 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Hub help, generated rather than written
+`h` at the hub prints what can be typed there. The point of the entry is that
+none of it is written down twice.
+
+The hub's keys were a hard-coded `if` chain, so a help screen beside it would
+have been a fourth list with nothing checking it — and the day it disagrees it
+teaches the wrong command confidently. `hub.HUB_KEYS` is now the dispatch *and*
+the help's source, and `tests/test_hub.py` fails if a key is dispatched that the
+help does not describe. Verified by breaking it: smuggling a working key into
+the dispatch is caught by name.
+
+The light's legend is generated from `ui.CONNECTION_STYLE` — the same mapping
+the light itself renders — so a connection state cannot exist without appearing
+in the help. The one hand-written line points at `/help`, which is a fact about
+where the session's commands are documented rather than a copy of twenty-two
+verbs, and copying them here would be the fourth list all over again.
+
+The error line for an unrecognised key is built from the table too, so it can no
+longer list a different set of keys from the ones that work — which it already
+did: it offered `n`, `p` and `q` and never mentioned that `new`, `private` and
+`quit` also worked.
+- Files: hub.py, tests/test_hub.py, HANDOVER.md, README.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Spend the last provider-400 suspect, at the wire boundary
 `agent.py` normalises a missing `content` to `""` on the assistant message
 carrying `tool_calls`, because `history`, `save_message` and the renderer all
@@ -59,7 +84,7 @@ path — the fail-safe direction that makes matching on a provider's wording
 tolerable at all.
 - Files: api.py, tests/test_wire.py, BUGS.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 334025c
 
 ## 2026-07-27 — The last three timestamp sites read local time
 `db.py` is the only module that stores UTC, and three sites still read the

@@ -314,6 +314,7 @@ def main():
 
     conn.close()
     test_format_date_localises()
+    test_hub_help_is_derived()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
@@ -363,6 +364,51 @@ def test_format_date_localises():
        (format_date(aware), format_ts(aware)))
     ok("junk degrades to the old slice rather than raising",
        format_date("not a date") == "not a date"[:10])
+
+def test_hub_help_is_derived():
+    """`h` at the hub — the help screen and the dispatch are one table.
+
+    A hand-written help screen is a fourth list with nothing checking it, and
+    the day it disagrees it teaches the wrong command confidently. Invariant 13
+    keeps the session's lists in agreement by asserting rather than
+    remembering; this is the same move one level up.
+    """
+    import io
+    from contextlib import redirect_stdout
+    import hub as hubmod
+    from ui import CONNECTION_STYLE
+
+    print("\n--- hub help is generated, not written ---")
+    # The dispatch is built from the table, so every documented key works.
+    for keys, value, _ in hubmod.HUB_KEYS:
+        for key in keys:
+            ok(f"'{key}' is dispatched",
+               hubmod._HUB_DISPATCH.get(key) is value
+               or hubmod._HUB_DISPATCH[key] == value,
+               key)
+    # ...and nothing is dispatched that the table doesn't declare. This is the
+    # assertion that makes the help trustworthy: a key cannot exist without a
+    # description, because the description is where the key comes from.
+    declared = {k for keys, _, _ in hubmod.HUB_KEYS for k in keys}
+    ok("no key is dispatched that the help doesn't describe",
+       set(hubmod._HUB_DISPATCH) == declared,
+       set(hubmod._HUB_DISPATCH) ^ declared)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        hubmod.console.file = buf
+        hubmod.print_hub_help()
+        hubmod.console.file = sys.stdout
+    out = buf.getvalue()
+    for keys, _, what in hubmod.HUB_KEYS:
+        ok(f"'{keys[0]}' appears on the help screen", keys[0] in out, out[:200])
+        ok(f"...with its description", what[:20] in out, what)
+    ok("a chat id is explained, since it isn't a key", "number" in out, out[:200])
+
+    # The light's legend comes from the same mapping the light renders, so a
+    # new connection state cannot be missing from the help.
+    for _, _, text in CONNECTION_STYLE.values():
+        ok(f"the legend carries: {text[:28]}", text in out, text)
 
 
 if __name__ == "__main__":
