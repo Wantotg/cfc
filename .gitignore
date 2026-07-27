@@ -24,15 +24,16 @@ claude_export/
 # Personal working notes — has names, filepaths, private context.
 # CLAUDE.example.md is the sanitised version that ships.
 CLAUDE.md
-# Split into one per kind of session (2026-07-26). They start as identical
-# copies of the old file and are expected to diverge; LEGACY_CLAUDE.md is the
-# common ancestor, kept until the three have grown apart enough to be worth
-# reading on their own. Public versions come later, if the split earns them —
-# CLAUDE.example.md is still the one that ships.
+# Split into one per kind of session (2026-07-26), with debug added 2026-07-27.
+# They start as identical copies of the old file and are expected to diverge;
+# LEGACY_CLAUDE.md is the common ancestor, kept until they have grown apart
+# enough to be worth reading on their own. Public versions come later, if the
+# split earns them — CLAUDE.example.md is still the one that ships.
 LEGACY_CLAUDE.md
 CODER CLAUDE.md
 DESIGNER CLAUDE.md
 DRAFT CLAUDE.md
+DEBUG CLAUDE.md
 
 # golden harness scratch
 tests/_fixture.db

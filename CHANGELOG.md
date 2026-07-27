@@ -23,6 +23,44 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — The playtest moves inside the release order
+A process change, not a code change, and it is here because it changes what a
+tag means. **The playtest now happens between the push and the tag** rather than
+after it.
+
+It had never been decided — the release order was three steps (push → note →
+tag) and said nothing about when to test, so testing landed after the tag by
+default. The cost is visible in the history: three of the four releases before
+v0.9.1 were patch releases named for what a testing pass caught, which had
+quietly made PATCH the mechanism for *the version was never tested* instead of
+*found after the version was genuinely done*. It also meant every version note
+was written from the plan rather than from use — v0.9's note says "ready to
+playtest to test weird things", because at the time that was all it could say.
+
+**What decides when a version is finished**, which is the half Cas was worried
+about: a finding blocks the tag if it **falsifies a claim in that version's
+`ROADMAP.md` entry**. Not "did this version cause it" — that is arguable
+forever and gets argued under pressure to ship. The entry is finite and written
+before the testing starts, so the finish line can't move while you are leaning
+on it. Everything else is assigned to `BUGS.md`, `BACKLOG.md` or a roadmap
+version and does not block.
+
+Nothing about the git layout changed, and that is worth recording: the order was
+the problem, not the tooling. The DEV-area question Cas raised alongside it
+stays open and undesigned in `ROADMAP_BEYOND.md`.
+
+Also adds a fourth session type, `DEBUG CLAUDE.md` — where Cas arrives with
+testing notes, findings get diagnosed and assigned, and the build brief gets
+drafted. Deliberately the one session that explains at length: it is the one not
+racing a build, so it is where the codebase actually gets learned. The other
+three stay lean. All four now carry the same five-step release order, because a
+stale copy of it in one file is the producer/parser hazard `HANDOVER.md` keeps a
+table of.
+- Files: .gitignore, CLAUDE.md, CODER/DESIGNER/DRAFT/DEBUG CLAUDE.md (all
+  gitignored), ROADMAP_BEYOND.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — v0.9.1 ships: the roadmap body moves over
 Per the release order: the v0.9.1 body moves from `ROADMAP_PRIVATE.md` to
 `ROADMAP.md` with its completion date and is deleted from the private file. The
@@ -46,7 +84,7 @@ exist: each is a testing pass finding what the release should have caught. It
 gets a design session rather than a plan appended by whoever reads it next.
 - Files: ROADMAP.md
 - Status: shipped
-- Commit: pending
+- Commit: ea6ab5a
 
 ## 2026-07-27 — Three closed entries reach the archive, four days late
 Not work — the archive rule is four days old and had already been missed once,
