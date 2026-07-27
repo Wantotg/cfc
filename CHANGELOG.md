@@ -78,12 +78,31 @@ that keeps earning: `ui.console` is `Console(markup=False)`, so `[green]●[/gre
 printed its own tags verbatim — every styled line here is a `Text` — and bare
 `/connect` offered to fix a connection that was already green.
 
-**Neither block is closed by this commit.** `preflight.py`'s two fix paths are
-still unproven — the acceptance test is quitting LM Studio entirely and
-launching cold — and the splash warning has not been seen firing from the bare
-`wsl.exe` shortcut. Both stay open in `HANDOVER.md` and `BUGS.md` respectively,
-because closing a defect on unverified work is the mistake those files exist to
-prevent.
+**The acceptance test was then run, and it failed — which is the whole reason
+it existed.** With LM Studio genuinely quit, `lms server start` waits 62 seconds
+and dies with "Timed out waiting for LM Studio daemon to start": it wakes a
+daemon that only exists once the GUI has run, and there is no headless flag.
+`cmd.exe /c start` returns 0 and launches nothing; a direct exec of the .exe
+does nothing at all. **So `LMS_TIMEOUT`'s comment — "a cold `server start` has
+to bring up the app" — was an assumption nobody had tested, and it was wrong**,
+including in the first draft of this entry.
+
+Red therefore prints an instruction and returns **in 0.8s instead of failing for
+62**, and the light says "start it on Windows" rather than naming a command that
+cannot work. Recorded under Rejected designs so the next session doesn't spend
+an evening on the same three attempts.
+
+That run also exposed a defect in the module whose entire job is making silent
+failures loud: **`_lms` returned only stdout**, and `lms` prints its reasons to
+stderr — so every failure reported `could not start the server: ` with nothing
+after it while the real message sat in a pipe nobody read. Success still returns
+stdout (callers parse JSON from it); failure now returns stderr.
+
+**Still open:** `lms server start` and `lms load` against a *running* LM Studio
+with its server off — the orange path, and the more common of the two — have
+never fired. And the splash warning has not been seen from the bare `wsl.exe`
+shortcut. Both stay open in `HANDOVER.md` and `BUGS.md`, because closing a
+defect on unverified work is the mistake those files exist to prevent.
 - Files: preflight.py, ui.py, hub.py, parse.py, main.py, commands.py,
   tests/test_connection.py, tests/test_parse.py, tests/test_preflight.py,
   tests/golden_baseline.txt, HANDOVER.md, README.md, BUGS.md

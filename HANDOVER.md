@@ -197,6 +197,17 @@ they lose. Reopening one needs a new argument, not a fresh eye.
 - **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates
   against its own `MOVE_ROOTS` precisely because it is not the model. The
   separation is the design; the two tuples are independent.
+- **Starting LM Studio from WSL.** The obvious completion of `/connect
+  embedding`, and it cannot be done. Measured 2026-07-27 with the app genuinely
+  quit, three ways: `lms server start` waits 62s and fails with "Timed out
+  waiting for LM Studio daemon to start" — it wakes a background daemon that
+  only exists once the GUI has run, and there is no headless flag on the
+  command; `cmd.exe /c start "…LM Studio.exe"` returns 0 immediately and
+  launches nothing; a direct exec of the .exe produces no process and no
+  output. **The `LMS_TIMEOUT` comment claiming "a cold `server start` has to
+  bring up the app" was an assumption nobody had tested, and it was wrong.**
+  So red prints an instruction and returns in 0.8s instead of failing for 62.
+  Reopening this needs a new mechanism, not another attempt at these three.
 - **Tightening the retrieval floor.** See the constants below. The signal isn't there.
 - **A tighter model-is-thinking check than list membership.** The only available
   signal is the `:thinking` id suffix, and it miscalibrates —
@@ -500,13 +511,14 @@ because patching config misses anything that read the value at import.
 - **The first *scheduled* routine run still hasn't happened** (v0.7's ST/MT jobs
   are waiting on a real tick). Read the first scheduled outputs rather than
   trusting the prompts.
-- **`preflight.py`'s two fix paths are still unproven** — `lms server start` and
-  `lms load` have never fired, because Cas keeps LM Studio up with the server
-  on. v0.9 made them reachable from inside the app (`/connect embedding`) and
-  gave the red/orange distinction real measurements behind it, but **reachable
-  is not proven**: the acceptance test is quitting LM Studio entirely and
-  launching cold, and until that has been run this stays open. Do not let the
-  light's existence be mistaken for evidence that the fixer works.
+- **`preflight.py`'s fix paths: one is now closed by measurement, one is still
+  open.** The cold-start acceptance test was run on 2026-07-27 with LM Studio
+  genuinely quit, and it **failed** — see "Starting LM Studio from WSL" in
+  Rejected designs. That is the closure: red is not fixable from here, and the
+  code now says so instead of trying. **`lms server start` and `lms load`
+  against a *running* LM Studio with its server off — the orange path — have
+  still never fired.** That is the remaining test, and it is the more common
+  case of the two.
 - **A provider 400 on tool turns is open** — `BUGS.md`. Two candidate causes were
   fixed in v0.5; whether either was *the* one is unproven.
 - **Zero recall hits and "nothing worth reporting" still produce identical output.**

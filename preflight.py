@@ -194,13 +194,27 @@ def find_lms():
 
 
 def _lms(cli, *args, timeout=LMS_TIMEOUT):
-    """Run one lms command. Returns (ok, stdout). Never raises."""
+    """Run one lms command. Returns (ok, output). Never raises.
+
+    **On success the output is stdout; on failure it is stderr.** That
+    asymmetry is the point. `lms` prints its JSON to stdout and its reasons to
+    stderr, so returning stdout unconditionally meant every failure reported an
+    empty string — `could not start the server: ` with nothing after it, while
+    `lms` had been saying "Timed out waiting for LM Studio daemon to start" the
+    whole time. Found by running the acceptance test, in the one module whose
+    entire job is making a silent failure loud.
+
+    Callers that parse JSON only do so when `ok`, so they never see stderr.
+    """
     try:
         p = subprocess.run([cli, *args], capture_output=True, text=True,
                            timeout=timeout)
-        return p.returncode == 0, p.stdout
+        if p.returncode == 0:
+            return True, p.stdout
+        return False, (p.stderr.strip() or p.stdout.strip()
+                       or f"exit {p.returncode}, no output")
     except Exception as e:
-        return False, str(e)
+        return False, f"{type(e).__name__}: {e}"
 
 
 def server_state(cli):
@@ -365,14 +379,29 @@ def ensure(say=_say, fix=True):
 
     acted = False       # did we actually change anything worth re-probing for?
 
-    # Red: the application itself is down. `lms server start` brings it up on a
-    # cold machine — which is why there is no separate "launch the GUI" step
-    # here. Starting a Windows GUI app across the interop boundary would be a
-    # second mechanism doing the first one's job, and a launch that half-works
-    # would report an action it did not complete into the one feature whose
-    # entire purpose is reporting state truthfully.
+    # **Red is where cfc stops, and it stops on purpose.** LM Studio cannot be
+    # started from WSL — measured 2026-07-27, three ways, all failing with the
+    # app genuinely quit:
+    #
+    #   lms server start          → "Timed out waiting for LM Studio daemon to
+    #                                start" after 62s. `lms` wakes a background
+    #                                daemon that only exists once the GUI has
+    #                                run, and there is no headless flag.
+    #   cmd.exe /c start "…exe"   → returns 0 immediately, nothing launches.
+    #   direct exec of the .exe   → no process, no output, nothing launches.
+    #
+    # So the old comment on `LMS_TIMEOUT` ("a cold `server start` has to bring
+    # up the app") was an assumption nobody had tested, and it was wrong.
+    #
+    # A button that half-works is worse than one that says it can't — and
+    # specifically so here, because reporting an action we did not complete
+    # would be a lie told by the one feature whose entire purpose is reporting
+    # state truthfully. Red prints the instruction and returns.
     if state == NOT_RUNNING:
-        say("warn", "LM Studio is not running — starting it (this is the slow one)")
+        say("fail", "LM Studio is not running, and cfc cannot start it from WSL")
+        say("info", "start LM Studio on Windows, then run /connect embedding "
+                    "again — it will do the rest.")
+        return False
 
     running, port = server_state(cli)
 

@@ -178,8 +178,11 @@ CONNECTION_STYLE = {
     "connected":   ("●", "green",   "embedder connected"),
     "no server":   ("●", "orange3", "LM Studio is up, embedder is not — "
                                     "/connect embedding"),
+    # No `/connect embedding` here either, and for the same reason as `hosted`:
+    # cfc cannot start LM Studio from WSL (measured; see preflight.ensure), so
+    # offering the command would be offering something that cannot work.
     "not running": ("●", "red",     "LM Studio is not running — "
-                                    "/connect embedding"),
+                                    "start it on Windows"),
     "down":        ("●", "red",     "embedder not answering — "
                                     "/connect embedding"),
     # No `/connect` here, and that is the honest answer rather than an

@@ -137,10 +137,15 @@ The hub shows a light for the same check, asked fresh every time you land there:
 ```
 
 `/connect embedding` walks as much of the loop as it can from wherever it
-starts: launches the server, loads the model, verifies. One command whichever
-colour you're looking at — there's nothing to type twice, and if you started LM
-Studio by hand in the meantime it just lands on green. Bare `/connect` reports
-without changing anything.
+starts: starts the server, loads the model, verifies. If you started LM Studio
+by hand in the meantime it just lands on green. Bare `/connect` reports without
+changing anything.
+
+**Red is where it stops, and that's deliberate.** LM Studio itself can't be
+started from WSL — `lms server start` waits on a daemon that only exists once
+the app has run, and launching the .exe across the interop boundary silently
+does nothing. So red tells you to start LM Studio on Windows rather than
+offering a button that can't work; everything after that, cfc does.
 
 The light and the launch check are the **same function**, not two opinions about
 the same thing. That matters more than it sounds: the failure worth designing

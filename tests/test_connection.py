@@ -86,8 +86,16 @@ def test_rendering_round_trip():
         # state whose next step is not a cfc command — nothing here can start
         # someone else's endpoint — so what it owes is saying that, and this
         # test insists on it rather than exempting the state and forgetting.
+        # Two states owe an instruction rather than a command, because cfc
+        # genuinely cannot fix them: a hosted endpoint is someone else's, and
+        # LM Studio cannot be launched from WSL (measured — see
+        # preflight.ensure). Naming a command that cannot work would be worse
+        # than saying so, and this test insists on the honest wording rather
+        # than exempting the states and forgetting why.
         if state == preflight.HOSTED:
             assert "not cfc's to start" in text, text
+        elif state == preflight.NOT_RUNNING:
+            assert "start it on Windows" in text, text
         elif state != preflight.CONNECTED:
             assert "/connect" in text, f"{state} does not name the fix: {text}"
     print(f"  ok  {len(preflight.STATES)} states render")
