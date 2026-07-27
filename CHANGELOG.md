@@ -23,6 +23,31 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — v0.9.1 ships: the roadmap body moves over
+Per the release order: the v0.9.1 body moves from `ROADMAP_PRIVATE.md` to
+`ROADMAP.md` with its completion date and is deleted from the private file. The
+note-shaped hole is left for Cas, and the tag comes after the note is in — a tag
+whose own version's note isn't in it would be that way permanently, because a
+pushed tag never moves.
+
+Also corrected three pointers in v1.0's private section that v0.9/v0.9.1 had
+made stale, since a forward plan citing archived entries is worse than one that
+is merely incomplete: the desktop-shortcut splash (closed as *audible*), the
+interactive empty-completion retry (shipped in `b423d30`), and `longcat-2.0` —
+which came out of `MODELS` back in v0.4 and is not in `config.py` today, so what
+was actually re-opened was the class, and both of Cas's calls on that shipped.
+
+And recorded an open question in `ROADMAP_BEYOND.md`, deliberately undesigned:
+**how versions actually get shipped, and where testing happens.** Raised by Cas
+at this tag. Today "shipped" and "on Cas's machine" are the same event — the
+model commits and pushes to `main`, and testing happens after, on the working
+copy the next version is built in. That is *why* v0.8.1, v0.8.2 and v0.9.1
+exist: each is a testing pass finding what the release should have caught. It
+gets a design session rather than a plan appended by whoever reads it next.
+- Files: ROADMAP.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Three closed entries reach the archive, four days late
 Not work — the archive rule is four days old and had already been missed once,
 which is about the rate you'd expect from a rule that only fires when something
@@ -50,7 +75,7 @@ it is the one that can only close on absence — which is why the error log abov
 was worth a patch release rather than a wait.
 - Files: BUGS.md, BACKLOG.md, legacy/BUGS.md, legacy/BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 95de5e6
 
 ## 2026-07-27 — Five papercuts, four of them a screen contradicting itself
 All from Cas's testing notes, all small, and four share a shape worth naming:

@@ -735,6 +735,72 @@ been observed working.
 /•᷅•᷄\੭ "I"m not a cat, I'm a database."
 ```
 
+## v0.9.1 — The third scratchpad, and somewhere for an error to land — **complete, 2026-07-27**
+
+The third patch release taken from notes kept *while using cfc* rather than from
+reading the code, and the pattern is settled enough now to be the reason the
+version exists: v0.8.1, v0.8.2 and this one all came out of a testing pass.
+
+Two defects, five papercuts, and **one thing that is genuinely new and says so**.
+A patch that adds a claim needs a reason, and the reason is the last entry in
+`BUGS.md`.
+
+- **A log for provider errors** — `~/.cfc/errors.log`. `BUGS.md`'s surviving
+  entry closes either when the next 400 settles it or on **absence** across the
+  0.9 → 1.0 window, and both need the error line to still exist when someone
+  goes looking. Until now the only place it existed was the scrollback, on a
+  tool turn — the kind that fills a screen. An absence-watch whose evidence
+  depends on a human noticing in real time is not a watch.
+
+  Three things it is really made of, none of them the file write. **The error
+  is recorded before anything decides how to render it** — a defect found while
+  planning this version, where `revert_bad_model()` printed *provider rejected
+  'X' — switched back to Y* **instead of** the provider's words, discarding the
+  one line we want exactly when a model switch preceded the failure. **A launch
+  writes a line too**, so an empty file means *never written* rather than *no
+  errors* — otherwise the mechanism built to catch a silent failure has the
+  same silent failure. And **a private chat writes nothing**: this is a fourth
+  path out of a private session, it carries up to 800 characters of the
+  provider's own body, and the gate lives at the write rather than at the call
+  sites, because a caller that forgets is the failure being prevented.
+
+  Routines log too, narrowed to provider errors. The bug is a *tool-turn* bug
+  and routines are the heaviest tool users in the system, so leaving them out
+  would put the hole exactly where the tool turns are.
+
+- **`/remove excerpts` now drops every block.** Reported against the hint
+  `/remember` prints itself, which is the worst place for a command to be
+  wrong. Settled by reading rather than reproducing: each `/remember` builds
+  exactly one envelope with one closing line, so *two* closing lines is
+  necessarily two calls — the single-block case could never have been broken,
+  and popping one of two was the whole of it. The command now matches its hint
+  instead of the hint being made smaller.
+
+- **Five papercuts, four of them a screen contradicting itself.** `/add <path>`
+  said it found nothing and then attached the file; traits had no row in the
+  session header while the other two pools had one each; the line count was
+  printed twice, off by one, because the tool's header and the renderer were
+  counting different things one line apart; `/wiki diff` never named its scope,
+  so a wiki-scoped review sat one command away from a vault-scoped commit with
+  both numbers right about different things.
+
+- **And `/wiki commit` stopped saying the vault has no remote**, because it now
+  has one — a private GitHub, added the same day, closing the ext4-only
+  exposure that v1.0 had called the most urgent chore in the project. The
+  failure ran opposite to this project's usual one: an unpushed commit really
+  *is* local only, so the sentence's conclusion survived while its reason went
+  false — and the false reason was the half saying nothing could be done, at
+  the moment the thing to do had become available. cfc still never pushes, but
+  that is now a choice with its own reasons rather than a description of the
+  environment.
+
+Bookkeeping the v0.9 commits skipped: three closed entries moved to `legacy/`,
+whole. That leaves `BUGS.md` holding **one** entry between here and the v1.0
+gate — the one that can only close on absence, which is what made the error log
+worth a patch release rather than a wait.
+
+>*(note-shaped hole for Cas)*
+
 ## v1.0 — Hardening, and a decision
 
 ---
