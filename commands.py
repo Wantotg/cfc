@@ -1104,6 +1104,57 @@ def memory_unavailable(err):
                   "chunks/vec_chunks table.\n")
 
 
+def embedder_down_note(err):
+    """If `err` is "nothing was listening", say so and return True.
+
+    **Branches on the exception class, never on its message.** `embed.py`
+    decides which kind of failure happened at the point it catches it and
+    carries that up as a type; re-deriving it here by matching words would put
+    a producer and a parser in two modules with prose between them, which is
+    the hazard this codebase keeps re-growing.
+
+    Returns False for anything else, so the caller falls through to its own
+    error line — `embedder_down_note(e) or console.print(...)` reads as "unless
+    this was the embedder being down".
+    """
+    try:
+        from embed import EmbedUnavailable
+    except Exception:
+        return False
+    if not isinstance(err, EmbedUnavailable):
+        return False
+    # The three states this whole block exists to separate meet here: this is
+    # *not* "memory has no answer". Nothing was asked. Saying which one it is
+    # is the entire feature, and pointing at /connect is what makes it
+    # actionable rather than merely honest.
+    console.print("\n[memory not searched] the embedder isn't answering, so "
+                  "nothing was looked up.")
+    console.print(f"This is not 'nothing found' — the search never ran. "
+                  f"Try {PREFIX}connect embedding.\n", style="dim")
+    return True
+
+
+def empty_memory_note(query, provider=None):
+    """Nothing came back. Say which of the two kinds of nothing it was.
+
+    An empty index and a corpus with no close match look identical from the
+    call site and mean opposite things: one is "you never indexed anything",
+    the other is "I looked, and your wiki doesn't cover this". Rendering the
+    first as the second is a confident falsehood about a corpus that was never
+    consulted, and it is silent by construction — which is why it survived
+    until someone went looking.
+    """
+    from search import why_empty, EMPTY_INDEX
+    if why_empty(str(DB_PATH), provider=provider) == EMPTY_INDEX:
+        console.print("\n[memory is empty] nothing is indexed to search.")
+        console.print(f"Run {PREFIX}update db to import and index the wiki.\n",
+                      style="dim")
+        return
+    console.print(f"\nNothing in memory comes close to '{query}'.")
+    console.print("The wiki is indexed and was searched — this is a real "
+                  "miss, not a broken lookup.\n", style="dim")
+
+
 def embed_retry_note(attempt, attempts, detail):
     """Say something when an embedding call is being retried.
 
@@ -1113,8 +1164,13 @@ def embed_retry_note(attempt, attempts, detail):
     it is the only way out while the call blocks — the REPL is not reading
     input, so there is no command to type.
     """
-    console.print(f"  [dim]no answer from the embedder yet — retry "
-                  f"{attempt + 1} of {attempts} · Ctrl-C to cancel[/dim]")
+    # `style=`, not `[dim]…[/dim]`: `ui.console` is `Console(markup=False)`
+    # so chat content is never reinterpreted as markup, which means these tags
+    # print themselves. Shipped that way in v0.8.2 and visible on every slow
+    # embedder since — the retry note the release was named for.
+    console.print(f"  no answer from the embedder yet — retry "
+                  f"{attempt + 1} of {attempts} · Ctrl-C to cancel",
+                  style="dim")
 
 
 def do_recall(query, k=MEMORY_K):
@@ -1136,10 +1192,14 @@ def do_recall(query, k=MEMORY_K):
             answer, hits = recall(str(DB_PATH), query, k=k,
                                   on_retry=embed_retry_note)
     except KeyboardInterrupt:
-        console.print("\n[dim]recall cancelled.[/dim]\n")
+        console.print("\nrecall cancelled.\n", style="dim")
         return
     except Exception as e:
-        console.print(f"\n[recall failed] {e}\n")
+        embedder_down_note(e) or console.print(f"\n[recall failed] {e}\n")
+        return
+
+    if answer is None:
+        empty_memory_note(query, provider="wiki")
         return
 
     console.print()
@@ -1209,15 +1269,14 @@ def do_remember(conn, session_id, history, injected, query,
             hits = search(str(DB_PATH), query, k=k, provider="wiki",
                           on_retry=embed_retry_note)
     except KeyboardInterrupt:
-        console.print("\n[dim]memory search cancelled.[/dim]\n")
+        console.print("\nmemory search cancelled.\n", style="dim")
         return
     except Exception as e:
-        console.print(f"\n[memory search failed] {e}\n")
+        embedder_down_note(e) or console.print(f"\n[memory search failed] {e}\n")
         return
 
     if not hits:
-        console.print(f"\nNothing in memory matches "
-                      f"'{query}'.\n")
+        empty_memory_note(query, provider="wiki")
         return
 
     block = {"role": "user",
@@ -1335,8 +1394,8 @@ def do_updatedb(arg=""):
     except KeyboardInterrupt:
         # Chunks and vectors are committed as they go, so an interrupted index
         # is partial, not corrupt — running it again picks up where it stopped.
-        console.print("\n[dim]index update cancelled — run /updatedb again to "
-                      "finish.[/dim]\n")
+        console.print("\nindex update cancelled — run /updatedb again to "
+                      "finish.\n", style="dim")
         return
     except Exception as e:
         console.print(f"\n[updatedb failed] {e}\n")

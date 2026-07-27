@@ -43,6 +43,32 @@ _READ_TIMEOUT    = 60.0    # a 100-chunk batch, or a cold model load, legitimate
 _RETRIES      = 4
 _DOWN_RETRIES = 2
 
+
+class EmbedError(RuntimeError):
+    """An embeddings request failed after its retries.
+
+    Subclasses `RuntimeError` because that is what this module raised before
+    the type existed, and every caller's `except Exception` keeps working
+    unchanged — the type adds a distinction, it doesn't take one away.
+    """
+
+
+class EmbedUnavailable(EmbedError):
+    """Nothing was listening. A *state*, not a transient.
+
+    This is the whole reason the type exists. "The embedder is down" and
+    "memory has nothing on that" produce the identical silence at the top of
+    the stack, and the second is a confident, wrong, unfalsifiable answer.
+    They are only cleanly separable **here**, at the point where one of them
+    is an exception and the other is an empty list — so the separation is made
+    here and carried up as a type.
+
+    Callers must branch on this class, never on the message text. The wording
+    is for humans; matching on it would be the recurring hazard `HANDOVER.md`
+    tabulates, and it would fail the day someone improves a sentence.
+    """
+
+
 def _post(batch, on_retry=None):
     """One embeddings request, with retries.
 
@@ -57,11 +83,15 @@ def _post(batch, on_retry=None):
     payload = {"model": EMBED_MODEL, "input": batch}
     timeout = httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT)
     last, attempt, attempts = None, 0, _RETRIES
+    # Which *kind* of failure the last attempt was. Recorded as a flag at the
+    # point the exception is caught, rather than reconstructed afterwards from
+    # the message, because the message is prose and prose drifts.
+    unreachable = False
     while attempt < attempts:
         try:
             r = httpx.post(url, headers=headers, json=payload, timeout=timeout)
             if r.status_code in (429, 500, 502, 503):
-                last = f"{r.status_code}: {r.text[:200]}"
+                last, unreachable = f"{r.status_code}: {r.text[:200]}", False
             else:
                 r.raise_for_status()
                 data = r.json()["data"]
@@ -71,16 +101,18 @@ def _post(batch, on_retry=None):
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             last = (f"no connection to {EMBED_BASE} ({type(e).__name__}) "
                     f"— is the embedding server running?")
+            unreachable = True
             attempts = min(attempts, _DOWN_RETRIES)
         except httpx.HTTPError as e:
-            last = str(e)
+            last, unreachable = str(e), False
         attempt += 1
         if attempt >= attempts:
             break                          # don't sleep on the way out
         if on_retry:
             on_retry(attempt, attempts, last)
         time.sleep(2 ** (attempt - 1))     # exponential backoff
-    raise RuntimeError(
+    cls = EmbedUnavailable if unreachable else EmbedError
+    raise cls(
         f"embeddings request failed after {attempt} "
         f"{'try' if attempt == 1 else 'tries'}: {last}")
 

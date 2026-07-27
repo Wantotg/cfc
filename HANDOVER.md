@@ -166,6 +166,16 @@ answer.** The mover doesn't ask a model where a file goes. `/wiki` doesn't ask a
 model to commit. The retrieval floor doesn't try to judge relevance — it hands
 excerpts to a model that can say "these don't answer it."
 
+**Separate states where they are separable, which is usually at the exception.**
+An unreachable embedder and an empty result set are the same silence by the time
+they reach a console, and one of them is a confident lie. They are cleanly
+distinct exactly once — at the point where one is an exception and the other is
+`[]` — so `embed.py` records which it saw *while catching it* and raises
+`EmbedUnavailable` rather than a message. Re-deriving a state further up, from
+wording or from a count, is the recurring hazard rebuilt: it works until someone
+improves a sentence. If you find yourself inferring which failure happened,
+you are at the wrong end of it.
+
 **Prefer the failure that is visible.** Nearly every bug in the Scars section is
 a silent false negative: nothing raised, something just quietly returned "there's
 nothing here", which is indistinguishable from the truthful answer. When you add
@@ -433,6 +443,15 @@ driving it, not by reading it.
 **`is_litter` matched one marker against a whole concatenated string** instead of
 per line, so concatenated markers got embedded as content. Shipped that way once.
 
+**Four `console.print` calls printed their own markup tags.** `ui.console` is
+`Console(markup=False)` — chat content must never be reinterpreted as markup —
+so `[dim]recall cancelled.[/dim]` renders the brackets. One of them was the
+embedder retry note **shipped in v0.8.2**, the release named for that note, and
+it was visible on every slow embedder from the day it landed. It survived a
+testing pass because a wrong-looking line still tells you the true thing. Styled
+output is `style=`, never brackets; found by driving the feature, not by reading
+it.
+
 **A prose sweep nearly renamed the persisted `[:remember …]` marker** during the
 `:`→`/` flip, which would have stopped every existing marker row from parsing. When
 you sweep for a prefix, storage formats are not prose.
@@ -531,9 +550,17 @@ because patching config misses anything that read the value at import.
   been watched over a working day.
 - **A provider 400 on tool turns is open** — `BUGS.md`. Two candidate causes were
   fixed in v0.5; whether either was *the* one is unproven.
-- **Zero recall hits and "nothing worth reporting" still produce identical output.**
-  A routine built on recall should fail loudly on zero hits rather than assume the
-  floor protects it.
+- **Zero recall hits are now three distinguishable outcomes** (v0.9): the
+  embedder never answered (`embed.EmbedUnavailable`), nothing is indexed
+  (`search.why_empty` → `EMPTY_INDEX`), or the corpus was searched and missed.
+  What is *not* built is the routine half, and the reason is worth recording:
+  **no routine can reach recall.** The four tools are `list_dir`, `read_file`,
+  `grep` and `write_file`, and `commands.py` is the only module that imports
+  `search` or `recall` at all. The draft that scoped this assumed otherwise.
+  So the distinction is made where it originates rather than at a call site
+  that doesn't exist — when a recall tool lands, it inherits a typed exception
+  instead of needing one retrofitted, and *that* is when a zero-hit routine
+  policy becomes a real question.
 - **The DB layer is anticipated to be reworked** — treat the chunk/vector schema as
   in flux. The intended shape is "SQLite stays the source of truth, sqlite-vec is an
   index over it".

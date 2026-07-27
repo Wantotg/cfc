@@ -422,6 +422,26 @@ told to say. Tightening it doesn't buy precision, it loses good questions
 silently. The number is specific to `bge-m3`, this corpus, *and* how the corpus is
 chunked — re-measure if any of the three change.
 
+**When memory comes back empty, it says which kind of empty.** Three things used
+to print the same line, and only one of them meant "your wiki doesn't cover
+this":
+
+```
+[memory not searched] the embedder isn't answering, so nothing was looked up.
+This is not 'nothing found' — the search never ran. Try /connect embedding.
+
+[memory is empty] nothing is indexed to search.
+Run /update db to import and index the wiki.
+
+Nothing in memory comes close to 'the Treaty of Asuncion'.
+The wiki is indexed and was searched — this is a real miss, not a broken lookup.
+```
+
+The distinction is made at the point the failure happens rather than guessed
+afterwards from the wording, because a down embedder returning "nothing found"
+is a confident answer to a question that was never asked — and you have no way
+to tell it apart from the truth.
+
 Deleting a session deletes what indexes it. `chunks` and `vec_chunks` are an
 index over `messages` with no foreign key, so that cascade is code rather than a
 database constraint — and until 2026-07-23 it wasn't there at all: a deleted

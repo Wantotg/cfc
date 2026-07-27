@@ -23,6 +23,53 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Recall says which kind of nothing it found
+Three outcomes used to produce one silence, and only one of them meant "memory
+has no answer". The embedder never answering, nothing being indexed, and a real
+miss all printed the same line — so a broken lookup was indistinguishable from a
+truthful one, which is this project's signature failure sitting in the memory
+layer.
+
+**Separated at the exception, which is the only place they are cleanly
+separable.** `embed.py` now records which kind of failure it saw *while it is
+catching it* and raises `EmbedUnavailable` (a subclass of the new `EmbedError`,
+which is still a `RuntimeError` — every existing `except` keeps working). The
+caller branches on the class. Re-deriving the state further up by matching
+words would be the recurring hazard rebuilt, and
+`tests/test_memory_states.py` pins exactly that: an `EmbedError` whose *message*
+is a perfect copy of the unreachable one must not be reported as unreachable.
+
+**A fourth state turned up while reading: an empty index is not a failed
+search.** `search.why_empty` separates "there was nothing to search" from "the
+corpus was searched and missed", scoped by provider — because a db full of chat
+chunks answers "yes, I have content" to a wiki-scoped search that had nothing to
+look at. It fails open to `EMPTY_INDEX`, which sends you to `/update db`
+(harmless if wrong) rather than asserting a search happened over content that
+isn't there.
+
+`recall()` now returns `answer=None` on zero hits instead of the sentence "No
+relevant excerpts found in memory." — which the caller had been rendering in the
+answer panel exactly as if a model had written it. The unreachable case points
+at `/connect embedding`, so this block and the connection block compose.
+
+**The routine half of this was scoped out, and the reason is worth keeping:
+no routine can reach recall.** The four tools are `list_dir`, `read_file`,
+`grep` and `write_file`, and `commands.py` is the only module that imports
+`search` or `recall`. The draft assumed otherwise. So the distinction is built
+where it originates; a future recall tool inherits a typed exception rather than
+needing one retrofitted.
+
+**Also fixed, and pre-existing: four `console.print` calls printed their own
+markup tags.** `ui.console` is `Console(markup=False)`, so `[dim]…[/dim]`
+renders the brackets. One was the embedder retry note **shipped in v0.8.2** —
+the release named for that note — visible on every slow embedder since. It
+survived a testing pass because a wrong-looking line still tells you the true
+thing.
+- Files: embed.py, search.py, recall.py, commands.py,
+  tests/test_memory_states.py, HANDOVER.md, README.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — The connection says which state it is in
 v0.9's first two blocks, and they are one job: cfc now reports the state of its
 embedder instead of degrading quietly into "memory has nothing on that".
@@ -52,10 +99,10 @@ application that has nothing to do with your endpoint.
 `/connect embedding` calls `preflight.ensure()` rather than reimplementing it;
 `ensure` grew a `say(level, msg)` callback so the same code prints raw ANSI
 under `launch.sh` and rich inside a session — the same move as `embed.py`'s
-`on_retry`, because preflight has no console and must not grow one. No separate
-"launch the GUI" path: `lms server start` already brings the app up cold, and a
-second mechanism doing the first one's job would be able to report an action it
-did not complete, into the one feature whose purpose is reporting truthfully.
+`on_retry`, because preflight has no console and must not grow one. It was
+written with no separate "launch the GUI" path on the assumption that `lms
+server start` brings the app up cold — see the correction below, which is what
+running the acceptance test was for.
 
 **Preflight also says when the splash will band** — `COLORTERM`, `TERM` and
 rich's `color_system`, with a warning when they don't add up. Fails in the safe
@@ -119,7 +166,7 @@ unverified work is the mistake that file exists to prevent.
   tests/test_connection.py, tests/test_parse.py, tests/test_preflight.py,
   tests/golden_baseline.txt, HANDOVER.md, README.md, BUGS.md
 - Status: shipped
-- Commit: pending
+- Commit: 6fe526b
 
 ## 2026-07-27 — Split the closed entries out of BUGS.md and BACKLOG.md
 `BUGS.md` was 283 lines holding three live entries and `BACKLOG.md` was 897

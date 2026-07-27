@@ -71,6 +71,52 @@ from embed import embed_texts
 # (self-hosted bge-m3) when either changes — including a re-chunk.
 MAX_DISTANCE = 1.08
 
+# Why a search came back with nothing. `search()` returning `[]` collapses two
+# genuinely different situations, and one of them is not about the query at all:
+#
+#   EMPTY_INDEX — there is nothing indexed to search (never imported, a fresh
+#                 db, or `provider='wiki'` on a db that only holds chat chunks).
+#   NO_MATCH    — the corpus has content and none of it came within
+#                 MAX_DISTANCE. This one really is "memory has no answer".
+#
+# Only the second is an answer to the question asked. The first says the
+# question was never really asked, and rendering it as "nothing in memory
+# matches that" is a confident falsehood about a corpus that was never
+# consulted — the exact shape `HANDOVER.md` calls the recurring silent false
+# negative. A third kind, "the embedder never answered", is not here because it
+# arrives as `embed.EmbedUnavailable` rather than as an empty list; see there.
+EMPTY_INDEX = "empty index"
+NO_MATCH = "no match"
+
+
+def why_empty(db_path, provider=None):
+    """Which kind of nothing a search returned. One of the two constants above.
+
+    Asked *after* `search()` returns empty rather than computed inside it, so
+    the fast path pays nothing: this is a COUNT that only runs when there is
+    already nothing to show, and only when a caller wants to explain it.
+    """
+    db = _connect(db_path)
+    try:
+        if provider:
+            n = db.execute(
+                "SELECT count(*) FROM chunks c JOIN sessions s "
+                "ON s.id = c.session_id WHERE s.provider = ?",
+                (provider,)).fetchone()[0]
+        else:
+            n = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
+    except Exception:
+        # The tables may not exist yet on a db that has never been indexed,
+        # which is itself the emptiest possible index. Failing open to
+        # EMPTY_INDEX is the safe direction: it sends the reader to `/update
+        # db`, which is harmless if wrong, whereas claiming NO_MATCH would
+        # assert a search happened over content that isn't there.
+        return EMPTY_INDEX
+    finally:
+        db.close()
+    return NO_MATCH if n else EMPTY_INDEX
+
+
 def _connect(db_path):
     db = sqlite3.connect(os.path.expanduser(db_path))
     db.enable_load_extension(True); sqlite_vec.load(db); db.enable_load_extension(False)

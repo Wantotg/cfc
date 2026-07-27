@@ -47,13 +47,26 @@ def build_context(hits):
     return "\n\n---\n\n".join(blocks)
 
 def recall(db_path, question, k=8, kind=None, provider="wiki", on_retry=None):
+    """(answer, hits). **`answer` is None when nothing was retrieved.**
+
+    It used to be the sentence "No relevant excerpts found in memory.", which
+    made a retrieval outcome indistinguishable from a synthesised one at the
+    call site — the caller rendered it in the answer panel exactly as if a
+    model had written it, and any code wanting to react to zero hits had to
+    match on the wording. `None` is checkable and cannot drift.
+
+    Saying *which* kind of nothing it was is the caller's job, via
+    `search.why_empty`: this module has no console and the answer depends on
+    which corpus the caller asked for. An unreachable embedder never reaches
+    this branch at all — it raises `embed.EmbedUnavailable` out of `search`.
+    """
     # provider='wiki' keeps recall grounded in the wiki even once the chat log
     # accumulates its own (source='chat') chunks. Pass provider=None for all.
     import httpx
     hits = search(db_path, question, k=k, kind=kind, provider=provider,
                   on_retry=on_retry)
     if not hits:
-        return "No relevant excerpts found in memory.", []
+        return None, []
     context = build_context(hits)
     user_msg = (
         f"Question: {question}\n\n"
@@ -76,6 +89,14 @@ if __name__ == "__main__":
     db_path, question = sys.argv[1], sys.argv[2]
     k = int(sys.argv[3]) if len(sys.argv) > 3 else 8
     answer, hits = recall(db_path, question, k=k)
+    if answer is None:
+        from search import why_empty, EMPTY_INDEX
+        why = why_empty(db_path, provider="wiki")
+        print("nothing indexed to search — run /update db in cfc"
+              if why == EMPTY_INDEX else
+              "the wiki is indexed, but nothing came close enough to that "
+              "question")
+        sys.exit(0)
     print("\n" + "="*60)
     print(answer)
     print("="*60)
