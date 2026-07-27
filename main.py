@@ -79,7 +79,8 @@ from commands import (
     show_routines, create_routine, do_routine,
     show_outbox, do_file,
     show_wiki_status, show_wiki_diff, do_wiki_commit,
-    connect_embedding, connect_status,
+    connect_embedding, connect_status, empty_completion_decision,
+    warn_unknown_model_ids,
     print_session_header, print_core_commands, print_help,
 )
 
@@ -478,12 +479,24 @@ def run_session(conn, session_id, private=False):
         current_model = new_model
         console.print(f"Switched to model: "
                       f"{new_model}")
-        # Arm auto-revert if we can't vouch for this model: the first turn
-        # that errors on it backs out to prev_model. A known model, or
-        # re-selecting the same one, disarms.
-        revert_model = (prev_model
-                        if new_model not in known_models()
-                        and new_model != prev_model else None)
+        # Arm auto-revert on **every** switch: the first turn that errors on
+        # the new model backs out to prev_model, and a turn that works disarms.
+        #
+        # It used to arm only for models *not* in `known_models()`, which meant
+        # the safety net skipped the exact case it was built for. A broken id
+        # that is in your `MODELS` — the longcat case — switched cleanly, armed
+        # nothing, and 400ed every turn with a raw provider error that never
+        # names the model, until you worked it out and switched back by hand.
+        # Dropping longcat from the config deleted the instance and left the
+        # class.
+        #
+        # The cost, and it was Cas's call (2026-07-27): a genuine transient on
+        # the first turn after any switch now bounces you back with
+        # `provider rejected 'X' — switched back to Y` and you switch again.
+        # One annoying line against a session stranded on a dead id with an
+        # error naming no model. If it grates, revert only on rejections and
+        # not on the transient shapes the codebase already recognises.
+        revert_model = prev_model if new_model != prev_model else None
 
     # --- Tags ---
 
@@ -865,17 +878,39 @@ def run_session(conn, session_id, private=False):
             # prefix — so a tools-off turn is byte-for-byte the request it
             # always was, and nothing about our budgets reaches the transcript.
             prefix = prefix + tools_guidance()
-            try:
-                final = agent_turn(prefix, history, current_model,
-                                   conn, session_id, ctx=chat_ctx)
-            except KeyboardInterrupt:
-                console.print("\n[tool turn cancelled]\n")
+            # Re-roll an empty tool turn instead of painting a blank panel.
+            # The decision is `commands.empty_completion_decision`, the same
+            # one the streaming path below uses — standing decision 7 exists
+            # because these two drifted once, and the tool path silently not
+            # offering this retry was that drift. `agent_turn` has already said
+            # *what* happened by the time we get here (see `agent._say_empty`).
+            empty_attempts = 0
+            final = None
+            while True:
+                try:
+                    final = agent_turn(prefix, history, current_model,
+                                       conn, session_id, ctx=chat_ctx)
+                except KeyboardInterrupt:
+                    console.print("\n[tool turn cancelled]\n")
+                    final = None
+                    break
+                except httpx.HTTPError as e:
+                    if not revert_bad_model():
+                        console.print(f"\n[error] {e}\n")
+                    final = None
+                    break
+                revert_model = None   # the model answered — it's real; disarm
+                if (final.get("content") or "").strip():
+                    break
+                retry, empty_attempts = empty_completion_decision(
+                    chat_ctx.interactive, empty_attempts,
+                    EMPTY_COMPLETION_RETRIES)
+                if not retry:
+                    final = None
+                    break
+            if final is None:
+                console.print()
                 continue
-            except httpx.HTTPError as e:
-                if not revert_bad_model():
-                    console.print(f"\n[error] {e}\n")
-                continue
-            revert_model = None   # the model answered — it's real; disarm
             render_answer(final.get("content"))
             # Same context bar as the streaming path — agent_turn persisted the
             # final turn's usage, so read it back from the row it just wrote.
@@ -930,30 +965,13 @@ def run_session(conn, session_id, private=False):
             else:
                 console.print("\n[empty response]")
 
-            # Who decides whether to re-roll depends on whether anyone is
-            # there. With a human at a terminal, ask — it's their tokens and
-            # they can see what happened. Driven from a pipe (or, later, a
-            # headless run), asking means blocking on a keypress that never
-            # comes, so retry a bounded number of times and then give up
-            # loudly. The old code asked unconditionally and read the EOFError
-            # as "no", which turned every piped hiccup into a lost turn.
-            if not chat_ctx.interactive:
-                empty_attempts += 1
-                if empty_attempts <= EMPTY_COMPLETION_RETRIES:
-                    console.print(f"[no human to ask — retrying "
-                                  f"{empty_attempts}/{EMPTY_COMPLETION_RETRIES}]")
-                    continue
-                console.print(f"[gave up after {EMPTY_COMPLETION_RETRIES} "
-                              f"retries]")
-                break
-
-            try:
-                again = input("retry? (y/n) ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                console.print()
-                again = "n"
-            if again == "y":
-                console.print()
+            # The re-roll policy now lives in one place, shared with the tool
+            # path above. What stays here is the diagnosis: this path can see
+            # whether the model thought before returning nothing, which the
+            # tool path's provider hides behind a 400.
+            retry, empty_attempts = empty_completion_decision(
+                chat_ctx.interactive, empty_attempts, EMPTY_COMPLETION_RETRIES)
+            if retry:
                 continue
             break
 
@@ -1009,5 +1027,10 @@ if __name__ == "__main__":
     # driving the terminal yet.
     if splash() == "quit":
         sys.exit(0)
+    # After the splash and before the hub, so it is read rather than scrolled
+    # past. Silent unless something is actually wrong. Here rather than in
+    # repl() for the same reason as safe_backup: tests/golden.py drives repl()
+    # directly and must not have config warnings appear in its baseline.
+    warn_unknown_model_ids()
     sid = int(sys.argv[1]) if len(sys.argv) > 1 else None
     repl(sid)

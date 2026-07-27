@@ -319,6 +319,52 @@ def known_models():
     return list(seen)
 
 
+def unknown_model_ids():
+    """Ids named in `MODEL_LIMITS`/`TOOLS_MODELS` that no model list contains.
+
+    The silent member of the model-config family, and the reason it earns a
+    check while `MODELS` itself doesn't: a bad id in `MODELS` fails loudly at
+    the first message with a provider 400. A typo in `TOOLS_MODELS` fails by
+    **doing nothing** — `use_tools` quietly stays False and tools never turn on
+    for a model you believe is covered, with no error to notice. `MODEL_LIMITS`
+    is the same shape one step milder: the context bar and `/status` just go
+    blank, which reads as "no data" rather than "you misspelled it".
+
+    Returns `{setting: [ids]}`, empty when everything checks out.
+
+    **This verifies a claim already made rather than adding one.** It compares
+    two config lists against a third; it does not ask the provider whether any
+    id is real. Pinging each id at startup was considered and rejected — API
+    calls on every launch, and a new claim to keep true.
+    """
+    known = set(known_models())
+    out = {}
+    for name, ids in (("MODEL_LIMITS", list(MODEL_LIMITS)),
+                      ("TOOLS_MODELS", list(TOOLS_MODELS))):
+        missing = [i for i in ids if i not in known]
+        if missing:
+            out[name] = missing
+    return out
+
+
+def warn_unknown_model_ids():
+    """Print `unknown_model_ids()` at startup, or stay silent. Returns a count.
+
+    Startup rather than on demand, because the failure it catches is one you
+    are never prompted to investigate — you type `/tools on`, it says tools are
+    on, and nothing happens for the rest of the session.
+    """
+    bad = unknown_model_ids()
+    for setting, ids in bad.items():
+        console.print(f"[config] {setting} names {len(ids)} model(s) not in "
+                      f"MODELS or ROUTINE_MODELS: {', '.join(ids)}",
+                      style="yellow")
+    if bad:
+        console.print("  a typo here fails silently — tools or the context "
+                      "bar just never activate for that model.", style="dim")
+    return sum(len(v) for v in bad.values())
+
+
 def _norm(s):
     """Fold a model id or a loose query to its comparable core: lowercase,
     alphanumerics only. 'minimax m3', 'minimax/minimax-m3' and 'MiniMax_M3'
@@ -1054,6 +1100,48 @@ def print_context_bar(model, tok_in, tok_out):
     if pct > context_thresholds()[1]:
         console.print("Context getting long -- consider /new",
                       style="yellow")
+
+
+def empty_completion_decision(interactive, attempts, max_retries):
+    """Whether to re-roll an empty completion. Returns `(retry, attempts)`.
+
+    Shared by the streaming and tool paths, beside `print_context_bar` and for
+    the same reason: standing decision 7 exists because these two drifted once
+    already, and the tool path silently not offering the retry the stream path
+    offers *is* that drift, caught small.
+
+    **It owns the policy and not the diagnosis.** The policy is identical for
+    both paths and is where they disagreed; what happened is genuinely
+    different knowledge — the stream path can see whether the model thought
+    first, the tool path's provider maps the same event onto a 400 — so each
+    says that for itself and this function never asks who called it. A shared
+    helper that branches on its caller is two helpers wearing one name.
+
+    Who decides depends on whether anyone is there. With a human at a terminal,
+    ask: it's their tokens and they just watched it happen. Driven from a pipe,
+    asking means blocking on a keypress that never comes, so retry a bounded
+    number of times and then give up loudly. The old streaming code asked
+    unconditionally and read the resulting `EOFError` as "no", which turned
+    every piped hiccup into a lost turn.
+    """
+    if not interactive:
+        attempts += 1
+        if attempts <= max_retries:
+            console.print(f"[no human to ask — retrying "
+                          f"{attempts}/{max_retries}]")
+            return True, attempts
+        console.print(f"[gave up after {max_retries} retries]")
+        return False, attempts
+
+    try:
+        again = input("retry? (y/n) ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        again = "n"
+    if again == "y":
+        console.print()
+        return True, attempts
+    return False, attempts
 
 
 def search_messages(conn, query):

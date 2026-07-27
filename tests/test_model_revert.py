@@ -92,18 +92,37 @@ def main_():
        dbmod.get_session_model(conn, sid) == "good-model",
        dbmod.get_session_model(conn, sid))
 
-    print("\n--- a KNOWN model that errors is left alone (no revert) ---")
+    print("\n--- no switch means nothing armed, so an error prints raw ---")
     sid2 = dbmod.new_session(conn, title="t2", model="good-model")
-    # A known model is never armed, so a transient error prints raw and the
-    # model stays put — the revert is only for the unverified-model case.
+    # Arming happens on a *switch*. This session never switched, so there is no
+    # previous model to fall back to and a transient prints raw.
     main.stream_response = lambda messages, model=None: (
         (_ for _ in ()).throw(httpx.HTTPError("upstream 503")))
     text2 = drive(conn, sid2, ":tools off\nhello\n:q\n")
-    ok("a known model's error is shown raw", "upstream 503" in text2, text2)
+    ok("an unswitched session's error is shown raw", "upstream 503" in text2, text2)
     ok("...and does not trigger a revert",
        "switched back" not in text2, text2)
     ok("...and the model is unchanged",
        dbmod.get_session_model(conn, sid2) == "good-model")
+
+    print("\n--- the longcat class: a KNOWN but broken id now reverts ---")
+    # The case the revert was built for and used to skip. Arming was gated on
+    # `new_model not in known_models()`, so a dead id that IS in your MODELS
+    # switched cleanly, armed nothing, and 400ed every turn thereafter with a
+    # provider error that never names the model. Dropping longcat from the
+    # config removed the instance and left the class; this is the class.
+    sid4 = dbmod.new_session(conn, title="t4", model="good-model")
+    main.known_models = lambda: ["good-model", "broken-but-listed"]
+    main.stream_response = lambda messages, model=None: (
+        (_ for _ in ()).throw(httpx.HTTPError("no such model: broken-but-listed")))
+    text4 = drive(conn, sid4, ":tools off\n:model broken-but-listed\nhello\n:q\n")
+    ok("a listed-but-dead model is reverted",
+       "provider rejected 'broken-but-listed'" in text4
+       and "switched back to good-model" in text4, text4)
+    ok("...and the session is left usable, not stranded",
+       dbmod.get_session_model(conn, sid4) == "good-model",
+       dbmod.get_session_model(conn, sid4))
+    main.known_models = lambda: ["good-model"]
 
     print("\n--- a first-turn success disarms the revert ---")
     sid3 = dbmod.new_session(conn, title="t3", model="good-model")

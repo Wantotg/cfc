@@ -212,10 +212,52 @@ def main():
     ok("an empty pool passes the query through untouched",
        res == "anything/at-all" and out.strip() == "", (res, out))
 
+    test_unknown_model_ids()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
     return 1 if FAIL else 0
+
+
+def test_unknown_model_ids():
+    """MODEL_LIMITS / TOOLS_MODELS naming ids no model list contains.
+
+    The silent member of the model-config family. A bad id in MODELS fails
+    loudly at the first message; a typo in TOOLS_MODELS fails by doing nothing
+    at all — tools quietly never activate for a model you believe is covered.
+    """
+    print("\n--- config lists that name unknown ids ---")
+    orig = commands.MODELS, commands.ROUTINE_MODELS, \
+        commands.MODEL_LIMITS, commands.TOOLS_MODELS
+    try:
+        commands.MODELS = ["real-a", "real-b"]
+        commands.ROUTINE_MODELS = ["real-b"]
+
+        commands.MODEL_LIMITS = {"real-a": 1}
+        commands.TOOLS_MODELS = ["real-b"]
+        ok("a clean config reports nothing", commands.unknown_model_ids() == {},
+           commands.unknown_model_ids())
+
+        commands.TOOLS_MODELS = ["real-b", "reel-b"]
+        ok("a TOOLS_MODELS typo is caught",
+           commands.unknown_model_ids() == {"TOOLS_MODELS": ["reel-b"]},
+           commands.unknown_model_ids())
+
+        commands.MODEL_LIMITS = {"real-a": 1, "rael-a": 2}
+        ok("a MODEL_LIMITS typo is caught too",
+           commands.unknown_model_ids().get("MODEL_LIMITS") == ["rael-a"],
+           commands.unknown_model_ids())
+
+        # ROUTINE_MODELS counts as known: known_models() is MODELS plus any
+        # routine-only ids, and a routine-only model legitimately wants a limit.
+        commands.MODEL_LIMITS = {"real-b": 1}
+        commands.TOOLS_MODELS = []
+        ok("a routine-only model is not a typo",
+           commands.unknown_model_ids() == {}, commands.unknown_model_ids())
+    finally:
+        (commands.MODELS, commands.ROUTINE_MODELS,
+         commands.MODEL_LIMITS, commands.TOOLS_MODELS) = orig
 
 
 if __name__ == "__main__":

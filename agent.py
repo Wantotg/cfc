@@ -299,6 +299,24 @@ def _is_empty_completion_400(err):
     return _EMPTY_COMPLETION_MARK in str(err).lower()
 
 
+def _say_empty():
+    """Announce an empty turn. Used by **both** ways this loop can produce one.
+
+    The tool path has two: a 200 whose content is empty, and the provider's 400
+    that means the same thing. They used to announce differently — the 400 said
+    "provider hiccup", the 200 said nothing at all and left `main.py` painting a
+    blank answer panel — so the same event looked like two different bugs
+    depending on which door it came through.
+
+    It lives here rather than in the caller because *which* kind of empty this
+    was is knowledge this module has and its callers don't. What the caller
+    owns is the decision to re-roll, and that is shared with the streaming path
+    (`commands.empty_completion_decision`) precisely so the two cannot drift.
+    """
+    console.print("\n[the model returned no answer — provider hiccup, "
+                  "common on thinking models]")
+
+
 def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                max_calls=None, touched=None):
     """Run a turn that may use tools. Returns the final assistant message.
@@ -393,8 +411,7 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                 # completion the loop produces, so the routine's audit transcript
                 # shows the hiccup. Every OTHER 400 keeps the raise path below.
                 if _is_empty_completion_400(e):
-                    console.print("\n[the model returned no answer — provider "
-                                  "hiccup, common on thinking models]")
+                    _say_empty()
                     return _finish("", history, conn, session_id, model)
                 # Re-raised as the same class, so every existing `except
                 # httpx.HTTPError` still matches, with our side of the request
@@ -428,6 +445,12 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                      meta={"tool_calls": calls} if calls else None)
 
         if not calls:
+            # Both empty exits announce, so the caller's retry decision never
+            # has to work out which door this came through — and a 200 with
+            # empty content stops being the silent one of the pair. See
+            # `_say_empty`.
+            if not msg["content"].strip():
+                _say_empty()
             return msg
 
         if msg["content"].strip():
