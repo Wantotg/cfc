@@ -23,6 +23,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Three closed entries reach the archive, four days late
+Not work — the archive rule is four days old and had already been missed once,
+which is about the rate you'd expect from a rule that only fires when something
+*else* finishes. Three entries were closed and still sitting in the live files.
+
+- **`BUGS.md`, the plain-console splash banding.** Closes as **audible rather
+  than fixed**, and the distinction is the entry: cfc's share shipped in v0.9
+  (`preflight.terminal_report()`), and it stayed open on purpose until the
+  warning had been *seen*, because closing a defect on unverified work is the
+  mistake the file exists to prevent. Cas launched from the bare `wsl.exe`
+  shortcut and got the line verbatim. The remaining repair is a `~/.bashrc`
+  gate — a personal dotfile, never this repo's to encode.
+- **`BACKLOG.md`, the interactive empty-completion retry.** Shipped in
+  `b423d30` as `commands.empty_completion_decision`, shared by both turn paths,
+  which is what the entry asked for in its last line.
+- **`BACKLOG.md`, nothing validates that a model in `MODELS` can be chatted
+  with.** Both of Cas's calls shipped in the same commit. What survives —
+  `ROUTINE_MODELS[0]` having nothing to revert *to* — was **let go rather than
+  carried forward**: it is audible (the run logs `failed`, the hub's freshness
+  column shows it), and this file is for what is owed, not for what works and
+  could be worded better.
+
+That leaves `BUGS.md` holding **one** entry between here and the v1.0 gate, and
+it is the one that can only close on absence — which is why the error log above
+was worth a patch release rather than a wait.
+- Files: BUGS.md, BACKLOG.md, legacy/BUGS.md, legacy/BACKLOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — Five papercuts, four of them a screen contradicting itself
 All from Cas's testing notes, all small, and four share a shape worth naming:
 the app printing two things that cannot both be the useful one.
@@ -72,7 +101,7 @@ now a choice with its own reasons rather than a description of the environment.
 - Files: main.py, commands.py, agent.py, wikigit.py, README.md, HANDOVER.md,
   tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 9f063fc
 
 ## 2026-07-27 — `/remove excerpts` drops every block, so the hint stops lying
 Reported by Cas against the hint `/remember` prints itself, which is the worst

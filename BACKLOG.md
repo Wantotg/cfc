@@ -57,58 +57,6 @@ test with a temp directory. The first keeps the command in the characterization
 sweep and pins less of it; the second pins more and takes it out of the sweep.
 Decide with whoever is next in `golden.py`, not on its own.
 
-## Nothing validates that a model in `MODELS` can be chatted with. Re-opened 2026-07-26
-
-**Found:** 2026-07-15, as `longcat-2.0` is in MODELS but can't chat.
-**Closed 2026-07-21 (v0.4), re-opened by Cas:** dropping `longcat-2.0` from
-`MODELS`, `MODEL_LIMITS` and the `TOOLS_MODELS` comment deleted the *instance*
-and left the *class*. `ROADMAP.md`'s v0.4 note ("closed rather than fixed…
-there was nothing to repair") is true about longcat and not true about this.
-
-**The class is live, and the auto-revert's trust is backwards.**
-`main.py:483-485`:
-
-```python
-revert_model = (prev_model
-                if new_model not in known_models()
-                and new_model != prev_model else None)
-```
-
-The safety net arms **only for models that are not in your config** — so the
-one case it was built for, a broken id that *is* in `MODELS`, switches cleanly,
-arms nothing, and 400s every turn with a raw provider error that never names the
-model, until you work it out and switch back by hand.
-
-**Cas's call (2026-07-27): arm on every switch.** Delete the `not in
-known_models()` condition, keep `new_model != prev_model`, keep "a working turn
-disarms". Accepted tradeoff: a genuine transient on the first turn after any
-switch now bounces you back with `provider rejected 'X' — switched back to Y`
-and you switch again. One annoying line against a session stranded on a dead id
-with an error naming no model. If it grates, the refinement is to revert only on
-rejections and not on the known-transient shapes the codebase already
-recognises.
-
-**Also called (2026-07-27): check `MODEL_LIMITS` and `TOOLS_MODELS` against
-`known_models()` at startup.** They are separate lists that can name ids nothing
-verifies, and a typo in `TOOLS_MODELS` means tools silently never turn on for a
-model you believe is covered. That one is *silent*, unlike a bad `MODELS` id,
-which is why it earns the line. It checks a claim already made rather than
-adding one.
-
-**Not covered by the 0.8.2 play-test (2026-07-27),** which confirmed that an
-id *not* in `MODELS` is accepted and falls back correctly. That is the path that
-already worked. The open case is a broken id that **is** in `MODELS`, which
-arms nothing — so a green result on the first is not evidence about the second.
-
-**Deliberately not doing:** validating `MODELS` by pinging each id at startup.
-API calls on every launch, and a new claim.
-
-**Still unresolved, and audible rather than silent:** `ROUTINE_MODELS[0]` has no
-revert available at all — a scheduled run has no previous model to fall back to,
-so a bad id there is a nightly `failed` forever. It is logged and the hub's
-freshness column shows it. The only question is whether cfc should say *why*
-more clearly than the provider error does.
-
 ## `[esc]` doesn't back out of prompts, and can't while they're `input()`. 0.8.2 remnant
 
 **Found:** 2026-07-26, Cas's 0.8.1 testing pass, as half of the `/model`
@@ -191,23 +139,6 @@ case-insensitively, refusing an ambiguous match rather than guessing. Pairs with
 the `/move` entry below — both are "name the thing instead of counting rows" —
 so decide the argument-parsing shape once, for both.
 **Where it lands:** past 1.0. `ROADMAP_BEYOND.md`'s proposed 1.1 holds it.
-
-## The interactive tool path drops an empty-completion turn without offering a retry. 0.8-adjacent, 24-07-2026
-**Found:** 2026-07-24, fixing the empty-completion 400 on the tool path.
-Description: `agent_turn` now maps a thinking-model empty-completion 400 onto the
-empty-completion path — it returns an empty message. Routines re-roll it
-(`runner._turn_with_retry`); the **interactive** chat tool path (`main.py`, the
-`use_tools` branch) just takes the empty return, prints the "provider hiccup"
-note, renders an **empty answer panel**, and moves on.
-Problem: the streaming path in the same situation *asks* `retry? (y/n)` (see the
-empty-completion handler around `main.py:700`). The tool path offers no such
-prompt and paints a blank panel. Not broken — a human can retype — but the two
-paths handle the identical event differently, and the empty panel reads as a
-render bug.
-Suggestion: on an empty return from `agent_turn` in the interactive branch, skip
-the empty panel and offer the same `retry? (y/n)` the stream path does. **Reuse
-the handler, don't fork it** — standing decision 7 exists because these two
-paths drifted once already, and this entry *is* that drift, caught small.
 
 ## "/move" — a file selector over the outbox. 0.8, 24-07-2026
 **Found:** in the note-reader workflow brief.

@@ -14,6 +14,71 @@ split line is what is frozen, not the file.
 
 # Closed since the split
 
+## ~~The plain-console Windows shortcut still bands the splash~~ — CLOSED, cfc's share shipped and was seen working (v0.9, 2026-07-27)
+
+**Closed 2026-07-27, in the v0.9.1 bookkeeping.** cfc's share of this shipped in
+v0.9 — `preflight.terminal_report()` — and this entry deliberately stayed open
+until the warning had been *seen*, because closing a defect on unverified work
+is the mistake this file exists to prevent. Cas launched from the bare `wsl.exe`
+shortcut on 2026-07-27 and got exactly what it was built to say:
+
+```
+this terminal is not truecolor — the splash will band
+COLORTERM=(unset) TERM=xterm-256color rich=256
+```
+
+So it closes as **audible rather than fixed**, and that distinction is the whole
+entry. The remaining repair is gating `~/.bashrc`'s unconditional
+`export COLORTERM=truecolor` on `WT_SESSION` — a personal dotfile, never this
+repo's to encode, and the entry said so from the start. Turning a silent
+degradation into a loud one was cfc's entire share, and it did that.
+
+**The original report follows.**
+
+**Found:** 2026-07-22, reported by Cas. Fixed for the Windows Terminal
+shortcut (see `CHANGELOG.md`, 2026-07-26); this entry is the other one.
+
+**Symptom:** `wsl.exe -d Ubuntu --cd ~ -- bash -lc "~/projects/cfc/launch.sh"`
+(no Windows Terminal in front of it) draws the splash background at visibly
+degraded colour depth. The Windows Terminal shortcut in `README.md` draws it
+correctly.
+
+**Why this one wasn't chased down:** `bash -lc` here is a login shell, so
+`~/.bashrc`'s own unconditional `export COLORTERM=truecolor` (not part of this
+repo) already fires — unlike the Windows Terminal shortcut, which needed
+`launch.sh` to set it. So this shortcut's problem is plausibly the opposite
+of that one: truecolor is being asserted onto a console that may not
+genuinely support it (legacy conhost), producing the same banding symptom
+from the other direction. Whether that's really conhost, or Windows 11's
+default-terminal-host delegation silently substituting something else, was
+never measured for this path.
+
+**Not urgent:** the Windows Terminal shortcut is the documented entry path.
+If this one gets revisited, the fix is almost certainly gating `~/.bashrc`'s
+`COLORTERM` export on `WT_SESSION` the same way `launch.sh` now does — but
+that's a personal dotfile change, not something to encode in this repo.
+
+**cfc's share shipped in v0.9, and this entry stays open until it is seen
+working.** `preflight.terminal_report()` now prints `COLORTERM`, `TERM` and
+rich's `color_system` and says "this terminal is not truecolor — the splash will
+band" when they don't add up. That is the whole of what this repo can do; the
+remaining fix is a dotfile. **It has not been run from the bare `wsl.exe`
+shortcut yet** — the acceptance test is launching from that shortcut and
+checking the line appears — and closing a defect on unverified work is the
+mistake this file exists to prevent. Close it when the warning has actually
+fired there.
+
+**The original reasoning, carried forward from the closed shortcuts entry:**
+this is a silent degradation with a real cause and a real fix, which is the
+shape `HANDOVER.md` says to make visible. `preflight.py` already runs on every
+launch and v0.9 is rewiring it for the connection light — a "this terminal is
+256-colour, the splash will band" line belongs there, added with that work
+rather than beside it. And `launch.sh` must **not** force `COLORTERM=truecolor`
+to make the symptom go away: conhost genuinely cannot render 24-bit escapes, so
+claiming it can trades banding for garbage.
+
+---
+
 ## ~~Cold-starting LM Studio from WSL~~ — FIXED and SETTLED (v0.9, 2026-07-27)
 
 **Settled by Cas the same day, from a genuinely cold machine via the desktop
