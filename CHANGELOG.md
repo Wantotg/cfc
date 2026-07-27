@@ -23,6 +23,57 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-27 — Five papercuts, four of them a screen contradicting itself
+All from Cas's testing notes, all small, and four share a shape worth naming:
+the app printing two things that cannot both be the useful one.
+
+**`/add <path>` said it found nothing, then attached the file.** The pool search
+runs before the path check *by design* — a pool item named like a file has to
+win — so it fails and says so, and then `looks_like_path` attaches it on the
+next line. The ordering is the deliberate part and does not move; the miss
+message is now held back when the query looks like a path. Suppressed whenever
+it looks like a path rather than only when the attach then works, because
+`do_attach` reports its own refusals and every one is more specific than the
+pool miss: outside the jail, no such file, a directory, wrong extension, not
+UTF-8, too big. There is no silent branch for it to have been covering.
+
+**Traits had no row in the session header.** The other two pools had one each,
+and traits is the pool you can carry several of — the one whose state is hardest
+to hold in your head. Deliberately thinner than `/status`'s row, which loads
+each file to mark a missing one: this header prints on every session open, and
+"which of these has lost its file" is what `/status` is for.
+
+**The line count was printed twice, off by one.** `tools.read_file` returns
+`<path> (115 lines)` and `agent._render_result` printed that as the head and
+then counted the result, header included, at 116. It now counts the lines
+*below* the head, which makes the two agree without either module knowing about
+the other — the alternative, the renderer noticing the head already carries a
+count, would be a producer here and a parser there. It also stays honest when
+`_truncate` has cut the body, where the numbers *should* differ.
+
+**`/wiki diff` never named its scope.** `where = _scope_label(scope)` was
+computed and then used only in the *nothing changed* branch, so a diff with
+content named nothing. Driven on the real vault after the fix: `wiki db: nothing
+changed`, `journal: 1 change(s)`, `the vault: 12 change(s)` — three different
+true answers one command apart, which is how a review step ends up approving one
+scope and committing another.
+
+**And `/wiki commit` said the vault has no remote, which it now does.** The
+vault went to a private GitHub on 2026-07-27, closing the ext4-only exposure
+that v1.0 called the most urgent chore in the project. The line's failure ran
+opposite to this project's usual one: an unpushed commit really is local only,
+so its conclusion survived while its reason went false — and the false reason
+was the half saying nothing could be done, at the moment the thing to do had
+become available. Now `_LOCAL_ONLY`, one constant across both commit paths:
+`committed locally — cfc does not push`. It says what cfc did rather than what
+the repo has, so it cannot go stale. `wikigit.py`'s header and `README.md`'s
+vault-git section were rewritten to match — cfc still never pushes, but that is
+now a choice with its own reasons rather than a description of the environment.
+- Files: main.py, commands.py, agent.py, wikigit.py, README.md, HANDOVER.md,
+  tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — `/remove excerpts` drops every block, so the hint stops lying
 Reported by Cas against the hint `/remember` prints itself, which is the worst
 place for a command to be wrong. The code path was intact and the report pointed
@@ -52,7 +103,7 @@ in a new place — a baseline pinning the environment rather than the source —
 is written up in `BACKLOG.md` rather than fixed here.
 - Files: commands.py, tests/golden_baseline.txt, BACKLOG.md
 - Status: shipped
-- Commit: pending
+- Commit: c7faee7
 
 ## 2026-07-27 — Somewhere for a provider error to land
 `BUGS.md`'s surviving entry closes either when the next 400 settles it or on

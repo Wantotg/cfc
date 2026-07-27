@@ -690,9 +690,18 @@ echo "gitdir: /home/<user>/vaults/wiki.git" > .git
 every git command run from inside the vault works unchanged. It keeps git's
 internals off the slow `/mnt/c` bridge, and makes `.git` a 36-byte file rather
 than a folder full of objects, which keeps Obsidian's explorer, search and graph
-clear of it. The tradeoff, stated plainly: the history now lives outside the
-Windows backup that covers the notes themselves. A WSL reinstall would keep every
-note and lose every commit. A remote would close that, and is parked at v1.0.
+clear of it. The tradeoff, stated plainly: the history lives outside the Windows
+backup that covers the notes themselves, so a WSL reinstall would keep every note
+and lose every commit. **Closed on 2026-07-27 by giving the vault repo a remote**
+— a private GitHub repo, pushed to by hand.
+
+By hand is the point: cfc commits and never pushes. `/wiki commit` says
+`committed locally — cfc does not push` every time, because "committed" reads as
+"safe" to anyone who has ever used git with a remote. A push is a network call
+against someone else's server with failure modes cfc has no way to explain
+(auth, connectivity, a rejected non-fast-forward), run from a REPL that would
+block for the duration. `git push` from a terminal is one word and reports its
+own errors properly.
 
 **Binaries are not tracked.** `.gitignore` excludes PDFs and images, dropping the
 repo from 131 MB to about 7 — static reference material that never gets edited,

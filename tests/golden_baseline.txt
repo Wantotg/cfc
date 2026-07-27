@@ -2,6 +2,7 @@
 Session #1  ·  glm-5.2  ·  Golden session one
   System prompt   not set — available: alpha, beta
   Persona         not set — available: delta, gamma
+  Traits          none — available: epsilon, zeta
   Context         8 tokens
   Tools           glm-5.2 is not in TOOLS_MODELS — off
 

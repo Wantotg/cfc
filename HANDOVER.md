@@ -538,17 +538,25 @@ vault in a different time base from the rest of the vault is itself the trap.
   GitHub repo (`cfc-vault-cas`), `main` tracks `origin/main`, and the ext4-only
   history that v1.0 called out as the most urgent chore in the project is no
   longer the exposure it was.
-- **cfc has not caught up with that, and the mismatch is live.** `wikigit.py`
-  still issues no `push` and no `remote` — that part is a standing choice, not a
-  bug, and `tests/test_wikigit.py` pins it. What *is* wrong is the sentence
-  `commands.py` prints after every commit (two sites, `_wiki_commit_folder` and
-  `_wiki_commit_file`): `local only — this repo has no remote`. The clause after
-  the dash is false. The effect isn't reassurance-over-a-broken-thing, which is
-  this project's usual hazard — it is the opposite and still bad: an unpushed
-  commit really is local only, so the warning's *conclusion* survives while its
-  *reason* tells you there is nothing you could do about it, which is now the
-  one useful thought it should be provoking. `wikigit.py`'s module header and
-  `README.md`'s vault-git section carry the same stale claim.
+- **cfc still never pushes, and that is now a choice rather than a description
+  of the environment.** `wikigit.py` issues no `push` and no `remote`;
+  `tests/test_wikigit.py` pins both as absent. The old reasoning — "a push that
+  silently no-ops today silently starts working the day a remote appears" —
+  expired when the day arrived, and what replaces it is in `wikigit.py`'s
+  header: a push is a network call with other people's failure modes (auth,
+  connectivity, a rejected non-fast-forward), from a REPL that would block for
+  the duration, and it would owe an answer to "what does a failed push do to a
+  commit that already succeeded". Teaching it to push is a design decision.
+- **The wording caught up in v0.9.1.** `/wiki commit` used to print `local only
+  — this repo has no remote`, which was true when written. The failure once it
+  wasn't is worth keeping, because it runs the opposite way to this project's
+  usual hazard: an unpushed commit really *is* local only, so the warning's
+  conclusion survived while its *reason* went false — and the false reason was
+  the half saying nothing could be done, at exactly the moment the thing to do
+  had become available. A warning that talks you out of the fix is worse than
+  no warning. It is now `_LOCAL_ONLY`, one constant shared by both commit
+  paths, saying what cfc did rather than what the repo has — a claim that
+  cannot go stale.
 - Embeddings come from a **separate endpoint** to chat: self-hosted `bge-m3` on LM
   Studio. `networkingMode=mirrored` means localhost reaches the Windows host; the
   old NAT gateway IP no longer resolves at all, and don't put one back — a stale

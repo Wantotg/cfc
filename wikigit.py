@@ -20,11 +20,23 @@
 #   3. **Refused, not guessed at.** No repo → an error, never `git init`. Wiki
 #      dir outside the repo → an error, never "commit what we found instead".
 #
-# **There is no push.** The vault repo has no remote: its history lives on ext4
-# outside the Windows backup, and whether the medical material goes to someone
-# else's server is a decision parked at v1.0. A push that silently no-ops today
-# is a push that silently starts working the day a remote appears, which is
-# exactly the wrong way for that decision to get made.
+# **There is no push, and as of 2026-07-27 that is a choice rather than a
+# description.** The vault repo now has a remote — a private GitHub, added
+# outside any version as the chore it always was — so the old reasoning here
+# ("a push that silently no-ops today silently starts working the day a remote
+# appears") has expired: the day arrived. What replaces it is narrower and
+# holds on its own. Pushing is a network operation against someone else's
+# server, run from a REPL that has no background thread and blocks its input
+# loop for the duration (see `_TIMEOUT`); and unlike commit, its failure modes
+# are other people's — auth, connectivity, a rejected non-fast-forward — none
+# of which this module has a way to explain. `git push` from a terminal is one
+# word and reports its own errors properly.
+#
+# So the module issues no `push` and no `remote`, `tests/test_wikigit.py` pins
+# both as absent, and `_LOCAL_ONLY` in `commands.py` says what cfc did rather
+# than what the repo has. Teaching it to push is a design decision, not a
+# tidy-up — and it would need to answer what a failed push does to a commit
+# that already succeeded.
 import subprocess
 from pathlib import Path
 

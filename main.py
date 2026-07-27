@@ -200,7 +200,8 @@ def run_session(conn, session_id, private=False):
     trait_names = get_traits(conn, session_id)
 
     print_session_header(conn, session_id, current_model, current_title,
-                         system_prompt_name, persona_name, private=private)
+                         system_prompt_name, persona_name, private=private,
+                         trait_names=trait_names)
     if private:
         # State it, don't warn it — this is a fact about the session, in the
         # same voice as the header. It is the user's only signal that the usual
@@ -343,7 +344,8 @@ def run_session(conn, session_id, private=False):
             # wrong place.
             print_session_header(conn, session_id, current_model,
                                  current_title, system_prompt_name,
-                                 persona_name, private=private)
+                                 persona_name, private=private,
+                                 trait_names=trait_names)
             return
         if AUTO_EXPORT and history and not private:
             safe_export(conn, session_id)
@@ -597,11 +599,23 @@ def run_session(conn, session_id, private=False):
 
         # Bare: search the three pools by priority. A path is only considered
         # once that has found nothing, so a pool item named like a file still
-        # wins — see parse.looks_like_path.
-        found = resolve_layer(cmd.raw, _active())
+        # wins — see parse.looks_like_path. **The ordering is the deliberate
+        # part and does not change.** What changes is that the pool search
+        # keeps its miss to itself when the thing is a path: it used to print
+        # `no exact, prefix or substring match for './notes.md' in 5 prompts, 3
+        # personas, 4 traits` and then attach the file on the very next line,
+        # which is the app contradicting itself inside two lines of output.
+        #
+        # Suppressed whenever it looks like a path, not only when the attach
+        # then works, because `do_attach` reports its own refusals and every one
+        # of them is more specific than the pool miss — outside the jail, no
+        # such file, a directory, wrong extension, not UTF-8, too big. There is
+        # no silent branch for the miss message to be covering.
+        maybe_path = looks_like_path(cmd.raw)
+        found = resolve_layer(cmd.raw, _active(), quiet=maybe_path)
         if found:
             _attach_layer(*found)
-        elif looks_like_path(cmd.raw):
+        elif maybe_path:
             do_attach(conn, session_id, history, cmd.raw,
                       model=current_model)
 

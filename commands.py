@@ -239,7 +239,7 @@ def _pick_layer(query, options):
     return None
 
 
-def resolve_layer(query, active=None, kinds=None):
+def resolve_layer(query, active=None, kinds=None, quiet=False):
     """`(kind, name)` for a query, asking when it is ambiguous. None if
     nothing was resolved — having said why.
 
@@ -248,10 +248,18 @@ def resolve_layer(query, active=None, kinds=None):
     search to one pool, which is what the explicit form (`:add trait relax`)
     passes; `active` is what the session already carries, which decides the
     collision walk.
+
+    `quiet` suppresses the *miss* message only — an ambiguous match still asks,
+    because that one needs an answer. Exactly one caller passes it: `/add` with
+    something that looks like a path, where the pool search is a deliberate
+    first pass whose failure is expected and whose message would contradict the
+    attach happening on the next line. It is not a general volume knob; a
+    resolver that can be told to fail silently is one that will.
     """
     matches = pools_match(query, kinds=kinds)
     if not matches:
-        console.print(f"  {pools_tried(query)}", style="dim")
+        if not quiet:
+            console.print(f"  {pools_tried(query)}", style="dim")
         return None
     distinct = {name for _, name in matches}
     if len(distinct) > 1:
@@ -754,7 +762,8 @@ def _strip_md(name):
 
 
 def print_session_header(conn, session_id, model, title,
-                         system_prompt_name, persona_name, private=False):
+                         system_prompt_name, persona_name, private=False,
+                         trait_names=()):
     """The chat screen's status block."""
     if private:
         # No id and no title: a private session is ephemeral, so #1 is
@@ -778,6 +787,22 @@ def print_session_header(conn, session_id, model, title,
     else:
         available = ", ".join(_names_in(get_personas_dir())) or "none found"
         _header_row("Persona", f"not set — available: {available}", "dim")
+
+    # The third pool had no row here at all, while the other two had one each —
+    # and traits are the pool you can carry several of, so it is the one whose
+    # state is hardest to hold in your head. Asked for directly by Cas.
+    #
+    # Deliberately thinner than `/status`'s trait row, which also loads each
+    # file to mark a missing one. This screen prints on every session open and
+    # after every `:new`; reading the pool off disk to decorate a header is a
+    # cost the header hasn't been paying, and "which of these has lost its
+    # file" is a question `/status` exists to answer.
+    if trait_names:
+        _header_row("Traits", ", ".join(_strip_md(n) for n in trait_names),
+                    "yellow")
+    else:
+        available = ", ".join(_names_in(get_traits_dir())) or "none found"
+        _header_row("Traits", f"none — available: {available}", "dim")
 
     items = list_attachments(conn, session_id)
     if items:
@@ -2359,6 +2384,11 @@ def _scope_word(word):
     }.get((word or "").strip().lower())
 
 
+# One string, two commit paths. It was two literals, which is one edit away
+# from the two paths disagreeing about what just happened to your vault.
+_LOCAL_ONLY = "  committed locally — cfc does not push"
+
+
 def _scope_label(scope):
     """How a scope is named on screen."""
     import wikigit
@@ -2494,6 +2524,19 @@ def _wiki_diff_folder(scope):
         console.print(f"  {where}: nothing changed", style="green")
         console.print()
         return
+
+    # Say the scope and the count *before* the diff, not only in the branch
+    # where there is nothing to show. `where` was computed and then used in the
+    # empty case alone, so a diff that had content named nothing — and the
+    # numbers really do differ per scope: a wiki-scoped diff showing 3 new pages
+    # sat one command away from a vault-scoped commit reporting 7 changes.
+    # Both were right about different things and neither said which.
+    #
+    # That is the whole failure mode of having a review step: approving a diff
+    # for one scope and committing another. The review reviewed something other
+    # than what got committed.
+    console.print(f"  {where}: {len(changes)} change(s)", style="bold")
+    console.print()
 
     if text.strip():
         # Rendered as a diff rather than printed raw so + and - lines are
@@ -2632,9 +2675,22 @@ def _wiki_commit_folder(scope, message):
 
     console.print(f"  committed {count} change(s) in {where} — "
                   f"{short} {subject}", style="green")
-    # Said every time, deliberately. The repo has no remote (see wikigit.py),
-    # and "committed" reads as "safe" to anyone who has ever used git with one.
-    console.print("  local only — this repo has no remote", style="dim")
+    # Said every time, deliberately: "committed" reads as "safe" to anyone who
+    # has ever used git with a remote, and cfc does not push.
+    #
+    # It used to read `local only — this repo has no remote`, which was true
+    # when written and stopped being true on 2026-07-27 when the vault got a
+    # private GitHub. The failure was not the usual one here — an unpushed
+    # commit really *is* local only, so the conclusion survived — but the
+    # clause after the dash was the half that said nothing could be done, at
+    # exactly the moment the thing to do had become available. A warning that
+    # talks you out of the fix is worse than no warning.
+    #
+    # It now states what cfc did and nothing about the repo, which is a claim
+    # that cannot go stale: `wikigit.py` issues no `push` and no `remote`, and
+    # `tests/test_wikigit.py` pins that. Whether it should is a design question,
+    # not a wording one.
+    console.print(_LOCAL_ONLY, style="dim")
 
 
 def _wiki_commit_file(scope, message):
@@ -2673,7 +2729,7 @@ def _wiki_commit_file(scope, message):
 
     console.print(f"  committed 1 change in {where} ({pick.path}) — "
                   f"{short} {subject}", style="green")
-    console.print("  local only — this repo has no remote", style="dim")
+    console.print(_LOCAL_ONLY, style="dim")
 
 
 # --- /connect -------------------------------------------------------------

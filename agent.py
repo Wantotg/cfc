@@ -195,8 +195,20 @@ def _render_result(result):
     lines = (result or "").splitlines()
     head = lines[0][:76] if lines else "(empty)"
     console.print(f"  ← {head}", style="dim")
+    # Lines *below* the head, not lines in the result. The head has just been
+    # printed, so counting it again was an off-by-one against the only number
+    # the reader can check — and against `read_file`'s own header, which says
+    # `<path> (115 lines)` and then got a `(116 lines)` stacked under it. Two
+    # counters counting two different things, one line apart.
+    #
+    # Counting the remainder makes them agree without either module knowing
+    # about the other, which is the point: the alternative — the renderer
+    # noticing that the head line already carries a count — would be a producer
+    # here and a parser there, the shape `HANDOVER.md` keeps a table of. It also
+    # stays honest when `_truncate` has cut the body, where the two numbers
+    # *should* differ and now say so.
     if len(lines) > 1:
-        console.print(f"    ({len(lines):,} lines)", style="dim")
+        console.print(f"    ({len(lines) - 1:,} more lines)", style="dim")
 
 
 def tools_guidance(max_calls=None):
