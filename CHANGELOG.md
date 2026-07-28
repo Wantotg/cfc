@@ -23,6 +23,54 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-28 — The suite stops writing to the evidence file
+`D-08`, and the first of v0.9.2's three claims. `~/.cfc/errors.log` is the whole
+of `B-01`'s evidence, and one of that bug's three closing routes is *absence
+across the 0.9 → 1.0 window* — so a test that writes convincing provider errors
+into it is the watcher poisoning the thing it watches.
+
+**Three files, not the one the entry predicted, and the reason is which surface
+a test drives rather than which test misbehaves today.** `errorlog.log_error`
+has exactly two call sites, `main.py`'s `run_session` handler and `runner.py`'s
+`run_routine` handler, so the question is which harnesses reach one:
+
+- `tests/test_model_revert.py` — the actual leak. Drives `run_session` with
+  stubbed streams that raise `httpx.HTTPError`.
+- `tests/test_routines.py` — drives `run_routine`. Nothing lands today, because
+  its crash fixture raises `TimeoutError` and `runner` narrows the log to
+  `httpx.HTTPError` on purpose. One fixture away from being untrue, and it is
+  the *unattended* path.
+- `tests/golden.py` — drives `run_session`, provokes no provider error today,
+  and is the script most likely to grow a new command test. Guarded beside its
+  existing refusals for the real database and the real vault.
+
+`tests/test_agent.py` was checked as the entry asks and needs nothing: it drives
+`agent.agent_turn` directly, and `agent.py` does not import `errorlog` at all.
+Recorded here rather than left as an absence, because "we looked" is the half
+that otherwise gets re-derived next time.
+
+**The assertion is the durable half, not the redirect** — a redirect that gets
+refactored away is silent. All three were verified by breaking them: with the
+redirect line removed each one raises before anything is written, which is the
+`HANDOVER.md` habit of proving a guard by disabling it. Golden's needed its own
+rather than `assert_not_real`, which compares against the real *database* and
+would have passed forever no matter where the log pointed — a decorative
+assertion, which is the failure that file's own docstring is about.
+
+**The evidence file was edited by hand, and this is the record of it.** 32
+fabricated error entries (64 lines) were deleted, in eight batches from
+`2026-07-27 20:35:16` to `21:07:10` — eight runs of `test_model_revert.py`
+during v0.9.1's build, all four fixture models each time (`shanhaig`,
+`good-model`, `broken-but-listed`, `custom-x`). `D-08` was written against the
+last batch alone and said four; the count is the only thing about the entry that
+was wrong. The 13 `launch` lines are real and stay, and the file now carries
+zero errors — which is the state the absence-watch actually needs.
+
+- Files: tests/test_model_revert.py, tests/test_routines.py, tests/golden.py,
+  BACKLOG.md, legacy/BACKLOG.md, CHANGELOG.md, TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-28 — Five findings get a place, and the scheduler stops being a claim
 The v0.9.1 **post-tag** playtest, triaged. Nothing fixed here, per the debug
 session's rule: the fix belongs to a build session working from the written
@@ -99,7 +147,7 @@ public with the v1.0 tag.**
 - Files: BUGS.md, BACKLOG.md, legacy/BACKLOG.md, HANDOVER.md, CHANGELOG.md,
   TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: ee2a4dd
 
 ## 2026-07-28 — One place to describe a finding, one line everywhere else
 A documentation-workflow change, from the v0.9.1 triage. Cas's problem, in his

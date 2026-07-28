@@ -269,44 +269,6 @@ decision 8 rests on. Add the early check, keep the late one.
 routine that was eventually saved is correct. It is a form that discards itself,
 which is debt.
 
-## D-08 · The test suite writes to the live `~/.cfc/errors.log`. 0.9.1, 28-07-2026
-
-**Found:** 2026-07-28, reading the error log to check `B-01`'s absence-watch —
-not from use. Four entries were already in it that no provider ever sent:
-
-```
-2026-07-27 21:07:10  error  session 1 · model shanhaig · nothing interrupted this session · chat
-    no such model: shanhaig
-2026-07-27 21:07:10  error  session 2 · model good-model · … upstream 503
-2026-07-27 21:07:10  error  session 3 · model broken-but-listed · … no such model
-2026-07-27 21:07:10  error  session 4 · model custom-x · … upstream 500
-```
-
-**Cause:** `tests/test_model_revert.py` drives the real `run_session` with a
-stubbed stream that raises `httpx.HTTPError`, which reaches `main.py`'s handler
-and `errorlog.log_error`. `errorlog.LOG_PATH` is a module constant
-(`~/.cfc/errors.log`) and that test never redirects it.
-
-**Why it is worse than clutter.** That file is the whole of `B-01`'s evidence,
-and one of that entry's three closing routes is **absence across the 0.9 → 1.0
-window**. `errorlog.py`'s header is explicit that *nothing parses this file* —
-it is read by a human, deliberately, so as not to create a seventh
-producer/parser pair. A human reading four fabricated `session 1 · model
-shanhaig` lines cold has no way to tell them from the thing being watched for,
-and they are dated inside the watch window. It is the same class as the scar
-where a test guard that asserted *after* an `unlink()` deleted the real
-database, and as `D-01`, where the golden baseline pins the live vault outbox:
-the suite reaching live state.
-
-**The fix is one line and the pattern is already in the next file over.**
-`tests/test_private.py` redirects `errorlog.LOG_PATH` to a temp path and then
-asserts on it — `assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the
-real log"`. `test_model_revert.py` wants the same, and while in there it is
-worth checking `test_agent.py`, which also drives error paths. The four
-existing lines can be deleted by hand; say so in the commit, because *editing
-the evidence file* is exactly the kind of thing the next reader deserves to
-find written down rather than infer.
-
 ## D-09 · The `reflection` routine cannot read what its prompt reads. 0.9.1, 28-07-2026
 
 **Found:** 2026-07-28, reading the run logs to confirm the report's *"routines

@@ -63,6 +63,22 @@ def main_():
     tmp = Path(tempfile.mkdtemp())
     assert "tmp" in str(tmp), tmp
     dbmod.DB_PATH = tmp / "chat.db"
+
+    # This file drives the real `run_session`, so the four fabricated provider
+    # errors below reach `errorlog.log_error` unpatched — and that writes to the
+    # live `~/.cfc/errors.log`, which is the whole of `B-01`'s evidence. One of
+    # that bug's closing routes is *absence across the 0.9 → 1.0 window*, so a
+    # test run drops convincing provider errors inside the window somebody will
+    # read to decide whether the bug came back. The watcher poisoning the thing
+    # it watches.
+    #
+    # **The assertion is the durable half, not the redirect.** A redirect that
+    # gets refactored away is silent; the assertion is what makes it loud. Same
+    # pattern and same wording as `tests/test_private.py`.
+    import errorlog
+    errorlog.LOG_PATH = tmp / "errors.log"
+    assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the real log"
+
     conn = dbmod.db()
 
     # The resolver is not what's under test: whatever you type, you get it.

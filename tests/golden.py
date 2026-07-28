@@ -53,6 +53,7 @@ FIXTURE_TRAITS = HERE / "_fixture_traits"
 # side effect by making the export path untested, and this harness's whole job
 # is to notice when output changes. Now it runs for real, into here.
 FIXTURE_VAULT = HERE / "_fixture_vault"
+FIXTURE_LOG = HERE / "_fixture_errors.log"
 
 # The same rule the prompts fixture follows, applied to config.py's model
 # lists: :config, :models and :tools print them verbatim, so editing your own
@@ -323,6 +324,26 @@ def capture():
     for name in patched:
         assert_not_real(getattr(sys.modules[name], "DB_PATH"), f"{name}.DB_PATH")
 
+    # And the error log, which is the same class of live-data hazard as the two
+    # around it: this script drives the real `run_session`, and `run_session`
+    # owns an `errorlog.log_error` call site. Nothing in the baseline provokes a
+    # provider error today, so nothing lands — but `~/.cfc/errors.log` is
+    # `B-01`'s evidence file, one of whose closing routes is *absence across the
+    # 0.9 → 1.0 window*, and this is the script most likely to grow a new
+    # command test. One holder rather than a loop: `LOG_PATH` lives in
+    # `errorlog.py` alone, which imports no cfc module and is never re-exported.
+    # The assertion is against the path it *was*, read off the module rather
+    # than written out here — `assert_not_real` is the wrong guard for this one
+    # (it compares against the real *database*, so it would pass forever no
+    # matter where the log pointed) and a literal `~/.cfc/errors.log` would be a
+    # second copy of a constant that lives in `errorlog.py`.
+    import errorlog
+    real_log = Path(errorlog.LOG_PATH).expanduser().resolve()
+    errorlog.LOG_PATH = FIXTURE_LOG
+    if Path(errorlog.LOG_PATH).expanduser().resolve() == real_log:
+        raise AssertionError(f"errorlog.LOG_PATH: refusing to write to the "
+                             f"real error log at {real_log}")
+
     # Same treatment for VAULT_PATH, and for the same reason: export.py reads
     # its module global at call time, and commands.py holds a second copy that
     # :config prints. Patching one would leave the other pointing at the real
@@ -424,6 +445,7 @@ def capture():
         for c, f in zip(consoles, saved):
             c.file = f
         FIXTURE.unlink(missing_ok=True)
+        FIXTURE_LOG.unlink(missing_ok=True)
         clean_prompt_fixtures()
 
     # The baseline pins the `[auto-exported: …]` line, which proves the message

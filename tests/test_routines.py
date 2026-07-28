@@ -343,6 +343,20 @@ def main():
             str(Path("~/.cfc").expanduser())), "refusing to touch a real db"
         saved_path = dbmod.DB_PATH
         dbmod.DB_PATH = store.tmp / "chat.db"
+
+        # `run_routine` owns the second `errorlog.log_error` call site, so the
+        # live `~/.cfc/errors.log` — `B-01`'s evidence file — is reachable from
+        # here. Nothing lands today: the crash fixture below raises
+        # `TimeoutError` and `runner` narrows the log to `httpx.HTTPError` on
+        # purpose. That is one fixture away from being untrue, and this is the
+        # *unattended* path, which is where a future error-path test would go.
+        # Redirected and then asserted, because the assertion is what survives
+        # a refactor of the redirect. Not restored afterwards — re-arming it
+        # for whatever runs next is the failure, not the fix.
+        import errorlog
+        errorlog.LOG_PATH = store.tmp / "errors.log"
+        assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the real log"
+
         conn = dbmod.db()
         try:
             import runner
