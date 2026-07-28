@@ -23,6 +23,25 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-28 — v0.9.2's body moves to the public roadmap
+Release-order step 1, the half the model owns: the version's body moves out of
+`ROADMAP_PRIVATE.md` and into `ROADMAP.md`, trimmed to what actually shipped
+rather than what was planned, and is deleted from the private file — the split's
+whole point is that a shipped version is described in exactly one place.
+
+**The note is a hole, deliberately.** It gets written by Cas after the playtest,
+from use, and the completion date lands with it. v0.9's note — *"ready to
+playtest to test weird things"* — is what a note written before use can be.
+
+Two things the public entry says that the plan did not, both because they were
+measured during the build rather than predicted: five of six routine rows were
+mis-coloured rather than one, and five of the twelve retired config commands are
+aliases whose real command is a different word rather than four.
+
+- Files: ROADMAP.md, ROADMAP_PRIVATE.md (gitignored), CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-28 — The routine column stops having an opinion
 `B-0.9.1-04`, and the last of v0.9.2's three claims. `hub._freshness` renders
 `schedule.why_not_due()` instead of deciding for itself — standing decision 16,
@@ -92,7 +111,7 @@ are what shipped; documentation changes apply going forward only.
 - Files: hub.py, tests/test_hub.py, README.md, HANDOVER.md, BUGS.md,
   legacy/BUGS.md, CHANGELOG.md, TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 4a642ef
 
 ## 2026-07-28 — `config.example.py` becomes a form again
 `B-0.9.1-02` and `D-0.9.1-02` in one pass over both config files, as both

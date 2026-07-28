@@ -804,6 +804,62 @@ worth a patch release rather than a wait.
 ⎛⎝ ≽  >  ⩊   < ≼ ⎠⎞  "There are two colors in my head
                          What, what was that you tried to say?"
 ```
+## v0.9.2 — The light, the form, and the evidence file
+
+**A patch release, and the kind the amended release order was written to
+allow.** The three things in it came out of a **post-tag** playtest of a version
+that had already been tested, triaged and tagged — which is what a patch is
+supposed to be for. Three of the four patch releases before v0.9.1 were named
+for what a testing pass caught, and that had quietly made PATCH the mechanism
+for *this version was never tested*.
+
+Nothing here is new and nothing is off the roadmap. All three tell a human
+something untrue.
+
+- **The hub's routine column stops having an opinion.** It said *green under a
+  day, orange under two, red beyond* — the v0.4 rule, written when a routine was
+  daily or on command. `weekly` arrived three days later and nothing revisited
+  the column. It now renders `schedule.why_not_due()`, the same function that
+  decides whether a run actually happens, so the colour answers **is this
+  routine owed a run** rather than how long ago it last ran.
+
+  Measured on the real routine folder, five of six rows were saying something
+  untrue: a weekly job that had absorbed its week *on schedule* read orange, and
+  two `command` routines — which can never be owed a run at all — read orange
+  too. Four of six routines are `command`, so the bug was wider than the report.
+
+  What the old column could not buy at any threshold: **if the scheduled tick
+  stops firing, every scheduled routine goes orange and stays orange.** And the
+  failure mode inverts — the colour and the behaviour now come from one
+  function, so they fail together and cannot quietly disagree. Red left the
+  column, because *how badly overdue* is not a fact the scheduler knows.
+
+- **`config.example.py` becomes a form again.** The file a new user copies and
+  reads while filling in told them to type twelve commands that were retired at
+  v0.8. It matters more than a stale comment because an unrecognised verb
+  doesn't error — it goes to the model, so someone following their own config
+  file gets a confident wrong answer rather than *no such command*.
+
+  The sweep is not `:` → `/`: five of the twelve are aliases whose real command
+  is a different word, so the form now says `/status`, `/update db`, `/add`,
+  `/list outbox` and `/list models` rather than teaching the retired word again
+  one generation later. Every command in the file was checked by running it
+  through the parser. The comments were trimmed in the same pass, on one rule —
+  keep the sentence that stops a wrong edit, cut the paragraph that recounts
+  when it was discovered — and two things that were simply wrong got fixed: how
+  to reach a Windows-hosted embedder from WSL, and the embedding model's real
+  id.
+
+- **The test suite stops writing to `~/.cfc/errors.log`.** That file is the
+  whole of the evidence for the one bug left in `BUGS.md`, and one of that
+  bug's closing routes is *absence* across the 0.9 → 1.0 window. Every test run
+  was dropping four fabricated provider errors into the window somebody will
+  read to decide whether the bug came back — the watcher poisoning the thing it
+  watches. Thirty-two of them had accumulated; they were deleted by hand and the
+  commit says so.
+
+>*(note-shaped hole for Cas)*
+
 ## v1.0 — Hardening, and a decision
 
 ---
