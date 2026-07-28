@@ -272,7 +272,7 @@ Everything else changes something.
 | `/search <word>` | Substring search across all messages |
 
 `/list chats` is the picker's view — real conversations. `/list sessions` is
-everything, routine runs and wiki pages included. Two different questions.
+everything, routine runs  and wiki pages included. Two different questions.
 
 **context — attach and detach**
 
