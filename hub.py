@@ -197,30 +197,79 @@ def list_sessions(conn):
     console.print()
 
 
-def _freshness(ts_text):
-    """(label, style) for when a routine last ran.
+def _freshness(routine, ts_text, now=None):
+    """(label, style) for a routine's Last run cell.
 
-    Green under 24h, orange to 48h, red past that — the roadmap's thresholds.
-    A routine that has never run is dim rather than red: 'never' is a different
-    fact from 'overdue', and colouring it as failure would cry wolf on the day
-    you write one.
+    **The colour says whether this routine is owed a run. It renders
+    `schedule.why_not_due()` and forms no opinion of its own** — standing
+    decision 16, applied one panel up the screen from the connection light and
+    for the same reason. Until v0.9.2 this was hours-since-last-run against the
+    v0.4 thresholds, which is a *proxy* for "is anything owed" and a poor one:
+    `weekly` landed three days after those thresholds were written, so a weekly
+    job that absorbed its week on schedule showed red for five days in seven,
+    and a `command` routine — four of six on Cas's machine — can never be
+    overdue at all yet aged into red like everything else.
 
-    An unparseable timestamp shows the raw string rather than being dropped. A
-    log line this code can't read is worth seeing, not hiding."""
+    What the same function costs the old one could not buy: **if the OS tick
+    stops firing, every scheduled routine goes orange and stays orange.** No
+    threshold over a timestamp can say that.
+
+    The order of the branches is the whole of it.
+
+    1. An **unparseable** timestamp is the raw string, dim, and it must be
+       decided before anything consults `why_not_due` — that function refuses
+       to run on a log line it cannot read, and its refusal reads as *not due*.
+       A naive mapping paints a broken log green, which is exactly the "green
+       over a dead server" failure decision 16 exists to prevent.
+    2. **Never run** stays `never`, dim. The cell's *text* already carries the
+       fact, so a colour would add alarm and no information, and it would cry
+       wolf on the day you write a routine.
+    3. **Dim also means "cannot be owed a run"** — disabled, or a trigger
+       `parse_trigger` won't read. Green would claim nothing is owed, which is a
+       different and stronger thing to say about a routine that will never fire.
+       Note this puts `trigger: command` and a *malformed* trigger in the same
+       cell; the conflation is real and is the hub's broken-routine blind spot
+       (`D-10`), not something a colour here can fix.
+    4. Otherwise the answer is `why_not_due(...) is None`: orange for owed,
+       green for nothing owed.
+
+    **The reason string stays unparsed.** `why_not_due` returns prose because
+    that is what makes "why didn't this fire" answerable, and this function uses
+    only `is None`. Matching on its wording would add a seventh row to
+    `HANDOVER.md`'s producer/parser table inside the fix for a bug caused by a
+    signal forming its own opinion. `trigger: command` is detected with
+    `parse_trigger`, which returns `(None, None)`, for the same reason.
+
+    **Red is deliberately gone from this column.** "How badly overdue" is not a
+    fact `why_not_due` knows — a daily job is due from its trigger until
+    midnight and then due again — and reconstructing severity from that means
+    inventing the threshold this design was chosen to avoid. `failed` is still
+    red in the Status column, where it belongs.
+
+    `now` is injectable so the due cases are writable without freezing the clock.
+    """
     if not ts_text:
         return "never", "dim"
     try:
         when = datetime.datetime.strptime(ts_text, "%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         return str(ts_text), "dim"
-    hours = (datetime.datetime.now() - when).total_seconds() / 3600
-    if hours < 24:
-        style = "green"
-    elif hours < 48:
-        style = "orange3"
-    else:
-        style = "red"
-    return when.strftime("%Y-%m-%d %H:%M"), style
+
+    label = when.strftime("%Y-%m-%d %H:%M")
+
+    # Local, like `routines`: `schedule` shells nothing out, but it reaches the
+    # agent stack (db, backup, runner) inside `_run`, and hub.py is imported by
+    # the golden harness. A hub render must not pay for that at import time.
+    from schedule import parse_trigger, why_not_due
+
+    if not routine.enabled:
+        return label, "dim"
+    _kind, at = parse_trigger(routine.trigger)
+    if at is None:
+        return label, "dim"
+    if why_not_due(routine, now or datetime.datetime.now()) is None:
+        return label, "orange3"
+    return label, "green"
 
 
 def _routine_rows(limit=HUB_ROUTINES):
@@ -240,13 +289,27 @@ def _routine_rows(limit=HUB_ROUTINES):
     except Exception:
         return []
 
+    # One clock for the whole panel, so two rows rendered a millisecond apart
+    # can never disagree about whether the same trigger time has passed.
+    now = datetime.datetime.now()
     out = []
     for r in good:
+        # **`_freshness` goes inside the per-routine `try`, never the outer
+        # one.** `pick_session` renders this panel under `if routines:`, so `[]`
+        # and "no routines configured" are the same screen — one routine that
+        # upsets `why_not_due` in the outer handler would delete the whole panel
+        # silently, which is this project's signature failure shape one
+        # indentation level away. Here the cost is confined to its own row, and
+        # the row still appears: a dim `?` rather than a vanished routine, the
+        # same call `ui.connection_light` makes for an unmapped state, because
+        # taking a row off the "is everything still running" panel is the worse
+        # failure of the two.
         try:
             status, ts, review = last_run(r.id)
+            label, style = _freshness(r, ts, now)
         except Exception:
             status, ts, review = None, None, False
-        label, style = _freshness(ts)
+            label, style = "?", "dim"
         out.append((r.name, label, style, status or "", ts or "", bool(review)))
     # Never-run routines sort last; among the rest, most recent first.
     out.sort(key=lambda row: row[4], reverse=True)
@@ -272,6 +335,19 @@ def _print_routines(rows):
             st_text, st_style = status, "dim"
         table.add_row(name, Text(label, style=style), Text(st_text, style=st_style))
     console.print(table)
+    # **Printed only when a row is actually orange** (Cas's call, 2026-07-28).
+    # The connection light gets away with a bare colour because
+    # `print_connection` prints dot *plus* sentence — "the dot is the signal,
+    # the sentence is the content" — and this column has no content half: a
+    # colour on a cell headed *Last run* has no sentence beside it to say what
+    # it means. A legend that is always there is furniture you stop reading; one
+    # that appears exactly when it applies is the sentence arriving with its
+    # signal. It says what is happening rather than what is wrong, because
+    # orange here is not a fault — it is the normal state of a routine between
+    # its trigger and the next tick.
+    if any(style == "orange3" for _, _, style, _, _ in rows):
+        console.print("  orange: due, waiting for the next scheduled tick",
+                      style="dim")
     console.print()
 
 

@@ -14,6 +14,89 @@ split line is what is frozen, not the file.
 
 # Closed since the split
 
+## ~~B-0.9.1-04 · The routines light applies a daily rule to every trigger kind~~ — CLOSED (v0.9.2, 2026-07-28)
+
+**Closed 2026-07-28.** `hub._freshness` stopped deciding anything for itself and
+now renders `schedule.why_not_due()` — standing decision 16, applied one panel
+up the screen from the connection light. Cas's call between the entry's two
+options: the colour means *is this routine due*, not *how long ago it ran*.
+
+**Measured on the live routine folder before and after, and the entry
+understated it.** Five of six rows were saying something untrue, not one:
+`medium-term-memory` (`weekly 0330`) had absorbed its week on schedule and read
+**orange**; `note-reader` and `note-writer` (`command`) read **orange** for
+routines that can never be owed a run at all; `long-term-memory` and
+`reflection` read green for the same non-reason. Only `short-term-memory`, the
+one daily job, was accidentally right.
+
+**What the same function buys that no threshold could:** if the OS tick stops
+firing, every scheduled routine goes orange and stays orange.
+
+Red left the column; dim now means *cannot be owed a run*, which puts
+`trigger: command` and a malformed trigger in one cell — recorded against
+`D-10`. The entry as it stood:
+
+---
+
+## B-0.9.1-04 · The routines light applies a daily rule to every trigger kind
+
+**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
+
+```
+where:    routines overview
+saw:      orange light because the weekly schedule happened >24h ago
+expected: green light, last routine happened and there were no issue
+guess:    working as designed, not as intended.
+```
+
+**The guess is right, and it is datable.** `hub._freshness` colours green under
+24h, orange to 48h, red past that — the v0.4 spec of 2026-07-21, written when a
+routine was daily or on command and nothing else existed. **`trigger: weekly
+HHMM` landed 2026-07-24** (`f58d1af`) and nothing revisited the light. The
+column has been wrong about weekly routines since the day weeklies shipped.
+
+**It is wider than the case that was reported.** Of the six routines on Cas's
+machine, one is `0300`, one is `weekly 0330`, and **four are `command`**. A
+command routine cannot be overdue — it runs when a human asks — yet it goes
+orange after a day and red after two exactly like a nightly job that has
+stopped firing. So the rule is correct for one routine in six, and the
+reported weekly case is the *quietest* of the wrong ones: `medium term memory`
+absorbed the week of 20–26 July on schedule and will show red for five days out
+of every seven.
+
+**What is actually wrong is that the light forms an opinion.** Standing
+decision 16 says the connection light renders `preflight.connection_state()`
+and never decides for itself, because a light that decides can disagree with
+the thing it describes. The routine column is the same screen doing the
+opposite: `schedule.why_not_due()` already answers "is this routine due",
+including weekly absorption, the never-run case and the retry rules — and
+`hub._routine_rows` has the `Routine` in hand and passes `_freshness` a bare
+timestamp. The failure direction is the friendly one (red over a healthy
+routine, not green over a dead server), which is why it survived: it cries
+wolf rather than reassuring, and nobody checks a light that is merely gloomy.
+
+**One thing must be decided before it is fixed, not during.** *Does the colour
+mean "how long ago" or "is this overdue"?* Today it means the first and is read
+as the second, and every plausible fix picks one:
+
+- Render `schedule.why_not_due()` the way the connection light renders
+  `connection_state()`. Most faithful to decision 16, and it needs an answer
+  for the window where a routine is legitimately due-and-not-yet-run — a `0300`
+  job is "overdue" from 03:00 until the tick collects it.
+- Or keep the staleness reading and scale the thresholds to the trigger — 24/48h
+  daily, a week and a fortnight for weekly, **no staleness colour at all for
+  `command`**, which is the case with no honest threshold.
+
+The second is smaller and does not import `schedule` into `hub`. The first is
+the one this codebase's own rule points at. Cheap either way; the cost of
+guessing is a third reading of the same column.
+
+**Not a v0.9.1 blocker, and it does not falsify v0.4 either** — that entry
+promises *"green <24h, orange 24–48h, red >48h"* and that is precisely what the
+code does. It is in this file rather than `BACKLOG.md` because the signal is
+wrong about the thing it signals, which is Cas's call (2026-07-28) knowing it
+gates v1.0.
+
 ## ~~B-0.9.1-02 · `config.example.py` documents twelve commands that no longer exist~~ — CLOSED (v0.9.2, 2026-07-28)
 
 **Closed 2026-07-28.** Swept together with `D-0.9.1-02` over both config files,

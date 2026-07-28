@@ -227,21 +227,144 @@ def main():
     ok("an unset root leaves every path in full",
        vault_relative(f"{root}/06 metadata", "") == f"{root}/06 metadata")
 
-    print("\n--- routine freshness ---")
+    print("\n--- the routine column answers 'is anything owed' ---")
+    # Rewritten in v0.9.2 (`B-0.9.1-04`). The four assertions that used to live
+    # here pinned hours-since-last-run against v0.4's 24/48h thresholds; that
+    # rule no longer exists, so they were statements about nothing. The two that
+    # survive unchanged are the ones about the *label* rather than the
+    # threshold, which is why they survive: they were never about the rule.
+    #
+    # The colour now renders `schedule.why_not_due()`. `schedule` binds
+    # `last_run` at import (`from routines import ... last_run`), so the seam to
+    # patch is `schedule.last_run` and NOT `routines.last_run` — patching the
+    # latter is the mistake `HANDOVER.md` names under "patch the seam, not
+    # config", and it would leave every due assertion silently reading Cas's
+    # real run logs.
+    import schedule as sched
+    from routines import Routine
+
     now = datetime.datetime.now()
 
     def at(hours_ago):
         return (now - datetime.timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
 
-    ok("1h ago is green", hub._freshness(at(1))[1] == "green")
-    ok("23h ago is green", hub._freshness(at(23))[1] == "green")
-    ok("30h ago is orange", hub._freshness(at(30))[1] == "orange3")
-    ok("60h ago is red", hub._freshness(at(60))[1] == "red")
-    # "never" is a different fact from "overdue". Colouring it red would cry
-    # wolf on the day you write a routine.
-    ok("never run is dim, not red", hub._freshness(None) == ("never", "dim"))
+    def routine(trigger="0300", enabled=True, rid="r"):
+        return Routine(id=rid, name=rid, prompt="p", trigger=trigger,
+                       enabled=enabled)
+
+    def with_last_run(ts, fn):
+        """Run `fn` with `schedule.last_run` pinned to one logged run."""
+        saved = sched.last_run
+        try:
+            sched.last_run = lambda _id: ("ok", ts, False)
+            return fn()
+        finally:
+            sched.last_run = saved
+
+    # --- the two that are about the label, and are unchanged ---
+    ok("never run is dim, not red",
+       hub._freshness(routine(), None) == ("never", "dim"))
     ok("an unparseable timestamp is shown, not dropped",
-       hub._freshness("garbage")[0] == "garbage")
+       hub._freshness(routine(), "garbage")[0] == "garbage")
+    # ...and the colour that goes with it, which is the branch that had to come
+    # first: why_not_due refuses to read a stamp it can't parse, and that
+    # refusal reads as "not due" — so getting this wrong paints a broken log
+    # green. That is decision 16's "green over a dead server", one row up.
+    ok("...and is dim, never green — a log we can't read is not 'nothing owed'",
+       hub._freshness(routine(), "garbage")[1] == "dim")
+
+    # --- dim means "cannot be owed a run", whatever the timestamp says ---
+    # The four-in-six case that made this bug wider than the report: a command
+    # routine has no honest threshold, so its age must not colour anything.
+    ok("a command routine is dim however old its last run",
+       hub._freshness(routine(trigger="command"), at(500))[1] == "dim")
+    ok("...and however fresh", hub._freshness(routine(trigger="command"),
+                                              at(1))[1] == "dim")
+    ok("a disabled routine is dim, not green",
+       hub._freshness(routine(enabled=False), at(1))[1] == "dim")
+    # Detected via parse_trigger, so a trigger nobody can read lands here too
+    # rather than falling through to green. See the docstring on D-10.
+    ok("a malformed trigger is dim, not green",
+       hub._freshness(routine(trigger="nonsense"), at(1))[1] == "dim")
+
+    # --- the colour flips across the trigger time, not across a duration ---
+    today_late = now.replace(hour=12, minute=0, second=0, microsecond=0)
+    ran_today = today_late.replace(hour=3, minute=5).strftime("%Y-%m-%d %H:%M:%S")
+    ran_yesterday = (today_late - datetime.timedelta(days=1)).replace(
+        hour=3, minute=5).strftime("%Y-%m-%d %H:%M:%S")
+
+    ok("a daily routine that already ran today is green",
+       with_last_run(ran_today,
+                     lambda: hub._freshness(routine(), ran_today,
+                                            today_late)[1]) == "green")
+    ok("...and is orange once today's trigger has passed unserved",
+       with_last_run(ran_yesterday,
+                     lambda: hub._freshness(routine(), ran_yesterday,
+                                            today_late)[1]) == "orange3")
+    # Before its trigger, nothing is owed yet — the same routine, the same last
+    # run, an earlier clock. This is the assertion that would fail if anything
+    # went back to measuring elapsed hours.
+    early = today_late.replace(hour=1, minute=0)
+    ok("...and green again before today's trigger comes round",
+       with_last_run(ran_yesterday,
+                     lambda: hub._freshness(routine(), ran_yesterday,
+                                            early)[1]) == "green")
+
+    # --- the two that pin the *reported* bug, and the only ones here that
+    # would fail against the old thresholds. Worth stating plainly: most of the
+    # assertions above pass under v0.4's rule too, because they are about cases
+    # it never reached. These two are the rule change itself.
+    #
+    # A weekly job that absorbed its week on schedule, looked at six days later
+    # — the report's own words were "red for five days in seven". Fixed dates,
+    # because a weekly assertion derived from `today` changes meaning depending
+    # on the weekday the suite runs. 27-07-2026 is a Monday, 02-08 the Sunday
+    # after; both sit in the week whose last completed week is 20–26 July, so
+    # the week is absorbed and nothing is owed.
+    weekly_ran = "2026-07-27 03:30:00"
+    weekly_now = datetime.datetime(2026, 8, 2, 12, 0)
+    saved_success = sched.last_success
+    try:
+        sched.last_success = lambda _id: datetime.datetime(2026, 7, 27, 3, 30)
+        ok("a weekly routine that absorbed its week is green six days on",
+           with_last_run(weekly_ran,
+                         lambda: hub._freshness(routine(trigger="weekly 0330"),
+                                                weekly_ran, weekly_now)[1])
+           == "green",
+           "was red under the v0.4 thresholds — this is B-0.9.1-04 itself")
+    finally:
+        sched.last_success = saved_success
+
+    # And the other direction: badly overdue is still only orange. Red left
+    # this column deliberately — "how badly overdue" is not a fact why_not_due
+    # knows, and inventing it means reinventing the threshold.
+    long_ago = (today_late - datetime.timedelta(days=3)).replace(
+        hour=3, minute=5).strftime("%Y-%m-%d %H:%M:%S")
+    ok("three days overdue is orange, not red — red is gone from this column",
+       with_last_run(long_ago,
+                     lambda: hub._freshness(routine(), long_ago,
+                                            today_late)[1]) == "orange3")
+
+    print("\n--- one bad routine costs its row, never the panel ---")
+    # pick_session renders the panel under `if routines:`, so [] and "no
+    # routines configured" are the same screen. A routine that upsets
+    # why_not_due must not be able to empty it.
+    import routines as routines_mod
+    saved_list, saved_lr = routines_mod.list_routines, routines_mod.last_run
+    try:
+        rs = [routine(rid="good"), routine(rid="bad")]
+        routines_mod.list_routines = lambda: (rs, [])
+        def boom(rid):
+            if rid == "bad":
+                raise RuntimeError("this routine's log is on fire")
+            return ("ok", at(1), False)
+        routines_mod.last_run = boom
+        rows = hub._routine_rows()
+        ok("both rows survive one exploding routine", len(rows) == 2, rows)
+        ok("...and the broken one degrades to a dim '?', not a vanished row",
+           any(r[1] == "?" and r[2] == "dim" for r in rows), rows)
+    finally:
+        routines_mod.list_routines, routines_mod.last_run = saved_list, saved_lr
 
     print("\n--- the picker never dies on the routine folder ---")
     # It is a vault path over the /mnt/c bridge: missing, unmounted and

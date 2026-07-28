@@ -209,8 +209,12 @@ falling back to 256-colour, which bands the splash.
 
 Past the splash is the hub: your 10 most recent **chats** — id, latest message,
 message count, context usage, title, prompt and persona — and below them your
-routines, with a traffic light on when each last ran (green under a day, orange
-under two, red beyond, dim for never). Routine transcripts and wiki pages are
+routines, with a traffic light on whether each is **owed a run**: orange means
+due and waiting for the next scheduled tick, green means nothing is owed, and
+dim means it cannot be owed one — never run, disabled, or `trigger: command`,
+which only runs when you type `/routine`. The colour is the scheduler's own
+answer, so if the tick stops firing every scheduled routine goes orange and
+stays there. Routine transcripts and wiki pages are
 kept off this list; `/list sessions` inside a session shows every session there is.
 
 | Key | Action |

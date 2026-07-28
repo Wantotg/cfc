@@ -228,6 +228,38 @@ Settled. Argue with them only with a reason, and say that you are.
     about. It also reports the *process* state only where it measured one —
     `DOWN` exists so "LM Studio is running, its server isn't" is never a guess.
 
+    **The routine column is the second light, added v0.9.2, and it earns the
+    same prohibition the same way.** `hub._freshness` renders
+    `schedule.why_not_due()` and decides nothing itself. It used to be
+    hours-since-last-run against v0.4's 24/48h thresholds — an *independent
+    opinion* about the same question the scheduler answers, and therefore free
+    to disagree with it. It did: `weekly` landed three days after those
+    thresholds were written, so a job that absorbed its week on schedule showed
+    red for five days in seven, and `command` routines — four of Cas's six —
+    aged into red despite never being able to be owed a run. Five of six rows
+    were saying something untrue when this was fixed (`B-0.9.1-04`).
+
+    Two properties fall out, and the second is the argument for the design.
+    **If the OS tick stops firing, every scheduled routine goes orange and stays
+    orange** — no threshold over a timestamp can say that. And the failure mode
+    inverts: the column can now say green when `schedule.py` is wrong, but the
+    function deciding the colour *is* the function deciding whether the run
+    happens, so a wrong green is a routine that genuinely isn't running and a
+    run log that stops growing. The light and the behaviour fail together and
+    cannot disagree. The old column's failure was the silent one.
+
+    **The reason string stays unparsed** — `why_not_due` returns prose, and the
+    hub uses only `is None`. Matching its wording would have added a seventh row
+    to the producer/parser table below, inside the commit fixing a bug caused by
+    a signal forming its own opinion. `trigger: command` is detected with
+    `parse_trigger`, not by reading the reason.
+
+    Red left this column deliberately: "how badly overdue" is not a fact
+    `why_not_due` knows, and reconstructing it means reinventing the threshold
+    that was just removed. Dim therefore means *cannot be owed a run*, which
+    puts `command` and a malformed trigger in the same cell — the hub's
+    broken-routine blind spot (`D-10`), not something this colour can fix.
+
 ## Two rules that generated most of the above
 
 **Use a model for judgement under ambiguity; use code for anything with a right
@@ -657,8 +689,10 @@ because patching config misses anything that read the value at import.
   `reflection` at 12:31 on 28-07 logged `ok (review)` because the model's own
   summary said a root it was told to read was outside its jail — which is
   exactly the scar it was built for, working. And the hub's freshness column
-  turns out to apply v0.4's daily thresholds to weekly and command routines
-  alike; see `B-0.9.1-04`.
+  turned out to apply v0.4's daily thresholds to weekly and command routines
+  alike (`B-0.9.1-04`) — **fixed in v0.9.2**, where the column stopped having
+  an opinion of its own and started rendering `why_not_due()`; see standing
+  decision 16.
 
   What is *not* covered: the outputs still want reading rather than trusting.
   A tick that fires and a routine that does the right thing are two claims, and

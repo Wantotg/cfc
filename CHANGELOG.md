@@ -23,6 +23,77 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-28 — The routine column stops having an opinion
+`B-0.9.1-04`, and the last of v0.9.2's three claims. `hub._freshness` renders
+`schedule.why_not_due()` instead of deciding for itself — standing decision 16,
+applied one panel up the same screen from the connection light. Cas's call
+between the entry's two options: **the colour means *is this routine due*, not
+*how long ago it ran*.**
+
+**The old column was an independent opinion about a question the scheduler
+already answers, and it was therefore free to disagree with it. It did.**
+Measured on the live routine folder before and after, and the report understated
+the damage — five of six rows were saying something untrue, not one:
+
+| routine | trigger | was | now |
+|---|---|---|---|
+| medium-term-memory | `weekly 0330` | orange | green — absorbed its week on schedule |
+| note-reader, note-writer | `command` | orange | dim — can never be owed a run |
+| long-term-memory, reflection | `command` | green | dim — right answer, no reason |
+| short-term-memory | `0300` | green | green — the one that was actually right |
+
+**What the same function buys that no threshold could:** if the Task Scheduler
+tick stops firing, every scheduled routine goes orange and stays orange.
+Hours-since-last-run is only ever a proxy for that, and a bad one.
+
+**The failure mode inverts, which is the argument for the design.** The column
+can now say green when `schedule.py` is wrong — but the function deciding the
+colour *is* the function deciding whether the run happens, so a wrong green is a
+routine that genuinely isn't running and a run log that stops growing. The light
+and the behaviour fail together and cannot disagree. The old column's failure
+was the silent one: two opinions, one of them decorative.
+
+**Branch order is the whole of it**, and the first branch is the load-bearing
+one: an unparseable timestamp is decided *before* anything consults
+`why_not_due`, because that function refuses to read a log line it can't parse
+and the refusal reads as *not due* — so a naive mapping paints a broken log
+green. Decision 16's "green over a dead server", one row up.
+
+Red left the column: "how badly overdue" is not a fact `why_not_due` knows.
+`failed` is still red in **Status**. Dim now means *cannot be owed a run*, which
+puts `trigger: command` and a *malformed* trigger in the same cell — noted
+against `D-10`, the hub's broken-routine blind spot, rather than papered over.
+
+**The legend line** (Cas's call): one dim line under the table, printed **only
+when a row is orange** — `orange: due, waiting for the next scheduled tick`.
+The connection light gets away with a bare colour because it prints dot *plus*
+sentence; this column has no content half, and a legend that is always there is
+furniture you stop reading.
+
+**Tests.** `tests/test_hub.py`'s four threshold assertions were statements about
+a rule that no longer exists and are gone; the two about the *label* survive
+unchanged, because they were never about the rule. What replaces them is one
+assertion per branch — and two that actually discriminate, since most of the
+others pass under the old rule too (they cover cases it never reached): a weekly
+routine that absorbed its week reads green where v0.4's thresholds said red, and
+three days overdue is orange rather than red. Plus one for the panel: a routine
+whose `why_not_due` explodes costs its own row and not the table, degrading to a
+dim `?`. The seam patched is `schedule.last_run`, not `routines.last_run` —
+`schedule` binds it at import, so patching the other one would have left every
+due assertion silently reading the real run logs.
+
+`tests/golden.py` drives `run_session`, not the picker: no re-record, and its
+diff is unchanged.
+
+`README.md` stated the old rule out loud and is rewritten. `ROADMAP.md`'s v0.4
+entry stays exactly as written — it promised the thresholds and the thresholds
+are what shipped; documentation changes apply going forward only.
+
+- Files: hub.py, tests/test_hub.py, README.md, HANDOVER.md, BUGS.md,
+  legacy/BUGS.md, CHANGELOG.md, TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-28 — `config.example.py` becomes a form again
 `B-0.9.1-02` and `D-0.9.1-02` in one pass over both config files, as both
 entries asked. The second of v0.9.2's three claims: the file a stranger opens
@@ -73,7 +144,7 @@ populated, and its `TOOLS_MODELS` note described three ids for a list of eight.
   BACKLOG.md, legacy/BUGS.md, legacy/BACKLOG.md, CHANGELOG.md,
   TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: cba36e7
 
 ## 2026-07-28 — The suite stops writing to the evidence file
 `D-08`, and the first of v0.9.2's three claims. `~/.cfc/errors.log` is the whole
