@@ -781,4 +781,4 @@ layer is `import_wiki` → `chunk` → `backfill` → `search` → `recall`.
 
 ## License
 
-Personal project. No license specified.
+AGPL-3.0 licensed. See LICENSE.md
