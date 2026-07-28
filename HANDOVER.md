@@ -23,7 +23,44 @@ most of what is summarised here. Go there when a one-liner below isn't enough.
 | `BUGS.md` | broken and known |
 | `legacy/` | the closed entries of both, frozen whole. **A closed entry moves here and leaves no stub** — see below |
 | `ROADMAP.md` | Cas's. Propose, don't edit. `ROADMAP_PRIVATE.md` (gitignored) holds the forward plan |
+| `TRACKER.md` | gitignored. One line per open issue, assigned to a version — an **index** over the four above, never a description. See below |
 | `CLAUDE.md` | who you're working with and the repo rules |
+
+**`TRACKER.md` is an index, and the rule that keeps it one is that a row may
+not explain anything** (added 2026-07-28). Every row carries an id, one line,
+the file its body lives in, the version it's assigned to and a state. The
+problem it was built for is arithmetic rather than aesthetic: an issue written
+up in `BUGS.md`, again in a roadmap version and again in a session brief has to
+be *maintained* in three places, so one change costs three edits and the three
+drift — and this project's whole recurring hazard is two copies of a fact
+disagreeing quietly. The tracker holds the one thing none of those files hold,
+which is *what is assigned to where*, and points at the rest.
+
+Two consequences worth knowing before you edit it. **Ids come from the playtest
+report and are never reallocated** — `B-0.9.1-01` is finding 01 of the v0.9.1
+pass, forever, so a report, a tracker row, a `BUGS.md` entry and a changelog
+line can all name the same thing without anyone reconciling them. And **closed
+rows stay, including *nothing owed***, with the reason in the row: that is the
+only durable record of a finding that was looked at and ruled out, and without
+it the same note comes back next playtest looking new. A session transcript is
+not a record.
+
+The report it consumes is `<vault>/00 inbox`, one file per playtest, from the
+template in the vault. What that template is *for* is in `DEBUG CLAUDE.md`.
+
+**Documentation changes apply going forward only** (decided 2026-07-28). A
+version note, a changelog entry and a scar below are records of what was true
+when they were written. Restyling old ones to a convention invented afterwards
+destroys the one property they have — `ROADMAP.md`'s entries from v0.1 to v0.9.1
+were each written by Cas from use at the time, and they stay as written even
+though that file changes shape at v1.0.
+
+This covers the reasoning, not just the prose, and that is the point: *"we used
+to do it the other way, and here is what it cost"* is the half most projects
+delete. It is also the half that is worth reading — this file is largely made of
+it. Applies to `CHANGELOG.md`, `ROADMAP.md`, `legacy/` and the Scars section
+alike. A correction to something factually *wrong* is a different act and is
+always allowed; say which one you are doing.
 
 **The archive rule, changed 2026-07-27.** A closed `BUGS.md`/`BACKLOG.md` entry
 used to leave a struck-through stub behind with its fix date. It doesn't any

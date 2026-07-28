@@ -24,16 +24,15 @@ claude_export/
 # Personal working notes — has names, filepaths, private context.
 # CLAUDE.example.md is the sanitised version that ships.
 CLAUDE.md
-# Split into one per kind of session (2026-07-26), with debug added 2026-07-27.
-# They start as identical copies of the old file and are expected to diverge;
-# LEGACY_CLAUDE.md is the common ancestor, kept until they have grown apart
-# enough to be worth reading on their own. Public versions come later, if the
-# split earns them — CLAUDE.example.md is still the one that ships.
+# CLAUDE.md has been split to specialise, the effectiveness of this will be
+# monitored, the old version has been renamed and stored.
 LEGACY_CLAUDE.md
+BRAINSTORM CLAUDE.md
 CODER CLAUDE.md
 DESIGNER CLAUDE.md
 DRAFT CLAUDE.md
 DEBUG CLAUDE.md
+MANAGER CLAUDE.md
 
 # golden harness scratch
 tests/_fixture.db
@@ -46,3 +45,7 @@ ROADMAP_PRIVATE.md
 
 # grouped, ordered ideas beyond v1.0, no version numbers yet — see ROADMAP.md
 ROADMAP_BEYOND.md
+
+# one line per open issue, assigned to a version — an index over BUGS.md,
+# BACKLOG.md and the roadmaps, not a fourth place to describe anything
+TRACKER.md

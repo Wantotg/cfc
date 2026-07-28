@@ -24,7 +24,8 @@ This file is how you use cooking for cats.
   The first two are singular; traits stack, so a voice is composed of pieces
 - **Semantic memory** — a distilled knowledge wiki, embedded locally. Ask it a
   question and get an answer cited by page, or pull raw excerpts into the live
-  context. New chats index themselves as they happen
+  context. Chats are embedded as they happen too, into the same index — but
+  recall reads the wiki only, until searching both lands
 - **File tools behind a gate** — the model can request `list_dir` / `read_file` /
   `grep`, and can `write_file` into exactly one narrow root that cannot reach
   your code

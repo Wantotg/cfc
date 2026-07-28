@@ -23,6 +23,76 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-28 — One place to describe a finding, one line everywhere else
+A documentation-workflow change, from the v0.9.1 triage. Cas's problem, in his
+words: *"a bug that has descriptions in three different documents means every
+change has to be documented at least thrice."*
+
+**Two new artefacts.** `TRACKER.md` (gitignored) is one line per open issue —
+id, one line, the file its body lives in, the version it's assigned to, a state.
+It is an **index**, and the rule that keeps it one is that a row may not explain
+anything. And a **playtest report template** in the vault, which is where the
+ids are allocated: a finding numbered `0.9.1-03` during the pass is
+`B-0.9.1-03` in `BUGS.md`, in the tracker, and in this file when it ships.
+Nothing gets re-described in order to be referred to.
+
+The template also splits three things that were one list before: **findings**
+(what broke), **wants** (works, would rather it were different — these never
+reach `BUGS.md`), and **questions** (cost an answer, not a commit). Plus a
+coverage checklist, so what a pass *didn't* touch is written down for once —
+`HANDOVER.md`'s open threads exist because "one clean pass" read as "tested".
+
+Three findings from the pass are recorded rather than fixed, per the debug
+session's rule: `B-0.9.1-01` (denying a tool call renders as `error: user
+denied` — the string is right for the model, which is its real reader, so the
+fix is at the render), `B-0.9.1-02` (`config.example.py` still documents twelve
+retired `:` commands, found by reading around the first one), and two backlog
+entries on the connection light's colour pairing and the config files' length.
+
+**The session split goes from four files to six**, both new ones taken out of
+sessions that were already happening inside the wrong file. **Brainstorm** left
+`DESIGNER CLAUDE.md`, which Cas had been using for it — a design file asks "what
+is the shape", and asked too early that question turns a passing thought into a
+specification with nobody having decided anything, which is the exact failure
+the split exists to prevent, happening inside the split. **Manage** left
+`DEBUG CLAUDE.md`, which had spent half of 2026-07-28 on documentation
+architecture; the two halves kept wanting different things from the same file.
+
+Reading the four before adding two turned up the reason the boundary hadn't been
+working: **`DESIGNER` and `CODER` had never diverged at all.** Both were still
+`LEGACY_CLAUDE.md` plus the debug paragraph, with no section describing their own
+session — so brainstorm-vs-design wasn't split across two files, it was one file
+with two names. Both now say what their session is for, and `DEBUG` states the
+explaining half as a deliverable rather than leaving it as a tone, which is what
+Cas said made him pick that file in the first place.
+
+The five shared sections are now **named** rather than implied, in every file
+and in the pointer, with the rule that they change in all six or in none.
+Nothing checks that, which is why it's `D-05` in the tracker along with two
+neighbours the same read turned up: the release order exists only in gitignored
+files, so nothing public says how a version ships, and `CLAUDE.example.md` still
+describes the single-file arrangement.
+
+**Documentation changes apply going forward only**, now written into
+`HANDOVER.md` as a rule rather than living inside one v1.0 note. Old entries are
+records of what was true when they were written; restyling them to a convention
+invented afterwards destroys the only property they have. This deliberately
+covers the *reasoning* and not just the prose — "we used to do it the other way,
+and here is what it cost" is the half most projects delete, and it is the half
+worth reading.
+
+`README.md`'s memory bullet was wrong in the reading rather than in the facts:
+*"new chats index themselves as they happen"* is true, and chats are embedded
+into an index `recall.py` deliberately doesn't read (`provider='wiki'`). It now
+says both halves. `.gitignore` stopped carrying changelog-shaped prose about the
+`CLAUDE.md` split, which is what this file is for.
+- Files: README.md, BUGS.md, BACKLOG.md, HANDOVER.md, CHANGELOG.md, .gitignore,
+  TRACKER.md (gitignored), ROADMAP_PRIVATE.md / ROADMAP_BEYOND.md (gitignored),
+  CLAUDE.md and BRAINSTORM/CODER/DESIGNER/DRAFT/DEBUG/MANAGER CLAUDE.md (all
+  gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-27 — The playtest moves inside the release order
 A process change, not a code change, and it is here because it changes what a
 tag means. **The playtest now happens between the push and the tag** rather than
@@ -59,7 +129,7 @@ table of.
 - Files: .gitignore, CLAUDE.md, CODER/DESIGNER/DRAFT/DEBUG CLAUDE.md (all
   gitignored), ROADMAP_BEYOND.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: cbe6d68
 
 ## 2026-07-27 — v0.9.1 ships: the roadmap body moves over
 Per the release order: the v0.9.1 body moves from `ROADMAP_PRIVATE.md` to
@@ -270,7 +340,7 @@ and the two live defects that were on no list.
 - Files: preflight.py, BUGS.md, legacy/BUGS.md, HANDOVER.md, ROADMAP.md,
   ROADMAP_PRIVATE.md
 - Status: shipped
-- Commit: pending
+- Commit: fd44d95
 
 ## 2026-07-27 — Hub help, generated rather than written
 `h` at the hub prints what can be typed there. The point of the entry is that
