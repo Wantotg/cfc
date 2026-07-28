@@ -114,26 +114,6 @@ Leaves open, and worth deciding when it's built: what `/clear` does with a note
 no routine ever read, and whether "clear" moves or deletes (it should move —
 `LOSER_DIR` set the precedent that a discarded thing keeps its body).
 
-## D-03 · Obsidian's template syntax and cfc's placeholders are both "{{ }}". 0.8-adjacent, 24-07-2026
-**Found:** 2026-07-24, adding the cadence placeholders.
-Description: `runner.PLACEHOLDERS` substitutes `{{date}}`, `{{dates}}`,
-`{{week}}` in a routine prompt. Obsidian's own templates use the same braces —
-this vault's `note template.md` has `{{date:YYYY-MM-DD}}` in it.
-Not live: matching is exact, so `{{date:…}}` is untouched, and the prompts point
-at the template by path rather than quoting it. But a bare `{{date}}` pasted
-into a prompt from an Obsidian template *would* be substituted, and the model
-would then write today's date into a new note where the placeholder belongs.
-
-**Cas's call (2026-07-26): change the vault, not the code.** The Obsidian
-properties are there to be inspected, not templated, so converting them to plain
-text is a small one-time edit of a handful of markdown files and it removes the
-collision at the source. Cheaper than an escape syntax nobody would remember,
-and it belongs to the vault repo rather than this one — cfc ships the mechanism,
-the vault ships the words. **cfc's side of this is nothing**, which is the
-point: leave `PLACEHOLDERS` exact-matching as it is. The entry stays open until
-the vault edit has actually happened, because until then the trap is live —
-but there is no code owed, and 0.9 owes it nothing.
-
 ## W-05a · "/file" takes a number, not a title. 0.7 leftover, 24-07-2026
 **Found:** Cas's 0.6.2 testing pass.
 Description: `/outbox` now shows each proposal's frontmatter title beside its
@@ -231,3 +211,122 @@ first clause is a date or a version, that is the tell.
 for retired `:` commands. Two passes over one file is one pass more than the
 change deserves, and the second pass would be re-reading prose the first pass
 already deleted.
+
+## D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation. 0.9.1, 28-07-2026
+
+**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
+
+```
+trigger (command, or HHMM) [command]: hhmm
+on failure (retry/skip) [retry]: retry
+model (blank = routine default):
+Not saved: trigger 'hhmm' is not 'command', HHMM or 'weekly HHMM'
+You: HHMM
+
+expected: to stay in routine creation and correct my mistake, instead of
+          sending a message
+guess:    user error, but we could make it more friendly and not leave
+          routine creation.
+```
+
+**Not user error.** `commands.create_routine` is half reject-as-you-type and
+half all-or-nothing, and the trigger is in the second half. Read roots go
+through `_ask_paths`, which validates each line and re-prompts — its docstring
+says *"exactly the shape a reject-and-re-prompt loop wants"* — and the task
+prompt is checked against the directory listing inline. `trigger` and
+`on_failure` are taken raw and reach validation only at `save_routine` →
+`Routine.validate()`, six answers later, where a `RoutineError` prints
+`Not saved:` and returns. Name, prompt, roots and model go with it.
+
+**The half that actually bit is the exit, not the validation.** The flow
+returns to the session REPL without saying it has, so the next line typed is a
+chat message — standing decision 13's failure shape (unrecognised input is not
+an error, it is an API call and a confidently wrong answer) reached through an
+abandoned prompt flow rather than through a missing verb. `create_routine`
+announces only one way out: *"Ctrl-C at any point abandons it."*
+
+**Three holes, one shape**, and a fix that closes one should close all three:
+
+- `on_failure` — anything but `retry`/`skip` discards the same six answers.
+- An id that already exists — `save_routine` raises `<id>.md already exists` at
+  the same late point, after every question has been answered.
+- Cancelling the **model** prompt is read as "use the routine default": every
+  other `None` in `create_routine` returns, but `select_model` returns `None`
+  both for *cancelled* and is then treated as *no pin*, so a Ctrl-C there
+  silently saves a routine rather than abandoning one.
+
+**Where a fix goes.** The per-field loop already exists in `_ask_paths`;
+`Routine.validate()` is non-raising and exhaustive by design (*"the creation
+flow wants to show all the problems at once"*), so the pieces are in place and
+the change is a re-prompt around the two raw fields rather than new
+machinery. Worth deciding at the same time: whether the prompt's `HHMM` reads
+as a placeholder — it was typed back literally here, and `0300` in the example
+would cost nothing. **Do not** move validation *out* of `save_routine`; that is
+what makes an invalid routine unsaveable, which is the invariant standing
+decision 8 rests on. Add the early check, keep the late one.
+
+**Why here and not `BUGS.md`:** nothing claims the flow re-prompts, and the
+routine that was eventually saved is correct. It is a form that discards itself,
+which is debt.
+
+## D-08 · The test suite writes to the live `~/.cfc/errors.log`. 0.9.1, 28-07-2026
+
+**Found:** 2026-07-28, reading the error log to check `B-01`'s absence-watch —
+not from use. Four entries were already in it that no provider ever sent:
+
+```
+2026-07-27 21:07:10  error  session 1 · model shanhaig · nothing interrupted this session · chat
+    no such model: shanhaig
+2026-07-27 21:07:10  error  session 2 · model good-model · … upstream 503
+2026-07-27 21:07:10  error  session 3 · model broken-but-listed · … no such model
+2026-07-27 21:07:10  error  session 4 · model custom-x · … upstream 500
+```
+
+**Cause:** `tests/test_model_revert.py` drives the real `run_session` with a
+stubbed stream that raises `httpx.HTTPError`, which reaches `main.py`'s handler
+and `errorlog.log_error`. `errorlog.LOG_PATH` is a module constant
+(`~/.cfc/errors.log`) and that test never redirects it.
+
+**Why it is worse than clutter.** That file is the whole of `B-01`'s evidence,
+and one of that entry's three closing routes is **absence across the 0.9 → 1.0
+window**. `errorlog.py`'s header is explicit that *nothing parses this file* —
+it is read by a human, deliberately, so as not to create a seventh
+producer/parser pair. A human reading four fabricated `session 1 · model
+shanhaig` lines cold has no way to tell them from the thing being watched for,
+and they are dated inside the watch window. It is the same class as the scar
+where a test guard that asserted *after* an `unlink()` deleted the real
+database, and as `D-01`, where the golden baseline pins the live vault outbox:
+the suite reaching live state.
+
+**The fix is one line and the pattern is already in the next file over.**
+`tests/test_private.py` redirects `errorlog.LOG_PATH` to a temp path and then
+asserts on it — `assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the
+real log"`. `test_model_revert.py` wants the same, and while in there it is
+worth checking `test_agent.py`, which also drives error paths. The four
+existing lines can be deleted by hand; say so in the commit, because *editing
+the evidence file* is exactly the kind of thing the next reader deserves to
+find written down rather than infer.
+
+## D-09 · The `reflection` routine cannot read what its prompt reads. 0.9.1, 28-07-2026
+
+**Found:** 2026-07-28, reading the run logs to confirm the report's *"routines
+— scheduled, on a real tick"* tick. Its 12:31 run logged `ok (review)`:
+
+> All 12 atomic notes written. **Processed 3 source files** from
+> `/06 metadata/reflection/` (the only readable root; the inbox at
+> `/00 inbox/notes` was outside my allowed roots and ina…
+
+**Vault, not code.** `reflection.md` borrows `note writer.md` as its prompt —
+the prompt whose job is to read `00 inbox/notes` and write atomic notes — while
+its own `read_roots` are `06 metadata/reflection` and `99 outbox/journal`. The
+routine did useful work on the roots it had and correctly reported that it
+could not reach the one its instructions name. Fix is a line in the routine
+file; cfc owes nothing, exactly like `D-03` (closed the same day, in
+[`legacy/BACKLOG.md`](legacy/BACKLOG.md)).
+
+**Two things worth keeping from it anyway.** This is the first time the
+`review` flag has fired in the wild, on precisely the case the scar was written
+for — a run whose loop completed while the model's own words said it could not
+do the task — so the second, orthogonal signal works as specified. And the
+routine in question is the one Cas built during this playtest, immediately
+after `D-0.9.1-03` made him retype the entire creation from scratch.

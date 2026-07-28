@@ -23,6 +23,84 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-28 — Five findings get a place, and the scheduler stops being a claim
+The v0.9.1 **post-tag** playtest, triaged. Nothing fixed here, per the debug
+session's rule: the fix belongs to a build session working from the written
+entry, and ten findings fixed in passing leave no record of why nine of them
+were ordered the way they were. First pass to use the report template from
+`fba699c`, and the template earned itself twice — once through the coverage
+checklist and once through the wants/questions split.
+
+**Two of the three reported findings are the same shape, and it is the shape
+this project keeps producing: a signal that was correct when it was written.**
+
+`B-0.9.1-03` — the connection light's advice, seen at the hub. The string lives
+once in `ui.CONNECTION_STYLE`, which is right, and its own comment states the
+rule it is written to: *say what to do, not what is wrong*. What it cannot know
+is **where** it is being rendered. Two of its three call sites are the hub,
+where `pick_session` takes `n`/`p`/`h`/`q` and a chat id and nothing else — so
+the first screen after launch names a command that screen refuses. Nothing
+drifted and the round-trip test is doing its job; the mapping is simply blind
+to context. Same family as `B-0.9.1-01`, and the two go in one pass.
+
+`B-0.9.1-04` — the hub's routine freshness. Green under 24h, orange to 48h, red
+beyond is the **v0.4 spec of 2026-07-21**, written when a routine was daily or
+on command. `trigger: weekly HHMM` landed three days later in `f58d1af` and
+nothing revisited the column, so a weekly job that absorbed its week on schedule
+shows red for five days in seven. It is wider than the report: of six routines
+here, four are `command` and can never be overdue, and they redden too. The real
+fault is that the column **forms an opinion** — `schedule.why_not_due()` already
+answers "is this due", including weekly absorption and the never-run case, and
+`_routine_rows` has the `Routine` in hand while passing `_freshness` a bare
+timestamp. That is standing decision 16 (the connection light renders
+`connection_state()` and never decides for itself) not applied to the row above
+it, and the reason it survived is the direction: it cries wolf rather than
+reassuring, and nobody double-checks a gloomy light. Cas's call to put it in
+`BUGS.md` knowing that gates v1.0.
+
+`D-0.9.1-03` — `/routine new` is half reject-as-you-type and half
+all-or-nothing. Read roots re-prompt per line; `trigger` and `on_failure` reach
+validation only at `save_routine`, six answers later, where the whole creation
+is discarded. The half that actually bit is the exit: the flow returns to the
+REPL without saying so, so the next line typed is a chat message — standing
+decision 13's failure shape reached through an abandoned prompt rather than a
+missing verb. Same hole in `on_failure`, in an id that already exists, and in
+the model prompt, where a cancel is read as "use the default".
+
+**Two more came from reading around the report, and neither was in it.**
+`D-08`: `tests/test_model_revert.py` drives the real `run_session` and reaches
+`errorlog.log_error` unpatched, so four fabricated provider errors are in the
+live `~/.cfc/errors.log`, dated inside `B-01`'s absence-watch window. That file
+is the whole of `B-01`'s evidence, its header says *nothing parses this file* on
+purpose, and the reader is therefore a human with no way to tell the fixtures
+from the thing being watched for. `tests/test_private.py` redirects `LOG_PATH`
+to a temp file and asserts *"refusing to touch the real log"*; the fix is that
+line, one file over. `D-09`: the `reflection` routine borrows `note writer.md`
+as its prompt and lacks the inbox root that prompt reads — vault, no code owed.
+
+**`HANDOVER.md`'s scheduled-run thread closes on evidence rather than on a
+tick in a report.** Both runs are in `~/.cfc/schedule.log` under a `run-due
+tick` header, which is what makes them unattended: `short-term-memory`
+(`trigger: 0300`) at 05:45 on 28-07 — the machine off at 03:00, so
+`why_not_due`'s "runs once, late, today" branch taken for real — and
+`medium-term-memory` (`weekly 0330`) at 03:30 on 27-07. v0.5's scheduler claim
+and v0.7's cadence are both driven now. Reading those logs is also where
+`B-0.9.1-04` came from, and where the **`review` flag was seen firing in the
+wild for the first time**: `reflection` logged `ok (review)` because the model's
+own summary said a root it was told to read was outside its jail, which is
+exactly the scar it was built for. What stays open is that a tick firing and a
+routine doing the right thing are two claims, and only the first is settled.
+
+Two entries close on Cas's own report. `D-03` (Obsidian's `{{ }}` colliding with
+`runner.PLACEHOLDERS`) closed by the vault edit it always asked for, moved whole
+to `legacy/BACKLOG.md`; `PLACEHOLDERS` is unchanged, which was the point.
+`W-04`, the public-repo decision, is decided: **AGPL-3.0, and the repo goes
+public with the v1.0 tag.**
+- Files: BUGS.md, BACKLOG.md, legacy/BACKLOG.md, HANDOVER.md, CHANGELOG.md,
+  TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-28 — One place to describe a finding, one line everywhere else
 A documentation-workflow change, from the v0.9.1 triage. Cas's problem, in his
 words: *"a bug that has descriptions in three different documents means every
@@ -91,7 +169,7 @@ says both halves. `.gitignore` stopped carrying changelog-shaped prose about the
   CLAUDE.md and BRAINSTORM/CODER/DESIGNER/DRAFT/DEBUG/MANAGER CLAUDE.md (all
   gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: fba699c
 
 ## 2026-07-27 — The playtest moves inside the release order
 A process change, not a code change, and it is here because it changes what a

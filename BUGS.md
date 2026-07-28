@@ -245,3 +245,114 @@ persisted `[:remember …]` marker keeps its colon. It is a storage format, not
 prose, and renaming it stops every existing marker row from parsing.
 
 **Not a v0.9.1 blocker.** Nothing in that entry concerns config.
+
+---
+
+## B-0.9.1-03 · The connection light tells the hub to type a command the hub won't take
+
+**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
+
+```
+saw:      ● LM Studio is not running — /connect embedding, or start it yourself
+expected: ● LM Studio is not running — /connect embedding inside a chat, or
+          start it yourself   (OR the reverse, that the command worked)
+```
+
+Confirmed with Cas the same session: he was **at the hub**, not in a chat.
+
+**Diagnosis: one string with three renderings, and it is right in one of
+them.** The text lives once, in `ui.CONNECTION_STYLE`, whose own comment states
+the rule it is written to — *"the wording says what to **do**, not what is
+wrong"*. It is rendered by `hub.print_connection` (the light above the picker),
+by `hub.print_hub_help`'s legend, and by `commands.connect_status` (`/connect`
+inside a session). Only the third is somewhere `/connect embedding` can be
+typed: `hub.pick_session` accepts `n`/`p`/`h`/`q` and a listed chat id, and
+answers anything else with *"Type a chat ID, or one of…"*.
+
+So the one screen whose job is to tell you what to do next names a command that
+screen cannot accept, and it does so in the two renderings that are *most*
+likely to be the first thing seen after launch.
+
+**This is `B-0.9.1-01`'s shape, one level out** — a single string correct for
+one audience and wrong for another, which is why the two belong in the same
+pass. It is not the recurring producer/parser hazard: nothing has drifted, and
+`tests/test_connection.py`'s round-trip is doing its job. The mapping is simply
+blind to *where* it is rendered, because it never had to know.
+
+**Where a fix goes, and the one thing it must not do.** Do not fork the table
+per caller — that is three literals a refactor away from disagreeing, which is
+the reason the mapping is centralised in the first place. Two shapes survive
+that:
+
+- The advice clause names its context (`/connect embedding, inside a chat`),
+  which is true everywhere including inside a chat, at the cost of a few words
+  where they are not needed.
+- Or `CONNECTION_STYLE` splits *what is wrong* from *what to do*, and each
+  caller renders the second half in its own words. More faithful, more code,
+  and it widens a producer/parser pair across the `ui.py` boundary — see
+  `D-0.9.1-01`, which is already open against the same table and should be
+  decided with this one.
+
+**Not a v0.9.1 blocker** — the tag was already cut when this was found, and
+that version's entry claims nothing about where the light is legible.
+
+---
+
+## B-0.9.1-04 · The routines light applies a daily rule to every trigger kind
+
+**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
+
+```
+where:    routines overview
+saw:      orange light because the weekly schedule happened >24h ago
+expected: green light, last routine happened and there were no issue
+guess:    working as designed, not as intended.
+```
+
+**The guess is right, and it is datable.** `hub._freshness` colours green under
+24h, orange to 48h, red past that — the v0.4 spec of 2026-07-21, written when a
+routine was daily or on command and nothing else existed. **`trigger: weekly
+HHMM` landed 2026-07-24** (`f58d1af`) and nothing revisited the light. The
+column has been wrong about weekly routines since the day weeklies shipped.
+
+**It is wider than the case that was reported.** Of the six routines on Cas's
+machine, one is `0300`, one is `weekly 0330`, and **four are `command`**. A
+command routine cannot be overdue — it runs when a human asks — yet it goes
+orange after a day and red after two exactly like a nightly job that has
+stopped firing. So the rule is correct for one routine in six, and the
+reported weekly case is the *quietest* of the wrong ones: `medium term memory`
+absorbed the week of 20–26 July on schedule and will show red for five days out
+of every seven.
+
+**What is actually wrong is that the light forms an opinion.** Standing
+decision 16 says the connection light renders `preflight.connection_state()`
+and never decides for itself, because a light that decides can disagree with
+the thing it describes. The routine column is the same screen doing the
+opposite: `schedule.why_not_due()` already answers "is this routine due",
+including weekly absorption, the never-run case and the retry rules — and
+`hub._routine_rows` has the `Routine` in hand and passes `_freshness` a bare
+timestamp. The failure direction is the friendly one (red over a healthy
+routine, not green over a dead server), which is why it survived: it cries
+wolf rather than reassuring, and nobody checks a light that is merely gloomy.
+
+**One thing must be decided before it is fixed, not during.** *Does the colour
+mean "how long ago" or "is this overdue"?* Today it means the first and is read
+as the second, and every plausible fix picks one:
+
+- Render `schedule.why_not_due()` the way the connection light renders
+  `connection_state()`. Most faithful to decision 16, and it needs an answer
+  for the window where a routine is legitimately due-and-not-yet-run — a `0300`
+  job is "overdue" from 03:00 until the tick collects it.
+- Or keep the staleness reading and scale the thresholds to the trigger — 24/48h
+  daily, a week and a fortnight for weekly, **no staleness colour at all for
+  `command`**, which is the case with no honest threshold.
+
+The second is smaller and does not import `schedule` into `hub`. The first is
+the one this codebase's own rule points at. Cheap either way; the cost of
+guessing is a third reading of the same column.
+
+**Not a v0.9.1 blocker, and it does not falsify v0.4 either** — that entry
+promises *"green <24h, orange 24–48h, red >48h"* and that is precisely what the
+code does. It is in this file rather than `BACKLOG.md` because the signal is
+wrong about the thing it signals, which is Cas's call (2026-07-28) knowing it
+gates v1.0.

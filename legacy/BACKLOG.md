@@ -22,6 +22,39 @@ not the file.
 
 # Closed since the split
 
+## ~~D-03 · Obsidian's template syntax and cfc's placeholders are both "{{ }}"~~ — CLOSED (vault edit, 2026-07-28)
+
+**Closed 2026-07-28**, reported done in Cas's post-tag v0.9.1 playtest: *"done,
+removed all tags from both vaults."* Closed by the vault, not by a commit —
+this entry always said cfc's side of it was nothing, and it stayed open only
+because the trap was live until the edit happened. `PLACEHOLDERS` is unchanged
+and still exact-matching, which is the outcome the entry asked for. The entry
+as it stood:
+
+---
+
+## D-03 · Obsidian's template syntax and cfc's placeholders are both "{{ }}". 0.8-adjacent, 24-07-2026
+**Found:** 2026-07-24, adding the cadence placeholders.
+Description: `runner.PLACEHOLDERS` substitutes `{{date}}`, `{{dates}}`,
+`{{week}}` in a routine prompt. Obsidian's own templates use the same braces —
+this vault's `note template.md` has `{{date:YYYY-MM-DD}}` in it.
+Not live: matching is exact, so `{{date:…}}` is untouched, and the prompts point
+at the template by path rather than quoting it. But a bare `{{date}}` pasted
+into a prompt from an Obsidian template *would* be substituted, and the model
+would then write today's date into a new note where the placeholder belongs.
+
+**Cas's call (2026-07-26): change the vault, not the code.** The Obsidian
+properties are there to be inspected, not templated, so converting them to plain
+text is a small one-time edit of a handful of markdown files and it removes the
+collision at the source. Cheaper than an escape syntax nobody would remember,
+and it belongs to the vault repo rather than this one — cfc ships the mechanism,
+the vault ships the words. **cfc's side of this is nothing**, which is the
+point: leave `PLACEHOLDERS` exact-matching as it is. The entry stays open until
+the vault edit has actually happened, because until then the trap is live —
+but there is no code owed, and 0.9 owes it nothing.
+
+---
+
 ## ~~Nothing validates that a model in `MODELS` can be chatted with~~ — FIXED (v0.9, 2026-07-27)
 
 **Closed 2026-07-27, in the v0.9.1 bookkeeping.** Both of Cas's calls shipped in

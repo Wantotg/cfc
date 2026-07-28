@@ -633,9 +633,27 @@ because patching config misses anything that read the value at import.
   arms only for ids it doesn't recognise, so the case it was built for is the
   case it misses. See `BACKLOG.md`. Sustained use is still the open half of this
   thread.
-- **The first *scheduled* routine run still hasn't happened** (v0.7's ST/MT jobs
-  are waiting on a real tick). Read the first scheduled outputs rather than
-  trusting the prompts.
+- **The first *scheduled* routine runs have happened, and the thread closes on
+  evidence rather than on a report** (2026-07-28). Both are in
+  `~/.cfc/schedule.log` under a `run-due tick` header, which is what makes them
+  unattended rather than someone typing `/routine`: `short-term-memory`
+  (`trigger: 0300`) started at **05:45 on 28-07** — the machine having been off
+  at 03:00, so this is `schedule.why_not_due`'s "runs once, late, today" branch
+  taken for real — and `medium-term-memory` (`weekly 0330`) at **03:30 on
+  27-07**, absorbing the week of 20–26 July. v0.5's claim that the scheduler
+  works is now driven, and so is v0.7's cadence.
+
+  **Two things fell out of reading those logs, and neither was in the playtest
+  report.** The `review` flag fired in the wild for the first time —
+  `reflection` at 12:31 on 28-07 logged `ok (review)` because the model's own
+  summary said a root it was told to read was outside its jail — which is
+  exactly the scar it was built for, working. And the hub's freshness column
+  turns out to apply v0.4's daily thresholds to weekly and command routines
+  alike; see `B-0.9.1-04`.
+
+  What is *not* covered: the outputs still want reading rather than trusting.
+  A tick that fires and a routine that does the right thing are two claims, and
+  only the first one is settled.
 - **`preflight.py`'s fix paths are no longer an open thread — all three states
   were driven on 2026-07-27, two of them by Cas on the real machine.** Orange
   worked: `lms server start` fired for the first time since it was written and
