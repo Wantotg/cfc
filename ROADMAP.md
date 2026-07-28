@@ -799,8 +799,11 @@ whole. That leaves `BUGS.md` holding **one** entry between here and the v1.0
 gate — the one that can only close on absence, which is what made the error log
 worth a patch release rather than a wait.
 
->*(note-shaped hole for Cas)*
-
+>*(note-shaped hole for Cas): slight changes to the workflow, a tag means claims survived initial testing. Everything in Its Right Place.*
+```
+⎛⎝ ≽  >  ⩊   < ≼ ⎠⎞  "There are two colors in my head
+                         What, what was that you tried to say?"
+```
 ## v1.0 — Hardening, and a decision
 
 ---
