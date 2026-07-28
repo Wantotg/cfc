@@ -201,6 +201,15 @@ Settled. Argue with them only with a reason, and say that you are.
     to a command that takes arguments. The one word with no alias is `detach`,
     whose replacement `/remove #<n>` changes the argument's shape — that is the
     bar for letting a word go.
+    **Retiring a verb also means grepping `config.example.py`** (added v0.9.2).
+    It is the only shipped file that *instructs a human*, and it is not code, so
+    nothing checks it — it carried twelve retired `:` commands across three
+    releases (`B-0.9.1-02`). The failure is this decision's own: the reader
+    types what their config file told them, and an unrecognised verb is an API
+    call rather than an error. Write the **canonical** verb there, never the
+    alias: `models` is `ALIASES["models"] = "list models"`, so the form says
+    `/list models`, and writing `/models` would re-teach the retired word one
+    generation later. The alias table is the thing to check, not intuition.
 14. **A delete reaches the index that points at what was deleted.**
     `chunks`/`vec_chunks` have no foreign keys, so the cascade is in code: index
     rows first, vectors before chunks, a vector-delete failure raising rather than

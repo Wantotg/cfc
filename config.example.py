@@ -34,7 +34,7 @@ PROMPTS_DIR = "PLACEHOLDER"
 PERSONAS_DIR = "PLACEHOLDER"
 TRAITS_DIR = "PLACEHOLDER"
 
-# Models available on your plan (for the :models command)
+# Models available on your plan (for /list models)
 # Replace these with the actual model names from your nano-gpt dashboard
 MODELS = [
     "zai-org/glm-5.2:thinking",
@@ -43,7 +43,7 @@ MODELS = [
 ]
 
 # Models vetted for routines (unattended runs). The FIRST entry is the default
-# a scheduled --run-due uses when no model is passed; an on-command :routine on
+# a scheduled --run-due uses when no model is passed; an on-command /routine on
 # a model that isn't in this list nudges (y/n) before running. The code trusts
 # the list — it does NOT detect "thinking" models, because that judgement is
 # yours: some thinking models run routines fine, others stall on empty
@@ -54,7 +54,7 @@ ROUTINE_MODELS = [
 ]
 
 # Context window size in tokens for each model
-# Used by :tokens to show how full the context is
+# Used by /status to show how full the context is
 MODEL_LIMITS = {
     "zai-org/glm-5.2:thinking": 1000000,
     "deepseek/deepseek-v4-pro:thinking": 1000000,
@@ -66,22 +66,30 @@ MODEL_LIMITS = {
 # using the same key/base as chat. To self-host instead (e.g. bge-m3 on
 # LM Studio), point EMBED_BASE at that server's OpenAI-compatible /v1 and set
 # EMBED_MODEL to its model id; EMBED_KEY can be any non-empty string if the
-# local server ignores auth. From WSL to a Windows host, use the NAT gateway
-# IP (see `ip route show default`) or mirrored networking, not 127.0.0.1.
+# local server ignores auth.
+#
+# From WSL to a Windows host: mirrored networking, so plain localhost reaches
+# it. The NAT gateway IP (`ip route show default`) works only in NAT mode, and
+# a gateway IP left here after a switch to mirrored does not resolve at all —
+# it fails closed, with nothing on screen to say why. 127.0.0.1 is never right.
+#
+# EMBED_MODEL must be the server's *own* id for the model, which is not the
+# name you searched for: LM Studio serves bge-m3 as
+# "text-embedding-baai-bge-m3-568m". A wrong id here is a dead embedder.
 EMBED_BASE  = API_BASE
 EMBED_MODEL = "BAAI/bge-m3"
 EMBED_KEY   = API_KEY
 
-# Embed new chat messages into the memory index after each turn, so :recall can
+# Embed new chat messages into the memory index after each turn, so /recall can
 # reach recent chats. Cheap on a local embedder; on a paid API you may prefer
-# False and running :updatedb manually. A failed embed never breaks a chat turn.
+# False and running /update db manually. A failed embed never breaks a chat turn.
 AUTO_EMBED = True
 
 # The default database state for a PRIVATE chat (started with 'p' at the hub).
 # A private chat never writes anything down; this is the separate *read* axis —
-# whether :recall/:remember may reach the wiki inside one. Default False keeps a
-# private chat fully sealed (no memory in, nothing out); :database on turns it
-# on for that session. A normal chat always starts with the database on.
+# whether /recall and /remember may reach the wiki inside one. Default False
+# keeps a private chat fully sealed (no memory in, nothing out); /database on
+# turns it on for that session. A normal chat always starts with the database on.
 DATABASE_ACTIVE = False
 
 # Where the `lms` CLI lives, for launch.sh's preflight check (it starts the
@@ -90,7 +98,7 @@ DATABASE_ACTIVE = False
 # /mnt/c/Users/*/.lmstudio/bin/lms.exe from WSL. Only set this if that fails.
 # LMS_CLI = "/mnt/c/Users/you/.lmstudio/bin/lms.exe"
 
-# --- :attach ---------------------------------------------------------------
+# --- attachments (/add) ----------------------------------------------------
 # Files can only be attached from inside one of ATTACH_ROOTS. A path passes if
 # it's inside any of them. Paths are resolved before the check, so ../ and
 # symlinks can't escape. Some files are refused even inside a root regardless of
@@ -111,7 +119,7 @@ ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")
 
 # --- local file tools ------------------------------------------------------
 # Tools the model can request: list_dir, read_file, grep (read) and write_file
-# (write). Off by default — opt in per session with ":tools on".
+# (write). Off by default — opt in per session with /tools on.
 #
 # TOOLS_MODELS was verified against the nano-gpt subscription, not assumed:
 # these three emit OpenAI-style tool_calls. GLM 5.2 is the intended primary
@@ -141,10 +149,7 @@ WRITE_ROOTS = ()
 # A turn runs under TWO budgets and they do different jobs. The call count
 # bounds round trips; the character count bounds how large the request grows,
 # because every call re-sends the whole conversation with all its tool results
-# in it. Until v0.5 only the first existed, and it counted loop iterations
-# rather than calls — so a model asking for four reads per message spent one
-# of its eight, and a browsing turn could quietly build a 200k-token request
-# that the provider rejected with a 400 about max_tokens.
+# in it. Raising the call ceiling alone makes that strictly worse.
 TOOLS_MAX_CALLS_PER_TURN = 25         # tool calls, chat
 TOOLS_MAX_RESULT_CHARS = 30_000       # truncate one tool result
 TOOLS_MAX_TURN_RESULT_CHARS = 120_000  # all tool output in one turn (~30k tok)
@@ -155,9 +160,9 @@ TOOLS_MAX_TURN_RESULT_CHARS = 120_000  # all tool output in one turn (~30k tok)
 ROUTINE_MAX_CALLS_PER_TURN = 30
 
 # --- routines --------------------------------------------------------------
-# A routine is a task the model runs on demand (":routine <name>") and, later,
-# on a schedule. One markdown file per routine: frontmatter for the fields,
-# a separate file for the task prompt.
+# A routine is a task the model runs on demand (/routine <name>) or on a
+# schedule. One markdown file per routine: frontmatter for the fields, a
+# separate file for the task prompt.
 #
 # A routine must be fully reconstructable from its file — no hidden DB state.
 # That is what makes "list" mean list the folder and "delete" mean remove a
@@ -177,7 +182,7 @@ ROUTINE_LOG_DIR = ""        # e.g. "<vault>/99 outbox/routine logs"
 
 # --- filing proposals out of the outbox ------------------------------------
 # The model writes into the outbox with a suggested `destination:` in the
-# file's frontmatter; ":outbox" lists proposals and ":file <n>" carries one
+# file's frontmatter; /list outbox lists proposals and /file <n> carries one
 # out. The mover re-validates that destination from scratch — the suggestion
 # is data, never authority — and refuses anything outside these roots rather
 # than guessing at what was meant.
@@ -187,17 +192,17 @@ ROUTINE_LOG_DIR = ""        # e.g. "<vault>/99 outbox/routine logs"
 # model the same reach, which is what the outbox exists to prevent.
 MOVE_ROOTS = ()             # e.g. (Path("<vault>"),)
 
-# The wiki corpus: what recall reads, and the default scope of ':wiki'.
+# The wiki corpus: what recall reads, and the default scope of /wiki.
 # Filing a page in here changes the corpus without the index knowing, so
-# ':file' sets a reindex marker and says so, and ':updatedb' clears it. Leave
+# /file sets a reindex marker and says so, and /update db clears it. Leave
 # empty if you have no wiki corpus.
 WIKI_DIR = ""               # e.g. "<vault>/03 resources/wiki db"
 
 # The journal corpus: the tiered memory files the memory routines rewrite.
-# A ':wiki … journal' scope, and where journal drafts in '<outbox>/journal'
+# A /wiki … journal scope, and where journal drafts in '<outbox>/journal'
 # are filed to. Filing here **replaces** a live file — that is what a rollover
 # is — so the mover refuses the move unless this corpus is git-clean, leaving
-# ':wiki diff journal' as the record of what changed. Leave empty if unused.
+# /wiki diff journal as the record of what changed. Leave empty if unused.
 JOURNAL_DIR = ""            # e.g. "<vault>/03 resources/journal"
 
 # Where a declined draft goes, split by corpus underneath (wiki/, journal/,

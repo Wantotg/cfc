@@ -22,6 +22,57 @@ not the file.
 
 # Closed since the split
 
+## ~~D-0.9.1-02 · The config files carry the whole origin story~~ — CLOSED (v0.9.2, 2026-07-28)
+
+**Closed 2026-07-28**, in one pass with `B-0.9.1-02` exactly as the entry asks.
+The rule it proposed — *if a comment's first clause is a date or a version,
+that is the tell* — held up as a filter and found three: the `TOOLS_MAX_*`
+block's `Until v0.5 …` paragraph in both files (already better written in
+`HANDOVER.md` under *Constants with provenance*), `config.py`'s `(Until v0.6
+these destinations were refused outright …)`, and its `(set 2026-07-20)` on
+mirrored networking.
+
+**What stayed, and it is the more useful half of the rule.** `WRITE_ROOTS`'
+*"deliberately NOT derived from ATTACH_ROOTS/TOOLS_ROOTS"*, the
+`TOOLS_AUTO_APPROVE` note explaining why a knob somebody will look for is not
+there, and `MOUSE_INPUT`'s trade — all *what a wrong value costs*, none of them
+history. The shipped file went 239 → 244 lines, which is the outcome rather
+than a miss: the trim removed three paragraphs and the two factual additions
+the version asked for (mirrored networking before the NAT gateway IP, and the
+`text-embedding-baai-bge-m3-568m` id) put four back. Shorter was never the
+claim; *a form somebody fills in* was. The entry as it stood:
+
+---
+
+## D-0.9.1-02 · The config files carry the whole origin story. 0.9.1, 28-07-2026
+
+**Found:** 2026-07-27, Cas's v0.9.1 playtest: *"does it need the whole origin
+story? we have it in changelog, roadmap and probably handover as well."*
+
+Description: `config.py` and `config.example.py` are 230 and 239 lines, and a
+large fraction of both is reasoning rather than settings — why `WRITE_ROOTS` is
+not derived from `TOOLS_ROOTS`, why the mover has its own `MOVE_ROOTS`, why
+`TOOLS_MODELS` was verified rather than assumed. All of it is true and most of
+it is duplicated in `HANDOVER.md`'s standing decisions.
+
+**Agreed, and the distinction that makes it decidable:** `config.example.py` is
+a **form somebody fills in**, and a form's comment should say what the field
+does and what a wrong value costs. The *history* of how the field came to exist
+belongs in `HANDOVER.md`, which is written for a reader who has time. A comment
+that must be re-read on every edit to find the one live sentence is the same
+unreadable-list problem the `legacy/` archive split was made to fix.
+
+**Where the line goes**, and it is not "delete the comments": keep the sentence
+that stops a wrong edit — *"deliberately NOT derived from TOOLS_ROOTS — an alias
+is how a read root becomes a write root by accident later"* is load-bearing and
+stays. Cut the paragraph that recounts when it was discovered. If a comment's
+first clause is a date or a version, that is the tell.
+
+**Do this together with `B-0.9.1-02`**, which is a sweep of the same two files
+for retired `:` commands. Two passes over one file is one pass more than the
+change deserves, and the second pass would be re-reading prose the first pass
+already deleted.
+
 ## ~~D-08 · The test suite writes to the live `~/.cfc/errors.log`~~ — CLOSED (v0.9.2, 2026-07-28)
 
 **Closed 2026-07-28.** Fixed in three files rather than the one the entry

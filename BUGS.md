@@ -215,39 +215,6 @@ is a signature change, so note it rather than discovering it mid-fix.
 
 ---
 
-## B-0.9.1-02 · `config.example.py` documents twelve commands that no longer exist
-
-**Found:** 2026-07-28, reading around the report above rather than from use, so
-there is no symptom — which is the reason it survived a `:`→`/` sweep and three
-releases.
-
-**Symptom, if anyone ever hits it:** the file a new user copies to `config.py`
-and reads while filling in tells them to type `:tools on`, `:recall`,
-`:updatedb`, `:remember`, `:attach`, `:routine`, `:outbox`, `:file <n>`,
-`:wiki` and `:wiki diff journal`. Every one of those was retired at v0.8.
-
-**Why it is worse than a stale comment.** Standing decision 13: an unrecognised
-verb does not error, it **falls through to the model**. So someone following
-their own config file gets an API call and a confidently wrong answer, not "no
-such command" — the exact failure that decision was written about, arriving
-through documentation instead of through a deleted table entry.
-
-**Scope, measured rather than assumed.** `README.md` is clean. The remaining
-`:`-prefixed residue across the tree is in docstrings and comments — `parse.py`
-explaining why `:attached` had to be tested before `:attach`, `hub.py` on
-`:list`, `commands.py` on `:status` — which is developer prose about history and
-harms nobody. `config.example.py` is the only shipped file that instructs a
-human. The likely reason it was missed is that `config.py` is gitignored and the
-example went with it in whoever swept.
-
-**One thing not to sweep**, and `HANDOVER.md` already carries the scar: the
-persisted `[:remember …]` marker keeps its colon. It is a storage format, not
-prose, and renaming it stops every existing marker row from parsing.
-
-**Not a v0.9.1 blocker.** Nothing in that entry concerns config.
-
----
-
 ## B-0.9.1-03 · The connection light tells the hub to type a command the hub won't take
 
 **Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:

@@ -23,6 +23,58 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-28 — `config.example.py` becomes a form again
+`B-0.9.1-02` and `D-0.9.1-02` in one pass over both config files, as both
+entries asked. The second of v0.9.2's three claims: the file a stranger opens
+first names only commands that exist, in the form the app documents them.
+
+**The sweep is not `:` → `/`, and the count of exceptions was one higher than
+the entry had.** It listed four retired names whose canonical verb is a
+different word (`:tokens`→`/status`, `:updatedb`→`/update db`, `:attach`→`/add`,
+`:outbox`→`/list outbox`). There are five: `parse.py` has
+`ALIASES["models"] = "list models"`, so `:models` becomes **`/list models`**.
+Writing `/models` would have been the exact mistake the entry warns about —
+teaching the alias instead of the command, which is how a retired word comes
+back one generation later.
+
+**Checked by running each command through the parser rather than by reading
+it.** Every `/command` in both files is extracted and passed to `parse.parse`,
+and the result must be a canonical `VERBS` entry with the verb unchanged. Zero
+aliases, zero unparseable. That check is the only thing standing here — decision
+13 sends an unrecognised verb to the model, so the failure mode is a confident
+wrong answer and there is no test that can catch it from the outside.
+
+`[:remember …]` keeps its colon, as `HANDOVER.md`'s scar requires: it is a
+storage format, not prose, and a sweep nearly renamed it once already.
+
+**The trim, and the rule that did the work.** *If a comment's first clause is a
+date or a version, that is the tell* found three: the `TOOLS_MAX_*` block's
+`Until v0.5 …` in both files (better written in `HANDOVER.md` under *Constants
+with provenance*), and in `config.py` alone `(Until v0.6 these destinations were
+refused outright …)` and `(set 2026-07-20)`. What stayed is the other half of
+the rule — `WRITE_ROOTS`' *deliberately NOT derived*, the `TOOLS_AUTO_APPROVE`
+note, `MOUSE_INPUT`'s trade — all *what a wrong value costs*.
+
+**Two additions the version asked for**, both factual and both about a wrong
+value that fails silently: `EMBED_BASE` now leads with mirrored networking and
+says a stale NAT gateway IP does not resolve at all, and `EMBED_MODEL` records
+that LM Studio's id is `text-embedding-baai-bge-m3-568m` rather than `bge-m3`.
+The shipped file is 239 → 244 lines; shorter was never the claim.
+
+**Two factual errors found in `config.py` while sweeping**, neither about `:` —
+its tools comment said *"Read-only tools the model can request"* while
+`write_file` has existed since v0.6 and that file's own `WRITE_ROOTS` is
+populated, and its `TOOLS_MODELS` note described three ids for a list of eight.
+
+`HANDOVER.md` decision 13 gains the consequence: retiring a verb means grepping
+`config.example.py`, and writing the canonical verb there rather than the alias.
+
+- Files: config.example.py, config.py (gitignored), HANDOVER.md, BUGS.md,
+  BACKLOG.md, legacy/BUGS.md, legacy/BACKLOG.md, CHANGELOG.md,
+  TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-28 — The suite stops writing to the evidence file
 `D-08`, and the first of v0.9.2's three claims. `~/.cfc/errors.log` is the whole
 of `B-01`'s evidence, and one of that bug's three closing routes is *absence
@@ -69,7 +121,7 @@ zero errors — which is the state the absence-watch actually needs.
 - Files: tests/test_model_revert.py, tests/test_routines.py, tests/golden.py,
   BACKLOG.md, legacy/BACKLOG.md, CHANGELOG.md, TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 864e46b
 
 ## 2026-07-28 — Five findings get a place, and the scheduler stops being a claim
 The v0.9.1 **post-tag** playtest, triaged. Nothing fixed here, per the debug

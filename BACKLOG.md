@@ -183,35 +183,6 @@ cfc module (decision 6), the mapping is already a producer/parser pair across a
 boundary that cannot be closed, and `tests/test_connection.py` pins it by
 round-trip. Adding colours widens that pair; re-assigning existing ones does not.
 
-## D-0.9.1-02 · The config files carry the whole origin story. 0.9.1, 28-07-2026
-
-**Found:** 2026-07-27, Cas's v0.9.1 playtest: *"does it need the whole origin
-story? we have it in changelog, roadmap and probably handover as well."*
-
-Description: `config.py` and `config.example.py` are 230 and 239 lines, and a
-large fraction of both is reasoning rather than settings — why `WRITE_ROOTS` is
-not derived from `TOOLS_ROOTS`, why the mover has its own `MOVE_ROOTS`, why
-`TOOLS_MODELS` was verified rather than assumed. All of it is true and most of
-it is duplicated in `HANDOVER.md`'s standing decisions.
-
-**Agreed, and the distinction that makes it decidable:** `config.example.py` is
-a **form somebody fills in**, and a form's comment should say what the field
-does and what a wrong value costs. The *history* of how the field came to exist
-belongs in `HANDOVER.md`, which is written for a reader who has time. A comment
-that must be re-read on every edit to find the one live sentence is the same
-unreadable-list problem the `legacy/` archive split was made to fix.
-
-**Where the line goes**, and it is not "delete the comments": keep the sentence
-that stops a wrong edit — *"deliberately NOT derived from TOOLS_ROOTS — an alias
-is how a read root becomes a write root by accident later"* is load-bearing and
-stays. Cut the paragraph that recounts when it was discovered. If a comment's
-first clause is a date or a version, that is the tell.
-
-**Do this together with `B-0.9.1-02`**, which is a sweep of the same two files
-for retired `:` commands. Two passes over one file is one pass more than the
-change deserves, and the second pass would be re-reading prose the first pass
-already deleted.
-
 ## D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation. 0.9.1, 28-07-2026
 
 **Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
