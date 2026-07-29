@@ -27,6 +27,30 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — Six sessions become a loop, and `D-05` closes by deletion
+Post-1.0 doc rewrite, step 6b. The six `* CLAUDE.md` files are replaced by six
+specialist files — one per step of a loop that goes round once per update, each
+reading the file the previous step wrote and writing the next.
+
+**`D-05` closes because the duplication is gone, not because something checks
+it.** The shared half went to `HANDOVER.md` in 6a; the human context and the
+loop table go in `CLAUDE.md`, which the harness loads automatically, so neither
+costs a hop. What is left in a specialist file is only what makes that session
+different from the other five — which is why they are 40 to 60 lines each
+instead of 220 to 390.
+
+The loop is six files and six specialists, one each. Cas's call: the earlier
+sketch had a seventh (`Plan.md`) that two of his own notes assigned to different
+specialists, and the update-wide scoping it named is already the drafter's job
+and lands in the work order.
+
+`.gitignore` covers the new names and the loop files. The old six are kept
+locally, ignored, and are no longer read by anything.
+
+- Files: .gitignore, TRACKER.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The repo rules stop living only in gitignored files
 Post-1.0 doc rewrite, step 6a. `Versions and releases` and `"Chat" means both
 chats` move into `HANDOVER.md`, which every session already reads. They were
@@ -49,7 +73,7 @@ these sections too.
 
 - Files: HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: ddd41aa
 
 ## 2026-07-29 — The README stops claiming two things that stopped being true
 Post-1.0 doc rewrite, step 5. Checked against the code rather than read for
@@ -96,7 +120,7 @@ narrative, and cutting further would remove content rather than retelling.
 
 - Files: HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 563bb48
 
 ## 2026-07-29 — The roadmap becomes the front office
 Post-1.0 doc rewrite, step 3. `W-06`, closed. `ROADMAP.md` was trying to be a

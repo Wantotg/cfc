@@ -22,10 +22,25 @@ claude_export/
 # Claude Code local files
 .claude/
 # Personal working notes — has names, filepaths, private context.
-# CLAUDE.example.md is the sanitised version that ships.
+# Public template versions of the specialist files ship separately.
 CLAUDE.md
-# CLAUDE.md has been split to specialise, the effectiveness of this will be
-# monitored, the old version has been renamed and stored.
+BRAINSTORMER.md
+DESIGNER.md
+DRAFTER.md
+CODER.md
+DEBUGGER.md
+MANAGER.md
+
+# One update's loop files. Overwritten each loop; the durable record is the
+# repo's own documents.
+Start.md
+Idea.md
+Concept.md
+Work Order.md
+Update.md
+Tag.md
+
+# Superseded by the six specialist files above, kept locally for reference.
 LEGACY_CLAUDE.md
 BRAINSTORM CLAUDE.md
 CODER CLAUDE.md
