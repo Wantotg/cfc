@@ -10,6 +10,8 @@ This file is how you use cooking for cats. The rest of the shelf:
 [`CHANGELOG.md`](CHANGELOG.md) is every change with its reasoning, and
 [`HANDOVER.md`](HANDOVER.md) is why the code is shaped the way it is —
 invariants, rejected designs, and the non-obvious choices.
+[`templates/`](templates/) is how cfc is actually built: six model sessions, one
+per step of a loop, with the personal half taken out so you can copy them.
 
 
 ## What it does

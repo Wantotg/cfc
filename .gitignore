@@ -22,23 +22,23 @@ claude_export/
 # Claude Code local files
 .claude/
 # Personal working notes — has names, filepaths, private context.
-# Public template versions of the specialist files ship separately.
-CLAUDE.md
-BRAINSTORMER.md
-DESIGNER.md
-DRAFTER.md
-CODER.md
-DEBUGGER.md
-MANAGER.md
+# Anchored with a leading slash: the same names live in templates/, which ships.
+/CLAUDE.md
+/BRAINSTORMER.md
+/DESIGNER.md
+/DRAFTER.md
+/CODER.md
+/DEBUGGER.md
+/MANAGER.md
 
 # One update's loop files. Overwritten each loop; the durable record is the
 # repo's own documents.
-Start.md
-Idea.md
-Concept.md
-Work Order.md
-Update.md
-Tag.md
+/Start.md
+/Idea.md
+/Concept.md
+/Work Order.md
+/Update.md
+/Tag.md
 
 # Superseded by the six specialist files above, kept locally for reference.
 LEGACY_CLAUDE.md

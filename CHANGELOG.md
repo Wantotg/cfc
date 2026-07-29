@@ -27,6 +27,37 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The instruction files ship, as templates
+Post-1.0 doc rewrite, step 7, and the last of it. `templates/` carries the seven
+files cfc actually runs on with the personal half removed — six specialists, the
+auto-loaded root file, and a README for the pattern itself.
+
+**They are the real files, not a description of them.** `CLAUDE.example.md` was
+a single-file *composite* of six, which meant the public copy and the working
+copies were prose about the same decisions rather than the same prose — a diff
+between them helped nobody, and it was on `HANDOVER.md`'s hazard list for
+exactly that reason. Copying the working files and stripping the personal half
+removes the second home instead of maintaining it.
+
+The README carries what a template can't: why the split exists, the two ways of
+handling the shared sections that don't work and the one that does, and the
+one-home-per-fact rule without which six sessions is just more paperwork. It
+also states the cost — each session starts without what the last one knew — as a
+property rather than an omission.
+
+`CLAUDE.example.md` moves to `legacy/` with a frozen header, since it is the
+only description of the six-session arrangement that preceded the loop.
+`README.md` links `templates/` from the top.
+
+**The `.gitignore` patterns added in 6b are now anchored** (`/CLAUDE.md`, not
+`CLAUDE.md`). Unanchored, they matched at any depth and silently swallowed seven
+of the eight new templates — `git add -A` staged only the README and reported
+nothing wrong. Caught by reading what got staged rather than by trusting it.
+
+- Files: templates/ (new, 8 files), legacy/CLAUDE.example.md (was CLAUDE.example.md), legacy/README.md, README.md, .gitignore
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — Six sessions become a loop, and `D-05` closes by deletion
 Post-1.0 doc rewrite, step 6b. The six `* CLAUDE.md` files are replaced by six
 specialist files — one per step of a loop that goes round once per update, each
@@ -49,7 +80,7 @@ locally, ignored, and are no longer read by anything.
 
 - Files: .gitignore, TRACKER.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 9070509
 
 ## 2026-07-29 — The repo rules stop living only in gitignored files
 Post-1.0 doc rewrite, step 6a. `Versions and releases` and `"Chat" means both

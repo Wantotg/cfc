@@ -1,5 +1,12 @@
 # CLAUDE.md — example
 
+**Frozen 2026-07-29 and superseded by [`../templates/`](../templates/), which
+ships the real instruction files with the personal half removed rather than a
+composite of them.** Kept because it is the only description of the six-session
+arrangement that preceded the loop. Nothing below is current.
+
+---
+
 A sanitised copy of the instructions that guide Claude Code in this repo. The
 real thing is gitignored, because it carries personal context, names and local
 filepaths — and because it is no longer one file. It is a set, one per kind of

@@ -9,6 +9,7 @@ nothing here should be worked from.
 | [`BACKLOG.md`](BACKLOG.md) | closed entries from `../BACKLOG.md`, frozen 2026-07-27 |
 | [`CHANGELOG.md`](CHANGELOG.md) | every entry up to the v1.0 tag, frozen 2026-07-29 |
 | [`HANDOVER.md`](HANDOVER.md) | the pre-repo-access handover, frozen at v0.8, 2026-07-25 |
+| [`CLAUDE.example.md`](CLAUDE.example.md) | the six-session arrangement that preceded the loop, frozen 2026-07-29. Superseded by [`../templates/`](../templates/) |
 
 ## Why keep them
 
