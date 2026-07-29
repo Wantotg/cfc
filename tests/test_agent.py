@@ -162,6 +162,57 @@ def main():
     ok("the loop continues after a denial",
        final["content"] == "Understood, I won't read it.", final)
     ok("...and the file was never read", "alpha" not in tool_msg["content"])
+    # **One string, two audiences** (`B-0.9.1-01`). The payload above must stay
+    # an error, because that is what lets the model treat a refusal as a normal
+    # move; the line the human reads must not, because they are the one who
+    # refused. Both are asserted off the same run, since the bug was that they
+    # were the same string and fixing either alone re-breaks the other.
+    ok("...but the screen doesn't call your own decision an error",
+       "error" not in out, out[-200:])
+    ok("...it says what happened, and to which tool",
+       "read_file denied at the prompt" in out, out[-200:])
+
+    print("\n--- a real tool error still reads as one ---")
+    # The inverse guard, and the direction that matters more. A genuine failure
+    # styled as a polite decline reads as something you chose, so a run that
+    # should have stopped keeps going and looks fine doing it. `_render_result`
+    # matches `commands.DENIED`/`SKIPPED` and nothing else — no prefix test, no
+    # "looks like a verdict" heuristic — and this is what holds that line.
+    fake = FakeAPI([reply(None, [("read_file", {"path": "/etc/passwd"})]),
+                    reply("blocked, then.")])
+    agent.call_api = fake
+    hist = [{"role": "user", "content": "go"}]
+    final, out = drive(agent.agent_turn, [], hist, "m", conn, 1, keys="a\n")
+    ok("a jail refusal is still rendered as an error", "error" in out, out[-200:])
+    ok("...and is not dressed up as a human verdict",
+       "at the prompt" not in out, out[-200:])
+
+    print("\n--- both verdicts, producer to renderer, no literal between ---")
+    # `gate_and_dispatch` writes the verdict and `_render_result` reads it, in
+    # two modules. They share `commands.DENIED`/`SKIPPED` rather than a matched
+    # pair of strings — the graph allows the import, so the pair is closed
+    # instead of pinned — and this runs the real producer into the real
+    # renderer so that stays true rather than merely being true today. Asserting
+    # against "user denied" here would be the thing HANDOVER.md warns about: a
+    # test that passes forever while the two ends drift apart.
+    for key, verdict in (("d", "denied"), ("s", "skipped")):
+        call = {"id": "v", "type": "function",
+                "function": {"name": "read_file",
+                             "arguments": json.dumps({"path": str(jail / "notes.md")})}}
+        approval = commands.TurnApproval()
+        result, out = drive(commands.gate_and_dispatch, call, approval,
+                            ToolContext.for_chat(read_roots=(jail,)), keys=f"{key}\n")
+        shown = io.StringIO()
+        agent.console.file = shown
+        agent._render_result(result, "read_file")
+        agent.console.file = sys.stdout
+        ok(f"'{key}' -> the model reads an error",
+           json.loads(result).get("error"), result)
+        ok(f"...and you read a decision", "error" not in shown.getvalue(),
+           shown.getvalue())
+        ok(f"...naming the tool and what you did",
+           f"read_file {verdict} at the prompt" in shown.getvalue(),
+           shown.getvalue())
 
     print("\n--- several calls in one message ---")
     agent.call_api = FakeAPI([

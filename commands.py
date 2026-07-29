@@ -1755,6 +1755,24 @@ class TurnApproval:
         self.allow_all = False
 
 
+# **The two verdicts that are the human's own**, as the model reads them.
+# Constants rather than literals because `agent._render_result` has to
+# recognise them to style a decision differently from a fault (`B-0.9.1-01`),
+# and a matched literal at each end would be a producer/parser pair across a
+# module boundary — the recurring hazard `HANDOVER.md` tabulates. Its own rule
+# is to keep the two in one module *where the dependency graph allows*, and
+# here it does: `agent.py` already imports from this file and nothing imports
+# back, so the pair closes instead of earning a row in that table.
+#
+# They stay inside `{"error": …}` on the wire. That is not an oversight to fix
+# later: `gate`'s docstring is explicit that a refusal reaching the model as an
+# error is what makes refusing a normal move in the conversation rather than an
+# abort. The word is right for its reader and was only ever wrong for the one
+# watching.
+DENIED = "user denied"
+SKIPPED = "user skipped"
+
+
 def gate(call, approval, ctx=None):
     """Ask about one tool call. Returns 'allow' | 'deny' | 'skip'.
 
@@ -1832,9 +1850,9 @@ def gate_and_dispatch(call, approval, ctx=None):
 
     verdict = gate(call, approval, ctx)
     if verdict == "deny":
-        return json.dumps({"error": "user denied"})
+        return json.dumps({"error": DENIED})
     if verdict == "skip":
-        return json.dumps({"error": "user skipped"})
+        return json.dumps({"error": SKIPPED})
     return tools.dispatch(name, args, ctx)
 
 

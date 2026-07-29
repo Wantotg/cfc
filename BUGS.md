@@ -171,45 +171,4 @@ observed across the whole 0.9 → 1.0 window and closes on absence**. The third 
 accepted. It is a weaker claim than "fixed", and v1.0's note has to say which
 one happened rather than let an empty `BUGS.md` imply the stronger one.
 
----
-
-## B-0.9.1-01 · Denying a tool call is reported as an error
-
-**Found:** 2026-07-27, Cas's v0.9.1 playtest. The report, verbatim:
-
-```
-─ Tool call  list_dir                          path: ~/projects/cfc
-[a]llow  [d]eny  [A]llow all this turn  [s]kip
-d
-  ← error: user denied
-```
-
-*Suggestion: print "Tool call list_dir cancelled by user".*
-
-**Diagnosis: one string with two audiences, and it is right for the other
-one.** `commands.gate_and_dispatch` returns `{"error": "user denied"}`, and that
-JSON is the **tool result sent to the model**. It has to be an error there —
-`gate`'s docstring is explicit that reading a denial as data is the whole point,
-so that refusing is a normal move in the conversation rather than an abort. Both
-`tests/test_gate.py` and `tests/test_agent.py` pin the string.
-
-What puts it on screen is `agent._render_result`, which unwraps any
-`{"error": …}` and prints it in dim red. The console is echoing the model's
-payload. So the word is correct for its reader and wrong for the one watching.
-
-**Fix at the render, not at the payload.** `_render_result` should special-case
-the two verdicts that are the human's own (`user denied`, `user skipped`) and
-say so in a neutral style rather than dim red. The JSON is untouched, nothing
-the model receives changes, and both existing tests still pass. Changing the
-payload instead would be the reported location taken at face value — it would
-also quietly tell the model that a refusal was a system fault, which is the one
-thing the gate's design says it must not do.
-
-**Where the tool name comes from:** `_render_result` receives only the result
-string, so printing `list_dir` by name (as the report asks) means passing the
-call's name in, not parsing it back out. Worth doing — a batch of calls renders
-several of these in a row and "cancelled" without a name is ambiguous — but it
-is a signature change, so note it rather than discovering it mid-fix.
-
-**Not a v0.9.1 blocker.** That version's entry claims nothing about the gate.
 

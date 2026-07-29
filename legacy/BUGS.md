@@ -14,6 +14,87 @@ split line is what is frozen, not the file.
 
 # Closed since the split
 
+## ~~B-0.9.1-01 · Denying a tool call is reported as an error~~ — CLOSED (v1.0, 2026-07-29)
+
+**Closed 2026-07-29**, v1.0 step 3, exactly where the entry said to put it: at
+the render, never at the payload. `{"error": "user denied"}` still goes to the
+model unchanged, because `gate`'s whole design is that a refusal arriving as an
+error is what makes refusing a normal move in the conversation rather than an
+abort. `agent._render_result` now recognises the two verdicts that are yours and
+prints `← read_file denied at the prompt` in plain dim, keeping dim red for
+errors that are actually errors. The tool name is passed in, as the report
+asked and as the entry warned would be a signature change.
+
+**"at the prompt" is doing a job.** `gate_and_dispatch` already prints
+`auto-denied <tool>: <why>` when the jail refuses a call before you are asked,
+and that one *is* an error and stays red. Two refusals a line apart needed to be
+tellable apart, and "denied" alone does not do it.
+
+**The producer/parser pair this could have created was closed instead of
+tabulated**, which is the interesting half. `agent.py` reads a string
+`commands.py` writes, in two modules — a matched literal at each end and a
+seventh row in `HANDOVER.md`'s table. But `agent.py` already imports from
+`commands.py` and nothing imports back, so the strings became `commands.DENIED`
+and `commands.SKIPPED` and there is nothing left to drift. The table's own first
+rule is *keep producer and parser in the same module where the dependency graph
+allows*; this is the first time that rule has been the reason a row was **not**
+added. `HANDOVER.md` says so at the table, because a pair that could have been
+closed and was merely pinned is one that drifts eventually.
+
+**The guard's direction was the thing to get right, and it is the inverse of
+the report.** A real tool error styled as a polite human decline reads as
+something you chose, so a run that should have stopped keeps going and looks
+fine doing it. The match is against the two constants and nothing else — no
+prefix test, no "looks like a verdict" heuristic. `tests/test_agent.py` pins
+both directions and runs the real `gate_and_dispatch` into the real renderer
+for both verdicts, with no literal in between. Verified by breaking it two ways:
+reverting the render fails the two denial assertions, widening the match to a
+default fails the two error assertions. The entry as it stood:
+
+---
+
+## B-0.9.1-01 · Denying a tool call is reported as an error
+
+**Found:** 2026-07-27, Cas's v0.9.1 playtest. The report, verbatim:
+
+```
+─ Tool call  list_dir                          path: ~/projects/cfc
+[a]llow  [d]eny  [A]llow all this turn  [s]kip
+d
+  ← error: user denied
+```
+
+*Suggestion: print "Tool call list_dir cancelled by user".*
+
+**Diagnosis: one string with two audiences, and it is right for the other
+one.** `commands.gate_and_dispatch` returns `{"error": "user denied"}`, and that
+JSON is the **tool result sent to the model**. It has to be an error there —
+`gate`'s docstring is explicit that reading a denial as data is the whole point,
+so that refusing is a normal move in the conversation rather than an abort. Both
+`tests/test_gate.py` and `tests/test_agent.py` pin the string.
+
+What puts it on screen is `agent._render_result`, which unwraps any
+`{"error": …}` and prints it in dim red. The console is echoing the model's
+payload. So the word is correct for its reader and wrong for the one watching.
+
+**Fix at the render, not at the payload.** `_render_result` should special-case
+the two verdicts that are the human's own (`user denied`, `user skipped`) and
+say so in a neutral style rather than dim red. The JSON is untouched, nothing
+the model receives changes, and both existing tests still pass. Changing the
+payload instead would be the reported location taken at face value — it would
+also quietly tell the model that a refusal was a system fault, which is the one
+thing the gate's design says it must not do.
+
+**Where the tool name comes from:** `_render_result` receives only the result
+string, so printing `list_dir` by name (as the report asks) means passing the
+call's name in, not parsing it back out. Worth doing — a batch of calls renders
+several of these in a row and "cancelled" without a name is ambiguous — but it
+is a signature change, so note it rather than discovering it mid-fix.
+
+**Not a v0.9.1 blocker.** That version's entry claims nothing about the gate.
+
+---
+
 ## ~~B-0.9.1-03 · The connection light tells the hub to type a command the hub won't take~~ — CLOSED (v1.0, 2026-07-29)
 
 **Closed 2026-07-29**, v1.0 step 2, in one pass with `D-0.9.1-01` because both

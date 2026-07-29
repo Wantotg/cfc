@@ -23,6 +23,54 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — A denied tool call stops reading as a fault
+v1.0 step 3, `B-0.9.1-01`. Denying a call printed `← error: user denied`, which
+is the model's payload echoed at the person who did the denying.
+
+**Fixed at the render, never at the payload.** `{"error": "user denied"}` still
+reaches the model unchanged, because `gate`'s design is that a refusal arriving
+as an error is what makes refusing a normal move in the conversation rather than
+an abort — changing the payload would have quietly told the model a human's
+decision was a system fault. `agent._render_result` recognises the two verdicts
+that are yours and prints `← read_file denied at the prompt` in plain dim,
+keeping dim red for errors that are errors. The tool name is passed in, as the
+report asked; that is the signature change `BUGS.md` flagged so it wouldn't be
+discovered mid-fix.
+
+**"at the prompt" earns its words.** `gate_and_dispatch` already prints
+`auto-denied <tool>: <why>` when the jail refuses a call before you are asked,
+and that one is a real error and stays red. Two refusals a line apart have to be
+tellable apart, and "denied" alone doesn't do it.
+
+**The producer/parser pair was closed rather than tabulated, and that is the
+part worth keeping.** `agent.py` reading a string `commands.py` writes is a
+matched literal at each end across a module boundary — a seventh row in
+`HANDOVER.md`'s table. But `agent.py` already imports from `commands.py` and
+nothing imports back, so the strings became `commands.DENIED` / `SKIPPED` and
+there is nothing left to drift. That table's own first rule is *keep producer
+and parser in the same module where the dependency graph allows*, and this is
+the first time it has been the reason a row was **not** added. Noted at the
+table, because a pair that could have been closed and was merely pinned is one
+that drifts eventually. (The line under it said *add a sixth* while the table
+already had six; corrected to seventh.)
+
+**The guard's direction is the inverse of the report, and it is the one that
+matters.** A real tool error styled as a polite decline reads as something you
+chose, so a run that should have stopped keeps going and looks fine doing it.
+The match is the two constants and nothing else — no prefix test, no "looks like
+a verdict" heuristic. `tests/test_agent.py` pins both directions and runs the
+real `gate_and_dispatch` into the real renderer for both verdicts with no
+literal between them. Verified by breaking it two ways: reverting the render
+fails the denial assertions, widening the match to a default fails the error
+ones. Both existing payload pins in `test_gate.py` and `test_agent.py` were
+untouched and still pass, which is the evidence that nothing the model sees
+changed.
+
+- Files: agent.py, commands.py, tests/test_agent.py, README.md, HANDOVER.md,
+  BUGS.md, legacy/BUGS.md, CHANGELOG.md; TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The light says what to do where you are standing
 v1.0 step 2, `B-0.9.1-03` and `D-0.9.1-01` — two findings against one table,
 `ui.CONNECTION_STYLE`, closed in one decision because doing them apart means
@@ -87,7 +135,7 @@ outbox hunk — read, not skipped.
   BUGS.md, BACKLOG.md, legacy/BUGS.md, legacy/BACKLOG.md, CHANGELOG.md;
   TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 2b4513c
 
 ## 2026-07-29 — `CLAUDE.example.md` learns the split and the release order
 v1.0 step 1, `D-06` and `D-07`, one edit to the one tracked file that could

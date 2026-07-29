@@ -521,7 +521,19 @@ graph allows, and **pin them by round-trip, never against a literal.** A test
 asserting `written_path("wrote /x (1 chars)")` passes forever while the real pair
 drifts apart; `tests/test_tools.py` runs a real write and parses its real result.
 
-**Add a sixth and add it to this table.**
+**Add a seventh and add it to this table** — unless the first rule can close it
+instead, which is what happened to the one that would have been the seventh.
+`B-0.9.1-01` (v1.0) needed `agent._render_result` to recognise the gate's two
+human verdicts so it could style your own decision as a decision rather than a
+fault. Written the obvious way that is a literal at each end across a module
+boundary and a new row here. But `agent.py` already imports from `commands.py`
+and nothing imports back, so the strings became `commands.DENIED` / `SKIPPED`
+and the pair closed. **Check the graph before adding a row**: a pair that can be
+closed and is merely pinned is a pair that will drift eventually, and this table
+is the list of the ones that genuinely can't be. `tests/test_agent.py` still
+round-trips it — the real `gate_and_dispatch` into the real renderer, no literal
+between them — because an import is only a guarantee while it is the thing being
+used.
 
 ---
 

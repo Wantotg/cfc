@@ -620,7 +620,12 @@ Read this before turning tools on.
   no delete, no move.
 - **Denial is data.** A refused call returns `{"error": …}` as the tool result;
   the model reads it and adapts rather than crashing the turn. Asked to fetch
-  `API_KEY`, it gets "config.py is on the deny list" and moves on.
+  `API_KEY`, it gets "config.py is on the deny list" and moves on. **You see
+  something different from what the model sees**, and only here: when the
+  refusal was yours, the line reads `← read_file denied at the prompt` rather
+  than an error, because it isn't one. A refusal cfc made for you — a deny-list
+  hit, a path outside the roots — still reads as an error, in red, since that
+  is what it is.
 - **The model proposes where a file goes; it doesn't put it there.** The suggested
   `destination:` is re-validated from scratch against the mover's own `MOVE_ROOTS`
   — **data, not authority** — and anything outside them is refused rather than

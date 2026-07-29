@@ -24,7 +24,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from api import call_api
-from commands import TurnApproval, gate_and_dispatch
+from commands import DENIED, SKIPPED, TurnApproval, gate_and_dispatch
 from db import save_message
 from tools import TOOL_SCHEMAS, written_path
 from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
@@ -182,12 +182,42 @@ def _render_reasoning(reasoning):
     console.print(ai_reasoning_panel(Text(_elide(reasoning), style="dim italic")))
 
 
-def _render_result(result):
+# Your own verdicts, rendered as what they are. **This is a rendering table and
+# nothing else** — the payload keeps saying `{"error": "user denied"}`, because
+# that is what makes a refusal something the model can adapt to rather than a
+# system fault it should apologise for. Keyed off `commands`' own constants, so
+# the two ends cannot drift; a literal here would have been the drift.
+#
+# The wording distinguishes these from `gate_and_dispatch`'s `auto-denied
+# <tool>: <why>`, which is the machine refusing and stays an error, styled red.
+# "at the prompt" is the half that says which of the two happened.
+_HUMAN_VERDICTS = {DENIED: "denied at the prompt",
+                   SKIPPED: "skipped at the prompt"}
+
+
+def _render_result(result, name=None):
     """Show what came back, briefly. The chain has to be legible — that's what
-    makes the feature trustworthy — but a 30k-char file would bury it."""
+    makes the feature trustworthy — but a 30k-char file would bury it.
+
+    `name` is the tool's, passed in rather than parsed back out of anything: a
+    batch renders several of these in a row, and a bare "denied" under the
+    third panel is a line you have to count backwards to read.
+    """
     try:
         d = json.loads(result)
         if isinstance(d, dict) and "error" in d:
+            # **Dim, not dim red, and only for these two exact strings.** The
+            # failure to design against is the inverse of the reported one: a
+            # real tool error styled as a polite human decline reads as
+            # something you chose, so a run that should have stopped keeps
+            # going and looks fine doing it. Matching the constants and nothing
+            # else is what bounds that — no prefix test, no "looks like a
+            # verdict" heuristic.
+            verdict = _HUMAN_VERDICTS.get(d["error"])
+            if verdict:
+                console.print(f"  ← {name + ' ' if name else ''}{verdict}",
+                              style="dim")
+                return
             console.print(f"  ← error: {d['error']}", style="dim red")
             return
     except (json.JSONDecodeError, TypeError):
@@ -496,7 +526,7 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                 else:
                     result = gate_and_dispatch(call, approval, ctx)
                     result_chars += len(result or "")
-                _render_result(result)
+                _render_result(result, call.get("function", {}).get("name"))
 
                 fn = call.get("function", {})
                 # Recorded at the point it succeeded, from the result rather
