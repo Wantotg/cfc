@@ -5,9 +5,11 @@ against [nano-gpt](https://nano-gpt.com)), keeps every conversation in a local
 SQLite file, answers questions from a semantic index over an Obsidian wiki, and
 runs unattended tasks against a narrow, declared slice of your filesystem.
 
-Why things are built the way they are — invariants, rejected designs, the
-reasoning behind the non-obvious choices — is in [`HANDOVER.md`](HANDOVER.md).
-This file is how you use cooking for cats.
+This file is how you use cooking for cats. The rest of the shelf:
+[`ROADMAP.md`](ROADMAP.md) is what each version added and what's next,
+[`CHANGELOG.md`](CHANGELOG.md) is every change with its reasoning, and
+[`HANDOVER.md`](HANDOVER.md) is why the code is shaped the way it is —
+invariants, rejected designs, and the non-obvious choices.
 
 
 ## What it does
@@ -538,6 +540,10 @@ Then set a routine's `trigger:` to a time and check it's seen with
 - **`on_failure: retry`** tries again next tick; **`skip`** waits for tomorrow. A
   retry gives up after 3 failures in a day, so a routine failing for a permanent
   reason can't run every 15 minutes until midnight at full API cost.
+- **A brief provider hiccup is re-rolled in place and doesn't spend that budget.**
+  An HTTP 429, 502 or 503 — and an empty completion — get the same turn retried
+  immediately, up to twice. Only the status code decides this, never the error
+  text, so a 400 is still a failure however temporary it sounds.
 - **An idle tick is silent and exits 0.** It runs ~90 times a day, and a log full
   of "nothing due" is a log nobody reads. The wrapper still writes a dated
   heartbeat per tick, so "did it fire at all?" has an answer.
@@ -848,7 +854,7 @@ records what shipped.
 
 ```bash
 python tests/golden.py check     # the REPL's exact output for every no-API command
-python tests/test_paths.py       # and the other 24 suites in tests/
+python tests/test_paths.py       # and the other 29 suites in tests/
 ```
 
 `golden.py` is a characterization harness: it pins stdout so a refactor meant to
@@ -857,8 +863,10 @@ intended — check the diff first, it exists to catch the changes you *didn't*
 intend. None of the suites need an API key.
 
 What they don't cover, and is verified by hand: the chat turn against a real API,
-retrieval quality, `/export`'s output, the picker, `/routine`, and how the splash
-actually looks.
+retrieval quality, `/export`'s output, `/routine`'s listing commands, and how the
+splash actually looks. `HANDOVER.md` has the full list with the reason each one
+is hand-verified — some of them cannot be automated, and saying which is which
+is the point.
 
 ## Where things are
 

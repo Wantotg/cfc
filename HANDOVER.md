@@ -727,7 +727,7 @@ the changes you *didn't* intend. `SCRUB` normalises timestamps, paths and the ke
 digest on both sides at compare time, so adding a rule fixes a baseline without
 re-recording.
 
-Twenty-five unit suites beside it; none needs an API key. **What is
+Thirty unit suites beside it; none needs an API key. **What is
 hand-verified, stated rather than implied** (`W-02`) — a version claiming things
 are verified by something that doesn't get tired owes the reader the other half
 of the sentence:

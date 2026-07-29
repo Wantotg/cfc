@@ -27,6 +27,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The README stops claiming two things that stopped being true
+Post-1.0 doc rewrite, step 5. Checked against the code rather than read for
+tone, which is what turned up both errors.
+
+**The picker was listed as hand-verified and has been covered since v0.9** —
+`tests/test_hub.py` drives `pick_session` with a scripted keyboard.
+`HANDOVER.md` caught this at v1.0 (`W-02`) and the README never did, which is
+the coupling between the two files failing in the direction it always fails:
+the human-facing copy keeps the old claim. **And the suite count said 25; there
+are 30.** Both files were wrong about that one, so both are fixed.
+
+The README now links `ROADMAP.md` and `CHANGELOG.md` from the top. It never
+linked either — the file made the front door in step 3 was not reachable from
+the front page.
+
+Also documents the transient-status retry from `8b83d97`, which is user-visible
+behaviour in the scheduler section: a 429/502/503 is re-rolled in place and does
+not spend the day's retry budget, decided by status code and never by error text.
+
+- Files: README.md, HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — HANDOVER.md loses the retelling
 Post-1.0 doc rewrite, step 4 — the *say it once* rule applied to the file that
 states it. 903 → 795 lines with **no decision, rejected design, constant,
