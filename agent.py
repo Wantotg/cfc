@@ -459,9 +459,16 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                 # httpx.HTTPError` still matches, with our side of the request
                 # appended to the provider's words. main.py prints it and
                 # runner.py logs it; both were showing a bare status code.
-                raise httpx.HTTPError(
+                enriched = httpx.HTTPError(
                     f"{e} {_request_shape(messages, model, calls_used, max_calls, result_chars)}"
-                ) from e
+                )
+                # api.py owns the status code.  Keep it as structured data
+                # while adding this loop's useful request context, so the
+                # routine runner can make its retry decision without parsing
+                # either our wording or the provider's.
+                if hasattr(e, "status_code"):
+                    enriched.status_code = e.status_code
+                raise enriched from e
         usage = resp.get("usage") or {}
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls")

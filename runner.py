@@ -29,7 +29,7 @@ import traceback
 import httpx
 
 from agent import LIMIT_MESSAGE, TURN_RESULT_CHARS, agent_turn
-from api import EMPTY_COMPLETION_RETRIES
+from api import EMPTY_COMPLETION_RETRIES, is_transient_status
 import errorlog
 from db import PROVIDER_ROUTINE, new_session, save_message
 import routines
@@ -267,11 +267,11 @@ class CallLimitReached(Exception):
 
 def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event,
                      touched=None):
-    """Run the turn, re-rolling an empty completion rather than accepting it.
+    """Run the turn, re-rolling transient provider hiccups or empty answers.
 
-    Thinking models return the occasional empty completion — a provider
-    hiccup, not a size limit, and the same context usually answers on a
-    re-roll.
+    Thinking models return the occasional empty completion, and providers can
+    briefly reject a request with 429, 502 or 503.  Both are provider hiccups,
+    not a size limit, and the same context usually answers on a re-roll.
 
     **The retry here is unconditional, and deliberately does NOT consult
     `ctx.interactive`.** A routine is a batch job whether or not somebody
@@ -301,12 +301,22 @@ def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event,
     did. This is also why the collector is created by the caller: the raise
     paths below leave through an exception, and the caller still holds the list.
     """
+    # One shared budget rather than a budget for each failure shape.  A sick
+    # provider alternating 503s and empty completions still gets at most the
+    # same two extra calls that an all-empty provider did before this existed.
     attempts = EMPTY_COMPLETION_RETRIES + 1
     for attempt in range(1, attempts + 1):
         history = [{"role": "user", "content": task}]
-        final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx,
-                           max_calls=ROUTINE_MAX_CALLS_PER_TURN,
-                           touched=touched)
+        try:
+            final = agent_turn(prefix, history, model, conn, session_id, ctx=ctx,
+                               max_calls=ROUTINE_MAX_CALLS_PER_TURN,
+                               touched=touched)
+        except httpx.HTTPError as error:
+            if not is_transient_status(error) or attempt == attempts:
+                raise
+            event(f"transient HTTP {error.status_code} — re-rolling "
+                  f"{attempt}/{attempts - 1}")
+            continue
         content = (final.get("content") or "").strip()
         # Checked before the truthiness test, because LIMIT_MESSAGE *is* truthy
         # — that is precisely how it used to pass for a successful answer.

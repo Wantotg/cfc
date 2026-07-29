@@ -134,7 +134,7 @@ def call_api(messages, model=None, tools=None, read_timeout=None):
             json=payload,
         )
         if r.is_error:
-            raise httpx.HTTPError(_error_detail(r))
+            raise _provider_error(r)
         return r.json()
 
 
@@ -171,6 +171,30 @@ _REASONING_TAIL_LINES = 12
 # Bounded because the failure mode of "retry until it works" against a sick
 # provider is a very large bill, discovered late.
 EMPTY_COMPLETION_RETRIES = 2
+
+# A status code is a provider contract; an error message is not.  Keep this
+# deliberately small: 400 and 401 describe a request/auth problem that another
+# identical call cannot repair, while these three are the temporary admission
+# and availability failures an unattended routine can reasonably outwait.
+TRANSIENT_STATUS_CODES = frozenset((429, 502, 503))
+
+
+def is_transient_status(error):
+    """Whether a provider response explicitly says this error is transient.
+
+    Transport failures do not carry a response status and are intentionally not
+    guessed at here.  The status is attached at the HTTP boundary below and
+    carried through agent.py; matching rendered text would make a provider
+    rewording silently change retry policy.
+    """
+    return getattr(error, "status_code", None) in TRANSIENT_STATUS_CODES
+
+
+def _provider_error(response):
+    """An HTTPError that keeps the provider status as data, not prose."""
+    error = httpx.HTTPError(_error_detail(response))
+    error.status_code = response.status_code
+    return error
 
 
 def _thinking_panel(reasoning):
@@ -227,7 +251,7 @@ def stream_response(messages, model=None):
             ) as response:
                 if response.is_error:
                     response.read()
-                    raise httpx.HTTPError(_error_detail(response))
+                    raise _provider_error(response)
                 for line in response.iter_lines():
                     if not line or not line.startswith(
                         "data: "

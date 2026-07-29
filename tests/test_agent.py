@@ -423,6 +423,25 @@ def main():
     ok("still an httpx.HTTPError, so every existing catch matches",
        raised != "")
 
+    # The routine runner may retry a provider response, but only by its actual
+    # status code.  agent_turn adds request context before the error reaches
+    # it, so this pins that the structured code survives the wrapper.
+    def unavailable(messages, model=None, tools=None):
+        error = httpx.HTTPError("provider unavailable")
+        error.status_code = 503
+        raise error
+
+    agent.call_api = unavailable
+    try:
+        drive(agent.agent_turn, [], [{"role": "user", "content": "go"}],
+              "m", conn, 1)
+    except httpx.HTTPError as e:
+        status_code = getattr(e, "status_code", None)
+    else:
+        status_code = None
+    ok("the provider status survives request-context enrichment",
+       status_code == 503, status_code)
+
     print("\n--- an empty-completion 400 re-rolls instead of failing ---")
     # nano-gpt surfaces a thinking model's empty completion as a 400 on the
     # non-streaming path. It is the same benign hiccup the stream path re-rolls,

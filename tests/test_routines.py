@@ -28,6 +28,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import httpx
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
@@ -584,6 +586,39 @@ def main():
             ok("one hiccup does not cost the run", ok6 is True, summary)
             ok("...and the answer is the retried one", summary == "did it",
                summary)
+
+            print("\n--- a transient provider status re-rolls, but only by code ---")
+            attempts = []
+
+            def unavailable_once(*a, **kw):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    error = httpx.HTTPError("provider changed its error text")
+                    error.status_code = 503
+                    raise error
+                return {"role": "assistant", "content": "recovered"}
+
+            runner.agent_turn = unavailable_once
+            ok_status, summary, _ = runner.run_routine("empty", conn, model="m")
+            ok("a 503 does not spend the scheduled-run failure", ok_status is True,
+               summary)
+            ok("...and re-runs the identical turn once", len(attempts) == 2,
+               len(attempts))
+
+            # Exact status matching is the safety boundary: a provider may
+            # reword an error at any time, and a 400 must not become retryable
+            # merely because its text happens to sound temporary.
+            for status in (429, 502, 503):
+                error = httpx.HTTPError("arbitrary provider wording")
+                error.status_code = status
+                ok(f"HTTP {status} is retryable", runner.is_transient_status(error))
+            for status in (400, 401, 500):
+                error = httpx.HTTPError("HTTP 503 in the message is irrelevant")
+                error.status_code = status
+                ok(f"HTTP {status} is not retryable", not runner.is_transient_status(error))
+            ok("a transport error with 503 words is not retryable",
+               not runner.is_transient_status(
+                   httpx.HTTPError("HTTP 503 but no response status")))
 
             # Whitespace is not an answer.
             runner.agent_turn = lambda *a, **kw: {"role": "assistant",
