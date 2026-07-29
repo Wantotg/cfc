@@ -732,14 +732,36 @@ digest on both sides at compare time, so adding a rule fixes a baseline without
 re-recording.
 
 Twenty-five unit suites beside it; none needs an API key. What they cover is
-readable from the files. What they **don't**: the chat turn against a real API,
-retrieval quality, `/export`'s output, the picker, `/routine`, and everything about
-how the splash actually looks. Those are hand-verified.
+**What is hand-verified, stated rather than implied** (reconciled v1.0, `W-02`;
+this list and `ROADMAP_PRIVATE.md`'s disagreed, and one item on it was already
+false). A version claiming things are "verified by something that doesn't get
+tired" owes the reader the other half of the sentence:
 
-Two habits worth keeping, both learned here: **verify a guard by disabling it** and
-watching the assertions fail (seven of them for the journal's git guard), and
-**patch the seam, not `config`** — `test_routines` patches `routines.routine_dir`
-because patching config misses anything that read the value at import.
+| | |
+|---|---|
+| the chat turn against a **real** API | **not automatable, and not a gap.** Against a stub it is covered — `tests/test_turn_paths.py`, `test_agent.py`, `test_empty.py`. What a real provider adds is its own behaviour, which is what `BUGS.md`'s `B-01` is about and what no test can assert |
+| retrieval quality | **not automatable.** A judgement, not an assertion. The *states* around it are pinned (`test_memory_states.py`); whether the right chunk came back is what `MAX_DISTANCE`'s 32 probes measured by hand, and re-measuring is the only honest method |
+| the two answer **panels** | **not comparable, and the reason is structural.** The tool path renders through `agent.render_answer`; the streaming path renders inside `api.stream_response`, delta by delta, because it paints as it arrives. Stubbing the provider — the right place — takes the streaming render with it |
+| how the splash **looks** | **not automatable.** The compositor and the import graph are pinned (`test_splash.py`); a one-pixel rim light on black is not |
+| `/export`'s output | **a real gap, and honestly automatable.** Owed, not impossible — write to a temp dir and read it back. Left out of v1.0 by scope, not by argument |
+| `/routine`'s listing and run commands | **a partial gap.** Creation is covered as of v1.0 (`test_routines.py`), `run_routine` since v0.5; `show_routines` and `do_routine` are not |
+
+**The picker used to be on that list and was already covered** — `test_hub.py`
+drives `pick_session` with a scripted keyboard: listed ids, refused ids,
+`n`/`p`/`q`, and garbage re-prompting. It sat here as hand-verified through two
+releases after the test landed. Which is the lesson worth more than the row:
+**a list of what isn't tested goes stale in the safe-looking direction**, because
+adding a test is the moment nobody thinks to edit the docs, and the result is a
+version planning work that is already done.
+
+Three habits worth keeping, all learned here: **verify a guard by disabling it**
+and watching the assertions fail (seven of them for the journal's git guard);
+**patch the seam, not `config`** — `test_routines` patches
+`routines.routine_dir` because patching config misses anything that read the
+value at import; and **compare two implementations to each other rather than
+to a literal** where there are two — `test_turn_paths.py` asserts the tool path
+ends exactly as the streaming path does, which cannot pass while they disagree
+and needs no edit when they agree differently.
 
 ## Open threads
 

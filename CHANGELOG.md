@@ -23,6 +23,73 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The two turn paths are pinned, and the baseline stops pinning the vault
+v1.0 step 7, `W-02` and `D-01`. Scope agreed before the first test was written,
+which is what the step asked for.
+
+**The reconciliation found one of the six paths was already covered.**
+`HANDOVER.md` listed the picker as hand-verified; `tests/test_hub.py` has been
+driving `pick_session` with a scripted keyboard for two releases — listed ids,
+refused ids, `n`/`p`/`q`, garbage re-prompting. **A list of what isn't tested
+goes stale in the safe-looking direction**, because adding a test is the moment
+nobody thinks to edit the docs, and the result is a version planning work that
+is already done. That section is now a table saying which paths are honestly
+unautomatable and which are owed, with the reason for each.
+
+**`tests/test_turn_paths.py` pins standing decision 7 for the first time.** The
+streaming and tool paths must end a turn identically, and they drifted once —
+when tools became the default the spinner and token bar vanished and usage was
+discarded, blanking `/status`. Nothing raised; the turn worked; only the ending
+was gone, for a release. **Every assertion compares the two paths to each other
+rather than to a literal**, so it cannot pass while they disagree and needs no
+edit when they agree differently. Behavioural, not schema: nothing names a
+column or a table, so the 2.0 DB rework inherits these rather than deleting
+them, which is what makes that rework safe to attempt. Verified by reintroducing
+the historical drift three ways — removing the tool path's bar, feeding it
+zeros, and dropping usage off the streaming row — each caught.
+
+**One thing it deliberately does not assert, because trying to found out
+why.** Rendering the answer is *not* a shared ending: the tool path calls
+`agent.render_answer` from `main.py`, the streaming path renders inside
+`api.stream_response`, delta by delta, because it paints as it arrives. So
+stubbing at the provider boundary — the right place — takes the streaming render
+with it, and no honest comparison of the two panels is possible from there. That
+is not a gap to paper over with a lower stub: decision 7 names
+`print_context_bar`, and it is exactly right to. The ending is shared; the
+rendering is two different jobs that only look alike.
+
+**`D-01`: the golden baseline stops pinning the live vault outbox.** Cas's call
+between the entry's two options was **redirect, don't drop** — `capture()` now
+points `mover.outbox_roots` at a fixture, so `/outbox` stays in the
+characterization sweep and a refactor of its rendering is still caught. Patched
+at the seam, not in config, for the reason `test_routines` patches
+`routines.routine_dir`. The fixture carries one filable proposal and one
+refusal, because both have their own rendering and the refusal's has a rule
+attached — the destination that was *asked for* stays beside the reason. The
+baseline also stopped carrying a real vault path, one of the six tracked files
+`N-0.9.1-01` ruled on.
+
+**Re-recording surfaced `D-11`: the same bug one line over.** `/tools` prints
+`TOOLS_ROOTS` and `WRITE_ROOTS` verbatim, so two more config values are pinned.
+**Written up rather than forced through, because the obvious fix is wrong** —
+repointing `WRITE_ROOTS` at a fixture under `tests/` raises `ScopeError`, since
+standing decision 4 refuses a write root overlapping the source. The guard was
+right. The asymmetry is worth knowing before trying again: `mover` validates
+against its own `MOVE_ROOTS`, deliberately not `WRITE_ROOTS`, so a fixture
+inside the repo is fine for the outbox and cannot be for this. The entry also
+says not to fix it by scrubbing — that would keep the baseline stable while
+making the line say nothing, and `/tools` is in `SCRIPT` because it is a
+statement about the permission model.
+
+Left owed and named rather than dropped: `/export`'s output and `/routine`'s
+listing and run commands. Both automatable, both out of v1.0 by scope.
+
+- Files: tests/test_turn_paths.py (new), tests/golden.py,
+  tests/golden_baseline.txt, HANDOVER.md, BACKLOG.md, legacy/BACKLOG.md,
+  CHANGELOG.md; TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — Zero recall hits: closed, not built
 v1.0 step 6, `W-01`. The version scoped this as **a closed row and a recorded
 reason rather than code**, and that is what it is — no behaviour changed.
@@ -71,7 +138,7 @@ scheduler and `preflight` threads were.
 - Files: HANDOVER.md, CHANGELOG.md; ROADMAP_BEYOND.md and TRACKER.md (both
   gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 07d47d2
 
 ## 2026-07-29 — The hub's broken-routine blind spot gets written up
 v1.0 step 5, `D-10`. **A drafting step, not a build**, and it was listed as one

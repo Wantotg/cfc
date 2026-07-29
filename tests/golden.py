@@ -55,6 +55,29 @@ FIXTURE_TRAITS = HERE / "_fixture_traits"
 FIXTURE_VAULT = HERE / "_fixture_vault"
 FIXTURE_LOG = HERE / "_fixture_errors.log"
 
+# **The outbox is environment too, and the baseline used to pin the live one**
+# (`D-01`, fixed v1.0). Re-recording for an unrelated one-line change carried a
+# second hunk: two journal proposals had been filed since the last `record`, so
+# the baseline said `2 of 2 can be filed` and the run said `(nothing pending)`.
+# Nothing about the code had changed.
+#
+# That is the `config.py` scar in a new place — *anything a baseline pins that
+# lives in config rather than in source is this bug* — and it fails in the good
+# direction, loudly, which is precisely what makes it dangerous: a `record`
+# whose diff has a hunk you learn to skip is a `record` that will one day carry
+# a real regression past you. It cost exactly that twice in one session, and
+# both times the reasoning was "that one's not mine".
+#
+# **Redirected rather than dropped**, which was the decision between D-01's two
+# written-up options (Cas, 2026-07-29). `/outbox` stays in `SCRIPT`, so a
+# refactor that changes its rendering is still caught by the sweep — and the
+# mechanism is the one `capture()` already uses for `DB_PATH`, `VAULT_PATH` and
+# the model lists, rather than a second way of doing the same thing. The
+# fixture carries one filable proposal and one refusal on purpose: both
+# verdicts render, so what stays pinned is the part that is about the code.
+FIXTURE_OUTBOX = HERE / "_fixture_outbox"
+FIXTURE_FILED = HERE / "_fixture_filed"
+
 # The same rule the prompts fixture follows, applied to config.py's model
 # lists: :config, :models and :tools print them verbatim, so editing your own
 # MODELS failed `check` on lines that describe your config and not the code.
@@ -207,6 +230,35 @@ def build_prompt_fixtures():
             (d / f"{n}.md").write_text(f"# {n}\nfixture\n", encoding="utf-8")
 
 
+def build_outbox_fixture():
+    """Two proposals: one that can be filed, one that cannot.
+
+    Both verdicts, because both have their own rendering and the refusal's is
+    the one with a rule attached — `show_outbox` prints the destination that
+    was *asked for* beside the reason, so the model's suggestion stays
+    auditable rather than being replaced by the error. A fixture with only
+    filable proposals would leave that untested and look complete.
+    """
+    for d in (FIXTURE_OUTBOX, FIXTURE_FILED):
+        d.mkdir(exist_ok=True)
+    (FIXTURE_OUTBOX / "filable-note.md").write_text(
+        f"---\ndestination: {FIXTURE_FILED}\ntitle: A Filable Note\n---\n\n"
+        "fixture\n", encoding="utf-8")
+    (FIXTURE_OUTBOX / "no-destination.md").write_text(
+        "---\ntitle: Missing Its Destination\n---\n\nfixture\n",
+        encoding="utf-8")
+
+
+def clean_outbox_fixture():
+    """Path checked before the unlink, not after — invariant #1."""
+    for d in (FIXTURE_OUTBOX, FIXTURE_FILED):
+        assert_not_real_vault(d, "clean_outbox_fixture")
+        if d.is_dir():
+            for f in d.glob("*.md"):
+                f.unlink()
+            d.rmdir()
+
+
 def clean_fixture_vault():
     """Remove the fixture export folder. Guarded like everything else that
     deletes here: the path is checked before the unlink, not after."""
@@ -301,6 +353,7 @@ def capture():
     assert_not_real(FIXTURE, "capture")
     build_fixture(FIXTURE)
     build_prompt_fixtures()
+    build_outbox_fixture()
     # Rich reads width at construction, so pin it before importing anything
     # that builds a Console at import time.
     os.environ["COLUMNS"] = "100"
@@ -385,6 +438,34 @@ def capture():
             if hasattr(mod, "AUTO_EXPORT"):
                 setattr(mod, "AUTO_EXPORT", True)
 
+    # `D-01`: point the outbox at the fixture. **Patched at the seam, not in
+    # config** — `mover._cfg` re-reads config on every call, so setting
+    # `config.WRITE_ROOTS` would work today and stop working the moment
+    # anything caches it, which is the reason `test_routines` patches
+    # `routines.routine_dir` rather than config. These four functions are the
+    # whole surface `list_proposals` consults.
+    #
+    # `wiki_dir`/`journal_dir` are pinned to None deliberately: a corpus
+    # subfolder pulls in `wikigit` and the vault's real git state, which is
+    # environment of exactly the kind this is fixing.
+    import mover
+    mover.outbox_roots = lambda: (FIXTURE_OUTBOX,)
+    mover.move_roots = lambda: (FIXTURE_FILED,)
+    mover.wiki_dir = lambda: None
+    mover.journal_dir = lambda: None
+    for root in mover.outbox_roots():
+        assert_not_real_vault(root, "mover.outbox_roots")
+
+    # **`/tools` still pins two config values and this block does not fix it**
+    # — `D-11`, found here and written up rather than forced through. The
+    # attempt is worth recording because of how it failed: repointing
+    # `WRITE_ROOTS` at a fixture under `tests/` raised `ScopeError`, since
+    # standing decision 4 refuses a write root overlapping the cfc source. The
+    # guard was right and the fix was wrong, which is a different situation
+    # from the outbox above — `mover` validates against its own `MOVE_ROOTS`,
+    # so a fixture inside the repo is fine there and is not fine here. See
+    # `BACKLOG.md`.
+
     # Same class of bug as the API key, one layer up: :config, :models and
     # :tools all print config.py's model lists straight into the baseline, so
     # adding a model to your own config failed `check` on lines that say
@@ -447,6 +528,7 @@ def capture():
         FIXTURE.unlink(missing_ok=True)
         FIXTURE_LOG.unlink(missing_ok=True)
         clean_prompt_fixtures()
+        clean_outbox_fixture()
 
     # The baseline pins the `[auto-exported: …]` line, which proves the message
     # printed. This proves a document landed: safe_export swallows its own

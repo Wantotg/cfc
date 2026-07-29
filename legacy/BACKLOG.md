@@ -22,6 +22,74 @@ not the file.
 
 # Closed since the split
 
+## ~~D-01 · The golden baseline pins the live vault outbox~~ — CLOSED (v1.0, 2026-07-29)
+
+**Closed 2026-07-29**, v1.0 step 7. Cas's call between the entry's two options:
+**redirect, don't drop.** `capture()` now points `mover.outbox_roots` at a
+fixture, so `/outbox` stays in the characterization sweep and a refactor that
+changes its rendering is still caught — which the other option would have given
+up. The mechanism is the one `capture()` already uses for `DB_PATH`,
+`VAULT_PATH`, `errorlog.LOG_PATH` and the model lists, so this is one more piece
+of environment the harness knows about rather than a second way of doing the
+same thing. The entry's own sentence is what decided it: *"the harness already
+knows it must not pin the environment; the outbox is environment it doesn't yet
+know about."* That argues for teaching it, not for removing a command.
+
+**Patched at the seam.** `mover._cfg` re-reads config on every call, so setting
+`config.WRITE_ROOTS` would have worked today and stopped working the moment
+anything cached it — the reason `test_routines` patches `routines.routine_dir`.
+Four functions are the whole surface `list_proposals` consults, and
+`wiki_dir`/`journal_dir` are pinned to `None` deliberately: a corpus subfolder
+reaches `wikigit` and the vault's real git state, which is environment of
+exactly the kind this was fixing.
+
+**The fixture carries one filable proposal and one refusal**, because both have
+their own rendering and the refusal's has a rule attached — the destination that
+was *asked for* is printed beside the reason, so the model's suggestion stays
+auditable. A fixture of only filable proposals would have left that untested and
+looked complete.
+
+**A bonus and a finding.** The baseline stopped carrying a real vault path,
+which is one of the six tracked files `N-0.9.1-01` ruled on. And re-recording
+showed the same bug one line over — `/tools` prints `TOOLS_ROOTS` and
+`WRITE_ROOTS` verbatim — now `D-11`, written up rather than forced through
+because the obvious fix raises `ScopeError` against standing decision 4. The
+entry as it stood:
+
+---
+
+## D-01 · The golden baseline pins the live vault outbox. 0.9.1, 27-07-2026
+
+**Found:** 2026-07-27, re-recording the baseline for a one-line help-text
+change. The diff carried a second, unrelated hunk: `/outbox`'s two journal
+proposals had been filed since the last record, so the baseline said
+`2 of 2 can be filed` and the run said `(nothing pending)`.
+
+**This is the `config.py` scar in a new place.** That one is in `HANDOVER.md`:
+*"Anything a baseline pins that lives in config rather than in source is this
+bug"* — adding a model to your own config failed `check` on lines that say
+nothing about the code. Same shape here, with the vault standing in for config.
+`SCRUB` normalises timestamps, paths and the key digest, so the harness already
+knows it must not pin the environment; the outbox is environment it doesn't yet
+know about.
+
+**Why it is not urgent, and what it costs anyway.** It fails *loudly* — a diff
+you have to read — which is the good direction, and the harness's whole job is
+to make you read diffs. The cost is that it trains the habit this file's
+neighbour scar was written about: a `record` whose diff has a hunk you learn to
+skip is a `record` that will one day carry a real regression past you. It cost
+exactly that here, twice in one session, and both times the reasoning was "that
+one's not mine".
+
+**Two fixes and neither is obviously right**, which is why it's deferred rather
+than done: scrub the outbox listing to a fixture the way `capture()` forces
+config values, or drop `/outbox` from the golden script and cover it in a unit
+test with a temp directory. The first keeps the command in the characterization
+sweep and pins less of it; the second pins more and takes it out of the sweep.
+Decide with whoever is next in `golden.py`, not on its own.
+
+---
+
 ## ~~D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation~~ — CLOSED (v1.0, 2026-07-29)
 
 **Closed 2026-07-29**, v1.0 step 4. All three holes plus the fourth the entry

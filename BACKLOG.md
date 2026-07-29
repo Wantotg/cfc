@@ -32,35 +32,44 @@ The full entry with all its history is in the archive.
 
 ---
 
-## D-01 · The golden baseline pins the live vault outbox. 0.9.1, 27-07-2026
+## D-11 · `/tools` puts two more config values in the golden baseline. 1.0, 29-07-2026
 
-**Found:** 2026-07-27, re-recording the baseline for a one-line help-text
-change. The diff carried a second, unrelated hunk: `/outbox`'s two journal
-proposals had been filed since the last record, so the baseline said
-`2 of 2 can be filed` and the run said `(nothing pending)`.
+**Found:** 2026-07-29, immediately after fixing `D-01` — the re-recorded
+baseline still carried two lines of Cas's config:
 
-**This is the `config.py` scar in a new place.** That one is in `HANDOVER.md`:
-*"Anything a baseline pins that lives in config rather than in source is this
-bug"* — adding a model to your own config failed `check` on lines that say
-nothing about the code. Same shape here, with the vault standing in for config.
-`SCRUB` normalises timestamps, paths and the key digest, so the harness already
-knows it must not pin the environment; the outbox is environment it doesn't yet
-know about.
+```
+  read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
+  write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
+```
 
-**Why it is not urgent, and what it costs anyway.** It fails *loudly* — a diff
-you have to read — which is the good direction, and the harness's whole job is
-to make you read diffs. The cost is that it trains the habit this file's
-neighbour scar was written about: a `record` whose diff has a hunk you learn to
-skip is a `record` that will one day carry a real regression past you. It cost
-exactly that here, twice in one session, and both times the reasoning was "that
-one's not mine".
+**Same class as `D-01` and as the `config.py` scar it descends from:** *anything
+a baseline pins that lives in config rather than in source is this bug.* Edit
+your own `TOOLS_ROOTS` and `check` fails on lines that say nothing about the
+code, which trains the habit of skipping a hunk in a `record` diff — and that is
+the habit that one day carries a real regression past you.
 
-**Two fixes and neither is obviously right**, which is why it's deferred rather
-than done: scrub the outbox listing to a fixture the way `capture()` forces
-config values, or drop `/outbox` from the golden script and cover it in a unit
-test with a temp directory. The first keeps the command in the characterization
-sweep and pins less of it; the second pins more and takes it out of the sweep.
-Decide with whoever is next in `golden.py`, not on its own.
+**The obvious fix was tried and is wrong, which is why this is an entry rather
+than a commit.** Repointing `WRITE_ROOTS` at a fixture under `tests/` raises
+`ScopeError`: standing decision 4 refuses a write root that overlaps the cfc
+source tree. The guard is right and the fix was wrong. Note the asymmetry with
+`D-01`, because it is the thing to understand before trying again — `mover`
+validates against its own `MOVE_ROOTS`, deliberately not `WRITE_ROOTS`, so a
+fixture *inside* the repo is fine for the outbox and cannot be for this.
+
+**So a fixture write root has to live outside the working tree**, which means a
+temp directory in `golden.py`'s lifecycle. That is not hard, but it is a new
+kind of thing for that file — every other fixture it owns is a path under
+`tests/` it creates and deletes — and `SCRUB` already collapses `/tmp/...` to
+`<TMP>`, so the determinism is free once the directory exists.
+
+**Do not fix it by scrubbing.** `/tools` is in `SCRIPT` because its output is a
+statement about the permission model rather than a status dump, and
+read-roots-are-not-write-roots is the load-bearing half of that. A `SCRUB` rule
+would keep the baseline stable while making the line say nothing, which is the
+worse of the two failures: `D-01`'s cost was a diff you learn to skip, and this
+would be a line you can no longer read.
+
+**Not urgent.** It fails loudly, in the good direction, exactly like `D-01`.
 
 ## D-04 · `[esc]` doesn't back out of prompts, and can't while they're `input()`. 0.8.2 remnant
 

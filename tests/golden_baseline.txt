@@ -333,8 +333,14 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Last turn       0 in · 8 out
 
 you>
-Outbox (/mnt/c/Users/disse/cooking for cats/99 outbox)
-  (nothing pending)
+Outbox (<ROOT>/tests/_fixture_outbox)
+  1. filable-note.md  —  A Filable Note
+     → <ROOT>/tests/_fixture_filed/filable-note.md
+  2. no-destination.md  —  Missing Its Destination
+     REFUSED — no destination
+
+  1 of 2 can be filed
+  /file <n> | /file all | /file <n> decline [why]
 
 you>
 Found 2 match(es) in 1 session(s):
