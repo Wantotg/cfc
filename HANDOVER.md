@@ -157,41 +157,38 @@ Settled. Argue with them only with a reason, and say that you are.
    flag that pre-clears a tool; don't rebuild one.
 
    **The creation flow checks early *as well*, never instead** (v1.0,
-   `D-0.9.1-03`). `/routine new` used to take `trigger` and `on_failure` raw and
-   discover they were wrong at `save_routine`, six answers later, throwing away
-   the name, the prompt, the roots and the model with them. It re-prompts per
-   field now — but `Routine.validate()` and `save_routine`'s refusal are
-   untouched, because they are what this decision rests on and a hand-edited
-   file never passes through the flow at all. The way to keep both honest is
-   that they are the *same function*: `routines.trigger_problem` and
-   `on_failure_problem` are called by the prompt and by `validate()`, so a
-   field accepted as you type it cannot be rejected at save. Two checks written
-   separately would have disagreed the first time `weekly` grew a variant.
+   `D-0.9.1-03`). `/routine new` re-prompts per field, but `Routine.validate()`
+   and `save_routine`'s refusal are untouched — a hand-edited file never passes
+   through the flow at all. What keeps the two honest is that they are the *same
+   function*: `routines.trigger_problem` and `on_failure_problem` are called by
+   the prompt and by `validate()`, so a field accepted as you type it cannot be
+   rejected at save. Two checks written separately would have disagreed the
+   first time `weekly` grew a variant.
 
-   The finding underneath it was the exit, not the validation: the flow
-   returned to the REPL silently, so the next line typed became a chat message
-   — decision 13's failure shape reached through an abandoned prompt instead of
-   a missing verb. Every way out of `create_routine` now says it is a way out.
-   The same trap is worth checking for in any prompt flow added later; there is
-   no mechanism enforcing it, only `_routine_abandoned`.
+   The finding underneath was the *exit*, not the validation: the flow returned
+   to the REPL silently, so the next line typed became a chat message —
+   decision 13's failure shape reached through an abandoned prompt instead of a
+   missing verb. Every way out of `create_routine` now says it is one. Worth
+   checking for in any prompt flow added later; nothing enforces it but
+   `_routine_abandoned`.
 9. **Wiki recall keys off the frontmatter id, never the filename.** Renaming a
    page keeps its recall identity. Recall stays wiki-only; the chat log is indexed
    (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and
    must never break a turn.
 10. **A private chat's isolation is the connection, not a flag.** It runs against
     `db(":memory:")`, so every `conn`-driven write — including the ones
-    `agent_turn` makes on its own — is already a no-op against disk. `private=True`
-    gates only the paths that *escape* the connection: auto-embed (opens
-    `DB_PATH` directly), auto-export (writes to the vault), model file-writes
-    (empty write roots), and — added v0.9.1 — the provider error log, which
-    opens `~/.cfc/errors.log` by path. A new disk-writing path either goes
-    through `conn` or silently defeats this, and owes `tests/test_private.py` a
-    negative. **The fourth one is the one to learn the shape from:** its gate
-    lives inside `errorlog.log_error`, at the write, not at either call site,
-    because a caller that forgets is exactly the failure being prevented. And
-    its negative is *two* assertions — no line was written, **and** a marker
-    planted in the error text is absent from the file — because the payload is
-    up to 800 characters of the provider's own body (`api._error_detail`) and
+    `agent_turn` makes on its own — is already a no-op against disk.
+    `private=True` gates only the four paths that *escape* the connection:
+    auto-embed (opens `DB_PATH` directly), auto-export (writes to the vault),
+    model file-writes (empty write roots), and the provider error log (opens
+    `~/.cfc/errors.log` by path). A new disk-writing path either goes through
+    `conn` or silently defeats this, and owes `tests/test_private.py` a negative.
+
+    **Learn the shape from the fourth.** Its gate is inside `errorlog.log_error`,
+    at the write rather than at either call site, because a caller that forgets
+    is the failure being prevented. And its negative is *two* assertions — no
+    line written, **and** a marker planted in the error text absent from the file
+    — because the payload is up to 800 characters of the provider's own body and
     providers echo request fragments back inside a 400. A test that only counts
     lines passes while leaking.
 11. **A move that overwrites a live file requires a verified undo.** Journal
@@ -210,27 +207,23 @@ Settled. Argue with them only with a reason, and say that you are.
     wrong; `tests/test_hub.py` fails if a key is dispatched that the help does
     not describe. The single hand-written line points at `/help`, which is a
     fact about where the commands are documented rather than a copy of them.
-13. **The command surface is two lists that must agree**, and they are checked
-    rather than maintained: `run_session` asserts its handler table equals
-    `parse.VERBS`. An unrecognised verb falls through **to the model** — so a verb
-    that is documented but missing from the table isn't an error message, it's an
-    API call and a confused answer. **Retiring a word therefore means aliasing
-    it, not deleting it.** `RETIRED` was a third list until v0.9; deleting it
-    without moving its entries into `ALIASES` would have turned `/models` and
-    `/prompts` back into prose, which is an API call each. An `ALIASES` value may
-    be a *phrase* (`models` → `list models`) precisely so a retired word can map
-    to a command that takes arguments. The one word with no alias is `detach`,
-    whose replacement `/remove #<n>` changes the argument's shape — that is the
-    bar for letting a word go.
-    **Retiring a verb also means grepping `config.example.py`** (added v0.9.2).
-    It is the only shipped file that *instructs a human*, and it is not code, so
+13. **The command surface is two lists that must agree**, checked rather than
+    maintained: `run_session` asserts its handler table equals `parse.VERBS`. An
+    unrecognised verb falls through **to the model**, so a verb that is
+    documented but missing from the table isn't an error message — it's an API
+    call and a confused answer. **Retiring a word therefore means aliasing it,
+    not deleting it.** An `ALIASES` value may be a *phrase* (`models` → `list
+    models`) precisely so a retired word can map to a command that takes
+    arguments. The only word ever let go is `detach`, whose replacement
+    `/remove #<n>` changes the argument's *shape* — that is the bar.
+
+    **Retiring a verb also means grepping `config.example.py`** (`B-0.9.1-02`).
+    It is the only shipped file that *instructs a human*, it is not code, and
     nothing checks it — it carried twelve retired `:` commands across three
-    releases (`B-0.9.1-02`). The failure is this decision's own: the reader
-    types what their config file told them, and an unrecognised verb is an API
-    call rather than an error. Write the **canonical** verb there, never the
-    alias: `models` is `ALIASES["models"] = "list models"`, so the form says
-    `/list models`, and writing `/models` would re-teach the retired word one
-    generation later. The alias table is the thing to check, not intuition.
+    releases. The failure is this decision's own: the reader types what their
+    config file told them, and an unrecognised verb is an API call rather than
+    an error. Write the **canonical** verb, never the alias — `/list models`,
+    not `/models`, or the retired word is re-taught one generation later.
 14. **A delete reaches the index that points at what was deleted.**
     `chunks`/`vec_chunks` have no foreign keys, so the cascade is in code: index
     rows first, vectors before chunks, a vector-delete failure raising rather than
@@ -249,116 +242,91 @@ Settled. Argue with them only with a reason, and say that you are.
     about. It also reports the *process* state only where it measured one —
     `DOWN` exists so "LM Studio is running, its server isn't" is never a guess.
 
-    **The dot carries recoverability and the sentence carries context** (v1.0,
-    `D-0.9.1-01` and `B-0.9.1-03`). Both halves were decided together because
-    both are one table, `ui.CONNECTION_STYLE`, and the thing a fix must not do
-    is fork it per caller — three literals a refactor away from disagreeing is
-    the reason it is centralised at all.
+    **The dot carries recoverability, not severity** (v1.0, `D-0.9.1-01`,
+    `B-0.9.1-03`). Orange where `/connect embedding` will try, red where it is
+    not cfc's to fix — the split `preflight.ensure` already makes, since
+    `hosted` returns early and the other three fall through to the fixer.
+    Severity cannot discriminate: every non-green state means memory is off,
+    equally, so a light sorted by severity is sorted by nothing. Three states
+    share orange, and that is a class rather than a collision. **A colour per
+    state is still the wrong answer** — `ui.py` imports no cfc module, so this
+    is a producer/parser pair across a boundary that cannot close; adding a
+    colour widens it.
 
-    The colour is **orange where `/connect embedding` will try, red where it is
-    not cfc's to fix**, which is the split `preflight.ensure` already makes:
-    `hosted` returns early, the other three fall through to the fixer. Severity
-    cannot discriminate here — every non-green state means memory is off,
-    equally — so a light sorted by severity is a light sorted by nothing. It
-    was the other way round until v1.0, where `hosted` was orange while being
-    the one state cfc cannot act on and `not running` was red while being one
-    `lms server start` away; the report was *"either this is where I find out
-    that I'm colourblind, or two of these lights are the same"*. Three states
-    now share orange and that is a class, not a collision. **A colour per state
-    is still the wrong answer**: `ui.py` imports no cfc module, so this is a
-    producer/parser pair across a boundary that cannot close, and re-assigning
-    colours leaves the pair the size it was while adding one widens it.
+    **The advice says where it can be typed** (*"in a chat"*), because two of
+    its three renderings are at the hub and the hub takes only `n`/`p`/`h`/`q`
+    and a chat id. `commands.connect_status` kept a second copy of that advice
+    and it had already gone wrong; the copy was deleted rather than corrected.
+    `tests/test_connection.py` pins both properties against the mapping, not
+    against colour names or an exact phrase, so re-wording stays free.
 
-    The advice **says where it can be typed**, because two of its three
-    renderings are at the hub and the hub takes `n`/`p`/`h`/`q` and a chat id.
-    The two screens most likely to be the first thing seen after launch were
-    naming a command the screen in front of you would refuse. `commands.
-    connect_status` used to keep its own copy of that advice as a trailing
-    line, and the copy had already gone wrong the way a copy does — it offered
-    the command for `hosted` too, four lines under a light saying *not cfc's to
-    start*. The copy is gone rather than corrected. `tests/test_connection.py`
-    pins both properties against the mapping rather than against colour names
-    or an exact phrase, so re-wording and re-styling stay free.
+    **The routine column is the second light** (v0.9.2, `B-0.9.1-04`).
+    `hub._freshness` renders `schedule.why_not_due()` and decides nothing.
+    It used to be hours-since-last-run against v0.4's 24/48h thresholds — an
+    independent opinion about the question the scheduler already answers, and
+    therefore free to disagree with it. Five of six live rows were untrue when
+    it was fixed: `weekly` postdated the thresholds, and `command` routines aged
+    into red despite never being able to be owed a run.
 
-    **The routine column is the second light, added v0.9.2, and it earns the
-    same prohibition the same way.** `hub._freshness` renders
-    `schedule.why_not_due()` and decides nothing itself. It used to be
-    hours-since-last-run against v0.4's 24/48h thresholds — an *independent
-    opinion* about the same question the scheduler answers, and therefore free
-    to disagree with it. It did: `weekly` landed three days after those
-    thresholds were written, so a job that absorbed its week on schedule showed
-    red for five days in seven, and `command` routines — four of Cas's six —
-    aged into red despite never being able to be owed a run. Five of six rows
-    were saying something untrue when this was fixed (`B-0.9.1-04`).
-
-    Two properties fall out, and the second is the argument for the design.
-    **If the OS tick stops firing, every scheduled routine goes orange and stays
-    orange** — no threshold over a timestamp can say that. And the failure mode
-    inverts: the column can now say green when `schedule.py` is wrong, but the
+    Two properties fall out, and the second is the argument. **If the OS tick
+    stops firing, every scheduled routine goes orange and stays orange** — no
+    threshold over a timestamp can say that. And the failure inverts: the
     function deciding the colour *is* the function deciding whether the run
-    happens, so a wrong green is a routine that genuinely isn't running and a
-    run log that stops growing. The light and the behaviour fail together and
-    cannot disagree. The old column's failure was the silent one.
+    happens, so a wrong green is a routine that genuinely isn't running. The
+    light and the behaviour fail together and cannot disagree.
 
-    **The reason string stays unparsed** — `why_not_due` returns prose, and the
-    hub uses only `is None`. Matching its wording would have added a seventh row
-    to the producer/parser table below, inside the commit fixing a bug caused by
-    a signal forming its own opinion. `trigger: command` is detected with
-    `parse_trigger`, not by reading the reason.
+    **The reason string stays unparsed** — `why_not_due` returns prose, the hub
+    uses only `is None`, and `trigger: command` is detected with `parse_trigger`.
+    Matching the wording would have added a seventh row to the producer/parser
+    table, inside the commit fixing a bug caused by a signal forming its own
+    opinion.
 
-    Red left this column deliberately: "how badly overdue" is not a fact
+    Red left this column deliberately: *how badly overdue* is not a fact
     `why_not_due` knows, and reconstructing it means reinventing the threshold
-    that was just removed. Dim therefore means *cannot be owed a run*, which
-    puts `command` and a malformed trigger in the same cell — the hub's
-    broken-routine blind spot (`D-10`), not something this colour can fix.
+    just removed. So dim means *cannot be owed a run*, which puts `command` and
+    a malformed trigger in one cell — `D-10`, not something this colour can fix.
 
-    **`D-10` turned out to be larger than that sentence, and it now has a body**
-    (`BACKLOG.md`, written v1.0 from driving it rather than reading it). The dim
-    conflation is the third of three tiers and the least of them. The first is
-    that a file which will not parse is dropped from the panel entirely —
-    `_routine_rows` unpacks `list_routines()` and discards `bad`. **The second
-    had never been written down: a routine that parses but fails `validate()`
-    renders green**, indistinguishable from a healthy one, because nothing in
-    `_freshness` consults `validate()`. The colour is not lying about what it
-    measures — *is a run owed* — and that is the trap, because the panel is read
-    as *is this still working*. The two questions agree on every routine except
-    a broken one. So this decision's own failure mode arrived one panel up from
-    the light it was written for, through a column that obeys it exactly.
+    **`D-10` is three tiers and the dim conflation is the least of them**
+    (body in `BACKLOG.md`, written v1.0 from driving the panel). A file that
+    will not parse is dropped entirely — `_routine_rows` discards
+    `list_routines()`'s `bad`. And **a routine that parses but fails
+    `validate()` renders green**, because nothing in `_freshness` consults
+    `validate()`. The colour is not lying about what it measures — *is a run
+    owed* — and that is the trap: the panel is read as *is this still working*,
+    and the two questions agree on every routine except a broken one.
 
-## Two rules that generated most of the above
+## Four rules that generated most of the above
 
 **Use a model for judgement under ambiguity; use code for anything with a right
 answer.** The mover doesn't ask a model where a file goes. `/wiki` doesn't ask a
-model to commit. The retrieval floor doesn't try to judge relevance — it hands
-excerpts to a model that can say "these don't answer it."
+model to commit. The retrieval floor doesn't judge relevance — it hands excerpts
+to a model that can say "these don't answer it."
 
 **Separate states where they are separable, which is usually at the exception.**
 An unreachable embedder and an empty result set are the same silence by the time
 they reach a console, and one of them is a confident lie. They are cleanly
-distinct exactly once — at the point where one is an exception and the other is
-`[]` — so `embed.py` records which it saw *while catching it* and raises
-`EmbedUnavailable` rather than a message. Re-deriving a state further up, from
-wording or from a count, is the recurring hazard rebuilt: it works until someone
-improves a sentence. If you find yourself inferring which failure happened,
-you are at the wrong end of it.
+distinct exactly once — where one is an exception and the other is `[]` — so
+`embed.py` records which it saw *while catching it* and raises `EmbedUnavailable`
+rather than a message. Re-deriving a state further up, from wording or from a
+count, works until someone improves a sentence. If you are inferring which
+failure happened, you are at the wrong end of it.
 
 **A format the provider needs and we don't goes at the wire boundary, not at the
 call site.** `api.wire_messages` drops an empty `content` from a tool-call
-message on the way out, while `history` keeps it for persistence and rendering.
-It lives inside `call_api`/`stream_response` rather than in `agent_turn`,
-because *both* paths replay history and the streaming one is the easy one to
-miss — it has no tools, so it looks like it cannot carry a tool-call message,
-and it can: a session that made tool calls and then switched to a non-tools
-model replays exactly those. A transform each caller must remember is one a
-caller will not.
+message on the way out; `history` keeps it for persistence and rendering. It
+lives in `call_api`/`stream_response` rather than `agent_turn` because *both*
+paths replay history, and the streaming one is the easy one to miss: it has no
+tools, so it looks like it cannot carry a tool-call message — and it can, when a
+session that made tool calls switches to a non-tools model. A transform each
+caller must remember is one a caller will not.
 
-**Prefer the failure that is visible.** Nearly every bug in the Scars section is
-a silent false negative: nothing raised, something just quietly returned "there's
-nothing here", which is indistinguishable from the truthful answer. When you add
-a guard, work out which direction its failure points — `tools.reserved_write_reason`
-fails open because failing to resolve a path can only narrow what is writable;
-the journal's git guard fails closed because failing to check can only widen what
-is destroyed.
+**Prefer the failure that is visible.** Nearly every bug in Scars is a silent
+false negative: nothing raised, something quietly returned "there's nothing
+here", indistinguishable from the truthful answer. When you add a guard, work
+out which way its failure points — `tools.reserved_write_reason` fails open
+because failing to resolve a path can only narrow what is writable; the
+journal's git guard fails closed because failing to check can only widen what is
+destroyed.
 
 ---
 
@@ -383,15 +351,11 @@ they lose. Reopening one needs a new argument, not a fresh eye.
 - **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates
   against its own `MOVE_ROOTS` precisely because it is not the model. The
   separation is the design; the two tuples are independent.
-- **~~Starting LM Studio from WSL~~ — this was never a rejected design, and the
-  mistake is kept here on purpose.** It was written up as impossible after
-  `lms server start` timed out at 62s from an interactive shell and two GUI
-  launch methods did nothing. Cas then ran the real path from a cold machine and
-  it worked first time. **Three failures in one afternoon are not proof of
-  impossibility about something that has been observed working**, and the note
-  had already removed a capability he relied on. This section stops people
-  trying things; an entry here needs to have earned that. Closed in
-  `legacy/BUGS.md`.
+- **~~Starting LM Studio from WSL~~ — not a rejected design; it works.** Written
+  up as impossible on three failures in one afternoon, then done first time from
+  a cold machine (`legacy/BUGS.md`). Kept here as the standing caution: **this
+  section stops people trying things, so an entry needs to have earned that.**
+  Three failures are not proof of impossibility about something observed working.
 - **Tightening the retrieval floor.** See the constants below. The signal isn't there.
 - **A tighter model-is-thinking check than list membership.** The only available
   signal is the `:thinking` id suffix, and it miscalibrates —
@@ -414,27 +378,25 @@ Numbers you can read off `config.py` and `search.py`. What you can't read off
 them is what they were measured against, which is what makes them re-derivable.
 
 **`MAX_DISTANCE = 1.08` is a lint filter, not a relevance judge.** Measured over
-32 probes **on the wiki corpus** (write the corpus down — see below). The
-answerable band (0.696–1.065) and the unanswerable band (0.995–1.194) *interleave*:
-`"what was agentmail about"` needs 1.065 and `"how do I tune a guitar to drop D"`
-scores 1.055. No threshold separates them, and a relative metric cancels ~70% of
-phrasing noise and lands on the same error rate. So the floor is set
-asymmetrically — **admit generously**, because a rejected good hit is a silent,
-confident "memory has no answer", while an admitted bad one reaches `recall.py`'s
-grounded synthesis, which is told to say when the excerpts don't cover the
-question. One failure is invisible; the other self-corrects. 1.024 lost 4 of 20
-good phrasings, which is what "recall returns nothing" actually was.
+32 probes **on the wiki corpus**. The answerable band (0.696–1.065) and the
+unanswerable band (0.995–1.194) *interleave* — `"what was agentmail about"` needs
+1.065 while `"how do I tune a guitar to drop D"` scores 1.055 — so no threshold
+separates them, and a relative metric lands on the same error rate. The floor is
+therefore asymmetric: **admit generously**, because a rejected good hit is a
+silent, confident "memory has no answer" while an admitted bad one reaches
+`recall.py`'s grounded synthesis, which is told to say when the excerpts don't
+cover the question. One failure is invisible, the other self-corrects. The old
+1.024 lost 4 of 20 good phrasings, which is what "recall returns nothing" was.
 
-- Phrasing noise alone spans ~0.09. Any future floor needs more headroom than that.
+- Phrasing noise alone spans ~0.09. Any future floor needs more headroom.
 - **Re-chunking or swapping the embedding model invalidates the floor** — it is
-  geometry-specific and the corpus is half of what it measures. Re-measure, don't
-  re-run the old number.
+  geometry-specific and the corpus is half of what it measures. Re-measure.
 - `vec0` ranks by **L2**, not cosine. A cosine check is magnitude-blind and won't
   catch a normalisation change that moves every distance.
-- **The provenance lesson itself:** the old 1.024 and its "total separation" were
-  measured on the retired Anthropic export and recorded as wiki numbers. Nothing
-  had ever regressed — the baseline was mislabelled, and it cost a full session to
-  establish that. Record which corpus a tuned constant was measured on.
+- **Record which corpus a constant was measured on.** The old 1.024 and its
+  "total separation" were measured on the retired Anthropic export and filed as
+  wiki numbers. Nothing had ever regressed; the baseline was mislabelled, and it
+  cost a session to establish that.
 
 **The tool turn's two budgets** (`TOOLS_MAX_CALLS_PER_TURN`,
 `TOOLS_MAX_TURN_RESULT_CHARS`) had to land together. The call ceiling is generous
@@ -452,40 +414,36 @@ human interrupts it, and a routine has no human. `max_calls` is a parameter and
 deliberately not on `ToolContext`: that object is the permission boundary, and a
 call count is capacity, not permission.
 
-**`embed.py`'s two timeouts are not the same quantity either, and this pair is
-the one that bit.** `httpx`'s single `timeout=` sets *connect*, *read*, *write*
-and *pool* alike, so one number has to serve the slower quantity — and a
-`timeout=60` meant every attempt against a dead embedding server waited out the
-full read budget just to learn nothing was listening. Four attempts of that is
-the ~240s `/recall` hang. Connect is 5s (the live endpoint answers in 0.18s);
-read stays 60s, because a 100-chunk batch or a cold model load legitimately
-needs it. **The retry budgets are split for the same reason the timeouts are:**
-a 429 is a transient and waiting helps, a refused connection is a *state* and
-asking four times gets one answer four times. `_DOWN_RETRIES = 2` rather than 1
-only so a call can catch a restart. `tests/test_embed.py` pins the timeouts **as
-a pair**, not as two numbers — retuning stays free, merging does not.
+**Connect and read are never one number, and this is the pair that bit.**
+`httpx`'s single `timeout=` sets *connect*, *read*, *write* and *pool* alike, so
+one value has to serve the slower quantity — and a dead port then costs the full
+*read* budget to learn nothing was listening. Both layers split it:
 
-**`preflight.py` learned the same lesson one layer up, and the measurement is
-what bought the traffic light.** `PROBE_CONNECT = 0.5` / `PROBE_READ = 8.0`
-replaced a single `PROBE_TIMEOUT = 8.0` for exactly `embed.py`'s reason — one
-number has to serve the slower quantity, so a *dead* port cost the full read
-budget to learn nothing was listening. Measured 2026-07-27 on Cas's machine: a
-live local embedder answers a real `/embeddings` POST in **0.157s**; `lms server
-status` and `lms ps` are ~0.33s; `tasklist.exe` is ~0.15s; a dead local port on
-WSL **hangs rather than refusing**, so it costs exactly the connect timeout.
-Those numbers are the argument for the light having no cache at all — 0.16s
-healthy and 0.5s broken is cheap enough to ask on every hub render, and an
-answer you can always re-ask is one you never have to age. **Re-measure before
-raising either**, and keep them a pair; `tests/test_connection.py` pins the
-relationship, not the values.
+| | connect | read | why read is that high |
+|---|---|---|---|
+| `embed.py` | 5s | 60s | a 100-chunk batch or a cold model load |
+| `preflight.py` | 0.5s | 8.0s | LM Studio **JIT-loads** on demand: 1.71s for bge-m3 from unloaded |
 
-**`PROBE_READ = 8.0` is not slack, and this is what it is for.** LM Studio
-JIT-loads a model when a request names it, so the first probe after a restart
-pays the load inside the read budget: 1.71s for bge-m3, measured with the model
-explicitly unloaded. Cutting the read timeout to something that "looks like
-plenty for a local call" would turn every cold start into a confident red light
-over a working embedder. A larger model would need more, which is the number to
-re-measure — not the healthy 0.157s, which is never the constraint.
+`embed.py`'s old flat `timeout=60` × four attempts is the ~240s `/recall` hang.
+`preflight.py`'s old flat `PROBE_TIMEOUT = 8.0` is the same bug one layer up.
+**`PROBE_READ` is not slack** — cutting it to something that "looks like plenty
+for a local call" turns every cold start into a confident red light over a
+working embedder. A larger embedding model is the reason to re-measure it; the
+healthy 0.157s never is.
+
+Measured 2026-07-27 on Cas's machine: a live local embedder answers a real
+`/embeddings` POST in **0.157s**, `lms server status` and `lms ps` ~0.33s,
+`tasklist.exe` ~0.15s, and a dead local port on WSL **hangs rather than
+refusing**, so it costs exactly the connect timeout. That is what buys the
+traffic light its lack of a cache: 0.16s healthy and 0.5s broken is cheap enough
+to ask on every hub render, and an answer you can always re-ask never has to be
+aged.
+
+**The retry budgets split for the same reason.** A 429 is a transient and
+waiting helps; a refused connection is a *state*, and asking four times gets one
+answer four times. `_DOWN_RETRIES = 2` rather than 1 only so a call can catch a
+restart. `tests/test_embed.py` and `tests/test_connection.py` pin these **as
+pairs**, not as values — retuning stays free, merging does not.
 
 **The two read timeouts are not the same quantity, so don't unify them.**
 `call_api` reads for 600s because non-streaming means no bytes arrive until the
@@ -555,19 +513,16 @@ graph allows, and **pin them by round-trip, never against a literal.** A test
 asserting `written_path("wrote /x (1 chars)")` passes forever while the real pair
 drifts apart; `tests/test_tools.py` runs a real write and parses its real result.
 
-**Add a seventh and add it to this table** — unless the first rule can close it
-instead, which is what happened to the one that would have been the seventh.
-`B-0.9.1-01` (v1.0) needed `agent._render_result` to recognise the gate's two
-human verdicts so it could style your own decision as a decision rather than a
-fault. Written the obvious way that is a literal at each end across a module
-boundary and a new row here. But `agent.py` already imports from `commands.py`
-and nothing imports back, so the strings became `commands.DENIED` / `SKIPPED`
-and the pair closed. **Check the graph before adding a row**: a pair that can be
-closed and is merely pinned is a pair that will drift eventually, and this table
-is the list of the ones that genuinely can't be. `tests/test_agent.py` still
-round-trips it — the real `gate_and_dispatch` into the real renderer, no literal
-between them — because an import is only a guarantee while it is the thing being
-used.
+**Add a seventh and add it to this table — unless the first rule can close it
+instead.** That is what happened to the one that would have been the seventh:
+`B-0.9.1-01` needed `agent._render_result` to recognise the gate's two human
+verdicts, which the obvious way is a literal at each end. But `agent.py` already
+imports from `commands.py` and nothing imports back, so the strings became
+`commands.DENIED` / `SKIPPED` and the pair closed. **Check the graph before
+adding a row** — a pair that *can* be closed and is merely pinned will drift
+eventually, and this table is for the ones that genuinely can't be.
+`tests/test_agent.py` still round-trips it, because an import is only a
+guarantee while it is the thing being used.
 
 ---
 
@@ -631,12 +586,10 @@ per line, so concatenated markers got embedded as content. Shipped that way once
 
 **Four `console.print` calls printed their own markup tags.** `ui.console` is
 `Console(markup=False)` — chat content must never be reinterpreted as markup —
-so `[dim]recall cancelled.[/dim]` renders the brackets. One of them was the
-embedder retry note **shipped in v0.8.2**, the release named for that note, and
-it was visible on every slow embedder from the day it landed. It survived a
-testing pass because a wrong-looking line still tells you the true thing. Styled
-output is `style=`, never brackets; found by driving the feature, not by reading
-it.
+so `[dim]recall cancelled.[/dim]` renders the brackets. One shipped in v0.8.2,
+the release named for that very note, visible on every slow embedder from the
+day it landed: it survived a testing pass because **a wrong-looking line still
+tells you the true thing.** Styled output is `style=`, never brackets.
 
 **A prose sweep nearly renamed the persisted `[:remember …]` marker** during the
 `:`→`/` flip, which would have stopped every existing marker row from parsing. When
@@ -667,26 +620,21 @@ timezone bug is invisible there by construction. It is pinned in
 a test written against a literal `+00:00` passes without the conversion on a
 UTC machine.
 
-**All three raw sites were converted in v0.9**, and the shape of the fix is a
-second helper rather than a call to the first: `format_ts` returns
-`YYYY-MM-DD HH:MM`, so a site that only wants a date could not simply call it —
-which is precisely why three `created_at[:10]` slices survived the v0.8.1 fix.
-`ui.format_date` is that date half, beside it, at the bottom of the graph.
-
-`[:10]` was never a cheap `format_date`. It reads the date off the **stored**
-string, so a session created after 22:00 local was filed and labelled under
-tomorrow. Confirmed live rather than reasoned about: session #24 on Cas's own
-db stores `2026-07-19` and is locally `2026-07-20`. Cas's call (2026-07-27) was
-to localise all three including `export.py`'s full timestamp — an export in the
-vault in a different time base from the rest of the vault is itself the trap.
+**`ui.format_date` is the date half, and it exists because `format_ts` returns
+`YYYY-MM-DD HH:MM`** — a site wanting only a date could not call it, which is
+why three `created_at[:10]` slices survived the v0.8.1 fix. `[:10]` reads the
+date off the **stored** string, so a session created after 22:00 local was filed
+under tomorrow: session #24 stores `2026-07-19` and is locally `2026-07-20`. All
+three sites converted in v0.9, `export.py`'s full timestamp included — an export
+in the vault in a different time base from the rest of the vault is itself the
+trap.
 
 ## The environment
 
-**The skeleton, written down v1.0 (`W-03`) because it lived in Cas's head.** cfc
-is understandable from its own source; the system around it was not written
-anywhere, and the failure mode of that is a machine getting rebuilt and something
-turning out to have lived in one place. `README.md` carries the human-facing
-version — this is the half that is about failure modes rather than layout.
+**The skeleton, written down v1.0 (`W-03`).** cfc is understandable from its own
+source; the system around it was not written anywhere, and the failure mode of
+that is a rebuild discovering something lived in exactly one place. `README.md`
+carries the layout; this is the failure modes.
 
 **One computer, two filesystems that fail independently.** ext4 (`~`) is erased
 by `wsl --unregister`; NTFS (`/mnt/c`) is not. Every durability question here
@@ -712,18 +660,17 @@ breaking by "tidying" the `.git` back into the vault.
 folder on the Windows side. `VAULT_ROOT`, three lines below it in `config.py`, is
 the actual vault. Nothing enforces the distinction and both are strings.
 
-**The database is the single point of failure, stated so it is a decision.**
-`backup.py` keeps ten rolling snapshots **on the same disk as the original**.
-That is the right design for what it defends against — a torn write, a bad
-migration, a mistake — and those are the failures that have actually occurred. It
-is not an off-machine backup and was never meant to be. The auto-exports are not
-one either: measured 2026-07-29, 28 MB of database against 1.5 MB of exported
-Markdown, and the difference is not compression. The exports carry the chat text.
-The retrieval index, the vectors, the routine transcripts, the token accounting
-and the tool metadata are in one file on one filesystem. Anyone proposing to make
-this durable should note that the chunk/vector schema is in flux (`W-07`, 2.0), so
-a scheme that copies the file survives the rework and one that exports the schema
-does not.
+**The database is the single point of failure, stated so it is a decision**
+(`Q-01`). `backup.py` keeps ten rolling snapshots **on the same disk as the
+original** — right for what it defends against (a torn write, a bad migration, a
+mistake, all of which have happened) and never meant to be an off-machine copy.
+The auto-exports are not one either: 28 MB of database against 1.5 MB of
+exported Markdown (2026-07-29), and the difference is not compression — the
+exports carry the chat text, while the retrieval index, the vectors, the routine
+transcripts, the token accounting and the tool metadata exist only in that one
+file. Anyone making this durable should note the chunk/vector schema is in flux
+(`W-07`, 2.0): a scheme that copies the file survives the rework, one that
+exports the schema does not.
 
 - WSL2/Ubuntu on Windows. Vault on `/mnt/c`, reached Linux→Windows (fast); never
   `\\wsl.localhost` (slow, flakier).
@@ -736,42 +683,34 @@ does not.
   GitHub repo (`cfc-vault-cas`), `main` tracks `origin/main`, and the ext4-only
   history that v1.0 called out as the most urgent chore in the project is no
   longer the exposure it was.
-- **cfc still never pushes, and that is now a choice rather than a description
-  of the environment.** `wikigit.py` issues no `push` and no `remote`;
-  `tests/test_wikigit.py` pins both as absent. The old reasoning — "a push that
-  silently no-ops today silently starts working the day a remote appears" —
-  expired when the day arrived, and what replaces it is in `wikigit.py`'s
+- **cfc never pushes, and since the remote arrived that is a choice rather than
+  a description.** `wikigit.py` issues no `push` and no `remote`;
+  `tests/test_wikigit.py` pins both absent. The reasoning is in `wikigit.py`'s
   header: a push is a network call with other people's failure modes (auth,
   connectivity, a rejected non-fast-forward), from a REPL that would block for
-  the duration, and it would owe an answer to "what does a failed push do to a
-  commit that already succeeded". Teaching it to push is a design decision.
-- **The wording caught up in v0.9.1.** `/wiki commit` used to print `local only
-  — this repo has no remote`, which was true when written. The failure once it
-  wasn't is worth keeping, because it runs the opposite way to this project's
-  usual hazard: an unpushed commit really *is* local only, so the warning's
-  conclusion survived while its *reason* went false — and the false reason was
-  the half saying nothing could be done, at exactly the moment the thing to do
-  had become available. A warning that talks you out of the fix is worse than
-  no warning. It is now `_LOCAL_ONLY`, one constant shared by both commit
-  paths, saying what cfc did rather than what the repo has — a claim that
-  cannot go stale.
+  the duration, and it owes an answer to *what does a failed push do to a commit
+  that already succeeded*. Teaching it to push is a design decision.
+- **`/wiki commit` says what cfc did, not what the repo has** (`_LOCAL_ONLY`,
+  one constant across both commit paths). It used to print `local only — this
+  repo has no remote`, true when written. Worth keeping because it runs opposite
+  to this project's usual hazard: the conclusion stayed true while its *reason*
+  went false — and the false reason was the half saying nothing could be done,
+  at the moment something could. A warning that talks you out of the fix is
+  worse than no warning.
 - Embeddings come from a **separate endpoint** to chat: self-hosted `bge-m3` on LM
   Studio. `networkingMode=mirrored` means localhost reaches the Windows host; the
   old NAT gateway IP no longer resolves at all, and don't put one back — a stale
   one now fails closed instead of drifting. "Serve on local network" must stay on,
   and the model id is `text-embedding-baai-bge-m3-568m`, not plain `bge-m3`.
 
-  **Why separate, since the code only shows that it is** (written down v1.0):
-  the corpus is personal, embedding it is cheap and constant, and posting every
-  note you write to a third party to get a vector back buys nothing. Two
-  consequences that are properties rather than side effects — **memory keeps
-  working when the internet doesn't**, and **the chat provider can be swapped
-  without re-indexing**, because nothing about the vectors depends on it. The
-  cost is a second process that has to be running, which is the entire reason
-  `preflight.py` and the connection light exist. Note the coupling in the other
-  direction: `MAX_DISTANCE` is geometry-specific, so swapping the *embedding*
-  model invalidates the floor and the whole index, while swapping the chat model
-  costs nothing.
+  **Why separate, since the code only shows that it is:** the corpus is
+  personal, embedding it is cheap and constant, and posting every note you write
+  to a third party to get a vector back buys nothing. Two properties fall out —
+  **memory keeps working when the internet doesn't**, and **the chat provider
+  can be swapped without re-indexing.** The cost is a second process that has to
+  be running, which is why `preflight.py` and the connection light exist. The
+  coupling runs one way only: swapping the *embedding* model invalidates
+  `MAX_DISTANCE` and the whole index; swapping the chat model costs nothing.
 - **LM Studio running is not the same as its server running.** The tray app can sit
   there for weeks with the server off; that's the state `preflight.py` exists for.
 - Windows Task Scheduler fires `run-due.sh` on a fixed tick. The wrapper redirects
@@ -788,11 +727,10 @@ the changes you *didn't* intend. `SCRUB` normalises timestamps, paths and the ke
 digest on both sides at compare time, so adding a rule fixes a baseline without
 re-recording.
 
-Twenty-five unit suites beside it; none needs an API key. What they cover is
-**What is hand-verified, stated rather than implied** (reconciled v1.0, `W-02`;
-this list and `ROADMAP_PRIVATE.md`'s disagreed, and one item on it was already
-false). A version claiming things are "verified by something that doesn't get
-tired" owes the reader the other half of the sentence:
+Twenty-five unit suites beside it; none needs an API key. **What is
+hand-verified, stated rather than implied** (`W-02`) — a version claiming things
+are verified by something that doesn't get tired owes the reader the other half
+of the sentence:
 
 | | |
 |---|---|
@@ -803,13 +741,10 @@ tired" owes the reader the other half of the sentence:
 | `/export`'s output | **a real gap, and honestly automatable.** Owed, not impossible — write to a temp dir and read it back. Left out of v1.0 by scope, not by argument |
 | `/routine`'s listing and run commands | **a partial gap.** Creation is covered as of v1.0 (`test_routines.py`), `run_routine` since v0.5; `show_routines` and `do_routine` are not |
 
-**The picker used to be on that list and was already covered** — `test_hub.py`
-drives `pick_session` with a scripted keyboard: listed ids, refused ids,
-`n`/`p`/`q`, and garbage re-prompting. It sat here as hand-verified through two
-releases after the test landed. Which is the lesson worth more than the row:
-**a list of what isn't tested goes stale in the safe-looking direction**, because
-adding a test is the moment nobody thinks to edit the docs, and the result is a
-version planning work that is already done.
+**A list of what isn't tested goes stale in the safe-looking direction.** The
+picker sat on that table as hand-verified for two releases after `test_hub.py`
+already drove it — adding a test is the moment nobody thinks to edit the docs,
+and the result is a version planning work that is already done.
 
 Three habits worth keeping, all learned here: **verify a guard by disabling it**
 and watching the assertions fail (seven of them for the journal's git guard);
@@ -822,82 +757,39 @@ and needs no edit when they agree differently.
 
 ## Open threads
 
-- **v0.8.2 has had one clean play-test** (Cas, 2026-07-27): every previously
-  reported issue fixed, nothing new, and the model fallback behaved. What that
-  pass does *not* cover is a broken id that is in `MODELS` — the auto-revert
-  arms only for ids it doesn't recognise, so the case it was built for is the
-  case it misses. See `BACKLOG.md`. Sustained use is still the open half of this
-  thread.
-- **The first *scheduled* routine runs have happened, and the thread closes on
-  evidence rather than on a report** (2026-07-28). Both are in
-  `~/.cfc/schedule.log` under a `run-due tick` header, which is what makes them
-  unattended rather than someone typing `/routine`: `short-term-memory`
-  (`trigger: 0300`) started at **05:45 on 28-07** — the machine having been off
-  at 03:00, so this is `schedule.why_not_due`'s "runs once, late, today" branch
-  taken for real — and `medium-term-memory` (`weekly 0330`) at **03:30 on
-  27-07**, absorbing the week of 20–26 July. v0.5's claim that the scheduler
-  works is now driven, and so is v0.7's cadence.
+Only what is genuinely unsettled. A thread that closed is a `TRACKER.md` row and
+a changelog entry, not a paragraph here.
 
-  **Two things fell out of reading those logs, and neither was in the playtest
-  report.** The `review` flag fired in the wild for the first time —
-  `reflection` at 12:31 on 28-07 logged `ok (review)` because the model's own
-  summary said a root it was told to read was outside its jail — which is
-  exactly the scar it was built for, working. And the hub's freshness column
-  turned out to apply v0.4's daily thresholds to weekly and command routines
-  alike (`B-0.9.1-04`) — **fixed in v0.9.2**, where the column stopped having
-  an opinion of its own and started rendering `why_not_due()`; see standing
-  decision 16.
+- **A provider 400 on tool turns, and the list of things to try is empty**
+  (`B-01`, `BUGS.md`). Two candidate causes fixed in v0.5, the interrupt theory
+  given its structural fix, the last suspect (`api.wire_messages`) spent in
+  v0.9. None of that is confirmation — there is no reproduction, so there is no
+  test that any of it *worked*. It closes by recurring and being explained, or
+  by absence across a window whose length was never stated (`Q-0.9.2-01`), which
+  is the weaker claim and has to be named as such. `errorlog.py` makes the watch
+  real: the error line is captured when it fires, so neither route depends on a
+  human reading scrollback in time. Blind spots (private chats, non-`httpx`
+  exceptions) are with the entry.
+- **Scheduled runs fire; their outputs are still trusted rather than read.** The
+  tick is driven and settled (`Q-0.9.1-04`). *Did the routine do the right
+  thing* is a second claim and nobody has checked it.
+- **The connection light has not been watched over a working day.** All three
+  fix paths were driven on 2026-07-27; ordinary use is what is left.
+- **v0.8.2's model fallback misses the case it was built for** — auto-revert
+  arms only for ids it doesn't recognise, so a *broken id that is in* `MODELS`
+  goes unhandled. `BACKLOG.md`.
+- **The DB layer is anticipated to be reworked** (`W-07`) — treat the
+  chunk/vector schema as in flux. Intended shape: SQLite stays the source of
+  truth, sqlite-vec is an index over it.
 
-  What is *not* covered: the outputs still want reading rather than trusting.
-  A tick that fires and a routine that does the right thing are two claims, and
-  only the first one is settled.
-- **`preflight.py`'s fix paths are no longer an open thread — all three states
-  were driven on 2026-07-27, two of them by Cas on the real machine.** Orange
-  worked: `lms server start` fired for the first time since it was written and
-  reached green in 1.4s. **Red worked too**, from a genuinely cold machine via
-  the desktop shortcut, which is the case that had never once been exercised.
-  And `lms load` turns out to be **near-unreachable**: LM Studio JIT-loads on
-  demand, so an unloaded model does not fail the probe, it makes it slow (1.71s
-  vs 0.15s) — which is what pins `PROBE_READ` as load-bearing rather than
-  slack. The branch is kept because JIT is a setting, not a guarantee.
-  What replaces this thread is ordinary use: the light has not been watched over
-  a working day.
-- **A provider 400 on tool turns is open, and the list of things to try is now
-  empty** — `BUGS.md`. Two candidate causes were fixed in v0.5, the surviving
-  interrupt theory got its structural fix, and v0.9 spent the last suspect
-  (`api.wire_messages`). None of that is confirmation: there is no reproduction,
-  so there is no test that any of it *worked*. It closes on the next occurrence
-  settling it, or on absence across the 0.9 → 1.0 window — a weaker claim than
-  "fixed", and v1.0's note has to say which one happened rather than let an
-  empty `BUGS.md` imply the stronger one. **v0.9.1 made the watch real**:
-  `errorlog.py` captures the error line the moment it fires, so neither closing
-  route now depends on a human reading scrollback in time. Its blind spots
-  (private chats, non-`httpx` exceptions) are in `BUGS.md` with the entry.
-- **Zero recall hits are three distinguishable outcomes, and this thread is
-  closed** (v1.0, `W-01`). The embedder never answered
-  (`embed.EmbedUnavailable`), nothing is indexed (`search.why_empty` →
-  `EMPTY_INDEX`), or the corpus was searched and missed. Built in v0.9, and
-  **driven on screen in v1.0 rather than closed on the code reading** — all
-  three print different sentences, and the middle one is the confident
-  falsehood the distinction exists to stop: *"nothing comes close"* about a
-  corpus that was never consulted. Pinned in `tests/test_memory_states.py`.
-
-  What was never built is the routine half, and **the reason is why this closed
-  without code**: no routine can reach recall. The four tools are `list_dir`,
-  `read_file`, `grep` and `write_file`; `commands.py` is the only module that
-  imports `search` or `recall`; `agent.py` doesn't, and `tools.py` and
-  `runner.py` mention the words only in prose. There is no call site at which a
-  routine's zero-hit policy could live, so building one means inventing the
-  caller before the capability. The draft that scoped this assumed otherwise —
-  which is the transferable half: **a policy for a caller that doesn't exist is
-  a spec nobody can execute**, and it reads exactly like ordinary owed work
-  until someone greps for the import.
-
-  So the distinction stays where it originates rather than at a call site that
-  doesn't exist. When a recall tool lands it inherits the typed exception
-  instead of needing one retrofitted, and *that* is when a zero-hit routine
-  policy becomes a real question. The successor is in `ROADMAP_BEYOND.md` with
-  its number deliberately unclaimed.
-- **The DB layer is anticipated to be reworked** — treat the chunk/vector schema as
-  in flux. The intended shape is "SQLite stays the source of truth, sqlite-vec is an
-  index over it".
+**One closed thread is kept, because what closed it is reusable.** Zero recall
+hits are three distinguishable outcomes (`W-01`, v1.0) — embedder never answered
+(`embed.EmbedUnavailable`), nothing indexed (`search.why_empty`), or searched and
+missed. The routine half was never built and never can be as things stand: **no
+routine can reach recall.** The four tools are `list_dir`, `read_file`, `grep`
+and `write_file`, and `commands.py` is the only module importing `search` or
+`recall`, so there is no call site a routine's zero-hit policy could live at. The
+transferable half is that the draft scoping it assumed otherwise: **a policy for
+a caller that doesn't exist is a spec nobody can execute**, and it reads exactly
+like ordinary owed work until someone greps for the import. Successor in
+`ROADMAP_BEYOND.md`, number unclaimed.

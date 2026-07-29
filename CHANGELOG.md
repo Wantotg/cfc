@@ -27,6 +27,30 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — HANDOVER.md loses the retelling
+Post-1.0 doc rewrite, step 4 — the *say it once* rule applied to the file that
+states it. 903 → 795 lines with **no decision, rejected design, constant,
+measurement or scar removed.**
+
+What went: the connection light's two stories told at the length of the
+investigation rather than the conclusion (90 lines → 50); `embed.py`'s and
+`preflight.py`'s timeout pairs, which explained the same lesson twice and are
+now one table with both rows; and *Open threads*, which had become the place
+closed threads went to be described (82 → 38). A closed thread is a `TRACKER.md`
+row and a changelog entry — the section says so now.
+
+Two factual corrections while in there: *Two rules that generated most of the
+above* listed four, and the `Q-01` and `W-07` ids were missing from the
+paragraphs that are their bodies.
+
+**It did not reach the ~600 lines estimated.** The remaining length is reference
+— 16 standing decisions, 8 constants with their measurements, 12 scars — not
+narrative, and cutting further would remove content rather than retelling.
+
+- Files: HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The roadmap becomes the front office
 Post-1.0 doc rewrite, step 3. `W-06`, closed. `ROADMAP.md` was trying to be a
 roadmap, a changelog, a backlog and a bug report at once — reasonable, since it
@@ -47,7 +71,7 @@ at the bottom.
 
 - Files: ROADMAP.md, TRACKER.md
 - Status: shipped
-- Commit: pending
+- Commit: 99c3510
 
 ## 2026-07-29 — The pre-1.0 changelog is frozen
 Post-1.0 doc rewrite, step 2. Every entry up to and including the v1.0 tag moves
@@ -65,7 +89,7 @@ nobody should follow.
 
 - Files: CHANGELOG.md, legacy/CHANGELOG.md, legacy/README.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 99c3510
 
 ## 2026-07-29 — cx · A transient provider status stops killing an unattended run
 `D-0.9.2-01`, closed. A 503 from the provider used to pass straight through
@@ -105,5 +129,5 @@ demonstrated on itself.
 
 - Files: HANDOVER.md, CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 99c3510
 
