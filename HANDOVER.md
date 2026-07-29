@@ -81,6 +81,51 @@ tracked in git rather than gitignored — a gitignored archive is invisible to
 clones, outside every backup, and destroyed by a fresh checkout, which is the
 same argument that killed `inbox/` at the repo root.
 
+## Versions and releases
+
+Annotated git tags, semver, `vMAJOR.MINOR.PATCH`. MINOR ships a roadmap feature;
+PATCH is fixes and polish with nothing new off the roadmap. (`v0.41` predates
+this scheme — it's pushed, so it stays; don't mint new two-digit ones.)
+
+**The order is fixed, the playtest is inside it, and the tag is always last.**
+
+1. **Build, commit and push** — in the session, by the model. The version's body
+   also moves from the private roadmap to the public one here.
+2. **Cas playtests the pushed version.** Nothing is tagged; `main` carries the
+   version and does not yet claim it works.
+3. **Triage.** Every finding gets a place. Whatever blocks the tag is fixed,
+   committed and pushed.
+4. **Cas writes the version note**, straight into `ROADMAP.md`, from use.
+5. **Cas pulls and tags** — `git push --tags`; tags do not ride a normal push.
+
+**What blocks the tag: a finding that falsifies a claim in that version's
+`ROADMAP.md` entry.** Not *did this version cause it* — that is arguable forever
+and gets argued under pressure to ship. *Does this version's claim depend on it*
+is answerable by reading the entry, which is finite and was written before
+testing started. Everything else is assigned and does not block.
+
+**Do not grow the entry during the playtest.** A finding that makes you want to
+add a claim is a finding for the *next* version. The entry is the finish line,
+and a finish line that can be moved is not one.
+
+Three things the order protects:
+
+- **The note lives in a file in the repo**, so tagging first gives you a tag
+  whose own note isn't in it — permanently, since a pushed tag must never move.
+- **A tag is a public claim that a version is done.** While the playtest came
+  after the tag, three of the four releases before v0.9.1 were patch releases
+  named for what a testing pass caught — which had quietly made PATCH mean *this
+  version was never tested*.
+- **The note gets written from use.** v0.9's note — *"ready to playtest to test
+  weird things"* — is a note about intent, because at the time that is all it
+  could be.
+
+**Push in-session, never tag in-session.** The tag is Cas's call. **A pushed tag
+is immutable** — a mistake found after tagging is fixed in the next ordinary
+commit, never by re-tagging.
+
+**Don't reformat working code you weren't asked to touch.**
+
 ## Shape
 
 ```
@@ -228,9 +273,19 @@ Settled. Argue with them only with a reason, and say that you are.
     `chunks`/`vec_chunks` have no foreign keys, so the cascade is in code: index
     rows first, vectors before chunks, a vector-delete failure raising rather than
     half-completing.
-15. **"Chat" means both chats.** Every feature is specified for private chat too.
-    The one exception is privacy itself, and there you refuse and leave the private
-    half unbuilt rather than ship a half-private one. See `CLAUDE.md`.
+15. **"Chat" means both chats.** cfc has normal sessions and **private** ones
+    (`p` at the hub), and every feature is specified and built for both.
+
+    **The single exception is privacy itself, and there you refuse rather than
+    compromise.** If a feature only works by writing something down or phoning
+    something home, say so and leave the private half unbuilt — a *silently*
+    half-private chat is worse than not having the feature. Name the conflict
+    and let Cas decide.
+
+    In practice this is nearly free: the isolation is structural, so a feature
+    going through the session's connection inherits it. If yours doesn't, that
+    is the signal to stop and think, not to add an `if private`. Decision 10 has
+    the three paths that escape the connection.
 16. **The connection light renders `preflight.connection_state()` and never
     forms an opinion.** The hub's light, `/connect embedding` and the launch
     report are three renderings of one function. A light that decides for itself

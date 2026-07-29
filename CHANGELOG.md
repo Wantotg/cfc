@@ -27,6 +27,30 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The repo rules stop living only in gitignored files
+Post-1.0 doc rewrite, step 6a. `Versions and releases` and `"Chat" means both
+chats` move into `HANDOVER.md`, which every session already reads. They were
+duplicated word-for-word across six gitignored instruction files, and the
+release order — how this project ships anything — was reachable only by someone
+who had those files.
+
+Cas's call between three options for `D-05`. Duplication has already drifted
+once; a shared file the instruction files point at is a pointer chain, and a
+pointer chain is how instructions get skipped. `HANDOVER.md` is neither: it is
+read in full by every session anyway, so the shared half costs no extra hop and
+the instruction files keep only what makes each specialist different.
+
+Standing decision 15 said *see `CLAUDE.md`* for its own content, which is a
+public file citing a gitignored one. It is now self-contained. `HANDOVER.md` and
+`README.md` no longer reference the instruction files at all.
+
+Still duplicated until step 6b replaces them: the six `* CLAUDE.md` files carry
+these sections too.
+
+- Files: HANDOVER.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The README stops claiming two things that stopped being true
 Post-1.0 doc rewrite, step 5. Checked against the code rather than read for
 tone, which is what turned up both errors.
@@ -48,7 +72,7 @@ not spend the day's retry budget, decided by status code and never by error text
 
 - Files: README.md, HANDOVER.md
 - Status: shipped
-- Commit: pending
+- Commit: 65804cf
 
 ## 2026-07-29 — HANDOVER.md loses the retelling
 Post-1.0 doc rewrite, step 4 — the *say it once* rule applied to the file that
