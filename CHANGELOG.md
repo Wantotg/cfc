@@ -23,6 +23,42 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — A transient provider status kills an unattended run
+Triage of *"every single routine is giving me 503 errors"*, written up rather
+than fixed. Most of it turned out to be nano-gpt's:
+`managed_mode_misconfigured` intermittently across every model and payload
+shape for about three hours, reproduced from outside cfc with a bare
+one-message request and recovered by 09:52 (`N-0.9.2-01`).
+
+**The cfc-owned half is `D-0.9.2-01`, and it is an asymmetry.**
+`_turn_with_retry` re-rolls an empty completion twice and a 503 zero times —
+while its own docstring describes an empty completion as *"a provider hiccup,
+not a size limit, and the same context usually answers on a re-roll"*, which is
+a description of a 503 with the word for it left out. All six failures died at
+call 0 of 30, before a single tool call: the cheapest possible point to have
+tried again.
+
+**The cost was the day, not the run.** `MAX_RETRIES_PER_DAY = 3` spends a slot
+per failed *run*, so three 503s fifteen minutes apart exhausted
+`short-term-memory`'s budget for all of 29-07 — and the provider was healthy by
+08:47, when the same routine ran by hand and succeeded first time. The cap
+stays (`N-0.9.2-02`): it bounds runs, and a transient status is not a run's
+worth of failure. Deferred to v1.1 because three questions want deciding first
+— where the ladder lives, which statuses it matches (**the code, never the
+wording**, or it becomes a row in `HANDOVER.md`'s producer/parser table), and
+what it costs when it is wrong.
+
+Two more from the same logs, both nothing owed. A routine that logged
+`10148s` against a 600s read timeout was a **machine suspend** at 03:30 mid-request,
+resumed at 06:19 — httpx's read clock is the guest's and was paused with it, so
+the timeout never ran, and standing decision 12 held because the date had been
+computed and injected before the suspend (`N-0.9.2-03`). The misleading elapsed
+figure is `W-0.9.2-01`.
+
+- Files: BACKLOG.md; TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-28 — v0.9.2's body moves to the public roadmap
 Release-order step 1, the half the model owns: the version's body moves out of
 `ROADMAP_PRIVATE.md` and into `ROADMAP.md`, trimmed to what actually shipped
@@ -40,7 +76,7 @@ aliases whose real command is a different word rather than four.
 
 - Files: ROADMAP.md, ROADMAP_PRIVATE.md (gitignored), CHANGELOG.md
 - Status: shipped
-- Commit: pending
+- Commit: 85fe0bf
 
 ## 2026-07-28 — The routine column stops having an opinion
 `B-0.9.1-04`, and the last of v0.9.2's three claims. `hub._freshness` renders
