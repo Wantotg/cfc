@@ -680,6 +680,49 @@ vault in a different time base from the rest of the vault is itself the trap.
 
 ## The environment
 
+**The skeleton, written down v1.0 (`W-03`) because it lived in Cas's head.** cfc
+is understandable from its own source; the system around it was not written
+anywhere, and the failure mode of that is a machine getting rebuilt and something
+turning out to have lived in one place. `README.md` carries the human-facing
+version — this is the half that is about failure modes rather than layout.
+
+**One computer, two filesystems that fail independently.** ext4 (`~`) is erased
+by `wsl --unregister`; NTFS (`/mnt/c`) is not. Every durability question here
+reduces to which side a file is on.
+
+| | side | what erases it |
+|---|---|---|
+| `~/projects/cfc` — the code | ext4 | a WSL reset. Recoverable: GitHub |
+| `~/.cfc/` — `chat.db`, `backups/`, `errors.log`, `schedule.log` | ext4 | a WSL reset. **Not recoverable** |
+| `~/vaults/wiki.git` — the vault's history | ext4 | a WSL reset. Recoverable only as far as the last manual push |
+| `<vault>` — the notes | NTFS | a Windows loss |
+| `VAULT_PATH` — exported transcripts | NTFS | a Windows loss |
+
+**The vault straddling both sides is deliberate and the split is load-bearing.**
+Files on NTFS so Obsidian and Windows' backup reach them; `.git` on ext4 via a
+`gitdir:` pointer because git over 9p is slow. So **losing Windows loses the
+files but not the history, and losing WSL loses the history but not the files** —
+two independent failures, neither individually fatal. That property is worth not
+breaking by "tidying" the `.git` back into the vault.
+
+**`VAULT_PATH` is not the vault** and this is the one naming trap in the layout
+(`W-0.9.1-01`, still open). It is the chat *export* destination — a different
+folder on the Windows side. `VAULT_ROOT`, three lines below it in `config.py`, is
+the actual vault. Nothing enforces the distinction and both are strings.
+
+**The database is the single point of failure, stated so it is a decision.**
+`backup.py` keeps ten rolling snapshots **on the same disk as the original**.
+That is the right design for what it defends against — a torn write, a bad
+migration, a mistake — and those are the failures that have actually occurred. It
+is not an off-machine backup and was never meant to be. The auto-exports are not
+one either: measured 2026-07-29, 28 MB of database against 1.5 MB of exported
+Markdown, and the difference is not compression. The exports carry the chat text.
+The retrieval index, the vectors, the routine transcripts, the token accounting
+and the tool metadata are in one file on one filesystem. Anyone proposing to make
+this durable should note that the chunk/vector schema is in flux (`W-07`, 2.0), so
+a scheme that copies the file survives the rework and one that exports the schema
+does not.
+
 - WSL2/Ubuntu on Windows. Vault on `/mnt/c`, reached Linux→Windows (fast); never
   `\\wsl.localhost` (slow, flakier).
 - **`<vault>/00 inbox` is where Cas leaves briefs. `<vault>/99 outbox` is the only
@@ -715,6 +758,18 @@ vault in a different time base from the rest of the vault is itself the trap.
   old NAT gateway IP no longer resolves at all, and don't put one back — a stale
   one now fails closed instead of drifting. "Serve on local network" must stay on,
   and the model id is `text-embedding-baai-bge-m3-568m`, not plain `bge-m3`.
+
+  **Why separate, since the code only shows that it is** (written down v1.0):
+  the corpus is personal, embedding it is cheap and constant, and posting every
+  note you write to a third party to get a vector back buys nothing. Two
+  consequences that are properties rather than side effects — **memory keeps
+  working when the internet doesn't**, and **the chat provider can be swapped
+  without re-indexing**, because nothing about the vectors depends on it. The
+  cost is a second process that has to be running, which is the entire reason
+  `preflight.py` and the connection light exist. Note the coupling in the other
+  direction: `MAX_DISTANCE` is geometry-specific, so swapping the *embedding*
+  model invalidates the floor and the whole index, while swapping the chat model
+  costs nothing.
 - **LM Studio running is not the same as its server running.** The tray app can sit
   there for weeks with the server off; that's the state `preflight.py` exists for.
 - Windows Task Scheduler fires `run-due.sh` on a fixed tick. The wrapper redirects

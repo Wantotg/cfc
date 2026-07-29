@@ -23,6 +23,62 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The skeleton gets documented
+v1.0 step 8, `W-03`. cfc is understandable from its own source; the system around
+it was in Cas's head. **Written from the real machine rather than from memory**,
+which is the only way this kind of document is worth anything — and it is what
+turned up the finding below.
+
+**One computer, two filesystems that fail independently**, which is the fact
+everything else reduces to. ext4 (`~`) is erased by `wsl --unregister`; NTFS
+(`/mnt/c`) is not. The code, `~/.cfc/` and the *vault's git directory* are on the
+first; the vault's notes and the exported transcripts are on the second.
+
+**The vault straddling both sides is deliberate and the split is load-bearing.**
+Notes on NTFS so Obsidian and Windows' backup reach them, `.git` on ext4 via the
+`gitdir:` pointer because git over 9p is slow. So losing Windows loses the files
+but not the history, and losing WSL loses the history but not the files — two
+independent failures, neither individually fatal. An accidental virtue, and one
+that a later tidy-up putting `.git` back in the vault would silently destroy.
+
+**Why the embedder is a separate endpoint**, which the code shows *that* but
+never *why*: the corpus is personal, embedding it is constant and cheap, and
+posting every note you write to a third party for a vector buys nothing. Two
+properties fall out — memory keeps working when the internet doesn't, and the
+chat provider can be swapped without re-indexing. The coupling runs the other
+way: `MAX_DISTANCE` is geometry-specific, so swapping the *embedding* model
+invalidates the floor and the index, while swapping the chat model costs nothing.
+
+**The finding, and it is why writing this from the machine mattered: the database
+has no off-machine copy, and the exports are not one.** `backup.py` keeps ten
+rolling snapshots on the same disk as the original. Measured today: 28 MB of
+database against 1.5 MB of exported Markdown, and the difference is not
+compression — the exports are the chat *text*, while the retrieval index, the
+vectors, the routine transcripts, the token accounting and the tool metadata live
+in one file on one filesystem.
+
+That is **not** a bug in `backup.py`. Rolling snapshots defend against a torn
+write, a bad migration and a mistake, which are the failures that have actually
+happened here. They do not defend against losing the disk and were never meant
+to. It is written down so it is a decision rather than a discovery, and opened as
+`Q-01` — a question that costs an answer, not a commit. Anyone acting on it should
+note that the chunk/vector schema is in flux (`W-07`, 2.0), so a scheme that
+copies the file survives the rework and one that exports the schema does not.
+
+Also recorded: **cfc never pushes**, so "the vault is backed up" is true exactly
+as often as `git push` is run in it — the vault was two commits ahead of its
+remote while this was being written, which is the design working as documented
+rather than a fault. And `VAULT_PATH` is not the vault (`W-0.9.1-01`, open); it
+is the export destination, with `VAULT_ROOT` three lines below it in `config.py`
+being the real one.
+
+`README.md` carries the layout, `HANDOVER.md` the failure modes — the two are
+coupled, so both moved.
+
+- Files: README.md, HANDOVER.md, CHANGELOG.md; TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The two turn paths are pinned, and the baseline stops pinning the vault
 v1.0 step 7, `W-02` and `D-01`. Scope agreed before the first test was written,
 which is what the step asked for.
@@ -88,7 +144,7 @@ listing and run commands. Both automatable, both out of v1.0 by scope.
   tests/golden_baseline.txt, HANDOVER.md, BACKLOG.md, legacy/BACKLOG.md,
   CHANGELOG.md; TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 01f7821
 
 ## 2026-07-29 — Zero recall hits: closed, not built
 v1.0 step 6, `W-01`. The version scoped this as **a closed row and a recorded

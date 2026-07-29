@@ -656,6 +656,73 @@ Read this before turning tools on.
 `tests/test_paths.py` and `tests/test_gate.py` are the ones that back this up.
 Keep them green.
 
+## The skeleton — two machines, four places
+
+cfc is one program, but the system it sits in is spread across two filesystems
+that fail independently, and nothing in the source says so. This section is the
+map. It matters most on the day you rebuild something.
+
+**Two machines, in the sense that counts.** cfc runs in WSL2 (Ubuntu) on a
+Windows host. That is one physical computer and two storage worlds: Linux's
+ext4, which a `wsl --unregister` erases completely, and Windows' NTFS reached
+through `/mnt/c`, which survives it. Which side a file lands on decides what
+kills it.
+
+| what | where | side | survives a WSL reset |
+|---|---|---|---|
+| the code | `~/projects/cfc` | ext4 | **no** — but it is on GitHub |
+| the state: `chat.db`, snapshots, logs | `~/.cfc/` | ext4 | **no**, and see below |
+| the vault's *history* (`.git`) | `~/vaults/wiki.git` | ext4 | **no** — but it has a remote |
+| the vault's *files* | `/mnt/c/…/<vault>` | NTFS | yes |
+| exported chat transcripts | `/mnt/c/…` (`VAULT_PATH`) | NTFS | yes |
+
+**The vault is split across both sides on purpose**, and it is the one piece of
+this that looks like a mistake and isn't. The notes live on the Windows side so
+Obsidian and Windows' own backup can see them; the `.git` directory was moved to
+ext4 and replaced with a `gitdir:` pointer, because git on a 9p mount is slow
+and occasionally strange. The consequence is worth holding in your head: **losing
+Windows loses the files but not the history; losing WSL loses the history but not
+the files.** Neither failure alone is fatal, which is the accidental virtue of
+the arrangement — but only if you know it, which is what this paragraph is for.
+
+**Where the embedder lives, and why it is a separate endpoint.** Chat goes to a
+hosted provider over the internet. Embeddings go to LM Studio running as a
+**Windows** application, reached from WSL at `localhost:1233` — which only works
+because WSL2's `networkingMode=mirrored` makes localhost mean the same thing on
+both sides. They are separate because they are different jobs: the corpus is
+personal, embedding it is cheap and constant, and sending every note you write to
+a third party to get a vector back is a trade with nothing on the other side of
+it. It also means memory keeps working when the internet doesn't, and that the
+chat provider can be swapped without re-indexing anything. The cost is a second
+thing that has to be running — which is the entire reason the connection light
+exists.
+
+### What backs up what, and the one gap
+
+| | backed up by | to |
+|---|---|---|
+| the code | git | GitHub (public) |
+| the vault | git, **pushed by hand** | a private GitHub repo |
+| chat transcripts | cfc's auto-export, per session | `VAULT_PATH` on the Windows side |
+| `chat.db` | `backup.py`, 10 rolling snapshots | `~/.cfc/backups/` — **the same disk** |
+
+**The database has no off-machine copy, and the exports are not one.** On this
+machine that is 28 MB of database against 1.5 MB of exported Markdown. The
+difference is not compression: the exports are the chat *text*. The retrieval
+index, the vectors, the routine transcripts, the token accounting and the tool
+metadata exist in one file, on one filesystem, with ten snapshots beside it on
+the same disk.
+
+That is not a bug in `backup.py`. Rolling snapshots protect against a corrupted
+write, a bad migration and a mistake — which they have, more than once — and
+those are the failures that actually happen. They do not protect against losing
+the disk, and they were never meant to. **It is written down here so that it is a
+decision rather than a discovery.**
+
+**cfc never pushes** — not the code, not the vault. `wikigit.py` issues no `push`
+and no `remote`, and there is a test that fails if either appears. So "the vault
+is backed up" is true exactly as often as you run `git push` in it.
+
 ## Backups
 
 cfc snapshots the database to `~/.cfc/backups/` on startup — at most once every 6
