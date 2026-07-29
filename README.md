@@ -9,9 +9,10 @@ Why things are built the way they are — invariants, rejected designs, the
 reasoning behind the non-obvious choices — is in [`HANDOVER.md`](HANDOVER.md).
 This file is how you use cooking for cats.
 
+
 ## What it does
 
-- **Chat, with som upgrades to the terminal** — pixel-art splash, live Markdown,
+- **Chat, with some upgrades to the terminal** — pixel-art splash, live Markdown,
   colour-coded speaker panels, a live view of thinking models' reasoning, and a
   context-usage bar that colours as the window fills
 - **Everything local** — one SQLite file, fully queryable, rolling backups

@@ -965,6 +965,9 @@ that claim was going to be drawn at moves. Saying that out loud is the point:
 an empty `BUGS.md` because nobody looked, and an empty one because nothing
 happened, are the same file.
 
->*(note-shaped hole for Cas)*
+>*(note-shaped hole for Cas) survived the documents, now tackle my own, and work on promises and claims made.*
+```
+ᓚ₍つ^. .^₎っ♡ "1.0! 1.0! Ignore the 400 and 503, go for 1.0!"
+```
 
 ---
