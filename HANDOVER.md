@@ -13,71 +13,73 @@ It was written for a model working *without* the source, so it re-describes
 things you can just go and look at — but it holds the long-form reasoning behind
 most of what is summarised here. Go there when a one-liner below isn't enough.
 
-## The other documents
+## Which file owns what
 
-| | |
-|---|---|
-| `README.md` | how a human uses it. Coupled to this file — rewrite one, rewrite the other |
-| `CHANGELOG.md` | what shipped, with the reasoning. Newest first. Log every shipped change in the same commit |
-| `BACKLOG.md` | deferred and still working. **Read it before touching the memory layer** |
-| `BUGS.md` | broken and known |
-| `legacy/` | the closed entries of both, frozen whole. **A closed entry moves here and leaves no stub** — see below |
-| `ROADMAP.md` | Cas's. Propose, don't edit. `ROADMAP_PRIVATE.md` (gitignored) holds the forward plan |
-| `TRACKER.md` | gitignored. One line per open issue, assigned to a version — an **index** over the four above, never a description. See below |
-| `CLAUDE.md` | who you're working with and the repo rules |
+**Every fact has one home; everywhere else names its `TRACKER.md` id and stops.**
+A finding written up in `BUGS.md`, again in a roadmap version and again in a
+session brief has to be *maintained* in three places — one change costs three
+edits and the three drift, which is this project's own recurring hazard rebuilt
+in prose.
 
-**`TRACKER.md` is an index, and the rule that keeps it one is that a row may
-not explain anything** (added 2026-07-28). Every row carries an id, one line,
-the file its body lives in, the version it's assigned to and a state. The
-problem it was built for is arithmetic rather than aesthetic: an issue written
-up in `BUGS.md`, again in a roadmap version and again in a session brief has to
-be *maintained* in three places, so one change costs three edits and the three
-drift — and this project's whole recurring hazard is two copies of a fact
-disagreeing quietly. The tracker holds the one thing none of those files hold,
-which is *what is assigned to where*, and points at the rest.
+| | owns | must not carry |
+|---|---|---|
+| `README.md` | how a human uses it. Coupled to this file — rewrite one, rewrite the other | internal reasoning |
+| `CHANGELOG.md` | what changed, when, and why it mattered. Newest first, logged in the same commit | reasoning that outlives the change |
+| this file | why the code is shaped as it is: decisions, rejected designs, provenance, scars | history |
+| `BACKLOG.md` | what's owed and still working. **Read it before touching the memory layer** | anything closed |
+| `BUGS.md` | what's broken and known | anything closed |
+| `legacy/` | closed entries of both, frozen whole with the original report; the pre-1.0 changelog | stubs |
+| `ROADMAP.md` | what each version added, in Cas's words. His file — propose, don't edit | bugs, backlog, design detail |
+| `ROADMAP_PRIVATE.md` · `ROADMAP_BEYOND.md` | gitignored. The forward plan, below and above 2.0 | |
+| `TRACKER.md` | gitignored. One line per open issue and the version it's assigned to | any explanation at all |
 
-Two consequences worth knowing before you edit it. **Ids come from the playtest
-report and are never reallocated** — `B-0.9.1-01` is finding 01 of the v0.9.1
-pass, forever, so a report, a tracker row, a `BUGS.md` entry and a changelog
-line can all name the same thing without anyone reconciling them. And **closed
-rows stay, including *nothing owed***, with the reason in the row: that is the
-only durable record of a finding that was looked at and ruled out, and without
-it the same note comes back next playtest looking new. A session transcript is
-not a record.
+**The test between here and `CHANGELOG.md`: will it still be true in three
+versions?** If yes it belongs here. If it is about one change it belongs there —
+a changelog entry may state a decision and its reason in a sentence, but it does
+not argue it.
 
-The report it consumes is `<vault>/00 inbox`, one file per playtest, from the
-template in the vault. What that template is *for* is in `DEBUG CLAUDE.md`.
+### Three rules for writing any of them
 
-**Documentation changes apply going forward only** (decided 2026-07-28). A
-version note, a changelog entry and a scar below are records of what was true
-when they were written. Restyling old ones to a convention invented afterwards
-destroys the one property they have — `ROADMAP.md`'s entries from v0.1 to v0.9.1
-were each written by Cas from use at the time, and they stay as written even
-though that file changes shape at v1.0.
+**Say it once, then stop.** A paragraph that would not change what a reader does
+is deleted. *"Wrote the decision down so it is visible"* is eight words; the same
+point ran to fifty-six in a v1.0 changelog entry, and the surviving eight
+belonged in this file anyway.
 
-This covers the reasoning, not just the prose, and that is the point: *"we used
-to do it the other way, and here is what it cost"* is the half most projects
-delete. It is also the half that is worth reading — this file is largely made of
-it. Applies to `CHANGELOG.md`, `ROADMAP.md`, `legacy/` and the Scars section
-alike. A correction to something factually *wrong* is a different act and is
-always allowed; say which one you are doing.
+**Name the failure, not the person.** These files record decisions, false
+assumptions and what they cost — that is why they are worth reading. They are
+not a narrative about how the mistakes came to be made. Retelling one past the
+point it teaches something spends tokens, distracts the reader and the model,
+and buries the finding it is wrapped around.
 
-**The archive rule, changed 2026-07-27.** A closed `BUGS.md`/`BACKLOG.md` entry
-used to leave a struck-through stub behind with its fix date. It doesn't any
-more: it moves to `legacy/`, whole, and the live file holds open entries only.
-The old rule is why those two files reached 283 and 897 lines with three and
-five live entries between them, and an unreadable list is one nobody checks.
+**Records are frozen; rules are maintained.** A version note, a changelog entry,
+a `legacy/` file and a scar below record what was true when they were written,
+and restyling them to a convention invented afterwards destroys the one property
+they have. That covers the reasoning, not just the prose: *"we used to do it the
+other way, and here is what it cost"* is the half most projects delete and the
+half worth keeping. A **rule** is a live instruction with no such claim — edit it
+freely, and this section was rewritten under exactly that licence
+(2026-07-29). Correcting something factually wrong is allowed in either; say
+which one you are doing.
 
-Two things hold it up and both are load-bearing. **`CHANGELOG.md` is the index**
-— every shipped fix is logged there in the same commit, so nothing needs the
-archive to answer "was this fixed, and why that way". And **the archive keeps
-the original report**, which `CHANGELOG.md` never carried; the symptom as first
-written is frequently the valuable half, and sometimes its *wrong* premise is
-the finding (`MAX_DISTANCE`, below). That is what makes it an archive rather
-than a delete, and it is the reason `legacy/` is tracked in git rather than
-gitignored — a gitignored archive is invisible to clones, outside every backup,
-and destroyed by a fresh checkout, which is the same argument that killed
-`inbox/` at the repo root.
+### Two files with a rule of their own
+
+**`TRACKER.md`'s ids are permanent and its closed rows stay.** An id comes from
+the playtest report and is never reallocated — `B-0.9.1-01` is finding 01 of the
+v0.9.1 pass, forever, so the report, the tracker row, the `BUGS.md` entry and the
+changelog line name the same thing with nothing to reconcile. Closed rows keep
+their reason and stay, *nothing owed* included: without that, the same note comes
+back next playtest looking new. A session transcript is not a record. The reports
+it consumes are in `<vault>/00 inbox`, one file per playtest.
+
+**`legacy/` takes a closed entry whole and leaves no stub.** Struck-through stubs
+are why `BUGS.md` and `BACKLOG.md` once reached 283 and 897 lines with eight live
+entries between them. Two things make the deletion safe: `CHANGELOG.md` is the
+index, so *was this fixed, and why that way* never needs the archive; and the
+archive keeps the **original report**, which the changelog never carried and
+whose wrong premise is sometimes the finding (`MAX_DISTANCE`, below). It is
+tracked in git rather than gitignored — a gitignored archive is invisible to
+clones, outside every backup, and destroyed by a fresh checkout, which is the
+same argument that killed `inbox/` at the repo root.
 
 ## Shape
 

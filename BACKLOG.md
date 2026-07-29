@@ -4,21 +4,16 @@ Things found in passing and deliberately not fixed, so they don't get lost.
 Nothing here is urgent — this is a hobby project and it all still works.
 
 Add to this rather than fixing on the spot when something turns up mid-task.
-`CLAUDE.md` is for how the project works; this is for what's still owed.
+`HANDOVER.md` is why the code is shaped as it is; this is what's still owed.
 
-`TRACKER.md` (gitignored) indexes this file, `BUGS.md` and the roadmaps in one
-line each, with the version an entry is assigned to. It says *where* and
-*when*; the entries below say *what*. Each one carries its tracker id in the
-heading — the id the playtest report gave it, unchanged thereafter.
+Each entry carries its tracker id in the heading — the id the playtest report
+gave it, unchanged thereafter.
 
 ## When an entry closes
 
 **It moves to [`legacy/BACKLOG.md`](legacy/BACKLOG.md), whole, and leaves
-nothing behind here.** This file holds open entries only. Full reasoning for the
-rule is in [`BUGS.md`](BUGS.md), which changed the same way on the same day
-(2026-07-27) — the short version is that `CHANGELOG.md` is the index of what
-shipped, and the archive is where an entry's **original report** survives, which
-`CHANGELOG.md` never carried.
+nothing behind here.** This file holds open entries only. The reasoning is in
+`HANDOVER.md`, *Which file owns what*.
 
 **Closed at the split, so it is in the archive and not below:** *Retire the
 `:`-command `startswith` chain for an exact-match table* — closed on
@@ -175,50 +170,6 @@ for — a run whose loop completed while the model's own words said it could not
 do the task — so the second, orthogonal signal works as specified. And the
 routine in question is the one Cas built during this playtest, immediately
 after `D-0.9.1-03` made him retype the entire creation from scratch.
-
-## D-0.9.2-01 · A transient provider status kills an unattended run outright. 0.9.2, 29-07-2026
-
-**Found:** 2026-07-29, from *"every single routine is giving me 503 errors"*.
-The provider (nano-gpt) was returning `HTTP 503 managed_mode_misconfigured —
-"Managed edge assertion configuration is missing"` intermittently across every
-model and every payload shape for roughly three hours. That part is theirs and
-nothing is owed for it (`N-0.9.2-01`). What the outage exposed is ours.
-
-**`_turn_with_retry` re-rolls an empty completion twice and a 503 zero times.**
-Its own docstring calls an empty completion *"a provider hiccup, not a size
-limit, and the same context usually answers on a re-roll"* — which is a
-description of a 503 with the word for it left out. An `httpx.HTTPError` raised
-inside `agent_turn` passes straight through the retry loop, out to
-`run_routine`'s broad handler, and the run is logged `failed`. Every one of the
-six failures today died at **call 0 of 30**, before a single tool call: the
-cheapest possible point to have tried again.
-
-**The cost is not the failed run, it is the day.** `MAX_RETRIES_PER_DAY = 3`
-spends one budget slot per failed *run*, so three 503s fifteen minutes apart at
-06:19, 06:30 and 06:45 exhausted `short-term-memory`'s retries for the whole of
-29-07 — and the provider was healthy again by 08:47, when the same routine ran
-by hand and succeeded first time. A retry ladder that had absorbed the 503 in
-process would have cost one extra request and no budget at all. The cap itself
-is right and stays (`N-0.9.2-02`); it is a bound on *runs*, and a transient
-status is not a run's worth of failure.
-
-**Why it is deferred rather than done.** The shape needs deciding before it
-gets written, and there are three questions in it that this session should not
-answer by itself:
-
-- **Where it lives.** In `api.py`, where the status code is, it protects both
-  paths and the chat turn inherits a silent retry a human didn't ask for. In
-  `_turn_with_retry`, where the existing re-roll is, it is routine-only and
-  matches the "batch job, nobody watching" reasoning already written there —
-  but it retries a whole turn rather than a call.
-- **Which statuses.** 503, 502 and 429 are transient by definition; 400 and 401
-  are not, and retrying a 400 would be retrying `BUGS.md`'s open bug three times
-  at full cost. The provider's own status code is the signal, so this does not
-  add a row to `HANDOVER.md`'s producer/parser table — but only if it matches on
-  the code and never on the wording.
-- **What it costs when it is wrong.** The bound exists for the same reason
-  `EMPTY_COMPLETION_RETRIES` is 2: "retry until it works" against a sick
-  provider is a large bill discovered late.
 
 ## D-10 · The hub's Routines panel cannot say a routine is broken. 1.0, 29-07-2026
 

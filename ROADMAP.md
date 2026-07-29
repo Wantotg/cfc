@@ -1,20 +1,43 @@
 # Roadmap
 
-Where cfc is going, and in what order. Cas's document — a session may *propose*
-changes here, it doesn't make them.
+What each version of cfc added, and what's coming. **This is the front office**:
+what a release does, in general terms. *Why* it was built that way is in
+`CHANGELOG.md` and `HANDOVER.md`; what's still owed is in `BACKLOG.md` and
+`BUGS.md`. Nothing is described twice — a fix gets one line here and its id.
 
-`BACKLOG.md` is what's owed; this says which version owns which item. A feature
-session is not obliged to clear unrelated debt, but debt that's genuinely
-adjacent to the version's work gets swept in it.
+Cas's document. A session may *propose* changes, it doesn't make them. Every
+version ends with his note, written from use rather than from the plan, and that
+note is the point of numbering this at all.
 
-Each version gets a short note from Cas, in his own words, about what landed and
-what it opened up. That note is the point of numbering this at all.
+A shipped version gets its full entry. A version still ahead gets only its
+number and title; the planning behind it lives in `ROADMAP_PRIVATE.md`,
+gitignored, and moves over here the day it ships.
 
-**This file is public — it ships with the repo.** A shipped version gets its
-full entry here: what landed, the completion date, Cas's note. A version still
-ahead gets only its number and title, as a placeholder — the actual planning
-(design reasoning, ordering, dependencies) lives in `ROADMAP_PRIVATE.md`,
-gitignored, and moves over here in full the day the version ships.
+## The shape of an entry, from v1.1
+
+**Everything up to and including v1.0 is in an older, longer shape and stays
+that way** — those entries record what was true when they were written, and
+restyling them would destroy the one property they have. From v1.1:
+
+```markdown
+## vX.Y — Title — YYYY-MM-DD
+
+Two or three sentences: what this version added, and what you can do now that
+you couldn't before.
+
+**Added**
+- one line per feature
+
+**Fixed**
+- one line per fix, patch-note style, carrying its tracker id (D-10)
+
+> *Note: Cas's, from use.*
+```
+
+A fix is **one line**. It is already described in `legacy/BUGS.md`, closed in
+`CHANGELOG.md` with its reasoning, and indexed in `TRACKER.md`; the id is how a
+reader reaches all three. The note stays at the bottom, where it reads as the
+signature on a release rather than a preamble to one.
 
 ## What "feature complete" means here
 
@@ -971,3 +994,12 @@ happened, are the same file.
 ```
 
 ---
+
+*Everything above this line is in the pre-1.0 shape. From here down, the shape
+described at the top applies.*
+
+---
+
+## v1.1 — Name it, don't count it
+
+Number and title only. The entry is written the day it ships.

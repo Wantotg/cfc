@@ -12,34 +12,16 @@ The line between this and the neighbours:
 - **BACKLOG.md** — found in passing, deliberately deferred, and *still works*.
   Debt with reasoning, not a defect.
 - **CHANGELOG.md** — what already shipped.
-- **TRACKER.md** (gitignored) — the index across all three, one line each, with
-  the version an entry is assigned to. It says *where* and *when*; every entry
-  below says *what*. If you are about to explain something in a tracker row,
-  it belongs here instead.
 
-Each entry carries its **tracker id** in the heading. It is the id the
-playtest report gave it, it never changes, and it is what lets the report, this
-file and `CHANGELOG.md` refer to one finding without three descriptions of it.
+Each entry carries its **tracker id** in the heading — the id the playtest
+report gave it, unchanged thereafter, so this file, the report and
+`CHANGELOG.md` name one finding without three descriptions of it.
 
 ## When an entry closes
 
 **It moves to [`legacy/BUGS.md`](legacy/BUGS.md), whole, and leaves nothing
-behind here.** This file holds open entries only.
-
-That is a change of rule, made at the v0.9 archive split (2026-07-27). The old
-rule left a struck-through stub with the fix date, which is why this file had
-grown to 283 lines of which three entries were live and `BACKLOG.md` to 897 of
-which five were. A file nobody can read is a file nobody checks.
-
-Two things make the move safe rather than lossy, and both have to hold:
-
-- **`CHANGELOG.md` is the index.** Every shipped fix is logged there in the same
-  commit, so "was this ever fixed, and why that way" is answered without opening
-  the archive.
-- **The archive keeps the original report**, which `CHANGELOG.md` does not. The
-  symptom as first written is frequently the valuable half — sometimes the
-  report's *wrong* premise is the finding. That is what makes it an archive and
-  not a delete.
+behind here.** This file holds open entries only. Why the archive is safe rather
+than lossy, and why it is tracked in git: `HANDOVER.md`, *Which file owns what*.
 
 ---
 
