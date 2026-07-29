@@ -230,6 +230,15 @@ def _freshness(routine, ts_text, now=None):
        Note this puts `trigger: command` and a *malformed* trigger in the same
        cell; the conflation is real and is the hub's broken-routine blind spot
        (`D-10`), not something a colour here can fix.
+
+       **That blind spot is bigger than this branch, and `D-10`'s `BACKLOG.md`
+       entry is the body** (written v1.0, after driving it). A routine that
+       parses but fails `validate()` — a prompt file that moved, a renamed read
+       root — never reaches this branch at all and renders **green**, identical
+       to a healthy one, because nothing here consults `validate()`. Green over
+       a routine that cannot run is decision 16's own failure shape one panel up
+       from the light it was written for. Read the entry before changing this
+       function; the cost of checking is measured there and it is not small.
     4. Otherwise the answer is `why_not_due(...) is None`: orange for owed,
        green for nothing owed.
 

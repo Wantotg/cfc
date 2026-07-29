@@ -23,6 +23,56 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The hub's broken-routine blind spot gets written up
+v1.0 step 5, `D-10`. **A drafting step, not a build**, and it was listed as one
+so this wouldn't get built from a one-line tracker row. That was the right call:
+the row named the smallest of three tiers.
+
+**Driven rather than read.** A temp routine folder with one healthy routine and
+one of each breakage, rendered through the real `_routine_rows` /
+`_print_routines`. A file that won't parse is **absent** from the panel —
+`_routine_rows` unpacks `list_routines()` and discards `bad`. A malformed
+*trigger* is **dim**, beside `command` and `disabled`, which is the conflation
+`_freshness`' docstring already flagged.
+
+**And in the middle, the one nobody had written down: a routine that parses but
+fails `validate()` renders green.** Prompt file deleted, everything else fine —
+green, byte-identical to a healthy row, because nothing in `_freshness` consults
+`validate()`. Green is the strongest thing that column says, *nothing is owed*,
+and it was being said over a routine that cannot run.
+
+That is standing decision 16's own failure shape — green over a dead server —
+one panel up the screen from the light the decision was written for, reached
+through a column that obeys it exactly. The colour is not wrong about what it
+measures, and that is the trap: **it answers *is a run owed* while the panel is
+read as *is this still working*.** The two questions agree on every routine
+except a broken one.
+
+**The entry holds two questions open rather than answering them**, which is what
+a drafting step is for: whether *cannot be owed a run* and *cannot be read* may
+stay one colour, and what the hub should show given what checking costs. The
+second has a measurement attached, taken on the real vault (six routines, 21
+roots, over `/mnt/c`): `list_routines()` is 22 ms, which the panel already pays;
+adding `validate()` to all six is ~205 ms, against a connection light that costs
+~0.16 s — so full validation roughly doubles the wait in front of the picker.
+`show_routines`' own comment blesses that cost with *"this screen is on
+demand"*, which the hub is not. Three shapes are written up, and the cheapest —
+showing the `bad` list already computed and thrown away — closes the third tier
+completely for nothing.
+
+Also recorded: `HUB_ROUTINES` is 5 and never-run routines sort last, so a
+brand-new broken routine is both the likeliest to be never-run and the first to
+fall off the panel. Confirmed with nine routines.
+
+`hub._freshness` and standing decision 16 both said the blind spot was the dim
+conflation. Both now point at the entry and name the green case — a correction,
+not a restyle. No behaviour changed in this commit.
+
+- Files: BACKLOG.md, HANDOVER.md, hub.py (docstring), CHANGELOG.md; TRACKER.md
+  (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — `/routine new` stops discarding itself
 v1.0 step 4, `D-0.9.1-03`. Typing `hhmm` at the trigger threw away the name, the
 prompt, the roots and the model — six answers — and then returned to the REPL
@@ -71,7 +121,7 @@ fix and watching that one fail.
   HANDOVER.md, BACKLOG.md, legacy/BACKLOG.md, CHANGELOG.md; TRACKER.md
   (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: b63f3d7
 
 ## 2026-07-29 — A denied tool call stops reading as a fault
 v1.0 step 3, `B-0.9.1-01`. Denying a call printed `← error: user denied`, which

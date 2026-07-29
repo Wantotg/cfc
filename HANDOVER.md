@@ -310,6 +310,19 @@ Settled. Argue with them only with a reason, and say that you are.
     puts `command` and a malformed trigger in the same cell — the hub's
     broken-routine blind spot (`D-10`), not something this colour can fix.
 
+    **`D-10` turned out to be larger than that sentence, and it now has a body**
+    (`BACKLOG.md`, written v1.0 from driving it rather than reading it). The dim
+    conflation is the third of three tiers and the least of them. The first is
+    that a file which will not parse is dropped from the panel entirely —
+    `_routine_rows` unpacks `list_routines()` and discards `bad`. **The second
+    had never been written down: a routine that parses but fails `validate()`
+    renders green**, indistinguishable from a healthy one, because nothing in
+    `_freshness` consults `validate()`. The colour is not lying about what it
+    measures — *is a run owed* — and that is the trap, because the panel is read
+    as *is this still working*. The two questions agree on every routine except
+    a broken one. So this decision's own failure mode arrived one panel up from
+    the light it was written for, through a column that obeys it exactly.
+
 ## Two rules that generated most of the above
 
 **Use a model for judgement under ambiguity; use code for anything with a right
