@@ -23,6 +23,48 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — `CLAUDE.example.md` learns the split and the release order
+v1.0 step 1, `D-06` and `D-07`, one edit to the one tracked file that could
+carry either. **The release order had existed only in gitignored files**, so
+nothing public said how a version ships — and the file that should have said it
+still described the single-`CLAUDE.md` arrangement that stopped being true on
+2026-07-28. Its *Versions and tags* section stopped at "write the note, then
+tag": true, and written before the 2026-07-27 amendment that put the playtest
+**inside** the order and made the tag last.
+
+**Not a rewrite, and deliberately not a copy.** The six-session split is a
+private arrangement; the example says *that a project can split its sessions and
+why*, with the three things worth knowing before trying it — that a boundary can
+exist on paper and nowhere else, that the two hardest boundaries were both a
+session happening in the wrong file, and that the shared half is copies with
+nothing checking them. The release order ships as five steps, the reasoning for
+each, the tag-blocking test (*does this version's entry claim something the
+finding falsifies*) and its corollary that the entry doesn't grow during the
+pass.
+
+**It names no model and no reasoning level**, on Cas's call. The workflow is
+about to stop being one setting for every session, and an example written now
+that encoded the current one would ship stale within a version — so the version
+that changes it starts from a clean cut instead of a correction.
+
+**The count of shared sections was wrong, and had been since the split.** The
+paragraph announcing *change them in all six or in none* said **four** and
+listed four; **five** are identical. The missing one is *Six kinds of session*
+— the section that paragraph is inside, which is what its own *"this one
+included"* had been pointing at all along. Found by checking the number rather
+than repeating it, because this edit was about to publish it. Corrected in all
+six by script, plus the pointer `CLAUDE.md`; a correction of something factually
+wrong, not a restyling. It does not close `D-05`, it is the first evidence in
+it: the drift landed in the *description* of the shared block rather than the
+block, so every session since the split read correct instructions with a wrong
+count in the middle of them. Nothing would have caught the other kind.
+
+- Files: CLAUDE.example.md, CHANGELOG.md; CLAUDE.md and
+  BRAINSTORM/CODER/DESIGNER/DRAFT/DEBUG/MANAGER CLAUDE.md, TRACKER.md (all
+  gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — A transient provider status kills an unattended run
 Triage of *"every single routine is giving me 503 errors"*, written up rather
 than fixed. Most of it turned out to be nano-gpt's:
@@ -57,7 +99,7 @@ figure is `W-0.9.2-01`.
 
 - Files: BACKLOG.md; TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 57d1b47
 
 ## 2026-07-28 — v0.9.2's body moves to the public roadmap
 Release-order step 1, the half the model owns: the version's body moves out of

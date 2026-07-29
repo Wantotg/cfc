@@ -1,8 +1,10 @@
 # CLAUDE.md — example
 
-A sanitised copy of the private `CLAUDE.md` that guides Claude Code in this
-repo. The real file is gitignored because it carries personal context, names and
-local filepaths. Copy this to `CLAUDE.md` and adapt it.
+A sanitised copy of the instructions that guide Claude Code in this repo. The
+real thing is gitignored, because it carries personal context, names and local
+filepaths — and because it is no longer one file. It is a set, one per kind of
+session, for reasons set out below. This is a single-file composite of it. Copy
+it to `CLAUDE.md` and adapt it.
 
 **Keep it short.** The strongest thing this file can do is describe the working
 relationship and the handful of rules that live in nobody's code. Everything
@@ -40,13 +42,60 @@ Worth stating explicitly, whatever the answer:
   messages.
 - Ask when genuinely blocked, not to cover yourself.
 
-**If you split brainstorming, design and building across separate sessions, say
-so** — it changes what a session should do with a half-formed idea. It also
-creates one failure worth naming: a brief written at the end of one session, by
-a model, tends to promote "they mentioned doing X first" into "X must come
-first, they were explicit." Usually they weren't. **Treat a brief's ordering and
-scope as proposals** unless the human confirms them in conversation; the fixed
-things are the invariants in the technical doc, which say that they are fixed.
+## One kind of session per file
+
+**The failure this prevents:** a half-formed idea of the human's, restated back
+to them by a model, comes back looking like a settled specification — and then
+gets built. Nobody decided anything; the writing-up did the deciding.
+
+The defence that worked here is structural rather than a rule about tone. The
+instruction file is split into one file per *kind of session*, and a session
+reads the one that matches it, in full, before planning anything. What arrives
+and what leaves are different for each:
+
+| session | what arrives | what leaves |
+|---|---|---|
+| brainstorm | a half-formed idea, or nothing | shapes worth considering. **Never a spec** |
+| design | a direction already chosen | one decided shape, and how it fails |
+| draft | a decided shape | the words — a roadmap entry, a brief |
+| build | a spec | code, a commit, a changelog entry |
+| debug | a report from someone using it | a diagnosis and a place for every finding |
+| manage | a question about the project's own documents | a change to how the project records itself |
+
+Six is this project's answer and not a recommendation. What generalises is that
+it is more than one, and that the split lines which earned their place were the
+ones where two kinds of session kept wanting different things from the same
+file.
+
+**Ask which one you're in rather than inferring it, and ask before starting.** A
+brainstorm opens exactly like a build. Guessing is the specific mistake the
+split exists to prevent, and "a bit of both" is a real answer — read both.
+
+Three things worth knowing before trying it:
+
+- **A boundary can exist on paper and nowhere else.** Reading these files in
+  order to extend them turned up that two of them had never diverged at all:
+  identical text under two names. That is not a split, it is one file being read
+  twice. Each file has to say what its own session is *for*, or it isn't one.
+- **The two hardest boundaries were both a session happening in the wrong
+  file.** Brainstorming inside a design file asks "what shape is this" while the
+  idea is still an idea, which manufactures the specification the split exists
+  to prevent — inside the split. And diagnosing a bug is not the same job as
+  deciding where findings should go in general, though they arrive together.
+- **Whatever the files share, they share by copy, and nothing checks it.** Five
+  sections here are word-for-word identical across all six, under a rule that
+  they change in all six or in none. That is a real cost, paid for the property
+  that a session reads one file in full — a pointer chain is how instructions
+  get skipped. It is not obviously the right trade, and it is unresolved here.
+  The paragraph stating that rule had itself miscounted the sections since the
+  day it was written, which is the whole argument in one line.
+
+One failure the split creates on its own is worth naming. **A brief written at
+the end of one session, by a model, is a proposal and not an order** — including
+its ordering, its scope, and its "they were explicit about this". Usually they
+weren't; the brief promoted a passing suggestion into a rule. The genuinely
+fixed things are the invariants in the technical doc, which say that they are
+fixed. If a different order or design is better, say so before starting.
 
 ## Environment
 
@@ -120,7 +169,7 @@ command names look identical in a regex and are not the same thing.
 - Unit suites (`test_paths`, `test_gate`, `test_agent`, `test_schema`,
   `test_parse`, …) need no API key.
 
-## Versions and tags (a suggested standard)
+## Versions and releases (a suggested standard)
 
 If you tag releases, a little discipline keeps the tags trustworthy:
 
@@ -128,15 +177,61 @@ If you tag releases, a little discipline keeps the tags trustworthy:
   markdown can't be checked out. Minor is a planned feature version, patch is a
   fix or QoL release between features. Avoid two-digit "point releases" like
   `v0.41` — ambiguous against `v0.4.1`, and they stop sorting past 9.
-- **Write the version's note into the tracked docs before you tag**, then tag.
-  Tag first and the tag points at a commit that doesn't contain its own note, so
-  `git checkout vX.Y` shows a roadmap that doesn't mention that version.
 - **A pushed tag is immutable.** It is the snapshot of that version, typos and
   all. A mistake found after tagging is fixed in the next ordinary commit, never
   by deleting and recreating the tag — someone may already have the old one.
 - Tags don't ride a normal `git push`; `git push --tags` sends them.
-- If a roadmap or release note is the human's to write, say so here. A model
-  offering the three commands at the end of a version is the right hand-off.
+
+**The order matters more than the format, the testing pass is inside it, and the
+tag is always last:**
+
+1. **Build, commit and push** — in the session, by the model.
+2. **The human uses the pushed version.** Nothing is tagged yet; the main branch
+   carries the version and does not yet claim that it works.
+3. **Triage what that pass found**, in its own session. Every finding gets a
+   place. Whatever blocks the tag gets fixed, committed and pushed.
+4. **The human writes the version's note** into the tracked docs — written from
+   use rather than from the plan.
+5. **Tag, locally, after the note is in.**
+
+```
+git pull
+git tag -a v0.9 -m "<one line>"
+git push --tags          # tags do NOT ride along on a normal push
+```
+
+This project ran its testing pass *after* the tag for its first nine releases,
+by default rather than by decision. Three things the current order protects:
+
+- **The note lives in a file in the repo.** Tag first and the tag points at a
+  commit that doesn't contain its own note — permanently, because a pushed tag
+  must never move. `git checkout vX.Y` then shows a roadmap that doesn't mention
+  that version.
+- **A tag is a public claim that a version is done.** While the testing came
+  after it, "done" meant "written": three of the four releases before the change
+  were patch releases named for what a testing pass caught, which had quietly
+  made PATCH the mechanism for *this version was never tested*. It should mean
+  something found after a version was genuinely finished.
+- **The note gets written from use.** One note in this repo reads *"ready to
+  playtest to test weird things"*, which is what a note written before use can
+  be.
+
+**Decide what blocks a tag in advance, because otherwise you decide it under
+pressure to ship.** The test here is *does this version's roadmap entry claim
+something the finding falsifies?* — not *did this version cause it*, which is
+arguable forever and gets argued by whoever wants to ship. The first question is
+answerable by reading the entry, which is finite and was written before the
+testing started. Everything else is assigned — a bug list if it's broken, a
+backlog if it works and is merely owed, a later version if it's a feature — and
+does not block.
+
+Its corollary: **don't grow the entry during the testing pass.** A finding that
+makes you want to add a claim is a finding for the *next* version. The entry is
+the finish line, and a finish line that can be moved is not one.
+
+**If the release note is the human's to write, say so here.** A model offering
+the three commands at the end of a version is the right hand-off; a model
+tagging on their behalf is not.
 
 ## Things to remember
 
