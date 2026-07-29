@@ -23,6 +23,7 @@ claude_export/
 .claude/
 # Personal working notes — has names, filepaths, private context.
 # Anchored with a leading slash: the same names live in templates/, which ships.
+/AGENTS.md
 /CLAUDE.md
 /BRAINSTORMER.md
 /DESIGNER.md
