@@ -23,6 +23,56 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — `/routine new` stops discarding itself
+v1.0 step 4, `D-0.9.1-03`. Typing `hhmm` at the trigger threw away the name, the
+prompt, the roots and the model — six answers — and then returned to the REPL
+without saying so, which turned the next line typed into a chat message.
+
+**Early *and* late, never early instead of late.** `Routine.validate()` and
+`save_routine`'s refusal are untouched: standing decision 8 rests on an invalid
+routine being unsaveable, and a file hand-edited in Obsidian never passes
+through the creation flow at all. What changed is that `trigger` and
+`on_failure` now re-prompt against `routines.trigger_problem` and
+`on_failure_problem` — **the same functions `validate()` calls**, lifted out of
+it rather than written beside it. A field accepted as you type it therefore
+cannot be rejected at save. Two checks maintained separately would have
+disagreed the first time `weekly` grew a variant, and the disagreement would
+have surfaced as this same bug in a different hat.
+
+**Four holes, and the fourth was the one that wrote a file.** `select_model`
+returns `None` only when the human backed out of its picker, and that was read
+as *no model pin* while every other `None` in the flow returns — so cancelling
+there saved the routine you were in the middle of abandoning. Confirmed by
+reverting the fix and watching `cancelled-model.md` land on disk. The other
+three: the two raw fields above, and a taken id, which is now caught at the name
+prompt and re-asked rather than raising `<id>.md already exists` after every
+question has been answered. `save_routine` keeps its own id check — the early
+one can lose a race with a second cfc, and the late one is the guarantee.
+
+**The exit was the half that actually bit, and the entry said so.** A prompt
+flow that returns silently is decision 13's failure shape (unrecognised input is
+not an error, it is an API call and a confidently wrong answer) reached through
+an abandoned form instead of a missing verb. Every way out of `create_routine`
+now announces itself: *"No routine created — back in the chat, so the next line
+you type is a message."* Nothing enforces this for prompt flows added later,
+which is noted at standing decision 8.
+
+**The placeholder was read as a placeholder, and that was fair.** `trigger
+(command, or HHMM)` against a default of the literal word `command` makes `HHMM`
+a consistent reading of the screen, which is exactly what was typed back. It now
+reads `(command, 0300, or weekly 0330)`.
+
+Driven rather than reasoned about: `tests/test_routines.py` scripts `input()`
+and runs the reported flow, the duplicate name, the cancelled picker and an
+abandoned exit. Each of the four assertions was verified by reverting its own
+fix and watching that one fail.
+
+- Files: commands.py, routines.py, tests/test_routines.py, README.md,
+  HANDOVER.md, BACKLOG.md, legacy/BACKLOG.md, CHANGELOG.md; TRACKER.md
+  (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — A denied tool call stops reading as a fault
 v1.0 step 3, `B-0.9.1-01`. Denying a call printed `← error: user denied`, which
 is the model's payload echoed at the person who did the denying.
@@ -69,7 +119,7 @@ changed.
 - Files: agent.py, commands.py, tests/test_agent.py, README.md, HANDOVER.md,
   BUGS.md, legacy/BUGS.md, CHANGELOG.md; TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 6ffa248
 
 ## 2026-07-29 — The light says what to do where you are standing
 v1.0 step 2, `B-0.9.1-03` and `D-0.9.1-01` — two findings against one table,

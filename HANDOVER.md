@@ -153,6 +153,25 @@ Settled. Argue with them only with a reason, and say that you are.
    invalid one cannot be *saved*. `ToolContext.for_routine()` is the only ungated
    context and forces a declared write scope in the same call. There is no config
    flag that pre-clears a tool; don't rebuild one.
+
+   **The creation flow checks early *as well*, never instead** (v1.0,
+   `D-0.9.1-03`). `/routine new` used to take `trigger` and `on_failure` raw and
+   discover they were wrong at `save_routine`, six answers later, throwing away
+   the name, the prompt, the roots and the model with them. It re-prompts per
+   field now — but `Routine.validate()` and `save_routine`'s refusal are
+   untouched, because they are what this decision rests on and a hand-edited
+   file never passes through the flow at all. The way to keep both honest is
+   that they are the *same function*: `routines.trigger_problem` and
+   `on_failure_problem` are called by the prompt and by `validate()`, so a
+   field accepted as you type it cannot be rejected at save. Two checks written
+   separately would have disagreed the first time `weekly` grew a variant.
+
+   The finding underneath it was the exit, not the validation: the flow
+   returned to the REPL silently, so the next line typed became a chat message
+   — decision 13's failure shape reached through an abandoned prompt instead of
+   a missing verb. Every way out of `create_routine` now says it is a way out.
+   The same trap is worth checking for in any prompt flow added later; there is
+   no mechanism enforcing it, only `_routine_abandoned`.
 9. **Wiki recall keys off the frontmatter id, never the filename.** Renaming a
    page keeps its recall identity. Recall stays wiki-only; the chat log is indexed
    (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and

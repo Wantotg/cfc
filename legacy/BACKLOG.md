@@ -22,6 +22,112 @@ not the file.
 
 # Closed since the split
 
+## ~~D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation~~ — CLOSED (v1.0, 2026-07-29)
+
+**Closed 2026-07-29**, v1.0 step 4. All three holes plus the fourth the entry
+listed separately, and the entry's own reading was right: **the fix is as much
+*announce the exit* as it is *re-prompt*.**
+
+**Early and late, never early instead of late.** `Routine.validate()` and
+`save_routine`'s refusal are untouched — standing decision 8 rests on them and
+a hand-edited file never passes through the creation flow at all. What changed
+is that the two raw fields are now checked against `routines.trigger_problem`
+and `on_failure_problem`, **the same functions `validate()` calls**, lifted out
+of it rather than copied beside it. A field accepted as you type it therefore
+cannot be rejected at save; two checks written separately would have disagreed
+the first time `weekly` grew a variant, and the disagreement would have shown
+up as this exact bug wearing a different hat.
+
+**Four holes closed:**
+
+- `trigger` and `on_failure` re-prompt per field, via `_ask_until`, which is
+  `_ask_paths`' shape — the loop the entry pointed out was already in the file
+  and had simply never been given to these two.
+- A **taken id** is caught at the name prompt and re-asks for one, rather than
+  raising `<id>.md already exists` after every question has been answered.
+  `save_routine` keeps its own check: the early one can lose a race with a
+  second cfc, and the late one is the guarantee.
+- **Cancelling the model picker no longer saves the routine you were
+  abandoning.** This was the one that wrote a file. `select_model` returns
+  `None` only when the human backed out, and that was read as *no pin* while
+  every other `None` in the flow returns. Confirmed by reverting the fix and
+  watching `cancelled-model.md` land on disk.
+- Every exit now says it is one. The flow returned to the REPL silently, so the
+  next line typed became a chat message — decision 13's failure shape reached
+  through an abandoned prompt rather than a missing verb.
+
+**The placeholder was read as a placeholder, and that was fair.** The prompt
+said `trigger (command, or HHMM)` against a default of the literal word
+`command`, so `HHMM` typed back is a consistent reading of the screen. It is
+now `(command, 0300, or weekly 0330)` — a concrete time cannot be mistaken for
+a form to fill in.
+
+Driven, not reasoned about: `tests/test_routines.py` scripts `input()` and runs
+the reported flow, the duplicate name, the cancelled picker and an abandoned
+exit. Each of the four assertions was verified by reverting its fix and
+watching that one fail. The entry as it stood:
+
+---
+
+## D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation. 0.9.1, 28-07-2026
+
+**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
+
+```
+trigger (command, or HHMM) [command]: hhmm
+on failure (retry/skip) [retry]: retry
+model (blank = routine default):
+Not saved: trigger 'hhmm' is not 'command', HHMM or 'weekly HHMM'
+You: HHMM
+
+expected: to stay in routine creation and correct my mistake, instead of
+          sending a message
+guess:    user error, but we could make it more friendly and not leave
+          routine creation.
+```
+
+**Not user error.** `commands.create_routine` is half reject-as-you-type and
+half all-or-nothing, and the trigger is in the second half. Read roots go
+through `_ask_paths`, which validates each line and re-prompts — its docstring
+says *"exactly the shape a reject-and-re-prompt loop wants"* — and the task
+prompt is checked against the directory listing inline. `trigger` and
+`on_failure` are taken raw and reach validation only at `save_routine` →
+`Routine.validate()`, six answers later, where a `RoutineError` prints
+`Not saved:` and returns. Name, prompt, roots and model go with it.
+
+**The half that actually bit is the exit, not the validation.** The flow
+returns to the session REPL without saying it has, so the next line typed is a
+chat message — standing decision 13's failure shape (unrecognised input is not
+an error, it is an API call and a confidently wrong answer) reached through an
+abandoned prompt flow rather than through a missing verb. `create_routine`
+announces only one way out: *"Ctrl-C at any point abandons it."*
+
+**Three holes, one shape**, and a fix that closes one should close all three:
+
+- `on_failure` — anything but `retry`/`skip` discards the same six answers.
+- An id that already exists — `save_routine` raises `<id>.md already exists` at
+  the same late point, after every question has been answered.
+- Cancelling the **model** prompt is read as "use the routine default": every
+  other `None` in `create_routine` returns, but `select_model` returns `None`
+  both for *cancelled* and is then treated as *no pin*, so a Ctrl-C there
+  silently saves a routine rather than abandoning one.
+
+**Where a fix goes.** The per-field loop already exists in `_ask_paths`;
+`Routine.validate()` is non-raising and exhaustive by design (*"the creation
+flow wants to show all the problems at once"*), so the pieces are in place and
+the change is a re-prompt around the two raw fields rather than new
+machinery. Worth deciding at the same time: whether the prompt's `HHMM` reads
+as a placeholder — it was typed back literally here, and `0300` in the example
+would cost nothing. **Do not** move validation *out* of `save_routine`; that is
+what makes an invalid routine unsaveable, which is the invariant standing
+decision 8 rests on. Add the early check, keep the late one.
+
+**Why here and not `BUGS.md`:** nothing claims the flow re-prompts, and the
+routine that was eventually saved is correct. It is a form that discards itself,
+which is debt.
+
+---
+
 ## ~~D-0.9.1-01 · Two connection states share a colour, and the pairing looks swapped~~ — CLOSED (v1.0, 2026-07-29)
 
 **Closed 2026-07-29**, v1.0 step 2, in one pass with `B-0.9.1-03` — the entry

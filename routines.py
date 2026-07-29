@@ -58,6 +58,41 @@ _WIKILINK_RE = re.compile(r"^\[\[(.+)\]\]$")
 _TRIGGER_RE = re.compile(r"^(command|\d{4}|weekly\s+\d{4})$")
 
 
+ON_FAILURE = ("retry", "skip")
+
+
+# **The two field checks the creation flow needs *before* the last question,
+# lifted out of `validate()` rather than copied beside it** (v1.0,
+# `D-0.9.1-03`). `/routine new` used to take `trigger` and `on_failure` raw and
+# find out they were wrong six answers later, at `save_routine`, discarding the
+# name, the prompt, the roots and the model with them.
+#
+# Lifted, because the alternative is a second opinion about what a valid
+# trigger is — and the two would disagree the first time `weekly` grew a
+# variant. `validate()` still calls these and is still the thing that makes an
+# invalid routine unsaveable (standing decision 8): the early check is a
+# courtesy to the typist, the late one is the guarantee, and they cannot
+# disagree because they are the same function.
+def trigger_problem(value):
+    """Why this trigger is unusable, or None. The single definition."""
+    trig = str(value).strip()
+    if not _TRIGGER_RE.match(trig):
+        return (f"trigger {value!r} is not 'command', HHMM or 'weekly HHMM'")
+    if trig != "command":
+        hhmm = trig.split()[-1]
+        hh, mm = int(hhmm[:2]), int(hhmm[2:])
+        if hh > 23 or mm > 59:
+            return f"trigger {value!r} is not a valid time"
+    return None
+
+
+def on_failure_problem(value):
+    """Why this on_failure is unusable, or None. The single definition."""
+    if value not in ON_FAILURE:
+        return f"on_failure {value!r} is not retry|skip"
+    return None
+
+
 _RAW_TRIGGER_RE = re.compile(r"^trigger:\s*(?P<v>.+?)\s*$", re.MULTILINE)
 
 
@@ -278,17 +313,13 @@ class Routine:
             # whether the file is missing or the link syntax went unread.
             tried = " | ".join(prompt_candidates(self.prompt)) or self.prompt
             problems.append(f"prompt file not found in {prompt_dir()}: {tried}")
-        trig = str(self.trigger).strip()
-        if not _TRIGGER_RE.match(trig):
-            problems.append(f"trigger {self.trigger!r} is not 'command', "
-                            f"HHMM or 'weekly HHMM'")
-        elif trig != "command":
-            hhmm = trig.split()[-1]
-            hh, mm = int(hhmm[:2]), int(hhmm[2:])
-            if hh > 23 or mm > 59:
-                problems.append(f"trigger {self.trigger!r} is not a valid time")
-        if self.on_failure not in ("retry", "skip"):
-            problems.append(f"on_failure {self.on_failure!r} is not retry|skip")
+        # The same two functions `/routine new` re-prompts against, so a field
+        # accepted as you type it can never be rejected at save, and a field
+        # edited into the file by hand is still caught here.
+        for problem in (trigger_problem(self.trigger),
+                        on_failure_problem(self.on_failure)):
+            if problem:
+                problems.append(problem)
 
         for label, roots in (("read", self.read_roots),
                              ("write", self.write_roots)):

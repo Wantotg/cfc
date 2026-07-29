@@ -83,6 +83,101 @@ def make(**kw):
     return routines.Routine(**kw)
 
 
+def typed(answers):
+    """Replace input() with a script. Returns a list that collects the prompts.
+
+    `create_routine` is built on plain `input()` (standing decision 6 — no
+    full-screen dialogs), so driving it means owning that function for the
+    duration. StopIteration is turned into KeyboardInterrupt on purpose: a
+    script that runs out is a flow that asked one more question than the test
+    expected, and "the human gave up" is the honest way to model that.
+    """
+    import builtins
+    it = iter(answers)
+    seen = []
+
+    def fake(prompt=""):
+        seen.append(prompt)
+        try:
+            return next(it)
+        except StopIteration:
+            raise KeyboardInterrupt
+    builtins.input = fake
+    return seen
+
+
+def test_creation_flow():
+    """`/routine new` re-prompts instead of discarding six answers.
+
+    `D-0.9.1-03`, and it is driven rather than reasoned about: the report was a
+    real session where typing `HHMM` at the trigger threw away the name, the
+    prompt, the roots and the model, and then dropped the next line into the
+    chat as a message.
+    """
+    import builtins
+    import commands
+
+    real_input = builtins.input
+    print("\n--- /routine new: three holes, one shape ---")
+    try:
+        with tempfile.TemporaryDirectory() as tmp, Store(tmp) as store:
+            # The reported flow exactly: a bad trigger, then a bad on_failure,
+            # then the corrections. Everything before them must survive.
+            typed(["Short term memory", "1", "", "n",
+                   "hhmm", "0300", "retrry", "retry", ""])
+            commands.create_routine()
+            saved = sorted(p.name for p in store.rdir.glob("*.md"))
+            ok("a bad trigger no longer discards the routine",
+               saved == ["short-term-memory.md"], saved)
+            r = routines.load_routine("short-term-memory")
+            ok("...and the corrected trigger is what got saved",
+               r.trigger == "0300", r.trigger)
+            ok("...with the answers given before it intact",
+               (r.name, r.prompt, r.on_failure) ==
+               ("Short term memory", "task.md", "retry"), r.__dict__)
+
+            # The same name again. This used to raise "<id>.md already exists"
+            # from save_routine, after every question had been answered.
+            typed(["Short term memory", "Short term memory 2", "1", "", "n",
+                   "command", "retry", ""])
+            commands.create_routine()
+            saved = sorted(p.name for p in store.rdir.glob("*.md"))
+            ok("a taken id is caught at the name, not at the save",
+               saved == ["short-term-memory-2.md", "short-term-memory.md"],
+               saved)
+
+            # **The one that wrote a file.** `select_model` returns None only
+            # when the human backed out of its picker, and that was read as
+            # "no model pin" — so cancelling saved the routine you were
+            # abandoning. Every other None in the flow returns.
+            real_select = commands.select_model
+            commands.select_model = lambda q: None
+            try:
+                typed(["Third routine", "1", "", "n", "command", "retry",
+                       "some-model"])
+                commands.create_routine()
+            finally:
+                commands.select_model = real_select
+            ok("cancelling the model picker saves nothing",
+               not (store.rdir / "third-routine.md").exists(),
+               sorted(p.name for p in store.rdir.glob("*.md")))
+
+            # The half that actually bit: the flow used to return to the REPL
+            # without saying so, so the next line typed became a chat message.
+            import io
+            import contextlib
+            buf = io.StringIO()
+            typed(["Fourth routine", "1", "", "n"])   # runs out -> Ctrl-C
+            commands.console.file = buf
+            with contextlib.redirect_stdout(buf):
+                commands.create_routine()
+            commands.console.file = sys.stdout
+            ok("an abandoned flow says it has ended",
+               "back in the chat" in buf.getvalue(), buf.getvalue()[-200:])
+    finally:
+        builtins.input = real_input
+
+
 def main():
     print("\n--- slugify ---")
     ok("spaces to hyphens", routines.slugify("Nightly Digest") == "nightly-digest")
@@ -680,6 +775,8 @@ def main():
             runner.agent_turn = real_turn
             conn.close()
             dbmod.DB_PATH = saved_path
+
+    test_creation_flow()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

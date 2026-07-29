@@ -475,6 +475,11 @@ A routine is a task the model runs against its own declared read and write roots
 either on command or on a schedule. `/routine new` creates one; the file lives in
 the vault and is fully editable in Obsidian.
 
+**Every answer is checked as you type it**, so a bad trigger or a name already
+taken costs you that one line rather than the whole form. Ctrl-C at any prompt
+abandons the routine — and says so, because the next line you type after that is
+a chat message, not an answer.
+
 A routine's `trigger:` is one of three things:
 
 | `trigger:` | When it runs |

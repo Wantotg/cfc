@@ -1921,6 +1921,44 @@ def _ask(prompt, default=None):
     return answer or (default or "")
 
 
+def _ask_until(prompt, default, problem):
+    """Ask until the answer is usable, or the human bails out (None).
+
+    `problem(answer)` returns a reason or None, and the ones passed in are the
+    *same functions* the late validation calls — see `routines.trigger_problem`.
+    A second opinion here would be a field accepted as you type it and rejected
+    six answers later, which is the bug this exists to close.
+
+    The shape is `_ask_paths`', which has re-prompted per line since it was
+    written; the two raw fields were simply never given it.
+    """
+    while True:
+        answer = _ask(prompt, default)
+        if answer is None:
+            return None
+        why = problem(answer)
+        if not why:
+            return answer
+        console.print(f"  {why}", style="red")
+
+
+def _routine_abandoned(why=""):
+    """End the creation flow out loud (`D-0.9.1-03`).
+
+    **The half that actually bit was the exit, not the validation.** The flow
+    used to return to the REPL silently, so the next line typed was a chat
+    message — standing decision 13's failure shape (unrecognised input is not
+    an error, it is an API call and a confidently wrong answer) reached through
+    an abandoned prompt rather than a missing verb. `create_routine` announces
+    one way out at the top; every other way out now announces itself.
+    """
+    if why:
+        console.print(f"  {why}", style="red")
+    console.print("  No routine created — back in the chat, so the next line "
+                  "you type is a message.", style="dim")
+    console.print()
+
+
 def _ask_paths(label, routines):
     """Collect roots one line at a time, rejecting each bad one as it's typed.
 
@@ -2007,17 +2045,32 @@ def show_routines():
 
 def create_routine():
     """/routine new — the sequential creation flow. No TUI."""
-    from routines import (Routine, RoutineError, prompt_dir, save_routine,
-                          slugify)
+    from routines import (Routine, RoutineError, on_failure_problem, prompt_dir,
+                          routine_dir, save_routine, slugify, trigger_problem)
 
     console.print()
     console.print("New routine. Ctrl-C at any point abandons it.", style="dim")
 
-    name = _ask("  name")
-    if not name:
-        console.print("Cancelled." if name is None else "A name is required.")
-        return
-    rid = slugify(name)
+    # **The id is checked here rather than at `save_routine`.** It used to
+    # raise `<id>.md already exists` after every question had been answered,
+    # which is the same discard the trigger caused and the same fix: find out
+    # while the answer is still the thing being typed. `save_routine` keeps its
+    # own check — this one can lose a race with a second cfc, and the late one
+    # is the guarantee.
+    while True:
+        name = _ask("  name")
+        if name is None:
+            _routine_abandoned()
+            return
+        if not name:
+            console.print("  A name is required.", style="red")
+            continue
+        rid = slugify(name)
+        if (routine_dir() / f"{rid}.md").exists():
+            console.print(f"  {rid}.md already exists — pick another name, or "
+                          f"edit that file directly.", style="red")
+            continue
+        break
     console.print(f"  id: {rid}", style="dim")
 
     # The prompt picker lists what's there rather than asking for a filename —
@@ -2029,24 +2082,30 @@ def create_routine():
         console.print(f"  No task prompts in {pdir}", style="red")
         console.print("  Create one there first — the prompt is the task.",
                       style="dim")
+        _routine_abandoned()
         return
     console.print(f"  task prompts in {pdir}:", style="dim")
     for i, p in enumerate(available, 1):
         console.print(f"   {i}. {p}", style="dim")
-    choice = _ask("  prompt (number or filename)")
-    if not choice:
-        console.print("Cancelled." if choice is None else "A prompt is required.")
-        return
-    if choice.isdigit() and 1 <= int(choice) <= len(available):
-        prompt = available[int(choice) - 1]
-    elif choice in available:
-        prompt = choice
-    else:
+    while True:
+        choice = _ask("  prompt (number or filename)")
+        if choice is None:
+            _routine_abandoned()
+            return
+        if not choice:
+            console.print("  A prompt is required.", style="red")
+            continue
+        if choice.isdigit() and 1 <= int(choice) <= len(available):
+            prompt = available[int(choice) - 1]
+            break
+        if choice in available:
+            prompt = choice
+            break
         console.print(f"  No such prompt: {choice}", style="red")
-        return
 
     read_roots = _ask_paths("read", None)
     if read_roots is None:
+        _routine_abandoned()
         return
     if not read_roots:
         console.print("  (no read roots — the routine will have no file access)",
@@ -2059,13 +2118,22 @@ def create_routine():
     if (_ask("  allow writing? (y/n, default n)") or "n").lower().startswith("y"):
         write_roots = _ask_paths("write", None)
         if write_roots is None:
+            _routine_abandoned()
             return
 
-    trigger = _ask("  trigger (command, or HHMM)", "command")
+    # `0300` rather than `HHMM` in the example: the placeholder was typed back
+    # literally in the report this came from, which is a fair reading of a
+    # prompt whose default is the word `command`. A concrete time cannot be
+    # mistaken for a form to fill in.
+    trigger = _ask_until("  trigger (command, 0300, or weekly 0330)", "command",
+                         trigger_problem)
     if trigger is None:
+        _routine_abandoned()
         return
-    on_failure = _ask("  on failure (retry/skip)", "retry")
+    on_failure = _ask_until("  on failure (retry/skip)", "retry",
+                            on_failure_problem)
     if on_failure is None:
+        _routine_abandoned()
         return
 
     # Optional model pin. Blank = the routine uses the vetted default (or the
@@ -2074,15 +2142,23 @@ def create_routine():
     model = ""
     mchoice = _ask("  model (blank = routine default)", "")
     if mchoice is None:
+        _routine_abandoned()
         return
     if mchoice.strip():
         picked = select_model(mchoice.strip())
-        if picked:
-            model = picked
-            if ROUTINE_MODELS and model not in ROUTINE_MODELS:
-                console.print(f"  note: {model} isn't in ROUTINE_MODELS — it "
-                              "may stall on empty completions when run "
-                              "unattended.", style="yellow")
+        # **`None` here means cancelled, not "no pin".** Every other `None` in
+        # this flow returns, but `select_model` returns `None` only when the
+        # human backed out of its picker — and reading that as *leave the model
+        # blank* saved a routine somebody was in the middle of abandoning. The
+        # blank answer is the one that means no pin, and it never reaches here.
+        if picked is None:
+            _routine_abandoned()
+            return
+        model = picked
+        if ROUTINE_MODELS and model not in ROUTINE_MODELS:
+            console.print(f"  note: {model} isn't in ROUTINE_MODELS — it "
+                          "may stall on empty completions when run "
+                          "unattended.", style="yellow")
 
     routine = Routine(id=rid, name=name, prompt=prompt, model=model,
                       read_roots=read_roots, write_roots=write_roots,
@@ -2096,7 +2172,12 @@ def create_routine():
     try:
         dest = save_routine(routine)
     except RoutineError as e:
-        console.print(f"  Not saved: {e}", style="red")
+        # Still reachable, and deliberately so: the per-field checks above
+        # cannot see a write root overlapping the cfc source, and a second cfc
+        # can create the file between the id check and this line. What has
+        # changed is that landing here is now a surprise rather than the normal
+        # way a typo ends.
+        _routine_abandoned(f"Not saved: {e}")
         return
     console.print(f"  Saved: {dest}", style="green")
     console.print(f"  Run it with '/routine {rid}'", style="dim")

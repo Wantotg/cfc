@@ -143,63 +143,6 @@ under the right prefix.
 its "Esc to leave" depends on the `[esc]` entry above, which is 2.0 — a typed
 word until then.
 
-## D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation. 0.9.1, 28-07-2026
-
-**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
-
-```
-trigger (command, or HHMM) [command]: hhmm
-on failure (retry/skip) [retry]: retry
-model (blank = routine default):
-Not saved: trigger 'hhmm' is not 'command', HHMM or 'weekly HHMM'
-You: HHMM
-
-expected: to stay in routine creation and correct my mistake, instead of
-          sending a message
-guess:    user error, but we could make it more friendly and not leave
-          routine creation.
-```
-
-**Not user error.** `commands.create_routine` is half reject-as-you-type and
-half all-or-nothing, and the trigger is in the second half. Read roots go
-through `_ask_paths`, which validates each line and re-prompts — its docstring
-says *"exactly the shape a reject-and-re-prompt loop wants"* — and the task
-prompt is checked against the directory listing inline. `trigger` and
-`on_failure` are taken raw and reach validation only at `save_routine` →
-`Routine.validate()`, six answers later, where a `RoutineError` prints
-`Not saved:` and returns. Name, prompt, roots and model go with it.
-
-**The half that actually bit is the exit, not the validation.** The flow
-returns to the session REPL without saying it has, so the next line typed is a
-chat message — standing decision 13's failure shape (unrecognised input is not
-an error, it is an API call and a confidently wrong answer) reached through an
-abandoned prompt flow rather than through a missing verb. `create_routine`
-announces only one way out: *"Ctrl-C at any point abandons it."*
-
-**Three holes, one shape**, and a fix that closes one should close all three:
-
-- `on_failure` — anything but `retry`/`skip` discards the same six answers.
-- An id that already exists — `save_routine` raises `<id>.md already exists` at
-  the same late point, after every question has been answered.
-- Cancelling the **model** prompt is read as "use the routine default": every
-  other `None` in `create_routine` returns, but `select_model` returns `None`
-  both for *cancelled* and is then treated as *no pin*, so a Ctrl-C there
-  silently saves a routine rather than abandoning one.
-
-**Where a fix goes.** The per-field loop already exists in `_ask_paths`;
-`Routine.validate()` is non-raising and exhaustive by design (*"the creation
-flow wants to show all the problems at once"*), so the pieces are in place and
-the change is a re-prompt around the two raw fields rather than new
-machinery. Worth deciding at the same time: whether the prompt's `HHMM` reads
-as a placeholder — it was typed back literally here, and `0300` in the example
-would cost nothing. **Do not** move validation *out* of `save_routine`; that is
-what makes an invalid routine unsaveable, which is the invariant standing
-decision 8 rests on. Add the early check, keep the late one.
-
-**Why here and not `BUGS.md`:** nothing claims the flow re-prompts, and the
-routine that was eventually saved is correct. It is a form that discards itself,
-which is debt.
-
 ## D-09 · The `reflection` routine cannot read what its prompt reads. 0.9.1, 28-07-2026
 
 **Found:** 2026-07-28, reading the run logs to confirm the report's *"routines
