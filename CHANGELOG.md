@@ -23,6 +23,56 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — Zero recall hits: closed, not built
+v1.0 step 6, `W-01`. The version scoped this as **a closed row and a recorded
+reason rather than code**, and that is what it is — no behaviour changed.
+
+**The claim was half already false and half unbuildable.** `W-01` said a zero-hit
+recall and "nothing worth reporting" were indistinguishable. On the chat side
+that stopped being true in v0.9, and it was **driven on screen here rather than
+closed on a code reading** — the three outcomes print three different sentences:
+
+```
+[memory not searched] the embedder isn't answering, so nothing was looked up.
+[memory is empty] nothing is indexed to search.
+Nothing in memory comes close to '…' — the wiki is indexed and was searched.
+```
+
+The middle one is the confident falsehood the distinction exists to stop: *"the
+wiki doesn't cover this"* said about a corpus that was never consulted. Pinned
+in `tests/test_memory_states.py`.
+
+**The routine half cannot be built, and the reason is the finding.** No routine
+can reach recall at all. The four tools are `list_dir`, `read_file`, `grep` and
+`write_file`; `commands.py` is the only module importing `search` or `recall`;
+`agent.py` doesn't, and `tools.py`/`runner.py` mention the words only in prose.
+So there is no call site at which a routine's zero-hit policy could live, and
+building one means inventing the caller before the capability. The draft that
+scoped `W-01` assumed otherwise — which is the part worth carrying: **a policy
+for a caller that doesn't exist reads exactly like ordinary owed work** until
+somebody greps for the import.
+
+**Successor opened in `ROADMAP_BEYOND.md`, number deliberately unclaimed.** What
+is actually wanted is the *tool*, and it is 1.7's shape — a new tool inside a
+jail that already exists — aimed at the local corpus rather than the network,
+which makes it the cheaper of the two: no new boundary, and the retrieval stack
+is already built and measured. Whether it lands before 1.7 or beside it is Cas's
+call. Two things left explicitly undecided there, because neither is decidable
+before the tool exists: what a routine does with a zero-hit recall (it may be
+`looks_unclear()`'s case arriving through another door, or a perfectly good
+"nothing to report"), and whether the tool searches the wiki only the way
+`/recall` does or the chat log too — the chat log is indexed and deliberately
+excluded until hybrid lands, and a tool is a second chance to get that boundary
+wrong quietly.
+
+`HANDOVER.md`'s open thread is rewritten as closed, in place, the way the
+scheduler and `preflight` threads were.
+
+- Files: HANDOVER.md, CHANGELOG.md; ROADMAP_BEYOND.md and TRACKER.md (both
+  gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The hub's broken-routine blind spot gets written up
 v1.0 step 5, `D-10`. **A drafting step, not a build**, and it was listed as one
 so this wouldn't get built from a one-line tracker row. That was the right call:
@@ -71,7 +121,7 @@ not a restyle. No behaviour changed in this commit.
 - Files: BACKLOG.md, HANDOVER.md, hub.py (docstring), CHANGELOG.md; TRACKER.md
   (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: 5d864ce
 
 ## 2026-07-29 — `/routine new` stops discarding itself
 v1.0 step 4, `D-0.9.1-03`. Typing `hhmm` at the trigger threw away the name, the

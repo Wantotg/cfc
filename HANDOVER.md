@@ -794,17 +794,31 @@ because patching config misses anything that read the value at import.
   `errorlog.py` captures the error line the moment it fires, so neither closing
   route now depends on a human reading scrollback in time. Its blind spots
   (private chats, non-`httpx` exceptions) are in `BUGS.md` with the entry.
-- **Zero recall hits are now three distinguishable outcomes** (v0.9): the
-  embedder never answered (`embed.EmbedUnavailable`), nothing is indexed
-  (`search.why_empty` → `EMPTY_INDEX`), or the corpus was searched and missed.
-  What is *not* built is the routine half, and the reason is worth recording:
-  **no routine can reach recall.** The four tools are `list_dir`, `read_file`,
-  `grep` and `write_file`, and `commands.py` is the only module that imports
-  `search` or `recall` at all. The draft that scoped this assumed otherwise.
-  So the distinction is made where it originates rather than at a call site
-  that doesn't exist — when a recall tool lands, it inherits a typed exception
+- **Zero recall hits are three distinguishable outcomes, and this thread is
+  closed** (v1.0, `W-01`). The embedder never answered
+  (`embed.EmbedUnavailable`), nothing is indexed (`search.why_empty` →
+  `EMPTY_INDEX`), or the corpus was searched and missed. Built in v0.9, and
+  **driven on screen in v1.0 rather than closed on the code reading** — all
+  three print different sentences, and the middle one is the confident
+  falsehood the distinction exists to stop: *"nothing comes close"* about a
+  corpus that was never consulted. Pinned in `tests/test_memory_states.py`.
+
+  What was never built is the routine half, and **the reason is why this closed
+  without code**: no routine can reach recall. The four tools are `list_dir`,
+  `read_file`, `grep` and `write_file`; `commands.py` is the only module that
+  imports `search` or `recall`; `agent.py` doesn't, and `tools.py` and
+  `runner.py` mention the words only in prose. There is no call site at which a
+  routine's zero-hit policy could live, so building one means inventing the
+  caller before the capability. The draft that scoped this assumed otherwise —
+  which is the transferable half: **a policy for a caller that doesn't exist is
+  a spec nobody can execute**, and it reads exactly like ordinary owed work
+  until someone greps for the import.
+
+  So the distinction stays where it originates rather than at a call site that
+  doesn't exist. When a recall tool lands it inherits the typed exception
   instead of needing one retrofitted, and *that* is when a zero-hit routine
-  policy becomes a real question.
+  policy becomes a real question. The successor is in `ROADMAP_BEYOND.md` with
+  its number deliberately unclaimed.
 - **The DB layer is anticipated to be reworked** — treat the chunk/vector schema as
   in flux. The intended shape is "SQLite stays the source of truth, sqlite-vec is an
   index over it".
