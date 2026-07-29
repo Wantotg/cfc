@@ -131,24 +131,31 @@ The hub shows a light for the same check, asked fresh every time you land there:
 
 ```
 ● embedder connected
-● LM Studio is up, embedder is not — /connect embedding
-● LM Studio is not running — /connect embedding
+● LM Studio is up, embedder is not — /connect embedding in a chat
+● LM Studio is not running — start it, or /connect embedding in a chat
+● embedder not answering — /connect embedding in a chat
+● hosted embedder unreachable — not cfc's to start
 ```
 
 `h` at the hub prints what can be typed there, the light's legend, and where the
 in-chat commands live. It is generated from the same tables that dispatch the
 keys and colour the light, so it cannot describe a hub cfc doesn't have.
 
-`/connect embedding` walks as much of the loop as it can from wherever it
-starts: starts the server, loads the model, verifies. If you started LM Studio
-by hand in the meantime it just lands on green. Bare `/connect` reports without
-changing anything.
+**The colour says what cfc can do about it, not how bad it is.** Green is
+working. Orange means `/connect embedding` will try. Red means it isn't cfc's to
+fix — a hosted embedder is someone else's server. Severity would be the useless
+axis here, because every light that isn't green means the same thing: memory is
+off.
 
-**Red is where it stops, and that's deliberate.** LM Studio itself can't be
-started from WSL — `lms server start` waits on a daemon that only exists once
-the app has run, and launching the .exe across the interop boundary silently
-does nothing. So red tells you to start LM Studio on Windows rather than
-offering a button that can't work; everything after that, cfc does.
+**The advice names where you can type it**, which is why the line says *in a
+chat*. The light appears at the hub, and the hub takes a chat id and `n`/`p`/
+`h`/`q` — commands live inside a conversation. So the light tells you the two
+steps, rather than a command the screen you are looking at would refuse.
+
+`/connect embedding` walks as much of the loop as it can from wherever it
+starts: starts LM Studio if it has to, starts the server, loads the model,
+verifies. If you started LM Studio by hand in the meantime it just lands on
+green. Bare `/connect` reports without changing anything.
 
 The light and the launch check are the **same function**, not two opinions about
 the same thing. That matters more than it sounds: the failure worth designing

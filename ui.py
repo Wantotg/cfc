@@ -204,22 +204,54 @@ def context_style(pct):
 #
 # The wording says what to *do*, not what is wrong. "no server" as a bare label
 # is a diagnosis nobody asked for; "run /connect embedding" is the next move.
+#
+# **The advice names where it can be typed** (v1.0, `B-0.9.1-03`). One string is
+# rendered on three screens and only one of them is inside a session: the hub's
+# light and the `h` legend are both at the picker, which accepts `n`/`p`/`h`/`q`
+# and a chat id and answers anything else with "Type a chat ID, or one of…". So
+# the two renderings most likely to be the first thing seen after launch were
+# naming a command the screen in front of you would refuse. Forking the table
+# per caller is the fix that must not happen — that is three literals a refactor
+# away from disagreeing, which is why the mapping is centralised at all — so the
+# clause carries its own context and is true everywhere, at the cost of three
+# redundant words when you read it from inside a chat.
+#
+# **The colour says what cfc can do about it, not how bad it is** (v1.0,
+# `D-0.9.1-01`). Severity does not discriminate here: every non-green state
+# means memory is off, equally. Recoverability does, so that is what the dot
+# carries — **orange, `/connect embedding` will try; red, it is not cfc's to
+# fix.** That is the split `preflight.ensure` already makes, where `hosted`
+# returns early and the other three fall through to the fixer, so the colour and
+# the behaviour cannot drift apart.
+#
+# It was the other way round until v1.0, and the report was "either this is
+# where I find out that I'm colourblind, or two of these lights are the same":
+# `hosted` was orange — the actionable colour — while being the one state cfc
+# cannot act on, and `not running` was red while being one `lms server start`
+# away. Three states now share orange, and that is a class rather than a
+# collision. **Do not answer it with a colour per state**: this module imports
+# no cfc module, the mapping is a producer/parser pair across a boundary that
+# cannot be closed, and re-assigning colours leaves that pair the size it was.
 CONNECTION_STYLE = {
     "connected":   ("●", "green",   "embedder connected"),
     "no server":   ("●", "orange3", "LM Studio is up, embedder is not — "
-                                    "/connect embedding"),
-    # `/connect embedding` is offered here again: whether cfc can wake LM
-    # Studio from WSL is genuinely unresolved (see `preflight.ensure` and
-    # `BUGS.md`), and the command says so honestly when it fails. Offering it
-    # costs a slow minute; withholding it removes a path that used to work.
-    "not running": ("●", "red",     "LM Studio is not running — "
-                                    "/connect embedding, or start it yourself"),
-    "down":        ("●", "red",     "embedder not answering — "
-                                    "/connect embedding"),
+                                    "/connect embedding in a chat"),
+    # Starting LM Studio itself is offered *first* because it is the path that
+    # always works, and `/connect embedding` second because it also works —
+    # driven 2026-07-27 from a cold machine, `lms server start` brought the app
+    # up and the probe came back green. cfc spent a day believing that was
+    # impossible on three failures from an interactive shell; see the rejected
+    # designs in `HANDOVER.md`, which keeps the mistake on purpose.
+    "not running": ("●", "orange3", "LM Studio is not running — start it, or "
+                                    "/connect embedding in a chat"),
+    "down":        ("●", "orange3", "embedder not answering — "
+                                    "/connect embedding in a chat"),
     # No `/connect` here, and that is the honest answer rather than an
     # omission: a hosted endpoint is not something cfc can start, so offering a
-    # command that cannot help would be worse than saying so.
-    "hosted":      ("●", "orange3", "hosted embedder unreachable — "
+    # command that cannot help would be worse than saying so. It is the one red
+    # for the same reason — red is where cfc runs out, not where things are
+    # worst.
+    "hosted":      ("●", "red",     "hosted embedder unreachable — "
                                     "not cfc's to start"),
 }
 

@@ -2805,9 +2805,13 @@ def connect_status():
     console.print(line)
     console.print(f"  {detail}", style="dim", highlight=False)
     console.print("  targets: embedding", style="dim")
-    # Only offer the fix when there is something to fix. "run /connect
-    # embedding to fix it" under a green light is the small, constant kind of
-    # wrong that teaches you to stop reading the line.
-    if state != preflight.CONNECTED:
-        console.print(f"  {PREFIX}connect embedding tries to fix it.",
-                      style="dim")
+    # **The advice is the light's, and this function no longer keeps a copy**
+    # (v1.0, `B-0.9.1-03`). There used to be a line here offering `/connect
+    # embedding` for every state but `connected` — which was a fork of
+    # `ui.CONNECTION_STYLE` written as prose, and it had already gone wrong in
+    # the way a fork does: it offered the command for `hosted` too, where the
+    # light one line above says *not cfc's to start* and `preflight.ensure`
+    # returns early without trying. Two lines disagreeing about the same state,
+    # four lines apart. The table now names the command in each state that has
+    # one and says so plainly in the state that doesn't, so the only way to
+    # reintroduce that bug is to reintroduce the second copy.

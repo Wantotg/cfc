@@ -14,6 +14,98 @@ split line is what is frozen, not the file.
 
 # Closed since the split
 
+## ~~B-0.9.1-03 · The connection light tells the hub to type a command the hub won't take~~ — CLOSED (v1.0, 2026-07-29)
+
+**Closed 2026-07-29**, v1.0 step 2, in one pass with `D-0.9.1-01` because both
+were one decision about `ui.CONNECTION_STYLE` seen from two angles — which is
+what the entry below asked for.
+
+**Cas's call between the entry's two shapes: the advice names its own context.**
+So the string is *"— /connect embedding in a chat"*, true at the hub, in the `h`
+legend and inside a session alike, at the cost of three redundant words in the
+one place they are not needed. The alternative — splitting *what is wrong* from
+*what to do* and letting each caller render the second half — was rejected for
+the reason the entry names: it puts three advice literals on the far side of the
+`ui.py` boundary that standing decision 6 will not let close, which is a wider
+pair than the one it started with.
+
+**A third option was on the table and was not taken.** Cas's own report offered
+it — *"OR the reverse, that the command worked"* — i.e. teach the hub to accept
+`/connect embedding`. It loses on scope rather than on merit: v1.0's claim is
+that everything cfc already says is true, and a new hub key is a new feature.
+It also would not have removed the wording problem, only moved it: a hub key is
+not the same string as an in-chat command, so the table would still have needed
+to know where it was being rendered. Worth reopening if the hub ever grows
+commands for another reason.
+
+**Fixing the table found a fourth rendering nobody had counted.**
+`commands.connect_status` (bare `/connect`) kept its own trailing line offering
+`/connect embedding` for every state but `connected` — a fork of the table
+written as prose, and it had already drifted the way a fork does: it offered the
+command for `hosted`, four lines below a light saying *not cfc's to start* and
+against a `preflight.ensure` that returns early without trying. Deleted rather
+than corrected, because the table now carries the command in every state that
+has one.
+
+`tests/test_connection.py` gained the pin: any state naming a command must also
+name a place to type it. Deliberately matched on *"chat"* and not on the exact
+phrase — the finding is the missing context, not the three words supplying it,
+and a test against the literal would be the producer/parser hazard rebuilt
+inside the test that exists to prevent it. Verified by breaking it. The entry as
+it stood:
+
+---
+
+## B-0.9.1-03 · The connection light tells the hub to type a command the hub won't take
+
+**Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:
+
+```
+saw:      ● LM Studio is not running — /connect embedding, or start it yourself
+expected: ● LM Studio is not running — /connect embedding inside a chat, or
+          start it yourself   (OR the reverse, that the command worked)
+```
+
+Confirmed with Cas the same session: he was **at the hub**, not in a chat.
+
+**Diagnosis: one string with three renderings, and it is right in one of
+them.** The text lives once, in `ui.CONNECTION_STYLE`, whose own comment states
+the rule it is written to — *"the wording says what to **do**, not what is
+wrong"*. It is rendered by `hub.print_connection` (the light above the picker),
+by `hub.print_hub_help`'s legend, and by `commands.connect_status` (`/connect`
+inside a session). Only the third is somewhere `/connect embedding` can be
+typed: `hub.pick_session` accepts `n`/`p`/`h`/`q` and a listed chat id, and
+answers anything else with *"Type a chat ID, or one of…"*.
+
+So the one screen whose job is to tell you what to do next names a command that
+screen cannot accept, and it does so in the two renderings that are *most*
+likely to be the first thing seen after launch.
+
+**This is `B-0.9.1-01`'s shape, one level out** — a single string correct for
+one audience and wrong for another, which is why the two belong in the same
+pass. It is not the recurring producer/parser hazard: nothing has drifted, and
+`tests/test_connection.py`'s round-trip is doing its job. The mapping is simply
+blind to *where* it is rendered, because it never had to know.
+
+**Where a fix goes, and the one thing it must not do.** Do not fork the table
+per caller — that is three literals a refactor away from disagreeing, which is
+the reason the mapping is centralised in the first place. Two shapes survive
+that:
+
+- The advice clause names its context (`/connect embedding, inside a chat`),
+  which is true everywhere including inside a chat, at the cost of a few words
+  where they are not needed.
+- Or `CONNECTION_STYLE` splits *what is wrong* from *what to do*, and each
+  caller renders the second half in its own words. More faithful, more code,
+  and it widens a producer/parser pair across the `ui.py` boundary — see
+  `D-0.9.1-01`, which is already open against the same table and should be
+  decided with this one.
+
+**Not a v0.9.1 blocker** — the tag was already cut when this was found, and
+that version's entry claims nothing about where the light is legible.
+
+---
+
 ## ~~B-0.9.1-04 · The routines light applies a daily rule to every trigger kind~~ — CLOSED (v0.9.2, 2026-07-28)
 
 **Closed 2026-07-28.** `hub._freshness` stopped deciding anything for itself and

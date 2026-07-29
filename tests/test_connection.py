@@ -87,17 +87,58 @@ def test_rendering_round_trip():
         # command: a remote endpoint is someone else's to start, and naming a
         # command that cannot help would be worse than saying so. Every other
         # non-connected state names `/connect embedding` — including
-        # `not running`, where whether cfc can wake LM Studio is unresolved
-        # rather than known-impossible (see BUGS.md).
+        # `not running`, where cfc genuinely can wake LM Studio: driven from a
+        # cold machine 2026-07-27, `lms server start` brought the app up and
+        # the probe came back green. This comment said "unresolved" until v1.0,
+        # which is the same stale claim `B-02` found in README.md.
         if state == preflight.HOSTED:
             assert "not cfc's to start" in text, text
         elif state != preflight.CONNECTED:
             assert "/connect" in text, f"{state} does not name the fix: {text}"
+            # ...**and says where it can be typed** (`B-0.9.1-03`). Two of the
+            # three renderings are at the hub, which accepts n/p/h/q and a chat
+            # id and refuses everything else — so an unqualified `/connect
+            # embedding` is advice the screen printing it would not take. Not
+            # pinned against the exact phrase: any wording that names a chat
+            # passes, because the finding is the missing context and not the
+            # three words that supply it.
+            assert "chat" in text, (
+                f"{state} names a command with no place to type it: {text}")
     print(f"  ok  {len(preflight.STATES)} states render")
     # An unknown state degrades rather than raising. The hub is not worth
     # taking down over a light.
     mark, style, text = ui.connection_light("something new")
     check("unknown state degrades", (mark, style), ("?", "dim"))
+
+
+def test_colour_follows_what_cfc_can_do():
+    """The dot carries recoverability, not severity (`D-0.9.1-01`).
+
+    Severity cannot discriminate here — every non-green state means memory is
+    off, equally — so the colour says whether `/connect embedding` will try:
+    one colour for the states `preflight.ensure` runs its fixer on, a different
+    one for `hosted`, which it returns early from.
+
+    **Pinned against the advice, not against colour names.** Which states offer
+    the command is derivable from the mapping itself, so re-styling stays free
+    and un-pairing the colour from the behaviour fails here. Asserting
+    `orange3` and `red` as literals would pass a table that had drifted away
+    from what `ensure` actually does, which is the only thing the colour claims.
+    """
+    print("the colour says what cfc can do about it")
+    fixable, unfixable = set(), set()
+    for state in preflight.STATES:
+        if state == preflight.CONNECTED:
+            continue
+        _, style, text = ui.connection_light(state)
+        (fixable if "/connect" in text else unfixable).add(style)
+    check("every state cfc can try shares one colour", len(fixable), 1)
+    check("the state it cannot shares none of it", fixable & unfixable, set())
+    # Green is working, and it is nobody else's colour. Without this the rule
+    # above is satisfied by painting the whole light one colour.
+    green = ui.connection_light(preflight.CONNECTED)[1]
+    check("connected keeps a colour of its own",
+          green not in fixable | unfixable, True)
 
 
 def test_probe_timeouts_are_a_pair():
@@ -132,6 +173,7 @@ def test_terminal_report_direction():
 if __name__ == "__main__":
     test_states()
     test_rendering_round_trip()
+    test_colour_follows_what_cfc_can_do()
     test_probe_timeouts_are_a_pair()
     test_terminal_report_direction()
     print("\nall connection tests passed")

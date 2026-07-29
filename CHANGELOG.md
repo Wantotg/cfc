@@ -23,6 +23,72 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — The light says what to do where you are standing
+v1.0 step 2, `B-0.9.1-03` and `D-0.9.1-01` — two findings against one table,
+`ui.CONNECTION_STYLE`, closed in one decision because doing them apart means
+opening the same table twice.
+
+**The advice named a command the screen printing it would refuse.** The string
+is rendered three times and only one of those is inside a session: the hub's
+light and the `h` legend are both at the picker, which takes `n`/`p`/`h`/`q` and
+a chat id and answers everything else with *"Type a chat ID, or one of…"*. So
+the two screens most likely to be the first thing after launch were saying
+`/connect embedding`. **The clause now carries its own context** — *"in a
+chat"* — which is true in all three renderings at the cost of three redundant
+words in the one place they aren't needed. Cas's call between the two shapes
+`BUGS.md` left open; the alternative, splitting *what is wrong* from *what to
+do*, would have put three advice literals on the far side of the `ui.py`
+boundary that standing decision 6 will not let close.
+
+**The report's own third option was declined on scope**: teaching the hub to
+accept `/connect embedding` would make the advice true rather than qualified,
+but a new hub key is a new feature and v1.0's claim is that what cfc already
+says is true. It also only moves the wording problem, since a hub key is not the
+same string as an in-chat command.
+
+**A fourth rendering turned up during the fix.** `commands.connect_status`
+(bare `/connect`) kept its own trailing line offering the command for every
+state but `connected` — a fork of the table written as prose, and it had already
+drifted the way a fork does: it offered `/connect embedding` for `hosted`, four
+lines under a light saying *not cfc's to start*, against a `preflight.ensure`
+that returns early without trying. Deleted, not corrected.
+
+**The colour now says what cfc can do about it, not how bad it is.** Orange
+where `/connect embedding` will try, red where it isn't cfc's to fix — so
+`hosted` and `not running` swapped, which is exactly what *"either this is where
+I find out that I'm colourblind, or two of these lights are the same"* was
+pointing at. Severity was never the axis: every non-green state means memory is
+off, equally, which is why the old pairing could be wrong for two releases with
+nobody able to say what it should have been. Recoverability discriminates, and
+it is the split `ensure()` already makes, so the colour and the behaviour cannot
+drift apart. Three states share orange now — a class, not a collision. No colour
+was invented; that would widen a producer/parser pair across a boundary that
+cannot close.
+
+**`README.md` was carrying a disproven claim** (`B-02`), found reading the
+section that documents the light: *"Red is where it stops — LM Studio itself
+can't be started from WSL."* That is the entry `HANDOVER.md` keeps in *rejected
+designs* as its one deliberately-preserved mistake — three failures in one
+afternoon written up as impossible, then driven successfully by Cas from a cold
+machine on 2026-07-27. `preflight.py`'s comment was corrected that day; the
+README and a `ui.py` comment were not. A correction of something factually
+wrong, not a restyle.
+
+**Both new properties are pinned against the mapping, never against literals.**
+Every state naming a command must name a place to type it (matched on *"chat"*,
+not the phrase — the finding is the missing context, not the words supplying
+it); every state that offers the command shares one colour, the state that
+doesn't shares none of it, and green is nobody else's. Verified by breaking all
+three, including painting the whole light one colour. `tests/test_hub.py`'s
+legend check follows the table for free. Golden's only diff is the known `D-01`
+outbox hunk — read, not skipped.
+
+- Files: ui.py, commands.py, tests/test_connection.py, README.md, HANDOVER.md,
+  BUGS.md, BACKLOG.md, legacy/BUGS.md, legacy/BACKLOG.md, CHANGELOG.md;
+  TRACKER.md (gitignored)
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — `CLAUDE.example.md` learns the split and the release order
 v1.0 step 1, `D-06` and `D-07`, one edit to the one tracked file that could
 carry either. **The release order had existed only in gitignored files**, so
@@ -63,7 +129,7 @@ count in the middle of them. Nothing would have caught the other kind.
   BRAINSTORM/CODER/DESIGNER/DRAFT/DEBUG/MANAGER CLAUDE.md, TRACKER.md (all
   gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: c29443c
 
 ## 2026-07-29 — A transient provider status kills an unattended run
 Triage of *"every single routine is giving me 503 errors"*, written up rather

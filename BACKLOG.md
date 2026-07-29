@@ -143,46 +143,6 @@ under the right prefix.
 its "Esc to leave" depends on the `[esc]` entry above, which is 2.0 — a typed
 word until then.
 
-## D-0.9.1-01 · Two connection states share a colour, and the pairing looks swapped. 0.9.1, 28-07-2026
-
-**Found:** 2026-07-27, Cas's v0.9.1 playtest, reported as *"either this is where
-I find out that I'm actually colourblind, or two of these lights are the same"*
-— against the `h` help screen's legend, which prints all five states at once.
-
-**He is right about the observation and it is not a defect.** `ui.CONNECTION_STYLE`
-maps five states onto three colours, so two pairs collide: `no server` and
-`hosted` are both `orange3`; `not running` and `down` are both `red`. Five
-distinct states over a traffic light was always going to collapse somewhere.
-
-**Why nothing is broken.** The dot is never printed alone. `hub.print_connection`
-emits dot *plus sentence*, and so do `/connect embedding` and
-`preflight.terminal_report()` — all three render one `connection_state()` and
-none of them abbreviates it. So the colour carries **severity** and the sentence
-carries **identity**, and the state is always legible. This is the light doing
-what standing decision 16 says it must; the legend is simply the one screen
-where all five appear together, which is what made the collision visible.
-
-**What is actually worth deciding, and it is the pairing rather than the count.**
-`hosted` is orange — the actionable colour — while its own text says it is the
-one state cfc *cannot* act on, and it is the only entry with no `/connect`
-offered. `not running` is red — the terminal colour — while it is the most
-trivially recoverable state on the list, one `lms server start` away, and
-`preflight.py`'s orange path is exactly the one that fixes it. Those two look
-swapped against what the colours mean everywhere else in cfc.
-
-**Not urgent, and the reason to write it down rather than just doing it:** the
-counter-argument is in `hub.py`'s own comment — *"the dot is the signal, the
-sentence is the content"* — and a fix has to either agree with that and accept
-that the signal is severity-only, or disagree and explain what a fourth colour
-would mean. Cheap to change, so the cost of getting it wrong is a second
-opinion later; decide it with whoever next touches `preflight.STATES`, not on
-its own.
-
-**One thing a fix must not do:** invent a colour per state. `ui.py` imports no
-cfc module (decision 6), the mapping is already a producer/parser pair across a
-boundary that cannot be closed, and `tests/test_connection.py` pins it by
-round-trip. Adding colours widens that pair; re-assigning existing ones does not.
-
 ## D-0.9.1-03 · `/routine new` checks the trigger only at the end, and drops the whole creation. 0.9.1, 28-07-2026
 
 **Found:** 2026-07-28, Cas's post-tag v0.9.1 playtest. The report, verbatim:

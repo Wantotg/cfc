@@ -228,6 +228,37 @@ Settled. Argue with them only with a reason, and say that you are.
     about. It also reports the *process* state only where it measured one —
     `DOWN` exists so "LM Studio is running, its server isn't" is never a guess.
 
+    **The dot carries recoverability and the sentence carries context** (v1.0,
+    `D-0.9.1-01` and `B-0.9.1-03`). Both halves were decided together because
+    both are one table, `ui.CONNECTION_STYLE`, and the thing a fix must not do
+    is fork it per caller — three literals a refactor away from disagreeing is
+    the reason it is centralised at all.
+
+    The colour is **orange where `/connect embedding` will try, red where it is
+    not cfc's to fix**, which is the split `preflight.ensure` already makes:
+    `hosted` returns early, the other three fall through to the fixer. Severity
+    cannot discriminate here — every non-green state means memory is off,
+    equally — so a light sorted by severity is a light sorted by nothing. It
+    was the other way round until v1.0, where `hosted` was orange while being
+    the one state cfc cannot act on and `not running` was red while being one
+    `lms server start` away; the report was *"either this is where I find out
+    that I'm colourblind, or two of these lights are the same"*. Three states
+    now share orange and that is a class, not a collision. **A colour per state
+    is still the wrong answer**: `ui.py` imports no cfc module, so this is a
+    producer/parser pair across a boundary that cannot close, and re-assigning
+    colours leaves the pair the size it was while adding one widens it.
+
+    The advice **says where it can be typed**, because two of its three
+    renderings are at the hub and the hub takes `n`/`p`/`h`/`q` and a chat id.
+    The two screens most likely to be the first thing seen after launch were
+    naming a command the screen in front of you would refuse. `commands.
+    connect_status` used to keep its own copy of that advice as a trailing
+    line, and the copy had already gone wrong the way a copy does — it offered
+    the command for `hosted` too, four lines under a light saying *not cfc's to
+    start*. The copy is gone rather than corrected. `tests/test_connection.py`
+    pins both properties against the mapping rather than against colour names
+    or an exact phrase, so re-wording and re-styling stay free.
+
     **The routine column is the second light, added v0.9.2, and it earns the
     same prohibition the same way.** `hub._freshness` renders
     `schedule.why_not_due()` and decides nothing itself. It used to be

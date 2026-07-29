@@ -460,8 +460,16 @@ def ensure(say=_say, fix=True):
         # We tried and it did not come up. Say the one thing that always works
         # rather than leaving it at "failed" — this is the state a human can
         # clear in five seconds if they are told to.
+        #
+        # **"in a chat" for `B-0.9.1-03`'s reason, in the place that has it
+        # worst** (v1.0). `ui.CONNECTION_STYLE`'s advice was naming a command
+        # two of its three screens would refuse; this line is read by
+        # `launch.sh` *before the hub exists at all*, so it named one the reader
+        # is two steps away from being able to type. Free where it is
+        # redundant: the other caller is `/connect embedding` itself, where a
+        # reader who is already in a chat has just proved they know.
         say("info", "start LM Studio on Windows, then run /connect embedding "
-                    "again — everything after that, cfc can do.")
+                    "in a chat — everything after that, cfc can do.")
     elif not acted:
         say("info", f"server is up on port {port} and {model} is loaded, so "
                     "this is not a startup problem.")
