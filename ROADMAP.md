@@ -804,7 +804,7 @@ worth a patch release rather than a wait.
 ⎛⎝ ≽  >  ⩊   < ≼ ⎠⎞  "There are two colors in my head
                          What, what was that you tried to say?"
 ```
-## v0.9.2 — The light, the form, and the evidence file
+## v0.9.2 — The light, the form, and the evidence file **completed 28-07**
 
 **A patch release, and the kind the amended release order was written to
 allow.** The three things in it came out of a **post-tag** playtest of a version
@@ -858,7 +858,11 @@ something untrue.
   watches. Thirty-two of them had accumulated; they were deleted by hand and the
   commit says so.
 
->*(note-shaped hole for Cas)*
+>*(note-shaped hole for Cas) the documentation on git, vscode, and most things tech/code related are removing the fun out of a hobby at a rapid pace*
+
+```
+ദ്ദി/ᐠ｡‸｡ᐟ\ "cool story bro"
+```
 
 ## v1.0 — Hardening, and a decision
 
