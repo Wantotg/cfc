@@ -864,6 +864,107 @@ something untrue.
 ദ്ദി/ᐠ｡‸｡ᐟ\ "cool story bro"
 ```
 
-## v1.0 — Hardening, and a decision
+## v1.0 — Hardening, and a decision **completed 29-07**
+
+**No new features.** Everything cfc has claimed since v0.1 does what it says, and
+the things that were verified by hand get verified by something that doesn't get
+tired. Nine steps: six of code and documentation, one that was deliberately a
+piece of writing rather than a build, one that closed by being understood rather
+than by being built, and one that is calendar.
+
+**The decision in the title is that this repo is public**, under **AGPL-3.0**,
+from the v1.0 tag. It had been an open question since v0.9; what settled it is
+that the two reasons pointed the same way — a public repo is the only backup that
+survives the machine, and it shows anyone what this is and how to build their
+own. Everything that had to be true first was: nothing personal in the working
+tree, `.gitignore` checked against what git actually tracks, the history
+rewritten, the authoring email replaced.
+
+**The first cleanup that decision bought was the file a stranger reads.**
+`CLAUDE.example.md` still described the single-file arrangement that stopped
+being true a day earlier, and its release order stopped at *write the note, then
+tag* — true when written, and written before the playtest moved **inside** the
+order. Shipping that stale on the day the repo opens would undercut the reason
+for opening it. It now describes splitting a project's sessions as a pattern with
+its costs, rather than reproducing six private files, and carries the release
+order as five steps with the tag last.
+
+### Three things that told a human something untrue
+
+- **The connection light named a command the screen couldn't take.** It said
+  `/connect embedding` — which works inside a chat, and the light's two most
+  visible renderings are at the hub, where that is not something you can type.
+  The advice now says where it can be typed. In the same pass the colours stopped
+  meaning *how bad is this* and started meaning *what can cfc do about it*:
+  orange where `/connect embedding` will try, red where it isn't cfc's to fix. So
+  a hosted embedder went red and *LM Studio isn't running* went orange, which is
+  the swap the report asked for — the light had the actionable colour on the one
+  state cfc cannot act on. Severity was never the useful axis: every light that
+  isn't green means the same thing.
+
+- **Denying a tool call was reported as an error.** Typing `d` at the approval
+  prompt printed `← error: user denied` in red. That word is right for the model,
+  which has to read a refusal as something it can adapt to rather than a fault —
+  so the payload is unchanged and the *screen* now says `← read_file denied at
+  the prompt`, in plain grey. A refusal cfc made for you, like a deny-list hit,
+  still reads as the error it is.
+
+- **`/routine new` discarded itself.** Typing `HHMM` at the trigger prompt threw
+  away the name, the prompt, the roots and the model — six answers — and then
+  returned to the chat without saying so, which turned the next line typed into a
+  message to the model. Every answer is now checked as you type it, a name that
+  is already taken re-asks rather than failing at the end, cancelling the model
+  picker no longer saves the routine you were abandoning, and every way out says
+  it is one. The trigger example says `0300` rather than `HHMM`, because the
+  placeholder was read as a placeholder and that was a fair reading.
+
+### Two that closed by being understood rather than built
+
+- **The hub cannot say a routine is broken**, and the tracker row named the
+  smallest part of it. Driving it turned up three tiers: a file that won't parse
+  is dropped from the panel, a malformed trigger is dim beside the deliberate
+  ones — and in the middle, undocumented until now, a routine that parses but
+  cannot run renders **green**, identical to a healthy one. Written up rather than
+  fixed, with the cost of checking measured, because the fix is a design decision
+  and this version's job was to stop it being a one-line note nobody could act on.
+
+- **Zero recall hits**, which had been carried as owed work since before v0.9.
+  Half of it had quietly become true already — an unreachable embedder, an empty
+  index and a real miss now say three different things. The other half cannot be
+  built, and finding out why was the deliverable: **no routine can reach recall at
+  all**. There is no place to put the policy. A recall tool is a feature, and this
+  version has none.
+
+### And the part with no visible output
+
+**The two turn paths are pinned for the first time.** A chat turn goes one of two
+ways, and they must end identically; they drifted once, when the token bar
+silently vanished and usage stopped being recorded. The new test compares the two
+paths *to each other* rather than to any fixed expectation, so it cannot pass
+while they disagree. **The golden baseline stopped depending on the contents of a
+real folder**, which had been quietly making re-recordings carry a hunk you learn
+to skip. **And the skeleton is written down** — the two filesystems and what each
+one erases, why the vault deliberately straddles both, why the embedder is a
+separate endpoint, and what backs up what. Written from the machine rather than
+from memory, which is how it turned up that the chat database has no off-machine
+copy and the exported transcripts are not one.
+
+### The bug that is still open, and this is deliberate
+
+`BUGS.md` is **not** empty. The provider 400 on tool turns has no reproduction and
+nothing identified left to fix, so it cannot close by being fixed — only by
+recurring and being explained, or by not being observed across a stated window.
+The evidence file added in v0.9.1 says the window so far is clean: from the v0.9
+tag to this release, nineteen launches, **zero 400s of any kind**. Every error in
+it is one provider outage on 29-07, already understood.
+
+That is encouraging and it is not yet an absence. The window was never given a
+length, which is its own finding — a window with no end can be waited on but
+never failed. So this release does not claim to be feature complete, and the line
+that claim was going to be drawn at moves. Saying that out loud is the point:
+an empty `BUGS.md` because nobody looked, and an empty one because nothing
+happened, are the same file.
+
+>*(note-shaped hole for Cas)*
 
 ---

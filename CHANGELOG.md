@@ -23,6 +23,37 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-29 — v1.0's body moves to the public roadmap
+Release-order step 1, the half the model owns: `ROADMAP.md`'s title-only stub
+becomes the full entry, written from what the nine steps actually delivered
+rather than from what the plan said they would. The private roadmap is Cas's to
+clear down.
+
+**The note is left as a hole**, as always. The entry describes what shipped; what
+it was like to use is his, written from use rather than from the plan.
+
+**The entry says v1.0 does not claim to be feature complete, and that is the one
+judgement in it.** The gate this project set itself is `BUGS.md` empty, and
+`B-01` is still in it. The evidence file was read rather than assumed: from the
+v0.9 tag to now it holds nineteen launches and **zero HTTP 400s of any kind** —
+every error in it is the single 29-07 provider outage, already ruled on
+(`N-0.9.2-01`). So the watch is clean, which is a better answer than *leave it
+be*, and it is still not an absence: the window was never given a length
+(`Q-0.9.2-01`), and a window with no end can be waited on but never failed.
+
+Writing it the other way would have been the exact failure this version's own
+plan predicted — *the version ships with `BUGS.md` empty because nothing was
+looked at, rather than because nothing happened*. An empty file cannot tell those
+apart, so the entry says which one this is.
+
+`ROADMAP.md`'s *What "feature complete" means here* still names v1.0 as one of
+the two feature-complete lines. Left alone deliberately: it describes a plan, the
+plan is Cas's, and editing it is a decision rather than a correction.
+
+- Files: ROADMAP.md, CHANGELOG.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The skeleton gets documented
 v1.0 step 8, `W-03`. cfc is understandable from its own source; the system around
 it was in Cas's head. **Written from the real machine rather than from memory**,
@@ -77,7 +108,7 @@ coupled, so both moved.
 
 - Files: README.md, HANDOVER.md, CHANGELOG.md; TRACKER.md (gitignored)
 - Status: shipped
-- Commit: pending
+- Commit: e6a18d8
 
 ## 2026-07-29 — The two turn paths are pinned, and the baseline stops pinning the vault
 v1.0 step 7, `W-02` and `D-01`. Scope agreed before the first test was written,
