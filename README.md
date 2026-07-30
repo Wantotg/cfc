@@ -292,6 +292,9 @@ Everything else changes something.
 `/list chats` is the picker's view — real conversations. `/list sessions` is
 everything, routine runs  and wiki pages included. Two different questions.
 
+`/outbox` is a real alias for `/list outbox`, not just the noun the table
+above uses — it's been resolved since v0.8.
+
 **context — attach and detach**
 
 | Command | Action |

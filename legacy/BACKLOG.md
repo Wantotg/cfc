@@ -22,6 +22,108 @@ not the file.
 
 # Closed since the split
 
+## ~~D-09 · The `reflection` routine cannot read what its prompt reads~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, vault-side, Cas's fix — the routine's read/write roots
+now cover what its prompt reads. Original entry:
+
+**Found:** 2026-07-28, reading the run logs to confirm the report's *"routines
+— scheduled, on a real tick"* tick. Its 12:31 run logged `ok (review)`:
+
+> All 12 atomic notes written. **Processed 3 source files** from
+> `/06 metadata/reflection/` (the only readable root; the inbox at
+> `/00 inbox/notes` was outside my allowed roots and ina…
+
+**Vault, not code.** `reflection.md` borrows `note writer.md` as its prompt —
+the prompt whose job is to read `00 inbox/notes` and write atomic notes — while
+its own `read_roots` are `06 metadata/reflection` and `99 outbox/journal`. The
+routine did useful work on the roots it had and correctly reported that it
+could not reach the one its instructions name. Fix is a line in the routine
+file; cfc owed nothing, exactly like `D-03` (closed the same day, above).
+
+**Two things worth keeping from it anyway.** This was the first time the
+`review` flag fired in the wild, on precisely the case the scar was written
+for — a run whose loop completed while the model's own words said it could not
+do the task — so the second, orthogonal signal worked as specified. And the
+routine in question is the one Cas built during that playtest, immediately
+after `D-0.9.1-03` made him retype the entire creation from scratch.
+
+## ~~D-02 · Processed notes stay in "00 inbox/notes" forever~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1, in `9ac48d6` — `/clear notes`. Original entry:
+
+**Found:** 2026-07-24, wiring the journal cadence. Cas had already hit it — it's
+in `st memory.md` for the 22nd: "routine read a stale note from the 24th because
+it was still in inbox/notes."
+Description: nothing removes a note from `00 inbox/notes` after a routine has
+processed it, so the folder grows without bound and every run re-reads material
+it has already written up.
+Mitigated, not fixed: the ST prompt now tells the model a note belongs to a date
+by its own `created:` field and to ignore anything outside the dates it was
+handed, so a stale note no longer produces a duplicate entry. That is a *prompt*
+holding the line, which is the weaker half of every pair in this project — and
+the cost is still real, since every run pays to read the whole folder.
+
+**Cas's call (2026-07-26): manual trigger, `/clear notes`.** Explicitly **not**
+the automatic post-run move this entry originally suggested, and the reason is
+ownership — **`00 inbox/notes` is read by more than one routine**, so "covered
+by that run" isn't a claim any single run can make. The first routine to finish
+would move notes the second hasn't read yet, and the second would be silently
+short of input, which is exactly this project's worst failure shape. A human
+command sidesteps the question entirely: by the time you type it, the loop and
+the script have already dealt with the outbox, so nothing is still owed the
+notes. `notes` needs no qualifier — the inbox one is the only one that means
+anything.
+
+Left open at the time, and settled by the build: what `/clear` does with a note
+no routine ever read (it moves, not deletes — `LOSER_DIR` set the precedent
+that a discarded thing keeps its body), into a dated batch folder under
+`00 inbox/notes`. The UX gap the build left — no paths shown, prompt reads as a
+list row — is `D-1.1-08`.
+
+## ~~W-05a · "/file" takes a number, not a title~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1, in `9ac48d6` and `53a7f1e` — `/file <title>`.
+Original entry:
+
+**Found:** Cas's 0.6.2 testing pass.
+Description: `/outbox` now shows each proposal's frontmatter title beside its
+filename, which fixes the "list of bare timestamps" half of the report. Typing
+one is still `/file 3`.
+Suggestion: accept `/file Aquarium Nitrogen Cycle` as well, matching the title
+case-insensitively, refusing an ambiguous match rather than guessing. Pairs with
+the `/move` entry below — both are "name the thing instead of counting rows" —
+so decide the argument-parsing shape once, for both.
+
+Shipped as designed: the whole remainder of the line, matched case-insensitively
+after folding case. `W-1.1-07` found and fixed the one thing the entry couldn't
+have anticipated — `/list outbox`'s own line let the corpus tag trail the title
+with nothing marking the boundary, so a title read straight off the screen
+carried it along and never matched. Fixed by reordering the line, not the
+matcher.
+
+## ~~W-05b · "/move" — a file selector over the outbox~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1, in `9ac48d6`. Original entry:
+
+**Found:** in the note-reader workflow brief.
+Description: a command to move a file out of `99 outbox` (top level only, not the
+subfolders) into the vault, driven like `/attach`: list filenames, arrow-select,
+Enter to confirm, Esc to leave. The terminal states what will move and asks for a
+destination (default `00 inbox`, arrow-select subfolders — today only
+`00 inbox/notes` exists). A single Enter confirms — moving files, not replacing,
+so no y/n. If a same-named file exists at the target, warn and offer: replace /
+rename-the-new-one (timestamp appended?) / cancel; typing `replace` rather than
+picking it is the protection against a careless clobber.
+Where it fits: it's a filing command, closest to the existing `/outbox`/`/file`
+pair rather than the taxonomy's attach/remove verbs — decide whether it's a
+third filing command or an extension of that pair before naming it, so it lands
+under the right prefix.
+
+Shipped as scoped, with a typed word (`back`) standing in for the deferred Esc
+key (`D-04`, still 2.0), and a verified-replace guard on collisions rather than
+a bare `replace`/`rename`/`cancel` choice.
+
 ## ~~D-0.9.2-01 · A transient provider status kills an unattended run outright~~ — CLOSED (2026-07-29)
 
 **Closed 2026-07-29**, post-v1.0, by Codex (`8b83d97`). The entry deferred this

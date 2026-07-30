@@ -90,86 +90,87 @@ The knock-on: any 1.x screen that wants "Esc returns" backs out on a **typed
 word** (`esc`, `back`, `q`) instead. Costs nothing, works today, and is honest —
 those screens are command-driven already.
 
-## D-02 · Processed notes stay in "00 inbox/notes" forever. 0.8, 24-07-2026
-**Found:** 2026-07-24, wiring the journal cadence. Cas had already hit it — it's
-in `st memory.md` for the 22nd: "routine read a stale note from the 24th because
-it was still in inbox/notes."
-Description: nothing removes a note from `00 inbox/notes` after a routine has
-processed it, so the folder grows without bound and every run re-reads material
-it has already written up.
-Mitigated, not fixed: the ST prompt now tells the model a note belongs to a date
-by its own `created:` field and to ignore anything outside the dates it was
-handed, so a stale note no longer produces a duplicate entry. That is a *prompt*
-holding the line, which is the weaker half of every pair in this project — and
-the cost is still real, since every run pays to read the whole folder.
+## D-1.1-05 · `TRANSIENT_STATUS_CODES` omits 504. 1.1, 30-07-2026
 
-**Cas's call (2026-07-26): manual trigger, `/clear notes`.** Explicitly **not**
-the automatic post-run move this entry originally suggested, and the reason is
-ownership — **`00 inbox/notes` is read by more than one routine**, so "covered
-by that run" isn't a claim any single run can make. The first routine to finish
-would move notes the second hasn't read yet, and the second would be silently
-short of input, which is exactly this project's worst failure shape. A human
-command sidesteps the question entirely: by the time you type it, the loop and
-the script have already dealt with the outbox, so nothing is still owed the
-notes. `notes` needs no qualifier — the inbox one is the only one that means
-anything.
+**Found:** 2026-07-30, v1.1 playtest.
 
-Leaves open, and worth deciding when it's built: what `/clear` does with a note
-no routine ever read, and whether "clear" moves or deletes (it should move —
-`LOSER_DIR` set the precedent that a discarded thing keeps its body).
+Description: `api.py:179` treats 429/502/503 as the temporary admission and
+availability failures an unattended routine can reasonably outwait —
+`D-0.9.2-01`'s own comment says so word for word — but 504 (gateway timeout,
+same class as 502: the upstream didn't answer in time) was never added.
+Omitted, not excluded: `D-0.9.2-01` shipped "429/502/503 by status code alone"
+and never claimed 504.
 
-## W-05a · "/file" takes a number, not a title. 0.7 leftover, 24-07-2026
-**Found:** Cas's 0.6.2 testing pass.
-Description: `/outbox` now shows each proposal's frontmatter title beside its
-filename, which fixes the "list of bare timestamps" half of the report. Typing
-one is still `/file 3`.
-Suggestion: accept `/file Aquarium Nitrogen Cycle` as well, matching the title
-case-insensitively, refusing an ambiguous match rather than guessing. Pairs with
-the `/move` entry below — both are "name the thing instead of counting rows" —
-so decide the argument-parsing shape once, for both.
-**Where it lands:** past 1.0. `ROADMAP_BEYOND.md`'s proposed 1.1 holds it.
+**Fix:** add 504 to the frozenset. One entry, and it gets a routine two more
+re-rolls on the shared `EMPTY_COMPLETION_RETRIES` budget. Worth deciding 408
+(client timeout) at the same time, and probably declining it — 408 is the
+*client* being slow, and resending an identical request that was too slow once
+buys nothing.
 
-## W-05b · "/move" — a file selector over the outbox. 0.8, 24-07-2026
-**Found:** in the note-reader workflow brief.
-Description: a command to move a file out of `99 outbox` (top level only, not the
-subfolders) into the vault, driven like `/attach`: list filenames, arrow-select,
-Enter to confirm, Esc to leave. The terminal states what will move and asks for a
-destination (default `00 inbox`, arrow-select subfolders — today only
-`00 inbox/notes` exists). A single Enter confirms — moving files, not replacing,
-so no y/n. If a same-named file exists at the target, warn and offer: replace /
-rename-the-new-one (timestamp appended?) / cancel; typing `replace` rather than
-picking it is the protection against a careless clobber.
-Where it fits: it's a filing command, closest to the existing `/outbox`/`/file`
-pair rather than the taxonomy's attach/remove verbs — decide whether it's a
-third filing command or an extension of that pair before naming it, so it lands
-under the right prefix.
-**Where it lands:** past 1.0. `ROADMAP_BEYOND.md`'s proposed 1.1 holds it. Note
-its "Esc to leave" depends on the `[esc]` entry above, which is 2.0 — a typed
-word until then.
+**Where it lands:** v1.1.1.
 
-## D-09 · The `reflection` routine cannot read what its prompt reads. 0.9.1, 28-07-2026
+## D-1.1-08 · `/clear notes` doesn't look like cfc. 1.1, 30-07-2026
 
-**Found:** 2026-07-28, reading the run logs to confirm the report's *"routines
-— scheduled, on a real tick"* tick. Its 12:31 run logged `ok (review)`:
+**Found:** 2026-07-30, v1.1 playtest.
 
-> All 12 atomic notes written. **Processed 3 source files** from
-> `/06 metadata/reflection/` (the only readable root; the inbox at
-> `/00 inbox/notes` was outside my allowed roots and ina…
+Description: the confirm prompt renders indented into the note list, at the
+same indent as the filenames — six notes, then a seventh line that isn't a
+note. `/move` gets away with the same layout because its list is numbered, so
+the prompt can't be mistaken for a row; this list isn't. And it names no
+paths — every other filing screen in cfc says which folder it means
+(`Outbox (/mnt/c/...)`), and `/move` shows `source → target` before Enter;
+`/clear notes` is about to move six files and says where neither, even though
+`notes.py` already knows both.
 
-**Vault, not code.** `reflection.md` borrows `note writer.md` as its prompt —
-the prompt whose job is to read `00 inbox/notes` and write atomic notes — while
-its own `read_roots` are `06 metadata/reflection` and `99 outbox/journal`. The
-routine did useful work on the roots it had and correctly reported that it
-could not reach the one its instructions name. Fix is a line in the routine
-file; cfc owes nothing, exactly like `D-03` (closed the same day, in
-[`legacy/BACKLOG.md`](legacy/BACKLOG.md)).
+Not a work-order fault. `Concept.md` specified "shows the count and every
+filename that will move" and the build met it exactly — the concept
+under-specified it, and the guarded-move pattern used everywhere else in this
+codebase is the better answer here too.
 
-**Two things worth keeping from it anyway.** This is the first time the
-`review` flag has fired in the wild, on precisely the case the scar was written
-for — a run whose loop completed while the model's own words said it could not
-do the task — so the second, orthogonal signal works as specified. And the
-routine in question is the one Cas built during this playtest, immediately
-after `D-0.9.1-03` made him retype the entire creation from scratch.
+**Where it lands:** v1.1.1.
+
+## D-1.1-09 · retired `:` commands survive in ~25 source comments. 1.1, 30-07-2026
+
+**Found:** 2026-07-30, v1.1 playtest — one instance (`main.py`) of a class
+`B-0.9.1-02`'s fix didn't reach. That sweep covered `config.example.py`
+because it's the one shipped file that instructs a human; source comments were
+never swept. About 25 survive across `main.py`, `commands.py`, `hub.py`,
+`mover.py`, `runner.py`, `wikigit.py`, `preflight.py`, `complete.py`, `ui.py`
+and four test docstrings. Most are harmless prose colour; three are docstrings
+naming the wrong key for the behaviour they document (`main.py:108,110,151`,
+all `:q`).
+
+Nobody types from a comment, so the original bug's argument doesn't carry —
+but a model reading `commands.py` to write the next feature does, and
+reproducing `:status` in new output is exactly how a retired prefix comes
+back.
+
+Carries one more fix found in the same pass: `agent.py:509`'s comment restates
+standing decision 2 and its scar in full, in a file that owns neither. Three
+lines and a pointer is the version that survives — it earns *some* length,
+since it's the invariant the `try/finally` directly below exists for, and a
+shorter comment is what let that `finally` look optional once.
+
+**Where it lands:** v1.1.1.
+
+## D-12 · three files still described the pre-v1.0 auto-revert. 1.1, 30-07-2026
+
+**Found:** 2026-07-30, diagnosing `W-1.1-03`. `HANDOVER.md`'s *Open threads*
+carried a bullet — auto-revert arms only for ids it doesn't recognise, so a
+broken id still *in* `MODELS` goes unhandled — that was already fixed in
+`44d91a7`; `main.py:527` arms on every switch, and the comment above it
+documents the change and its cost. Removed from `HANDOVER.md` on 2026-07-30 as
+a factual correction, under its own first rule (code right, file stale). Its
+pointer to this file was also dead — no such entry existed here, so a reader
+following it found nothing and couldn't tell whether the entry was closed or
+never written; moot now that the bullet is gone.
+
+Still open: `tests/test_model_revert.py`'s docstring describes the old scope —
+*"a known-good unlisted model never reverts later on a transient hiccup"* — the
+exact property `W-1.1-03` is asking to have back. The assertions pass; only the
+docstring lies.
+
+**Where it lands:** v1.1.1, alongside `W-1.1-03` — same sentence either way.
 
 ## D-10 · The hub's Routines panel cannot say a routine is broken. 1.0, 29-07-2026
 

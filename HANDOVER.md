@@ -99,10 +99,19 @@ this scheme — it's pushed, so it stays; don't mint new two-digit ones.)
 5. **Cas pulls and tags** — `git push --tags`; tags do not ride a normal push.
 
 **What blocks the tag: a finding that falsifies a claim in that version's
-`ROADMAP.md` entry.** Not *did this version cause it* — that is arguable forever
-and gets argued under pressure to ship. *Does this version's claim depend on it*
-is answerable by reading the entry, which is finite and was written before
-testing started. Everything else is assigned and does not block.
+`ROADMAP_PRIVATE.md` proposal.** Not *did this version cause it* — that is
+arguable forever and gets argued under pressure to ship. *Does this version's
+claim depend on it* is answerable by reading the entry, which is finite and was
+written before testing started. Everything else is assigned and does not block.
+
+**Why the private file and not `ROADMAP.md`, since v1.1 (`Q-02`).** `W-06`
+moved the public entry to a stub written the day a version ships, filled from
+use *after* the playtest — so a playtest starting under that shape has nothing
+public to test against yet. The private proposal is still finite and still
+written before testing starts; it just isn't the file that ends up carrying the
+claim. This is `Q-02`, settled 2026-07-30: the debugger session tested v1.1
+against the private proposal without the rule saying so, which worked and is
+now the rule.
 
 **Do not grow the entry during the playtest.** A finding that makes you want to
 add a claim is a finding for the *next* version. The entry is the finish line,
@@ -838,9 +847,6 @@ a changelog entry, not a paragraph here.
   thing* is a second claim and nobody has checked it.
 - **The connection light has not been watched over a working day.** All three
   fix paths were driven on 2026-07-27; ordinary use is what is left.
-- **v0.8.2's model fallback misses the case it was built for** — auto-revert
-  arms only for ids it doesn't recognise, so a *broken id that is in* `MODELS`
-  goes unhandled. `BACKLOG.md`.
 - **The DB layer is anticipated to be reworked** (`W-07`) — treat the
   chunk/vector schema as in flux. Intended shape: SQLite stays the source of
   truth, sqlite-vec is an index over it.
