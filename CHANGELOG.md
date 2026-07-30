@@ -27,6 +27,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-30 — Put the proposal's title last on its line
+The v1.1 playtest's one tag-blocking finding (`W-1.1-07`). `/file <title>`
+matched correctly the whole time; the screen it was read off did not let you
+tell where the title ended. `/list outbox` printed
+`20260730113101.md  —  Agentic Risk Standards for cfc   [wiki]`, and five
+attempts at pasting that line back all failed — the corpus tag trailed the
+title with nothing marking the boundary. The tag now leads
+(`[wiki]  20260730113101.md  —  Agentic Risk Standards for cfc`), so the title
+runs to end-of-line and a select-to-EOL is exactly the argument `/file` takes.
+
+`tests/test_mover.py` pins the **round trip**, not the punctuation: it renders
+a tagged proposal's label, slices whatever follows the dash, and asserts
+`match_title` finds it. A test against the literal label would have passed
+throughout the failure. Verified by reverting the render and watching both
+assertions fail.
+
+- Files: commands.py, tests/test_mover.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-30 — Name it, don't count it: /move, /clear notes, and title filing
 v1.1. Three focused commands close three pieces of workflow that had been
 number-only or manual: `/file` now also takes a proposal's exact title,
@@ -64,7 +84,7 @@ states the same boundary as settled.
   tests/test_mover.py, tests/test_notes.py (new), tests/test_parse.py,
   tests/test_private.py, tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 9ac48d6
 
 ## 2026-07-29 — The instruction files ship, as templates
 Post-1.0 doc rewrite, step 7, and the last of it. `templates/` carries the seven

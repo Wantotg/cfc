@@ -556,6 +556,25 @@ def main():
            mover.match_title("", proposals) == [])
         ok("a title is not a substring match",
            mover.match_title("Aquarium", proposals) == [])
+
+        # The round trip, not the punctuation: whatever `/list outbox` prints
+        # after the dash has to be a title `/file` accepts. Pinning the exact
+        # label would pass while the two drifted, which is the whole `W-1.1-07`
+        # failure — the tag used to sit *after* the title, so the visible line
+        # was not a usable argument for a command that takes the remainder.
+        import commands
+        tagged = v.propose("20260730113101.md", body="Fact.",
+                           folder=v.wiki_out, extra="title: Agentic Risk Standards")
+        tagged_p = mover.plan(tagged)
+        label = commands._proposal_label(tagged_p)
+        shown = label.split("  —  ")[-1]
+        ok("a tagged proposal's title is the last thing on its line",
+           shown == "Agentic Risk Standards", label)
+        ok("...and pasting that back is what /file matches",
+           [p.name for p in mover.match_title(shown, mover.list_proposals())]
+           == ["20260730113101.md"], label)
+        tagged.unlink()
+
         for f in (broken, v.outbox / "no-title.md", v.outbox / "titled-a.md",
                  v.outbox / "titled-b.md", v.outbox / "unique.md"):
             f.unlink()

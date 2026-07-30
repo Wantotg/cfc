@@ -2313,23 +2313,31 @@ def show_outbox():
 
 
 def _proposal_label(p):
-    """`name` for an ordinary draft, `name — Title` when the two differ.
+    """`name` for an ordinary draft, `[tag]  name  —  Title` when there's more.
 
     A wiki page is named after its id (`20260724201001.md`), so a list of them
     is a list of numbers: unreadable, and impossible to choose between without
     opening each one. The title is right there in the frontmatter. Shown
     *alongside* the filename rather than instead of it, because the filename is
     what lands on disk and what a refusal will name.
+
+    **The title is last on the line, and that is the whole point** (`W-1.1-07`).
+    The tag used to trail it — `name  —  Title   [wiki]` — which left no cue
+    where the title ended, so the first real use of `/file <title>` was five
+    failed attempts at pasting the visible line back. `/file` takes the whole
+    remainder, so a title that runs to end-of-line is one a select-to-EOL
+    hands over intact. `tests/test_mover.py` pins the round trip rather than
+    the punctuation: whatever this prints after the dash, `match_title` finds.
     """
     from mover import proposal_title
 
-    label = p.name
     tag = ("journal" if getattr(p, "into_journal", False)
            else "wiki" if getattr(p, "into_wiki", False) else "")
+    label = f"[{tag}]  {p.name}" if tag else p.name
     title = proposal_title(p.path)
     if title and title.lower() != Path(p.name).stem.lower():
         label = f"{label}  —  {title}"
-    return f"{label}   [{tag}]" if tag else label
+    return label
 
 
 def do_file(arg):
