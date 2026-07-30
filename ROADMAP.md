@@ -1002,4 +1002,33 @@ described at the top applies.*
 
 ## v1.1 — Name it, don't count it
 
-Number and title only. The entry is written the day it ships.
+Three commands close three pieces of workflow that were number-only or manual.
+You can file a proposal by typing its title instead of counting rows, walk one
+loose outbox file to a folder you pick, and archive the notes inbox in one
+confirmed batch instead of deleting notes by hand.
+
+**Added**
+- `/file <title>` — file a proposal by its exact frontmatter title, no quotes
+  needed (W-05)
+- `/move` — guide one loose top-level outbox file to a destination you choose,
+  with a verified-replace guard on collisions (W-05)
+- `/clear notes` — archive the notes inbox into a dated batch folder (D-02)
+- a Notes inbox row on `/status`, from the same inventory `/clear notes` uses
+
+**Fixed**
+- `/status`'s "Last turn" no longer renders in the same grey as an inactive
+  setting (W-0.9.1-09)
+- `/list outbox` puts the corpus tag first, so a proposal's title is the last
+  thing on its line and can be pasted straight into `/file` (W-1.1-07)
+
+**Settled**
+- cfc stays local-only. Off-machine backup is optional and yours to run:
+  `backup.py --force`, then copy the snapshot by hand (Q-01)
+
+> *Note: users should be able to choose how to interact with the vault, added options to make it easier from cfc*
+```
+      'welcome to'    <(✦) 'your tag was late'
+˶^•ﻌ•^˵ the team!       (\ \_
+                       \\//
+                     --" "---
+```
