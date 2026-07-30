@@ -28,7 +28,7 @@ in prose.
 | this file | why the code is shaped as it is: decisions, rejected designs, provenance, scars | history |
 | `BACKLOG.md` | what's owed and still working. **Read it before touching the memory layer** | anything closed |
 | `BUGS.md` | what's broken and known | anything closed |
-| `legacy/` | closed entries of both, frozen whole with the original report; the pre-1.0 changelog | stubs |
+| `legacy/` | closed entries of both, frozen whole with the original report; the pre-1.0 changelog and roadmap | stubs |
 | `ROADMAP.md` | what each version added, in Cas's words. His file — propose, don't edit | bugs, backlog, design detail |
 | `ROADMAP_PRIVATE.md` · `ROADMAP_BEYOND.md` | gitignored. The forward plan, below and above 2.0 | |
 | `TRACKER.md` | gitignored. One line per open issue and the version it's assigned to | any explanation at all |
