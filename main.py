@@ -77,7 +77,7 @@ from commands import (
     show_tools_state, show_status, show_list,
     resolve_layer, resolve_attached, load_pool_file,
     show_routines, create_routine, do_routine,
-    show_outbox, do_file,
+    show_outbox, do_file, do_move, do_clear,
     show_wiki_status, show_wiki_diff, do_wiki_commit,
     connect_embedding, connect_status, empty_completion_decision,
     warn_unknown_model_ids,
@@ -788,6 +788,12 @@ def run_session(conn, session_id, private=False):
     def h_file(cmd):
         do_file(cmd.raw)
 
+    def h_move(cmd):
+        do_move()
+
+    def h_clear(cmd):
+        do_clear(cmd.raw)
+
     def h_wiki(cmd):
         if not cmd.args:
             show_wiki_status()
@@ -806,13 +812,10 @@ def run_session(conn, session_id, private=False):
                 "  scope: wiki (default) | journal | vault    "
                 "granularity: folder (default) | file", style="dim")
 
-    # The whole command surface, in one place. A verb that isn't here is not a
-    # command: it falls through to the model, exactly as an unmatched
-    # `startswith` did. Aliases (`h`, `?`, `db`) are resolved by the parser, so
-    # this table holds canonical verbs only.
-    # The command surface: twenty-two verbs. Anything not here is not a
-    # command — it goes to the model. Aliases (`h`, `?`, `db`) and retired
-    # verbs are the parser's business, so this table holds live verbs only.
+    # The command surface: twenty-four verbs, in one place. A verb that isn't
+    # here is not a command — it falls through to the model, exactly as an
+    # unmatched `startswith` did. Aliases (`h`, `?`, `db`) and retired verbs
+    # are the parser's business, so this table holds live, canonical verbs only.
     HANDLERS = {
         # ask
         "help": h_help,
@@ -844,6 +847,8 @@ def run_session(conn, session_id, private=False):
         "wiki": h_wiki,
         "routine": h_routine,
         "file": h_file,
+        "move": h_move,
+        "clear": h_clear,
     }
     # The table and the canonical list must agree. Checked rather than
     # remembered: a verb in one and not the other is a command that is

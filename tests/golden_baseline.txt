@@ -82,7 +82,10 @@ chats · sessions · outbox
     /wiki commit [kind]     stage & commit; add 'file' to pick one
     /routine name           run a routine now  (/routine new to create one)
     /file 1                 carry out filing proposal #1  (/list outbox)
+    /file Some Title        …or file the proposal with that exact title
     /file 1 decline why     reject #1, keeping it and the reason
+    /move                   guide one loose outbox file to a destination you pick
+    /clear notes            archive everything in the notes inbox
 
   editing
     Alt+Enter               insert a newline (Enter sends)
@@ -170,6 +173,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
+  Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you> No prompt attached.
 you> added alpha — System prompt (15 characters)
@@ -188,6 +192,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
+  Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
 System prompt: alpha
@@ -237,6 +242,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
+  Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you> Tagged session #2 with 'python'.
 you>       All tags
@@ -319,6 +325,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
+  Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
 Session #1  ·  glm-5.2  ·  Renamed By Golden
@@ -331,6 +338,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
+  Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
 Outbox (<ROOT>/tests/_fixture_outbox)
@@ -340,7 +348,7 @@ Outbox (<ROOT>/tests/_fixture_outbox)
      REFUSED — no destination
 
   1 of 2 can be filed
-  /file <n> | /file all | /file <n> decline [why]
+  /file <n> | /file <title> | /file all | /file <n> decline [why]
 
 you>
 Found 2 match(es) in 1 session(s):
@@ -352,4 +360,17 @@ Session #1  "Renamed By Golden"
 you>
 Nothing injected in this session to forget.
 
+you>
+Outbox (top level)
+  1. filable-note.md
+  2. no-destination.md
+  file (number, or 'back'):   cancelled
+
+you>
+Notes inbox — 2 notes:
+  one.md
+  two.md
+  Enter to confirm, or 'back':   cancelled
+
+you> Usage: /clear notes
 you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]

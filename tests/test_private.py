@@ -258,6 +258,44 @@ def main_():
     ok("...and logging never raises, whatever the path is",
        _never_raises(errorlog))
 
+    print("\n--- /clear notes: an explicit vault op, same in a private chat ---")
+    # decision 15's exception is privacy itself — a feature that only works by
+    # writing something down or phoning something home stays unbuilt for a
+    # private chat. /clear notes isn't that: it never touches `conn` at all
+    # (do_clear takes no session argument), so it is structurally outside the
+    # isolation this file is otherwise testing, the same way /file already is.
+    # The proof here is two-sided: privacy must not silently block the vault
+    # operation, and the vault operation must not silently leak into the
+    # channels privacy is sealing (db, embed, export).
+    import notes
+    tmp_notes = Path(tempfile.mkdtemp())
+    inbox = tmp_notes / "notes"
+    archive = tmp_notes / "archive"
+    inbox.mkdir()
+    inbox_cfg = {"NOTES_DIR": str(inbox), "NOTES_ARCHIVE_DIR": str(archive)}
+    saved_notes_cfg = notes._cfg
+    saved_notes_roots = notes.move_roots
+    notes._cfg = lambda key, default=None: inbox_cfg.get(key, default)
+    notes.move_roots = lambda: (tmp_notes.resolve(),)
+    try:
+        (inbox / "one.md").write_text("hello\n", encoding="utf-8")
+        real_before = count_msgs(real)
+        priv4 = dbmod.db(":memory:")
+        p4 = dbmod.new_session(priv4, title="(untitled)")
+        embeds.clear(); exports.clear()
+        out = drive(priv4, p4, private=True, keys="/clear notes\n\n/q\n")
+        ok("a private chat can still clear notes — privacy doesn't block "
+           "an explicit vault operation", "archived 1 note" in out, out[-400:])
+        ok("...and the note actually moved", not (inbox / "one.md").exists())
+        ok("...without turning auto-embed on", embeds == [], embeds)
+        ok("...without turning auto-export on", exports == [], exports)
+        ok("...and nothing landed in the real db",
+           count_msgs(real) == real_before, (real_before, count_msgs(real)))
+        priv4.close()
+    finally:
+        notes._cfg = saved_notes_cfg
+        notes.move_roots = saved_notes_roots
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

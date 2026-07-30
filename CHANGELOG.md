@@ -27,6 +27,45 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-30 — Name it, don't count it: /move, /clear notes, and title filing
+v1.1. Three focused commands close three pieces of workflow that had been
+number-only or manual: `/file` now also takes a proposal's exact title,
+`/move` guides one loose outbox file to a human-picked destination, and
+`/clear notes` archives the notes inbox in one confirmed batch — closing
+`D-02` and `W-05`.
+
+**They share filesystem facts, not an abstraction.** Title extraction and
+matching (`mover.proposal_title`/`match_title`) live beside proposal
+discovery, so `/list outbox`'s title and `/file <title>`'s match are one read,
+not two frontmatter parses that can drift. `/move`'s destination resolution,
+collision handling and the write itself reuse the same `path_guard`/deny-list
+machinery `/file` already validates a suggested `destination:` against — `/move`
+adds a **verified-replace guard**: typing `replace` in full is intent, and
+git proving the target is tracked and unmodified (`wikigit.is_tracked`, new)
+is the recoverability half; neither substitutes for the other, and both are
+re-checked at the write, not only at the plan the human read on screen.
+
+**A small `notes.py` owns the notes inbox** — validation against `MOVE_ROOTS`,
+one-level inventory, the backstage `note template.md` exclusion, and the
+batch move — so `/status`'s new row and `/clear notes` share one inventory and
+cannot disagree about the count. `NOTES_DIR`/`NOTES_ARCHIVE_DIR` are new,
+optional `config.py` settings, explicit rather than derived from `VAULT_ROOT`.
+`/status` also stops rendering "Last turn" in the same dim grey as an inactive
+state (`W-0.9.1-09`) — ordinary workflow information, not a warning.
+
+**`Q-01` closes by documentation, not a feature.** cfc's database durability
+stays local-only: verified rolling snapshots, no off-machine copy of cfc's
+own making. `README.md`'s *Backups* section gains the optional, user-run
+pattern (`backup.py --force`, then copy the snapshot yourself); `HANDOVER.md`
+states the same boundary as settled.
+
+- Files: mover.py, wikigit.py, notes.py (new), commands.py, main.py, parse.py,
+  hub.py, config.py, config.example.py, README.md, HANDOVER.md,
+  tests/test_mover.py, tests/test_notes.py (new), tests/test_parse.py,
+  tests/test_private.py, tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-29 — The instruction files ship, as templates
 Post-1.0 doc rewrite, step 7, and the last of it. `templates/` carries the seven
 files cfc actually runs on with the personal half removed — six specialists, the
@@ -56,7 +95,7 @@ nothing wrong. Caught by reading what got staged rather than by trusting it.
 
 - Files: templates/ (new, 8 files), legacy/CLAUDE.example.md (was CLAUDE.example.md), legacy/README.md, README.md, .gitignore
 - Status: shipped
-- Commit: pending
+- Commit: 80cb0cd
 
 ## 2026-07-29 — Six sessions become a loop, and `D-05` closes by deletion
 Post-1.0 doc rewrite, step 6b. The six `* CLAUDE.md` files are replaced by six

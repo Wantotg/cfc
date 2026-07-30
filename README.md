@@ -22,7 +22,7 @@ per step of a loop, with the personal half taken out so you can copy them.
 - **Everything local** — one SQLite file, fully queryable, rolling backups
 - **Private chat** — `p` at the hub. Same client, in-memory, leaves nothing on
   disk: no transcript, no index, no title, invisible to the hub
-- **Simple commands** — `/verb [kind] [target] [message]`, twenty-two verbs.
+- **Simple commands** — `/verb [kind] [target] [message]`, twenty-four verbs.
   `/add` attaches anything, `/remove` takes it off, `/status` says what's on,
   `/list` says what exists
 - **System prompts, personas and traits** — Markdown files you edit in Obsidian.
@@ -38,7 +38,9 @@ per step of a loop, with the personal half taken out so you can copy them.
   own declared roots, with an append-only run log
 - **Propose, review, approve** — everything the model writes lands in one outbox
   with a suggested destination. `/list outbox` shows what would happen, `/file`
-  carries it out, `/file <n> decline <why>` rejects it and records why
+  carries it out (by number or by its exact title), `/file <n> decline <why>`
+  rejects it and records why. `/move` guides a loose outbox file to a
+  destination you pick by hand, for the files that never had a suggestion
 - **A tiered journal the model maintains** — a diary in three tiers, each more
   compressed than the last, rolled over by routines and approved by you
 - **Vault git from the REPL** — `/wiki diff`, `/wiki commit`, scoped to a corpus
@@ -368,13 +370,19 @@ it back**. `/remove` never destroys anything.
 | `/routine <name>` | Run a routine now |
 | `/routine new` | Create a routine (name, prompt, roots, trigger) |
 | `/file <n>` | File one proposal at its destination (`/list outbox` to review) |
+| `/file <title>` | File the proposal with that exact title (case-insensitive, no quotes needed) |
 | `/file all` | File every valid proposal |
 | `/file <n> decline [why]` | Reject a proposal — moved aside with the reason recorded on it (`drop` is the terse form) |
+| `/move` | Guide one loose top-level outbox file to a destination you pick |
+| `/clear notes` | Archive everything in the notes inbox (`00 inbox/notes`) into a dated batch folder |
 
 **Two deliberate exceptions to the grammar.** `/file 1 decline <why>` keeps
 target-then-action so it inherits the numbering already on screen; and `/wiki`
 carries an extra `folder|file` slot, being the one command whose object has a
-sub-granularity.
+sub-granularity. `/file` also takes a bare title instead of a number — the
+whole remainder of the line, matched exactly after folding case — but never a
+title *and* `decline`, since the reason is free text and would make it
+ambiguous where the title ends.
 
 **Coming from the `:` commands?** The old prefix is gone as of v0.9 — a `:` line
 is ordinary text and goes to the model, as it did before v0.8. The old *words*
@@ -597,6 +605,23 @@ Missing days is fine and expected. A day nobody captured anything for gets no
 entry; a week with three days in it condenses to three days' worth. The journal
 holding less is the correct outcome, not a gap to paper over.
 
+## The notes inbox
+
+`00 inbox/notes` is where raw material goes for the memory routines to read —
+nothing there is written by cfc, and nothing removes a note once a routine has
+read it. That's deliberate: more than one routine reads the folder, so no
+single run can claim it covered everything, and an automatic post-run move
+would risk emptying it out from under a routine that hasn't looked yet.
+
+`/clear notes` is the human alternative: it shows every note that will move,
+you confirm once, and they're archived together into one dated folder under
+`04 archive/cleared notes` — an undo, not a deletion. A backstage `note
+template.md` in the inbox is never counted or offered; `/status` shows the
+same count `/clear notes` would clear, from the same inventory, so the two can
+never disagree. Set `NOTES_DIR` and `NOTES_ARCHIVE_DIR` in `config.py` to turn
+it on — both are optional and unset by default, and neither is derived from
+`VAULT_ROOT`, which stays display-only.
+
 ## Security
 
 Read this before turning tools on.
@@ -651,6 +676,14 @@ Read this before turning tools on.
   `/file`, keeps saying so on `/list outbox` and `/wiki`, and clears it when
   `/update db` re-imports. The id is stamped by code at approval, never by the
   model, and a page whose id already exists is refused rather than clobbered.
+- **`/move` is a human picking a destination, never the model.** It has no
+  title argument and no tool schema; the destination is typed at a prompt,
+  validated against `MOVE_ROOTS` the same way a suggested `destination:` is.
+  Overwriting an existing file needs the word `replace`, typed in full, and
+  even then only when git proves the target is tracked and unmodified —
+  typing the word is intent, the git check is recoverability, and neither
+  substitutes for the other. `rename` (a suggested, non-colliding name) is
+  always available instead.
 - **Routines are the one ungated path, and that is why they declare their own
   roots.** A chat has two guardrails: the roots, and you at the gate. A routine
   running at 03:00 has no human, so the gate can't function and the roots are all
@@ -728,6 +761,13 @@ those are the failures that actually happen. They do not protect against losing
 the disk, and they were never meant to. **It is written down here so that it is a
 decision rather than a discovery.**
 
+**Settled for v1.1: cfc stays local-only.** It keeps verified snapshots; it
+does not make an off-machine copy of them, and it does not push anything —
+`wikigit.py` issues no `push` for the same reason. That is not the last word on
+durability, only this version's: off-machine backup is left to you, as an
+explicit step outside cfc rather than a feature inside it, and the database
+layer this all sits on is expected to be reworked later regardless.
+
 **cfc never pushes** — not the code, not the vault. `wikigit.py` issues no `push`
 and no `remote`, and there is a test that fails if either appears. So "the vault
 is backed up" is true exactly as often as you run `git push` in it.
@@ -752,6 +792,24 @@ They've earned their keep beyond disaster recovery: v0.2 resolved a retrieval
 mystery by measuring the same query against five months of daily snapshots and
 proving the corpus had never changed. A rolling backup is also a record of what
 used to be true.
+
+### An off-machine copy, if you want one
+
+cfc doesn't make one — see *the one gap*, above. If losing this machine
+entirely is a risk worth covering, the pattern is manual and outside cfc:
+
+```bash
+python backup.py --force          # a fresh, integrity-checked snapshot
+# then copy that snapshot file yourself, to wherever you trust:
+# a private cloud drive, another machine, an external disk.
+```
+
+**Never copy the live `~/.cfc/chat.db` itself** — copying mid-write is exactly
+what the online backup API in `backup.py --force` exists to avoid, so always
+copy the snapshot it produces, not the database. This is deliberately a
+pattern for *you* to run, not a feature: cfc has no GitHub credentials, makes
+no git commits or pushes of its own, and defines no second backup format to
+maintain alongside SQLite's.
 
 ## The vault, and why it's a git repo
 

@@ -460,6 +460,37 @@ def plan(source):
                     reason="")
 
 
+def proposal_title(path):
+    """The `title:` frontmatter field of an outbox file, or "" — never raises.
+
+    Lives here rather than in commands.py so "the title shown" (`/list
+    outbox`) and "the title accepted" (`/file <title>`) are one fact read one
+    way, not two frontmatter parses that can drift. Malformed frontmatter, an
+    unreadable file, or a missing key all fall through to "" — the file stays
+    listed and reachable by number, it just cannot be a title match.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    fm, _, _ = split_frontmatter(text)
+    return str(fm.get("title", "") or "").strip()
+
+
+def match_title(title, proposals):
+    """Every proposal whose frontmatter title matches `title`.
+
+    Exact after folding the outside whitespace and case — not a substring,
+    prefix, filename, or fuzzy match, so a guess never files the wrong
+    document. Zero hits is "no match", one is the answer, two or more is an
+    ambiguity the caller must refuse rather than resolve.
+    """
+    needle = " ".join((title or "").split()).lower()
+    if not needle:
+        return []
+    return [p for p in proposals if proposal_title(p.path).lower() == needle]
+
+
 def list_proposals():
     """Every *.md in the outbox, with its verdict. Sorted by name.
 
@@ -682,3 +713,210 @@ def drop(proposal, trash_dir=None):
     """Decline with no reason given. Kept because it is the older name and
     reads right when there is nothing to say beyond "not this one"."""
     return decline(proposal, "", trash_dir)
+
+
+# --- /move: a guided manual move for a loose outbox file --------------------
+#
+# Everything above is about a *proposal* — a draft with a suggested
+# destination the model wrote. /move is the other case: the human picks up a
+# loose outbox file and names its destination themselves, so there is no
+# `destination:` to trust or refuse, no wiki/journal routing, and no id to
+# stamp. What it shares with the proposal path — containment, the deny list,
+# re-validation at the moment of the write — it shares by calling the same
+# functions, not by duplicating them.
+
+
+def loose_files():
+    """Every regular file directly inside an outbox root — no subfolders, no
+    readme. This is what /move offers: not `*.md` proposals, whatever sits at
+    the top level, because a file being loose there is reason enough to
+    offer it regardless of extension."""
+    out = []
+    for root in outbox_roots():
+        if not root.is_dir():
+            continue
+        try:
+            entries = sorted(root.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            continue
+        for f in entries:
+            try:
+                if not f.is_file():
+                    continue
+            except OSError:
+                continue
+            if is_reserved(f):
+                continue
+            out.append(f)
+    return out
+
+
+def _in_outbox_top(path):
+    """True if `path`'s parent is exactly an outbox root — a loose top-level
+    file, not something inside a subfolder or already moved elsewhere."""
+    try:
+        parent = Path(path).resolve().parent
+    except OSError:
+        return False
+    return any(parent == root for root in outbox_roots())
+
+
+def _inside_outbox(path):
+    for root in outbox_roots():
+        if path == root or root in path.parents:
+            return True
+    return False
+
+
+def resolve_move_destination(raw):
+    """Turn a typed destination folder into a validated directory, or raise.
+
+    Accepts an absolute path or one relative to a move root — the same shape
+    `_resolve_destination` accepts for a suggested `destination:`, minus the
+    trailing-filename handling, because a /move destination always names a
+    folder. Refused rather than guessed at: no folder is created from a typo
+    and there is no fallback to '00 inbox' once a destination was typed.
+    """
+    roots = move_roots()
+    if not roots:
+        raise MoveError("no MOVE_ROOTS configured — moving is disabled")
+
+    candidate = Path(str(raw).strip()).expanduser()
+    tries = [candidate] if candidate.is_absolute() else \
+            [root / candidate for root in roots]
+
+    last = None
+    for t in tries:
+        try:
+            resolved = path_guard(t, roots)
+        except PathError as e:
+            last = e
+            continue
+        if _inside_outbox(resolved):
+            raise MoveError(f"{resolved} is inside the outbox — a "
+                            "destination is where a file moves TO")
+        if not resolved.exists():
+            raise MoveError(f"no such folder: {resolved}")
+        if not resolved.is_dir():
+            raise MoveError(f"{resolved} is a file, not a folder")
+        return resolved
+
+    raise MoveError(str(last) if last else f"cannot resolve destination {raw!r}")
+
+
+def suggest_rename(target):
+    """A non-colliding sibling of `target`: its stem plus a timestamp before
+    the extension. Bumped on a further collision so two renames offered in
+    the same second can't clash — the same idea as `_gen_wiki_id`, applied to
+    a filename instead of an id."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidate = target.with_name(f"{target.stem}-{stamp}{target.suffix}")
+    n = 1
+    while candidate.exists():
+        n += 1
+        candidate = target.with_name(f"{target.stem}-{stamp}-{n}{target.suffix}")
+    return candidate
+
+
+def _replace_reason(target):
+    """Why `target` may not be replaced, or "" if it may.
+
+    Typing `replace` is intent; this is the recoverability half, and neither
+    substitutes for the other. Reuses wikigit's vault-wide git discovery
+    (anchored at WIKI_DIR, never the process cwd) rather than opening a
+    second entry point to the same repo — the same reasoning the journal
+    guard already relies on.
+    """
+    try:
+        import wikigit
+    except ImportError:                                   # pragma: no cover
+        return "cannot import wikigit to check the target is committed"
+    try:
+        root = wikigit.repo_root()
+    except wikigit.GitError as e:
+        return f"cannot determine the vault's git state ({e})"
+    try:
+        rel = str(target.resolve().relative_to(root))
+    except ValueError:
+        return "the target is outside the vault's git repository"
+    if not wikigit.is_tracked(target, root=root):
+        return "the target is not tracked by git"
+    try:
+        changed = wikigit.status(wikigit.VAULT, root=root, paths=[rel])
+    except wikigit.GitError as e:
+        return f"cannot check the target's git state ({e})"
+    if changed:
+        return "the target has uncommitted changes"
+    return ""
+
+
+class MovePlan:
+    """One human-guided /move: a loose outbox file and a destination folder
+    the human typed — not a suggestion from a routine. `collides` is whether
+    the target name already exists there; `replace_reason` is why `replace`
+    would be refused, or "" when it is available."""
+
+    def __init__(self, source, target, collides=False, replace_reason=""):
+        self.source = source
+        self.target = target
+        self.collides = collides
+        self.replace_reason = replace_reason
+
+    @property
+    def replace_ok(self):
+        return self.collides and not self.replace_reason
+
+
+def plan_move(source, dest_dir):
+    """Verdict for moving `source` (a loose outbox file) into `dest_dir`,
+    already validated by `resolve_move_destination`. A collision is not a
+    refusal here — it is a `MovePlan` property the guided flow branches on —
+    but a denied target still raises, the same as everywhere else in this
+    module.
+    """
+    target = dest_dir / source.name
+    why = denial_reason(target)
+    if why:
+        raise MoveError(why)
+    collides = target.exists()
+    reason = _replace_reason(target) if collides else ""
+    return MovePlan(source=source, target=target, collides=collides,
+                    replace_reason=reason)
+
+
+def commit_move(source, target, allow_replace=False):
+    """Carry out a human-guided /move: `source` to exactly `target`.
+
+    Write-target-first, source-remove-second — the same order `commit()`
+    uses and for the same reason: a crash between the two leaves both copies,
+    which is recoverable, rather than neither. Re-validates at the moment of
+    the move rather than trusting the plan on screen: the source must still
+    be a loose top-level outbox file, the target's denial is re-checked, and
+    when the target exists, `allow_replace` alone is not enough — the git
+    check is re-run here too, because the preview it was drawn from may
+    already be stale.
+
+    A byte copy (not a text read/write) so a /move target need not be
+    Markdown, or even valid UTF-8, to be movable.
+    """
+    source = Path(source)
+    if not (source.is_file() and _in_outbox_top(source)
+            and not is_reserved(source)):
+        raise MoveError("the source is no longer a loose outbox file — it "
+                        "may have moved, been filed, or been removed")
+    why = denial_reason(target)
+    if why:
+        raise MoveError(why)
+    if target.exists():
+        if not allow_replace:
+            raise MoveError(f"target exists: {target}")
+        why = _replace_reason(target)
+        if why:
+            raise MoveError(why)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp")
+    shutil.copy2(str(source), str(tmp))
+    os.replace(str(tmp), str(target))
+    source.unlink()
+    return target

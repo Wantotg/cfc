@@ -727,6 +727,14 @@ file. Anyone making this durable should note the chunk/vector schema is in flux
 (`W-07`, 2.0): a scheme that copies the file survives the rework, one that
 exports the schema does not.
 
+**Settled for v1.1, and closed as `Q-01`: cfc remains local-only.** Off-machine
+durability is optional and user-managed, never cfc's own: make a verified
+snapshot with `backup.py --force`, then copy that snapshot — never the live
+`chat.db` — to a trusted private remote or other off-machine backup by hand.
+No GitHub credentials, no git operations, no automatic copying, and no second
+backup format live in cfc for this; `README.md`'s *Backups* section carries
+the exact command. `W-07`'s rework is still not part of this decision.
+
 - WSL2/Ubuntu on Windows. Vault on `/mnt/c`, reached Linux→Windows (fast); never
   `\\wsl.localhost` (slow, flakier).
 - **`<vault>/00 inbox` is where Cas leaves briefs. `<vault>/99 outbox` is the only

@@ -525,6 +525,282 @@ def main():
         finally:
             mover.loser_dir = saved_ld
 
+        print("\n--- title matching for /file ---")
+        for f in v.outbox.glob("*.md"):
+            f.unlink()
+        v.propose("no-title.md", "02 areas/daily/", body="no title here")
+        v.propose("titled-a.md", "02 areas/daily/", extra="title: Aquarium Notes")
+        v.propose("titled-b.md", "02 areas/daily/", extra="title: AQUARIUM NOTES")
+        v.propose("unique.md", "02 areas/daily/", extra="title: Unique One")
+        broken = v.outbox / "broken-fm.md"
+        broken.write_text('---\ntitle: "unterminated\n---\n\nbody\n',
+                          encoding="utf-8")
+        proposals = mover.list_proposals()
+
+        ok("title reads from readable frontmatter",
+           mover.proposal_title(v.outbox / "titled-a.md") == "Aquarium Notes")
+        ok("a missing title reads as empty, not raising",
+           mover.proposal_title(v.outbox / "no-title.md") == "")
+        ok("malformed frontmatter reads as empty, not raising",
+           mover.proposal_title(broken) == "")
+
+        matches = mover.match_title("Aquarium Notes", proposals)
+        ok("case folded and trimmed, an exact match finds every holder",
+           {p.name for p in matches} == {"titled-a.md", "titled-b.md"}, matches)
+        matches = mover.match_title("  Unique One  ", proposals)
+        ok("outside whitespace on the query is trimmed too",
+           [p.name for p in matches] == ["unique.md"], matches)
+        ok("no match returns nothing",
+           mover.match_title("Nothing Like This", proposals) == [])
+        ok("an empty title matches nothing",
+           mover.match_title("", proposals) == [])
+        ok("a title is not a substring match",
+           mover.match_title("Aquarium", proposals) == [])
+        for f in (broken, v.outbox / "no-title.md", v.outbox / "titled-a.md",
+                 v.outbox / "titled-b.md", v.outbox / "unique.md"):
+            f.unlink()
+
+        print("\n--- /move: top-level loose inventory ---")
+        for f in list(v.outbox.iterdir()):
+            if f.is_file():
+                f.unlink()
+        (v.outbox / "loose-a.md").write_text("A", encoding="utf-8")
+        (v.outbox / "loose-b.txt").write_text("B", encoding="utf-8")
+        (v.outbox / "99 readme.md").write_text("doc", encoding="utf-8")
+        (v.outbox / "routine logs").mkdir(exist_ok=True)
+        (v.outbox / "routine logs" / "log.md").write_text("x", encoding="utf-8")
+        (v.wiki_out / "wdraft.md").write_text("x", encoding="utf-8")
+        loose = mover.loose_files()
+        names = {f.name for f in loose}
+        ok("offers a loose file regardless of extension",
+           {"loose-a.md", "loose-b.txt"} <= names, names)
+        ok("excludes the outbox's own readme", "99 readme.md" not in names, names)
+        ok("excludes subfolder contents (run logs)", "log.md" not in names, names)
+        ok("excludes subfolder contents (wiki proposals)",
+           "wdraft.md" not in names, names)
+        (v.wiki_out / "wdraft.md").unlink()
+        (v.outbox / "routine logs" / "log.md").unlink()
+
+        print("\n--- /move: resolving a typed destination ---")
+        ok("a relative folder under a move root resolves",
+           mover.resolve_move_destination("02 areas/daily")
+           == v.areas.resolve())
+        for label, dest in (
+            ("outside every move root", str(v.outside)),
+            ("inside the outbox itself", "99 outbox"),
+        ):
+            try:
+                mover.resolve_move_destination(dest)
+                ok(f"refused: {label}", False)
+            except mover.MoveError:
+                ok(f"refused: {label}", True)
+        (v.areas / "a-file.md").write_text("x", encoding="utf-8")
+        try:
+            mover.resolve_move_destination("02 areas/daily/a-file.md")
+            ok("refused: a file, not a folder", False)
+        except mover.MoveError:
+            ok("refused: a file, not a folder", True)
+        try:
+            mover.resolve_move_destination("02 areas/nope-nope")
+            ok("refused: a missing folder, not created", False)
+        except mover.MoveError:
+            ok("refused: a missing folder, not created", True)
+        ok("...and nothing was created",
+           not (v.root / "02 areas" / "nope-nope").exists())
+
+        print("\n--- /move: a symlinked destination is judged as its target ---")
+        esc_dest = v.root / "escapedest"
+        try:
+            esc_dest.symlink_to(v.outside, target_is_directory=True)
+            try:
+                mover.resolve_move_destination("escapedest")
+                ok("a symlinked destination out of the vault is refused", False)
+            except mover.MoveError:
+                ok("a symlinked destination out of the vault is refused", True)
+        except (OSError, NotImplementedError):
+            ok("symlinked destination refused (skipped: no symlink support)",
+               True)
+
+        print("\n--- /move: the deny list still applies to the target name ---")
+        denied_src = v.outbox / "id_rsa"
+        denied_src.write_text("fake key", encoding="utf-8")
+        try:
+            mover.plan_move(denied_src, v.areas)
+            ok("a denied filename is refused even as a plain move target", False)
+        except mover.MoveError:
+            ok("a denied filename is refused even as a plain move target", True)
+        denied_src.unlink()
+
+        print("\n--- /move: collisions, and whether replace is available ---")
+        no_collide = v.outbox / "loose-a.md"
+        plan_clean = mover.plan_move(no_collide, v.areas)
+        ok("no collision plans cleanly",
+           not plan_clean.collides and not plan_clean.replace_reason,
+           plan_clean.replace_reason)
+
+        (v.areas / "tracked-clean.md").write_text("already here",
+                                                   encoding="utf-8")
+        v.commit_all("area: tracked-clean")
+        plan_tc = mover.plan_move(v.outbox / "tracked-clean.md", v.areas)
+        ok("a tracked, clean target collides", plan_tc.collides)
+        ok("...and replace is available",
+           plan_tc.replace_ok, plan_tc.replace_reason)
+
+        (v.areas / "tracked-dirty.md").write_text("committed", encoding="utf-8")
+        v.commit_all("area: tracked-dirty")
+        (v.areas / "tracked-dirty.md").write_text("edited by hand, uncommitted",
+                                                   encoding="utf-8")
+        plan_td = mover.plan_move(v.outbox / "tracked-dirty.md", v.areas)
+        ok("a dirty tracked target collides but replace is refused",
+           plan_td.collides and not plan_td.replace_ok, plan_td.replace_reason)
+        ok("...and the reason names it uncommitted",
+           "uncommitted" in plan_td.replace_reason, plan_td.replace_reason)
+        v.commit_all("area: settle tracked-dirty")
+
+        (v.areas / "untracked.md").write_text("never committed",
+                                               encoding="utf-8")
+        plan_ut = mover.plan_move(v.outbox / "untracked.md", v.areas)
+        ok("an untracked existing target collides but replace is refused",
+           plan_ut.collides and not plan_ut.replace_ok, plan_ut.replace_reason)
+        ok("...distinguished from 'no changes': not tracked at all",
+           "not tracked" in plan_ut.replace_reason, plan_ut.replace_reason)
+
+        print("\n--- /move: an unverifiable git state fails CLOSED ---")
+        saved_wd = wikigit.wiki_dir
+        wikigit.wiki_dir = lambda: None
+        try:
+            plan_nowiki = mover.plan_move(v.outbox / "tracked-clean.md", v.areas)
+            ok("no WIKI_DIR to anchor discovery refuses replace",
+               plan_nowiki.collides and not plan_nowiki.replace_ok
+               and "cannot determine" in plan_nowiki.replace_reason,
+               plan_nowiki.replace_reason)
+        finally:
+            wikigit.wiki_dir = saved_wd
+
+        saved_status = wikigit.status
+
+        def _explode(*a, **kw):
+            raise wikigit.GitError("no repo here")
+
+        wikigit.status = _explode
+        try:
+            plan_explode = mover.plan_move(v.outbox / "tracked-clean.md", v.areas)
+            ok("git unavailable mid-check refuses replace, not silently allows",
+               plan_explode.collides and not plan_explode.replace_ok
+               and "cannot check" in plan_explode.replace_reason,
+               plan_explode.replace_reason)
+        finally:
+            wikigit.status = saved_status
+
+        print("\n--- /move: suggest_rename avoids the collision ---")
+        renamed = mover.suggest_rename(v.areas / "tracked-clean.md")
+        ok("a suggested rename does not collide", not renamed.exists())
+        ok("...keeps the extension", renamed.suffix == ".md", renamed.name)
+        ok("...and keeps the original stem, with a suffix",
+           renamed.stem.startswith("tracked-clean-"), renamed.name)
+
+        print("\n--- /move: committing an ordinary move ---")
+        loose_c = v.outbox / "move-me.md"
+        loose_c.write_text("payload\n", encoding="utf-8")
+        target_c = v.areas / "move-me.md"
+        result = mover.commit_move(loose_c, target_c)
+        ok("the file arrives byte for byte",
+           target_c.read_text(encoding="utf-8") == "payload\n")
+        ok("...and leaves the outbox", not loose_c.exists())
+        ok("...at exactly the resolved target", result == target_c.resolve())
+
+        print("\n--- /move: commit_move re-validates the source ---")
+        loose_s = v.outbox / "stale-source.md"
+        loose_s.write_text("x", encoding="utf-8")
+        target_s = v.areas / "stale-source.md"
+        loose_s.unlink()
+        try:
+            mover.commit_move(loose_s, target_s)
+            ok("a vanished source is refused at commit", False)
+        except mover.MoveError:
+            ok("a vanished source is refused at commit", True)
+
+        nested = v.wiki_out / "nested.md"
+        nested.write_text("x", encoding="utf-8")
+        try:
+            mover.commit_move(nested, v.areas / "nested.md")
+            ok("a source inside a subfolder is refused, not top-level", False)
+        except mover.MoveError:
+            ok("a source inside a subfolder is refused, not top-level", True)
+        nested.unlink()
+
+        readme_src = v.outbox / "99 readme.md"
+        try:
+            mover.commit_move(readme_src, v.areas / "99 readme.md")
+            ok("the outbox's own readme cannot be /move'd", False)
+        except mover.MoveError:
+            ok("the outbox's own readme cannot be /move'd", True)
+
+        print("\n--- /move: a target that appeared after the plan is refused ---")
+        loose_t = v.outbox / "appeared-target.md"
+        loose_t.write_text("incoming", encoding="utf-8")
+        target_t = v.areas / "appeared-target.md"
+        target_t.write_text("appeared after the plan was drawn",
+                            encoding="utf-8")
+        try:
+            mover.commit_move(loose_t, target_t)
+            ok("appeared target refused without allow_replace", False)
+        except mover.MoveError:
+            ok("appeared target refused without allow_replace", True)
+        ok("...the file that appeared is untouched",
+           target_t.read_text(encoding="utf-8")
+           == "appeared after the plan was drawn")
+        ok("...and the source is still in the outbox", loose_t.exists())
+        target_t.unlink()
+        loose_t.unlink()
+
+        print("\n--- /move: the deny list is re-checked at commit too ---")
+        loose_d = v.outbox / "id_rsa"
+        loose_d.write_text("fake key", encoding="utf-8")
+        try:
+            mover.commit_move(loose_d, v.areas / "id_rsa")
+            ok("commit_move refuses a denied target too", False)
+        except mover.MoveError:
+            ok("commit_move refuses a denied target too", True)
+        loose_d.unlink()
+
+        print("\n--- /move: the replace guard is re-run at commit, not just plan ---")
+        (v.areas / "race-target.md").write_text("clean version",
+                                                 encoding="utf-8")
+        v.commit_all("area: race-target")
+        loose_r = v.outbox / "race-target.md"
+        loose_r.write_text("incoming", encoding="utf-8")
+        plan_r = mover.plan_move(loose_r, v.areas)
+        ok("clean at plan time, replace looks available",
+           plan_r.replace_ok, plan_r.replace_reason)
+        (v.areas / "race-target.md").write_text("edited after the plan",
+                                                 encoding="utf-8")
+        try:
+            mover.commit_move(loose_r, plan_r.target, allow_replace=True)
+            ok("a target gone dirty between plan and commit is refused", False)
+        except mover.MoveError:
+            ok("a target gone dirty between plan and commit is refused", True)
+        ok("...the hand edit survived the refusal",
+           (v.areas / "race-target.md").read_text(encoding="utf-8")
+           == "edited after the plan")
+        ok("...and the source is still in the outbox", loose_r.exists())
+        v.commit_all("area: settle race-target")
+        loose_r.unlink()
+
+        print("\n--- /move: a verified replacement ---")
+        (v.areas / "replace-me.md").write_text("old content", encoding="utf-8")
+        v.commit_all("area: replace-me")
+        loose_rep = v.outbox / "replace-me.md"
+        loose_rep.write_text("new content", encoding="utf-8")
+        plan_rep = mover.plan_move(loose_rep, v.areas)
+        ok("a clean tracked target allows replace",
+           plan_rep.replace_ok, plan_rep.replace_reason)
+        result = mover.commit_move(loose_rep, plan_rep.target, allow_replace=True)
+        ok("the replacement lands",
+           result.read_text(encoding="utf-8") == "new content")
+        ok("...and the source left the outbox", not loose_rep.exists())
+        v.commit_all("area: replace-me done")
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

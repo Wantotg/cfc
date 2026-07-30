@@ -234,6 +234,26 @@ def _parse_status(raw):
     return changes
 
 
+def is_tracked(path, root=None):
+    """True if `path` is tracked by git.
+
+    Distinct from `status()` reporting no changes for it: an *ignored* file
+    that exists on disk also produces no status output, and would otherwise
+    look identical to a tracked, unmodified one to a caller checking only
+    for the absence of changes — which is exactly the mistake a "may this be
+    overwritten" guard cannot afford. Plain `ls-files` prints the path if it
+    is tracked and nothing if it is not, regardless of whether the working
+    tree copy is also present.
+    """
+    root = root or repo_root()
+    try:
+        rel = str(Path(path).resolve().relative_to(root))
+    except ValueError:
+        return False
+    out = _git(root, "ls-files", "-z", "--", rel)
+    return bool(out.strip("\0"))
+
+
 def status(scope=WIKI, root=None, paths=None):
     """Changed paths in `scope` (or limited to `paths`). Sorted by path."""
     root = root or repo_root()

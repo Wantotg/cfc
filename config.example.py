@@ -211,6 +211,16 @@ JOURNAL_DIR = ""            # e.g. "<vault>/03 resources/journal"
 # 'dropped/' folder instead.
 LOSER_DIR = ""              # e.g. "<vault>/03 resources/loser corner"
 
+# --- the notes inbox ---------------------------------------------------
+# Raw material for the memory routines to read, and the human-declared batch
+# clearing that empties it (/clear notes, D-02). Explicit deployment facts,
+# not derived from VAULT_ROOT (display-only) or from each other — an older
+# config.py without these two lines simply reports the feature unavailable
+# rather than guessing at a path. Both are validated against MOVE_ROOTS, the
+# same vault boundary the mover already enforces.
+NOTES_DIR = ""              # e.g. "<vault>/00 inbox/notes"
+NOTES_ARCHIVE_DIR = ""      # e.g. "<vault>/04 archive/cleared notes"
+
 # --- terminal input --------------------------------------------------------
 # Let the mouse position the cursor in the input line. Off by default, and the
 # reason is a trade rather than caution: prompt_toolkit's mouse support puts

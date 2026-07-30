@@ -103,7 +103,7 @@ VERBS = (
     "recall", "remember", "update",                   # memory
     "new", "q", "title",                              # session
     "model", "tools", "database", "connect",          # settings
-    "wiki", "routine", "file",                        # feature areas
+    "wiki", "routine", "file", "move", "clear",       # feature areas
 )
 
 # Verbs held but deliberately unspent. Reserving costs nothing; spending one

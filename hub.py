@@ -467,7 +467,7 @@ def print_hub_help():
 
     The one hand-written line is the pointer to `/help`, and it is prose because
     it is a fact about where the session's commands are documented, not a list
-    of them. Repeating twenty-two verbs here would be the fourth list this
+    of them. Repeating twenty-four verbs here would be the fourth list this
     design exists to avoid.
     """
     console.print()

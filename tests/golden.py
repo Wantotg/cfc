@@ -78,6 +78,14 @@ FIXTURE_LOG = HERE / "_fixture_errors.log"
 FIXTURE_OUTBOX = HERE / "_fixture_outbox"
 FIXTURE_FILED = HERE / "_fixture_filed"
 
+# The notes inbox: /status's new row needs something to count, and driving
+# it read-only ('/clear notes' then 'back') would otherwise be the only new
+# screen this harness never renders. Nested under FIXTURE_FILED rather than
+# given its own top-level fixture folder so it inherits that folder's
+# MOVE_ROOTS patch below instead of needing a second one.
+FIXTURE_NOTES = FIXTURE_FILED / "notes"
+FIXTURE_NOTES_ARCHIVE = FIXTURE_FILED / "notes archive"
+
 # The same rule the prompts fixture follows, applied to config.py's model
 # lists: :config, :models and :tools print them verbatim, so editing your own
 # MODELS failed `check` on lines that describe your config and not the code.
@@ -164,6 +172,14 @@ SCRIPT = [
     f"{PREFIX}outbox",
     f"{PREFIX}grep vector",
     f"{PREFIX}forget",
+    # Both guided flows, driven read-only — 'back' cancels at the first
+    # prompt, so neither actually touches the outbox or notes fixtures. What
+    # this pins is the entry screen: the listing and the usage/refusal text.
+    f"{PREFIX}move",
+    "back",
+    f"{PREFIX}clear notes",
+    "back",
+    f"{PREFIX}clear",
     f"{PREFIX}q",
 ]
 
@@ -257,6 +273,32 @@ def clean_outbox_fixture():
             for f in d.glob("*.md"):
                 f.unlink()
             d.rmdir()
+
+
+def build_notes_fixture():
+    """Two notes and the backstage template, so /status's new row has
+    something to count and the template's exclusion is exercised too. SCRIPT
+    drives '/clear notes' read-only ('back' cancels), so this is never
+    actually emptied — clean_notes_fixture() removes it regardless."""
+    FIXTURE_NOTES.mkdir(parents=True, exist_ok=True)
+    (FIXTURE_NOTES / "one.md").write_text("first\n", encoding="utf-8")
+    (FIXTURE_NOTES / "two.md").write_text("second\n", encoding="utf-8")
+    (FIXTURE_NOTES / "note template.md").write_text(
+        "template\n", encoding="utf-8")
+
+
+def clean_notes_fixture():
+    """Must run before clean_outbox_fixture(): FIXTURE_NOTES sits inside
+    FIXTURE_FILED, and that function's rmdir() would fail with it still
+    there."""
+    assert_not_real_vault(FIXTURE_NOTES, "clean_notes_fixture")
+    if FIXTURE_NOTES.is_dir():
+        for f in FIXTURE_NOTES.glob("*.md"):
+            f.unlink()
+        FIXTURE_NOTES.rmdir()
+    assert_not_real_vault(FIXTURE_NOTES_ARCHIVE, "clean_notes_fixture")
+    if FIXTURE_NOTES_ARCHIVE.is_dir():
+        shutil.rmtree(FIXTURE_NOTES_ARCHIVE)
 
 
 def clean_fixture_vault():
@@ -354,6 +396,7 @@ def capture():
     build_fixture(FIXTURE)
     build_prompt_fixtures()
     build_outbox_fixture()
+    build_notes_fixture()
     # Rich reads width at construction, so pin it before importing anything
     # that builds a Console at import time.
     os.environ["COLUMNS"] = "100"
@@ -484,7 +527,9 @@ def capture():
                               ("MODELS", FIXTURE_MODELS),
                               ("TOOLS_MODELS", FIXTURE_TOOLS_MODELS),
                               ("ROUTINE_MODELS", FIXTURE_ROUTINE_MODELS),
-                              ("API_BASE", FIXTURE_API_BASE)):
+                              ("API_BASE", FIXTURE_API_BASE),
+                              ("NOTES_DIR", str(FIXTURE_NOTES)),
+                              ("NOTES_ARCHIVE_DIR", str(FIXTURE_NOTES_ARCHIVE))):
                 if hasattr(mod, attr):
                     setattr(mod, attr, val if isinstance(val, str)
                             else list(val))
@@ -528,6 +573,7 @@ def capture():
         FIXTURE.unlink(missing_ok=True)
         FIXTURE_LOG.unlink(missing_ok=True)
         clean_prompt_fixtures()
+        clean_notes_fixture()
         clean_outbox_fixture()
 
     # The baseline pins the `[auto-exported: …]` line, which proves the message

@@ -937,7 +937,24 @@ def show_status(conn, session_id, model, title, private=False,
     else:
         _header_row("Context", "empty — no messages yet", "dim")
     if tok_in or tok_out:
-        _header_row("Last turn", f"{tok_in:,} in · {tok_out:,} out", "dim")
+        # Not dim: this is ordinary workflow information, not an inactive
+        # state, and printing it in the same grey as "not set" was the
+        # W-0.9.1-09 finding — the row you'd actually want to read at a
+        # glance was styled identically to the ones saying nothing is on.
+        _header_row("Last turn", f"{tok_in:,} in · {tok_out:,} out")
+
+    from notes import inventory as notes_inventory
+    note_files, _has_sub = notes_inventory()
+    if note_files is None:
+        _header_row("Notes inbox", "unavailable", "dim")
+    elif not note_files:
+        _header_row("Notes inbox", "no notes")
+    else:
+        n = len(note_files)
+        _header_row("Notes inbox",
+                    f"{n} note{'s' if n != 1 else ''} — available to "
+                    f"routines; archive when you're finished "
+                    f"({PREFIX}clear notes)")
     console.print()
 
 
@@ -999,7 +1016,7 @@ _CORE_COMMANDS = [
     ("Alt+Enter", "insert a newline  (Enter sends)"),
 ]
 
-# The whole surface: twenty-two verbs, grouped by what they are for. The
+# The whole surface: twenty-four verbs, grouped by what they are for. The
 # grammar line above them is what makes this a list you can hold in your head
 # rather than a table you re-read — every command is verb, then kind, then
 # target, then free text.
@@ -1058,7 +1075,11 @@ _ALL_COMMANDS = [
         (f"{PREFIX}routine name",
          f"run a routine now  ({PREFIX}routine new to create one)"),
         (f"{PREFIX}file 1", f"carry out filing proposal #1  ({PREFIX}list outbox)"),
+        (f"{PREFIX}file Some Title",
+         "…or file the proposal with that exact title"),
         (f"{PREFIX}file 1 decline why", "reject #1, keeping it and the reason"),
+        (f"{PREFIX}move", "guide one loose outbox file to a destination you pick"),
+        (f"{PREFIX}clear notes", "archive everything in the notes inbox"),
     ]),
     ("editing", [
         ("Alt+Enter", "insert a newline (Enter sends)"),
@@ -1084,8 +1105,8 @@ def print_core_commands():
 def print_help():
     """`:help` — everything, grouped, under one grammar line.
 
-    Twenty-two verbs rather than the old forty-seven forms. The grammar line is
-    the point of the exercise: once every command is verb → kind → target →
+    Twenty-four verbs rather than the old forty-seven forms. The grammar line
+    is the point of the exercise: once every command is verb → kind → target →
     free text, the list is something you read once instead of a table you come
     back to.
     """
@@ -2285,7 +2306,7 @@ def show_outbox():
     filable = sum(1 for p in proposals if p.ok)
     console.print()
     console.print(f"  {filable} of {len(proposals)} can be filed", style="dim")
-    console.print("  /file <n> | /file all | "
+    console.print("  /file <n> | /file <title> | /file all | "
                   "/file <n> decline [why]", style="dim")
     console.print()
     return proposals
@@ -2300,39 +2321,29 @@ def _proposal_label(p):
     *alongside* the filename rather than instead of it, because the filename is
     what lands on disk and what a refusal will name.
     """
+    from mover import proposal_title
+
     label = p.name
     tag = ("journal" if getattr(p, "into_journal", False)
            else "wiki" if getattr(p, "into_wiki", False) else "")
-    title = _frontmatter_title(p.path)
+    title = proposal_title(p.path)
     if title and title.lower() != Path(p.name).stem.lower():
         label = f"{label}  —  {title}"
     return f"{label}   [{tag}]" if tag else label
 
 
-def _frontmatter_title(path):
-    """The `title:` from a draft's frontmatter, or "" — never raises.
-
-    Best-effort by design: this is a display nicety, and a draft with broken
-    frontmatter must still be listed and refusable. Failing to read a title is
-    not a reason to hide a proposal from review.
-    """
-    try:
-        import yaml
-        text = Path(path).read_text(encoding="utf-8")
-        if not text.startswith("---"):
-            return ""
-        end = text.find("\n---", 3)
-        if end < 0:
-            return ""
-        fm = yaml.safe_load(text[3:end]) or {}
-        return str(fm.get("title", "") or "").strip()
-    except Exception:
-        return ""
-
-
 def do_file(arg):
-    """/file <n> [decline [why]] | /file all — carry out or reject a proposal."""
-    from mover import MoveError, commit, decline, list_proposals
+    """/file <n> [decline [why]] | /file <title> | /file all — carry out or
+    reject a proposal.
+
+    A title is the whole remainder when it isn't one of the numbered forms —
+    matching is exact after folding case and trimming the outside, never a
+    substring, prefix, filename, or fuzzy match. Declining by title is not
+    offered: the decline reason is free text, and 'Some title decline
+    because…' would be ambiguous about where the title ends. Numbered decline
+    still is.
+    """
+    from mover import MoveError, commit, decline, list_proposals, match_title
 
     proposals = list_proposals()
     if not proposals:
@@ -2341,8 +2352,26 @@ def do_file(arg):
 
     parts = (arg or "").split()
     if not parts:
-        console.print("Usage: /file <n> | /file all | "
+        console.print("Usage: /file <n> | /file <title> | /file all | "
                       "/file <n> decline [why]")
+        return
+
+    if parts[0] != "all" and not _looks_numbered(parts[0]):
+        title = arg.strip()
+        matches = match_title(title, proposals)
+        if not matches:
+            console.print(f"No titled proposal matches {title!r} — "
+                          f"/list outbox lists filenames and titles.",
+                          style="red")
+            return
+        if len(matches) > 1:
+            names = ", ".join(p.name for p in matches)
+            console.print(f"{len(matches)} proposals share the title "
+                          f"{title!r} — {names}. Use /file <n> instead.",
+                          style="red")
+            return
+        _file_one(matches[0])
+        show_outbox()
         return
 
     if parts[0] == "all":
@@ -2393,6 +2422,27 @@ def do_file(arg):
         show_outbox()
         return
 
+    _file_one(proposal)
+    show_outbox()
+
+
+def _looks_numbered(token):
+    """True for a token /file should read as a row number, not the start of
+    a title. Titles beginning with a digit (`"3 Body Problem"`) are the
+    accepted collision with this — the grammar has no other way to tell them
+    apart, same trade-off /list outbox already makes with row numbers."""
+    try:
+        int(token)
+        return True
+    except ValueError:
+        return False
+
+
+def _file_one(proposal):
+    """Commit one proposal and report it — the tail shared by the numbered
+    and titled forms of /file, once the proposal itself is resolved."""
+    from mover import MoveError, commit
+
     try:
         target = commit(proposal)
         verb = "replaced" if getattr(proposal, "replaces", False) else "filed"
@@ -2403,7 +2453,6 @@ def do_file(arg):
             _journal_filed_note()
     except (MoveError, OSError) as e:
         console.print(f"  cannot file {proposal.name}: {e}", style="red")
-    show_outbox()
 
 
 def _journal_filed_note():
@@ -2444,6 +2493,192 @@ def _wiki_filed_note():
         pass
     console.print("  → filed into the wiki. Recall index is now stale — "
                   "run /update db to re-import.", style="yellow")
+
+
+# --- /move: a guided manual move for one loose outbox file -----------------
+#
+# '/file' carries out a proposal the model already suggested a destination
+# for. '/move' is for the other case: a loose file at the top of the outbox
+# and a human who wants to pick where it goes. No title argument — a loose
+# file need not have frontmatter at all — so this is the numbered-picker idiom
+# throughout (decision 6: prompt_toolkit and rich never drive the terminal at
+# once, so there is no arrow-key dialog here). Every step backs out on the
+# typed word 'back' rather than Esc, which cfc cannot see from inside input()
+# (`D-04`) — the honest 1.x exit.
+
+
+def do_move():
+    """/move — list loose outbox files, then guide one to a destination."""
+    from mover import (MoveError, commit_move, loose_files, plan_move,
+                       resolve_move_destination, suggest_rename)
+
+    console.print()
+    files = loose_files()
+    if not files:
+        console.print("Nothing loose in the outbox to move.", style="dim")
+        console.print()
+        return
+
+    console.print("Outbox (top level)")
+    for i, f in enumerate(files, 1):
+        console.print(f"  {i}. {f.name}")
+    raw = input("  file (number, or 'back'): ").strip()
+    if not raw or raw.lower() == "back":
+        console.print("  cancelled", style="dim")
+        console.print()
+        return
+    try:
+        idx = int(raw)
+        if idx < 1:
+            raise IndexError
+        source = files[idx - 1]
+    except (ValueError, IndexError):
+        console.print(f"  no such file: {raw!r}", style="red")
+        console.print()
+        return
+
+    dest_dir = None
+    while dest_dir is None:
+        raw = input("  destination folder (Enter for 00 inbox, or "
+                    "'back'): ").strip()
+        if raw.lower() == "back":
+            console.print("  cancelled", style="dim")
+            console.print()
+            return
+        try:
+            dest_dir = resolve_move_destination(raw or "00 inbox")
+        except MoveError as e:
+            console.print(f"  refused: {e}", style="red")
+
+    try:
+        plan = plan_move(source, dest_dir)
+    except MoveError as e:
+        console.print(f"  refused: {e}", style="red")
+        console.print()
+        return
+
+    if not plan.collides:
+        console.print(f"  {source.name} → {plan.target}")
+        raw = input("  Enter to confirm, or 'back': ").strip().lower()
+        if raw == "back":
+            console.print("  cancelled", style="dim")
+            console.print()
+            return
+        _finish_move(source, plan.target, "moved")
+        return
+
+    # A target that already exists makes the ordinary confirmation disappear.
+    while True:
+        console.print(f"  {plan.target} already exists.", style="yellow")
+        if plan.replace_reason:
+            console.print(f"    replace unavailable — {plan.replace_reason}",
+                          style="dim")
+        raw = input("  rename | replace | back: ").strip().lower()
+        if raw == "back":
+            console.print("  cancelled", style="dim")
+            console.print()
+            return
+        if raw == "rename":
+            renamed = suggest_rename(plan.target)
+            console.print(f"  → {renamed}")
+            confirm = input("  Enter to confirm, or 'back': ").strip().lower()
+            if confirm == "":
+                _finish_move(source, renamed, "moved")
+                return
+            if confirm != "back":
+                console.print("  not recognised", style="red")
+            continue
+        if raw == "replace":
+            if plan.replace_reason:
+                console.print("  replace is not available — see above",
+                              style="red")
+                continue
+            _finish_move(source, plan.target, "replaced", allow_replace=True)
+            return
+        console.print("  type 'rename', 'replace', or 'back'", style="red")
+
+
+def _finish_move(source, target, verb, allow_replace=False):
+    """Carry out and report a /move — the tail shared by the ordinary,
+    renamed and replace confirmations above."""
+    from mover import MoveError, commit_move
+
+    try:
+        result = commit_move(source, target, allow_replace=allow_replace)
+        console.print(f"  {verb} {source.name} → {result}", style="green")
+    except (MoveError, OSError) as e:
+        console.print(f"  cannot move: {e}", style="red")
+    console.print()
+
+
+# --- /clear notes: closing a human-declared batch ---------------------------
+#
+# '00 inbox/notes' is read by more than one routine, so no single run can
+# claim it processed everything — the automatic post-run move D-02 first
+# suggested was rejected for exactly that reason. A human command sidesteps
+# the question: by the time it's typed, the loop and the script have already
+# read whatever they were going to read.
+#
+# notes.py owns validation, the inventory, and the move; this is prompts and
+# rendering only, the same split mover.py and /move already keep.
+
+
+def do_clear(arg):
+    """/clear notes — preview and archive the notes inbox."""
+    kind = (arg or "").split()[0].lower() if (arg or "").split() else ""
+    if kind != "notes":
+        console.print("Usage: /clear notes", style="red")
+        return
+    _do_clear_notes()
+
+
+def _do_clear_notes():
+    from notes import NotesError, clear_batch, inventory
+
+    console.print()
+    files, has_sub = inventory()
+    if files is None:
+        console.print("Notes inbox unavailable — check NOTES_DIR in "
+                      "config.py.", style="red")
+        console.print()
+        return
+    if not files:
+        console.print("Nothing to clear.", style="dim")
+        console.print()
+        return
+
+    console.print(f"Notes inbox — {len(files)} note"
+                  f"{'s' if len(files) != 1 else ''}:")
+    for f in files:
+        console.print(f"  {f.name}")
+    raw = input("  Enter to confirm, or 'back': ").strip().lower()
+    if raw == "back":
+        console.print("  cancelled", style="dim")
+        console.print()
+        return
+
+    try:
+        moved, failed, batch = clear_batch(files)
+    except NotesError as e:
+        console.print(f"  {e}", style="red")
+        console.print()
+        return
+
+    if moved:
+        console.print(f"  archived {len(moved)} note"
+                      f"{'s' if len(moved) != 1 else ''} → {batch}",
+                      style="green")
+        for name in moved:
+            console.print(f"    {name}", style="dim")
+    if failed:
+        console.print(f"  {len(failed)} did not move — still in the inbox:",
+                      style="red")
+        for name in failed:
+            console.print(f"    {name}", style="red")
+    if has_sub:
+        console.print("  a subfolder in the notes inbox was left as-is — "
+                      "not part of the batch.", style="yellow")
+    console.print()
 
 
 # --- the vault repo -------------------------------------------------------
