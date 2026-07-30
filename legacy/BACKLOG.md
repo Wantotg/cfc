@@ -22,6 +22,106 @@ not the file.
 
 # Closed since the split
 
+## ~~D-1.1-05 · `TRANSIENT_STATUS_CODES` omits 504~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1.1 — 504 added to the frozenset alongside 429/502/503;
+408 considered and declined in the same pass, since resending a request the
+client itself timed out proves nothing. `CHANGELOG.md`. Original entry:
+
+**Found:** 2026-07-30, v1.1 playtest.
+
+Description: `api.py:179` treats 429/502/503 as the temporary admission and
+availability failures an unattended routine can reasonably outwait —
+`D-0.9.2-01`'s own comment says so word for word — but 504 (gateway timeout,
+same class as 502: the upstream didn't answer in time) was never added.
+Omitted, not excluded: `D-0.9.2-01` shipped "429/502/503 by status code alone"
+and never claimed 504.
+
+**Fix:** add 504 to the frozenset. One entry, and it gets a routine two more
+re-rolls on the shared `EMPTY_COMPLETION_RETRIES` budget. Worth deciding 408
+(client timeout) at the same time, and probably declining it — 408 is the
+*client* being slow, and resending an identical request that was too slow once
+buys nothing.
+
+**Where it lands:** v1.1.1.
+
+## ~~D-1.1-08 · `/clear notes` doesn't look like cfc~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1.1 — the preview now names the guarded notes-inbox
+path and the cleared-notes archive root, and the confirmation prompt is no
+longer indented into the filename list. `CHANGELOG.md`. Original entry:
+
+**Found:** 2026-07-30, v1.1 playtest.
+
+Description: the confirm prompt renders indented into the note list, at the
+same indent as the filenames — six notes, then a seventh line that isn't a
+note. `/move` gets away with the same layout because its list is numbered, so
+the prompt can't be mistaken for a row; this list isn't. And it names no
+paths — every other filing screen in cfc says which folder it means
+(`Outbox (/mnt/c/...)`), and `/move` shows `source → target` before Enter;
+`/clear notes` is about to move six files and says where neither, even though
+`notes.py` already knows both.
+
+Not a work-order fault. `Concept.md` specified "shows the count and every
+filename that will move" and the build met it exactly — the concept
+under-specified it, and the guarded-move pattern used everywhere else in this
+codebase is the better answer here too.
+
+**Where it lands:** v1.1.1.
+
+## ~~D-1.1-09 · retired `:` commands survive in ~25 source comments~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1.1 — swept from source comments and four test
+docstrings; `agent.py:509`'s restated invariant cut to three lines and a
+pointer to `HANDOVER.md` standing decision 2. The two runtime strings the
+sweep didn't reach — the private-chat banner and `_session_arg`'s fallback —
+are `B-03`, `CHANGELOG.md`. Original entry:
+
+**Found:** 2026-07-30, v1.1 playtest — one instance (`main.py`) of a class
+`B-0.9.1-02`'s fix didn't reach. That sweep covered `config.example.py`
+because it's the one shipped file that instructs a human; source comments were
+never swept. About 25 survive across `main.py`, `commands.py`, `hub.py`,
+`mover.py`, `runner.py`, `wikigit.py`, `preflight.py`, `complete.py`, `ui.py`
+and four test docstrings. Most are harmless prose colour; three are docstrings
+naming the wrong key for the behaviour they document (`main.py:108,110,151`,
+all `:q`).
+
+Nobody types from a comment, so the original bug's argument doesn't carry —
+but a model reading `commands.py` to write the next feature does, and
+reproducing `:status` in new output is exactly how a retired prefix comes
+back.
+
+Carries one more fix found in the same pass: `agent.py:509`'s comment restates
+standing decision 2 and its scar in full, in a file that owns neither. Three
+lines and a pointer is the version that survives — it earns *some* length,
+since it's the invariant the `try/finally` directly below exists for, and a
+shorter comment is what let that `finally` look optional once.
+
+**Where it lands:** v1.1.1.
+
+## ~~D-12 · three files still described the pre-v1.0 auto-revert~~ — CLOSED (2026-07-30)
+
+**Closed 2026-07-30**, v1.1.1, alongside `W-1.1-03` — the remaining stale
+claim, `tests/test_model_revert.py`'s docstring, corrected in the same edit.
+`CHANGELOG.md`. Original entry:
+
+**Found:** 2026-07-30, diagnosing `W-1.1-03`. `HANDOVER.md`'s *Open threads*
+carried a bullet — auto-revert arms only for ids it doesn't recognise, so a
+broken id still *in* `MODELS` goes unhandled — that was already fixed in
+`44d91a7`; `main.py:527` arms on every switch, and the comment above it
+documents the change and its cost. Removed from `HANDOVER.md` on 2026-07-30 as
+a factual correction, under its own first rule (code right, file stale). Its
+pointer to this file was also dead — no such entry existed here, so a reader
+following it found nothing and couldn't tell whether the entry was closed or
+never written; moot now that the bullet is gone.
+
+Still open: `tests/test_model_revert.py`'s docstring describes the old scope —
+*"a known-good unlisted model never reverts later on a transient hiccup"* — the
+exact property `W-1.1-03` is asking to have back. The assertions pass; only the
+docstring lies.
+
+**Where it lands:** v1.1.1, alongside `W-1.1-03` — same sentence either way.
+
 ## ~~D-09 · The `reflection` routine cannot read what its prompt reads~~ — CLOSED (2026-07-30)
 
 **Closed 2026-07-30**, vault-side, Cas's fix — the routine's read/write roots

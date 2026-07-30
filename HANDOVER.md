@@ -845,6 +845,13 @@ a changelog entry, not a paragraph here.
 - **Scheduled runs fire; their outputs are still trusted rather than read.** The
   tick is driven and settled (`Q-0.9.1-04`). *Did the routine do the right
   thing* is a second claim and nobody has checked it.
+
+  A manual trigger through Windows Task Scheduler itself, 2026-07-30 (v1.1.1
+  manager pass), ran a routine end to end and it completed without error — the
+  same entry point a real tick calls, prompted rather than waited for. No
+  review log was kept, so this confirms the mechanism fires and exits clean,
+  not that the routine's output was checked against what it should have
+  written. The claim this thread is actually about is still open.
 - **The connection light has not been watched over a working day.** All three
   fix paths were driven on 2026-07-27; ordinary use is what is left.
 - **The DB layer is anticipated to be reworked** (`W-07`) — treat the
