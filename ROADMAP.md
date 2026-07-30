@@ -1000,8 +1000,7 @@ described at the top applies.*
 
 ---
 
-## v1.1 — Name it, don't count it
-
+## v1.1 - Name it, don't count it **completed, 30/07**
 Three commands close three pieces of workflow that were number-only or manual.
 You can file a proposal by typing its title instead of counting rows, walk one
 loose outbox file to a folder you pick, and archive the notes inbox in one
@@ -1031,4 +1030,32 @@ confirmed batch instead of deleting notes by hand.
 ˶^•ﻌ•^˵ the team!      (\ \_
                        \\//
                      --" "---
+```
+## v1.1.1 - A hiccup is not a rejection **completed, 30/07**
+The v1.1 playtest patch. A model you just switched to now survives a provider
+hiccup on its first turn instead of being switched back out from under you, and
+you can pick a model by the number the list already prints.
+
+**Added**
+- `/model <n>` — switch by the number `/list models` shows, no picker
+  (W-1.1-10)
+
+**Fixed**
+- a transient provider error on the first turn after `/model` no longer reverts
+  the switch; only a real rejection does. 504 joins the retryable statuses
+  (W-1.1-03, D-1.1-05)
+- the hub's Routines panel lists seven, so a routine no longer falls off it
+  unseen (W-1.1-04)
+- `/clear notes` names the inbox and archive it moves between, and its
+  confirmation no longer reads as one more filename (D-1.1-08)
+- retired `:` command spellings gone from source comments, and from the two
+  lines that printed them at you (D-1.1-09, B-03)
+- three files describing the pre-v1.0 auto-revert scope corrected (D-12)
+
+> *Note: small update: a few fixes and a easier time switching models.*
+```
+ /\_/\ 'so, that was NOT a rejection?'
+( 0_o )
+==_~_==
+ /___\
 ```
