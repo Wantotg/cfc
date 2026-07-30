@@ -27,6 +27,25 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-30 — Two retired `:` spellings that reached a user, not a comment
+`D-1.1-09` swept comments and docstrings; these two are runtime strings and
+were out of that scope on purpose, flagged by the coder rather than absorbed.
+The private-chat banner told every private session that *"an explicit
+`:export`"* is the one thing reaching disk — printed on screen, naming a verb
+retired in v0.9 — and `_session_arg`'s fallback usage line built itself as
+`f":{cmd.verb} <session id>"`, so `/export abc` or `/delete chat abc` answered
+a typo with a second one. Same class as `B-0.9.1-02` (`config.example.py`'s
+twelve retired `:` commands) and it fails the same way standing decision 13
+describes: an unrecognised verb is an API call, not an error, so a user typing
+what cfc told them gets a confused answer rather than a correction. `B-03`.
+
+Neither string is in the golden baseline, so the fix is baseline-neutral and
+the 379-line check is identical either side of it.
+
+- Files: main.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-30 — v1.1.1: a status-coded hiccup no longer costs a model switch, and four playtest fixes
 The v1.1 playtest patch. Six fixes, no new roadmap capability.
 
@@ -66,7 +85,7 @@ what it was restating in full.
   tests/test_hub.py, tests/test_attach.py, tests/test_complete.py,
   tests/test_wikigit.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: a2062cd
 
 ## 2026-07-30 — Put the proposal's title last on its line
 The v1.1 playtest's one tag-blocking finding (`W-1.1-07`). `/file <title>`

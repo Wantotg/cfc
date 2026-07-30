@@ -219,7 +219,7 @@ def run_session(conn, session_id, private=False):
             "transcript, no\nmemory index, no auto-export, and it won't "
             "appear in the hub. Closing it\n(/q, Ctrl-D, or quitting) ends "
             "it for good; there is no restore. Model file\nwrites are "
-            "blocked; an explicit [bold]:export[/] is the one thing that "
+            "blocked; an explicit [bold]/export[/] is the one thing that "
             "reaches disk,\nand only because you asked for it by name.",
             style="cyan",
         ))
@@ -329,7 +329,7 @@ def run_session(conn, session_id, private=False):
             return session_id
         target = cmd.int_arg(i)
         if target is None:
-            console.print(usage or f":{cmd.verb} <session id>")
+            console.print(usage or f"/{cmd.verb} <session id>")
         return target
 
     def h_quit(cmd):

@@ -1028,7 +1028,7 @@ confirmed batch instead of deleting notes by hand.
 > *Note: users should be able to choose how to interact with the vault, added options to make it easier from cfc*
 ```
       'welcome to'    <(✦) 'your tag was late'
-˶^•ﻌ•^˵ the team!       (\ \_
+˶^•ﻌ•^˵ the team!      (\ \_
                        \\//
                      --" "---
 ```
