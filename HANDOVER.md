@@ -159,6 +159,7 @@ must end a turn identically** — see invariant 6.
 | `tools.py` | the four tools + dispatcher |
 | `paths.py` | the jail: `path_guard`, containment + deny list |
 | `api.py` | streaming and non-streaming calls, per-phase timeouts, provider error extraction |
+| `preflight.py` | the embedder probe: `connection_state()`, its two timeouts, `ensure`'s fixer |
 | `db.py` | connection, schema/migrations, every query, replay + orphan drop |
 | `hub.py` | session browser, picker, `HUB_KEYS` + the help it generates, routine freshness |
 | `context.py` | `ToolContext` — read roots, write roots, gated/interactive |
@@ -169,6 +170,7 @@ must end a turn identically** — see invariant 6.
 | `errorlog.py` | `~/.cfc/errors.log`: provider errors + a line per launch. **Imports no cfc module, never raises, nothing private** |
 | `ui.py` | shared Console, palette, panels, `read_input`. **Imports no other cfc module** |
 | memory | `import_wiki` → `chunk` → `embed`/`backfill` → `search` → `recall` |
+| the leaves | `export.py` · `backup.py` · `notes.py` · `complete.py` · `splash.py` — one job each, named for it |
 | `config.py` | every deployment knob. **Gitignored** — `config.example.py` is the tracked copy |
 
 ---
@@ -254,13 +256,6 @@ Settled. Argue with them only with a reason, and say that you are.
     a scheduled run is a fresh process. Inferring from the document — "the last
     entry is Thursday, so write Friday" — is self-consistent and therefore
     silently wrong forever after one missed run.
-13b. **The hub's keys are one table too.** `hub.HUB_KEYS` is the dispatch *and*
-    the source of the `h` help screen, and the light's legend is generated from
-    `ui.CONNECTION_STYLE` — the same mapping the light renders. A help screen is
-    the artefact nobody re-reads, so the only safe kind is one that cannot be
-    wrong; `tests/test_hub.py` fails if a key is dispatched that the help does
-    not describe. The single hand-written line points at `/help`, which is a
-    fact about where the commands are documented rather than a copy of them.
 13. **The command surface is two lists that must agree**, checked rather than
     maintained: `run_session` asserts its handler table equals `parse.VERBS`. An
     unrecognised verb falls through **to the model**, so a verb that is
@@ -278,6 +273,14 @@ Settled. Argue with them only with a reason, and say that you are.
     config file told them, and an unrecognised verb is an API call rather than
     an error. Write the **canonical** verb, never the alias — `/list models`,
     not `/models`, or the retired word is re-taught one generation later.
+
+    **The hub's keys are one table too.** `hub.HUB_KEYS` is the dispatch *and*
+    the source of the `h` help screen, and the light's legend is generated from
+    `ui.CONNECTION_STYLE` — the same mapping the light renders. A help screen is
+    the artefact nobody re-reads, so the only safe kind is one that cannot be
+    wrong; `tests/test_hub.py` fails if a key is dispatched that the help does
+    not describe. The single hand-written line points at `/help`, which is a
+    fact about where the commands are documented rather than a copy of them.
 14. **A delete reaches the index that points at what was deleted.**
     `chunks`/`vec_chunks` have no foreign keys, so the cascade is in code: index
     rows first, vectors before chunks, a vector-delete failure raising rather than
@@ -350,12 +353,8 @@ Settled. Argue with them only with a reason, and say that you are.
     just removed. So dim means *cannot be owed a run*, which puts `command` and
     a malformed trigger in one cell — `D-10`, not something this colour can fix.
 
-    **`D-10` is three tiers and the dim conflation is the least of them**
-    (body in `BACKLOG.md`, written v1.0 from driving the panel). A file that
-    will not parse is dropped entirely — `_routine_rows` discards
-    `list_routines()`'s `bad`. And **a routine that parses but fails
-    `validate()` renders green**, because nothing in `_freshness` consults
-    `validate()`. The colour is not lying about what it measures — *is a run
+    **The dim conflation is the least of `D-10`** — three tiers, body in
+    `BACKLOG.md`. The colour is not lying about what it measures — *is a run
     owed* — and that is the trap: the panel is read as *is this still working*,
     and the two questions agree on every routine except a broken one.
 
@@ -701,48 +700,31 @@ that is a rebuild discovering something lived in exactly one place. `README.md`
 carries the layout; this is the failure modes.
 
 **One computer, two filesystems that fail independently.** ext4 (`~`) is erased
-by `wsl --unregister`; NTFS (`/mnt/c`) is not. Every durability question here
-reduces to which side a file is on.
-
-| | side | what erases it |
-|---|---|---|
-| `~/projects/cfc` — the code | ext4 | a WSL reset. Recoverable: GitHub |
-| `~/.cfc/` — `chat.db`, `backups/`, `errors.log`, `schedule.log` | ext4 | a WSL reset. **Not recoverable** |
-| `~/vaults/wiki.git` — the vault's history | ext4 | a WSL reset. Recoverable only as far as the last manual push |
-| `<vault>` — the notes | NTFS | a Windows loss |
-| `VAULT_PATH` — exported transcripts | NTFS | a Windows loss |
+by `wsl --unregister`; NTFS (`/mnt/c`) is not. The code and `~/.cfc/` — `chat.db`,
+`backups/`, `errors.log`, `schedule.log` — are on ext4; the vault's files and
+`VAULT_PATH`'s exports are on NTFS. Every durability question reduces to which
+side a file is on.
 
 **The vault straddling both sides is deliberate and the split is load-bearing.**
 Files on NTFS so Obsidian and Windows' backup reach them; `.git` on ext4 via a
 `gitdir:` pointer because git over 9p is slow. So **losing Windows loses the
-files but not the history, and losing WSL loses the history but not the files** —
-two independent failures, neither individually fatal. That property is worth not
-breaking by "tidying" the `.git` back into the vault.
+files but not the history, and losing WSL loses only the history since the last
+push** — two independent failures, neither individually fatal. That property is
+worth not breaking by "tidying" the `.git` back into the vault.
 
 **`VAULT_PATH` is not the vault** and this is the one naming trap in the layout
 (`W-0.9.1-01`, still open). It is the chat *export* destination — a different
 folder on the Windows side. `VAULT_ROOT`, three lines below it in `config.py`, is
 the actual vault. Nothing enforces the distinction and both are strings.
 
-**The database is the single point of failure, stated so it is a decision**
-(`Q-01`). `backup.py` keeps ten rolling snapshots **on the same disk as the
-original** — right for what it defends against (a torn write, a bad migration, a
-mistake, all of which have happened) and never meant to be an off-machine copy.
-The auto-exports are not one either: 28 MB of database against 1.5 MB of
-exported Markdown (2026-07-29), and the difference is not compression — the
-exports carry the chat text, while the retrieval index, the vectors, the routine
-transcripts, the token accounting and the tool metadata exist only in that one
-file. Anyone making this durable should note the chunk/vector schema is in flux
-(`W-07`, 2.0): a scheme that copies the file survives the rework, one that
-exports the schema does not.
-
-**Settled for v1.1, and closed as `Q-01`: cfc remains local-only.** Off-machine
-durability is optional and user-managed, never cfc's own: make a verified
-snapshot with `backup.py --force`, then copy that snapshot — never the live
-`chat.db` — to a trusted private remote or other off-machine backup by hand.
-No GitHub credentials, no git operations, no automatic copying, and no second
-backup format live in cfc for this; `README.md`'s *Backups* section carries
-the exact command. `W-07`'s rework is still not part of this decision.
+**cfc remains local-only** (`Q-01`, settled v1.1). `backup.py`'s ten rolling
+snapshots sit **on the same disk as the original** — right for what they defend
+against, a torn write or a bad migration or a mistake, and never an off-machine
+copy. Off-machine durability is the user's and is done by hand: `backup.py
+--force` for a verified snapshot, then copy *that*, never the live `chat.db`.
+No GitHub credentials, no git operations, no automatic copying and no second
+backup format live in cfc for this; `README.md`'s *Backups* section has the
+command.
 
 - WSL2/Ubuntu on Windows. Vault on `/mnt/c`, reached Linux→Windows (fast); never
   `\\wsl.localhost` (slow, flakier).
@@ -799,7 +781,7 @@ the changes you *didn't* intend. `SCRUB` normalises timestamps, paths and the ke
 digest on both sides at compare time, so adding a rule fixes a baseline without
 re-recording.
 
-Thirty unit suites beside it; none needs an API key. **What is
+Thirty-odd unit suites beside it; none needs an API key. **What is
 hand-verified, stated rather than implied** (`W-02`) — a version claiming things
 are verified by something that doesn't get tired owes the reader the other half
 of the sentence:

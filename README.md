@@ -939,6 +939,11 @@ tool-calling turn, `paths.py` the jail, `db.py` everything SQLite, `runner.py` a
 `schedule.py` the unattended path, `mover.py` the filing step, and the memory
 layer is `import_wiki` → `chunk` → `backfill` → `search` → `recall`.
 
+Public template versions of the specialist files that run this repo's
+development loop live in `templates/README.md`. The wider set — templates for
+starting a project like this one from scratch — is in its own repo,
+[Template Vault](https://github.com/Wantotg/Template-Vault-cooking-for-cats).
+
 ## License
 
 AGPL-3.0 licensed. See LICENSE.md

@@ -31,6 +31,7 @@ claude_export/
 /CODER.md
 /DEBUGGER.md
 /MANAGER.md
+/REVIEWER.md
 
 # One update's loop files. Overwritten each loop; the durable record is the
 # repo's own documents.
@@ -42,7 +43,7 @@ claude_export/
 /Tag.md
 
 # Superseded by the six specialist files above, kept locally for reference.
-LEGACY_CLAUDE.md
+legacy/LEGACY_CLAUDE.md
 BRAINSTORM CLAUDE.md
 CODER CLAUDE.md
 DESIGNER CLAUDE.md
@@ -67,4 +68,4 @@ ROADMAP_BEYOND.md
 TRACKER.md
 
 # Codex's private pre-1.0 tour handoff; a session aid, not project doctrine.
-CODEX_TOUR_REPORT.md
+Archive/CODEX_TOUR_REPORT.md
