@@ -59,7 +59,8 @@ from db import (
 )
 from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
-from api import stream_response, generate_title, EMPTY_COMPLETION_RETRIES
+from api import (stream_response, generate_title, is_transient_status,
+                 EMPTY_COMPLETION_RETRIES)
 from backup import safe_backup
 import errorlog
 from complete import install as install_completion, make_completer
@@ -68,7 +69,8 @@ from hub import list_sessions, pick_session
 from commands import (
     show_tags, list_all_tags,
     list_prompts, load_prompt_file, list_personas, load_persona_file,
-    list_models, select_model, known_models, show_config, show_token_stats,
+    list_models, select_model, known_models, model_by_number,
+    show_config, show_token_stats,
     context_bar, print_context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
@@ -105,9 +107,9 @@ _LEAVE = object()
 def repl(session_id=None):
     """Outer driver: the hub, and the session you return to it from.
 
-    A session never exits the program. `:q` (and EOF / Ctrl-C) drop back to the
+    A session never exits the program. `/q` (and EOF / Ctrl-C) drop back to the
     hub — the exact screen you started on. The program quits only from the hub,
-    with `q`. A `session_id` from `main.py 5` still returns to the hub on `:q`,
+    with `q`. A `session_id` from `main.py 5` still returns to the hub on `/q`,
     so the hub is the one way out.
     """
     conn = db()
@@ -148,13 +150,13 @@ def repl(session_id=None):
 
 def run_session(conn, session_id, private=False):
     """One session's REPL loop. Returns when the user leaves the session
-    (`:q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'.
+    (`/q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'.
 
     `private` is not a per-call-site switch — the isolation is structural, in
     the in-memory `conn` repl() hands us, so every DB write is already a no-op
     against disk. It gates only the two paths that *escape* the connection:
     auto-embed (reads the real db by hardcoded path) and auto-export (writes a
-    file). Automatic persistence is off; an explicit `:export` is still honoured
+    file). Automatic persistence is off; an explicit `/export` is still honoured
     — the contract is 'nothing is written down unless you ask for it by name'.
     """
     history = load_history(conn, session_id)
@@ -171,7 +173,7 @@ def run_session(conn, session_id, private=False):
     # provider, so including it would dilute the one signal this exists for.
     turns_interrupted = 0
     tools_on = True        # session toggle; the master switch still gates it
-    # Whether /recall/:remember/:updatedb may reach the wiki this session. A
+    # Whether /recall, /remember or /updatedb may reach the wiki this session. A
     # normal chat: on. A private chat: DATABASE_ACTIVE (default off), so memory
     # is sealed unless you type /database on. This is the *read* axis and is
     # separate from privacy, which is about the write paths — a private chat
@@ -179,12 +181,15 @@ def run_session(conn, session_id, private=False):
     db_on = True if not private else DATABASE_ACTIVE
     current_title = get_session_title(conn, session_id)
     current_model = get_session_model(conn, session_id)
-    # Auto-revert arming. Non-None ⇒ the current model was set via the
-    # "not in your configured models" path and has not yet completed a turn, so
-    # the first turn that errors on it is almost certainly "no such model": we
-    # back out to this remembered model rather than stranding the session on a
-    # dead id. A turn that returns without an HTTP error disarms it (the model
-    # is real). Known models are never armed. This holds for both chats — it's
+    # Auto-revert arming. Non-None ⇒ the current model was set by a switch and
+    # has not yet completed a turn, so a turn that errors on it needs a
+    # decision: a status-coded transient (429/502/503/504) says the provider
+    # was temporarily unavailable, not that the selected id is dead, so it
+    # leaves this armed and prints the ordinary error; anything else — a
+    # rejection, or an error with no transient status — is almost certainly
+    # "no such model", and backs out to this remembered model rather than
+    # stranding the session on a dead id. A turn that returns without an HTTP
+    # error disarms it (the model is real). This holds for both chats — it's
     # the same dispatch, and a private chat's throwaway db takes the revert the
     # same way, persisting nothing real either way.
     revert_model = None
@@ -252,10 +257,12 @@ def run_session(conn, session_id, private=False):
         console.print("--- End of history ---\n")
 
     def revert_bad_model():
-        """If an unverified model's first turn just failed, back out to the
-        model we were on and say so, instead of printing the raw provider error
-        and leaving the session stranded on a dead id. Returns True if it acted.
-        Idempotent: disarms itself, so a later transient error prints normally."""
+        """Back out to the model we were on before the just-armed switch, and
+        say so, instead of leaving the session stranded on a dead id. Returns
+        True if it acted. Idempotent: disarms itself, so a later transient
+        error prints normally — the arming a caller must check first, since a
+        transient right after a switch is handled by `handle_turn_error`
+        without ever reaching here."""
         nonlocal current_model, revert_model
         if not revert_model:
             return False
@@ -281,9 +288,20 @@ def run_session(conn, session_id, private=False):
         than two `log_error(e)` calls: standing decision 7 exists because these
         two paths drifted once already, and a hand-placed pair is that drift
         pre-made.
+
+        A status-coded transient (`api.is_transient_status`) on an armed
+        switch's first turn is deliberately not a revert: 429/502/503/504 say
+        the provider was briefly unavailable, not that the id itself is bad, so
+        `revert_model` stays armed for a later, non-transient failure and this
+        prints the ordinary provider error instead of the switched-back-to-Y
+        line. Anything else — a rejection, or an error with no transient status
+        — still reverts as before.
         """
         errorlog.log_error(e, session_id=session_id, model=current_model,
                            interrupted=turns_interrupted, private=private)
+        if revert_model and is_transient_status(e):
+            console.print(f"\n[error] {e}\n")
+            return
         if not revert_bad_model():
             console.print(f"\n[error] {e}\n")
 
@@ -304,7 +322,7 @@ def run_session(conn, session_id, private=False):
         """The session id at token `i`, defaulting to this session.
 
         Returns None — having said why — when a token is present but isn't a
-        number. `:title abc` used to reach a bare `int()` and take the whole
+        number. `/title abc` used to reach a bare `int()` and take the whole
         REPL down; a typo should cost a line of output, not the app.
         """
         if not cmd.arg(i):
@@ -326,7 +344,7 @@ def run_session(conn, session_id, private=False):
         nonlocal session_id, history, injected, current_title, current_model
         nonlocal system_prompt, system_prompt_name, persona, persona_name
         nonlocal trait_names, turns_interrupted
-        # `:new p` — a private chat from inside a session, joining `p` at the
+        # `/new p` — a private chat from inside a session, joining `p` at the
         # hub. It **nests** rather than replacing this session: a private chat
         # is a side trip, and coming back to what you were doing is the point.
         # The isolation is the same one the hub's `p` gets, for the same reason
@@ -367,9 +385,9 @@ def run_session(conn, session_id, private=False):
         show_config(current_model)
 
     def h_export(cmd):
-        # `:export`, `:export chat 5`, and `:export 5` — a bare integer is a
+        # `/export`, `/export chat 5`, and `/export 5` — a bare integer is a
         # chat id everywhere in the surface, so the kind is optional here even
-        # though `:delete` requires it. The asymmetry is deliberate and is
+        # though `/delete` requires it. The asymmetry is deliberate and is
         # about consequence, not consistency: an export you didn't mean costs
         # a file, a delete you didn't mean costs the conversation.
         i = 1 if cmd.arg(0).lower() in ("chat", "chats", "session") else 0
@@ -400,13 +418,13 @@ def run_session(conn, session_id, private=False):
                       f"{new_title}")
 
     def h_delete(cmd):
-        """`:delete` destroys durable data, so it **always** needs a kind.
+        """`/delete` destroys durable data, so it **always** needs a kind.
 
-        Bare `:delete` lists what is deletable and acts on nothing. That is
-        not politeness: the drafts had bare `:delete` meaning both "delete
+        Bare `/delete` lists what is deletable and acts on nothing. That is
+        not politeness: the drafts had bare `/delete` meaning both "delete
         this conversation" and "drop the injected excerpts", and a confirm
         prompt is the worst possible place to discover which one you typed.
-        Detaching lives under `:remove`, where nothing is destroyed.
+        Detaching lives under `/remove`, where nothing is destroyed.
         """
         if not cmd.args:
             console.print("Usage: /delete chat [<id>]   "
@@ -447,12 +465,12 @@ def run_session(conn, session_id, private=False):
         search_messages(conn, cmd.raw)
 
     def h_update(cmd):
-        """`:update db` — re-import the wiki, then index anything new.
+        """`/update db` — re-import the wiki, then index anything new.
 
-        Bare `:update` says what is updatable rather than guessing, the same
-        rule `:delete` follows: a command that reaches the vault and the
+        Bare `/update` says what is updatable rather than guessing, the same
+        rule `/delete` follows: a command that reaches the vault and the
         embedder should be typed on purpose. `database` is accepted for `db`,
-        matching the plural forgiveness `:list` has.
+        matching the plural forgiveness `/list` has.
         """
         what = cmd.arg(0).lower()
         if not what:
@@ -498,7 +516,21 @@ def run_session(conn, session_id, private=False):
             console.print(f"Current model: "
                           f"{current_model}")
             return
-        new_model = select_model(cmd.raw)
+        raw = cmd.raw.strip()
+        # A plain integer picks straight off /list models' displayed order,
+        # ahead of loose-name resolution and with no second picker. Checked
+        # here rather than inside `select_model`, which the routine-creation
+        # model prompt also calls — that flow reads a `None` return as
+        # "cancelled", and a mistyped number there must not silently abandon
+        # the routine being built.
+        if raw.isdigit():
+            new_model = model_by_number(int(raw))
+            if new_model is None:
+                console.print(f"  {raw} isn't a listed model number — "
+                              f"{PREFIX}list models to see them", style="dim")
+                return
+        else:
+            new_model = select_model(cmd.raw)
         if not new_model:
             console.print("model unchanged", style="dim")
             return
@@ -518,12 +550,11 @@ def run_session(conn, session_id, private=False):
         # Dropping longcat from the config deleted the instance and left the
         # class.
         #
-        # The cost, and it was Cas's call (2026-07-27): a genuine transient on
-        # the first turn after any switch now bounces you back with
-        # `provider rejected 'X' — switched back to Y` and you switch again.
-        # One annoying line against a session stranded on a dead id with an
-        # error naming no model. If it grates, revert only on rejections and
-        # not on the transient shapes the codebase already recognises.
+        # A status-coded transient (429/502/503/504) on this first turn no
+        # longer spends the revert (`W-1.1-03`, 2026-07-30): `handle_turn_error`
+        # checks `api.is_transient_status` before reverting, so a hiccup right
+        # after a switch leaves the new model selected and armed, and only a
+        # rejection or an untyped error still backs out to prev_model.
         revert_model = prev_model if new_model != prev_model else None
 
     # --- Tags ---

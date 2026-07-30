@@ -159,8 +159,8 @@ def list_all_tags(conn):
 
 
 def list_pool(kind):
-    """Print what a pool holds. One function for all three: `:prompts`,
-    `:personas` and the traits listing printed three near-identical copies of
+    """Print what a pool holds. One function for all three: `/prompts`,
+    `/personas` and the traits listing printed three near-identical copies of
     this, and a third copy was exactly what block 3 existed not to write.
 
     The wording is parameterised rather than generalised — the output is
@@ -245,7 +245,7 @@ def resolve_layer(query, active=None, kinds=None, quiet=False):
 
     The thin I/O shell over `pools.match`/`pools.fill`, the same pure-core /
     shell split `resolve_model`/`select_model` uses. `kinds` restricts the
-    search to one pool, which is what the explicit form (`:add trait relax`)
+    search to one pool, which is what the explicit form (`/add trait relax`)
     passes; `active` is what the session already carries, which decides the
     collision walk.
 
@@ -317,7 +317,7 @@ def load_pool_file(kind, name):
 
 
 def known_models():
-    """The pool the selector matches a loose `:model` query against: every
+    """The pool the selector matches a loose `/model` query against: every
     model cfc knows from config, MODELS first, then any ROUTINE_MODELS not
     already there. Order preserved, deduped. It is not a live catalogue — a
     model you never listed can't be matched, only typed in full, which is why
@@ -588,8 +588,19 @@ def select_model(query):
     return query
 
 
+def model_by_number(n):
+    """1-based lookup into `MODELS`, in the order `list_models` displays it —
+    the same order `/model <n>` indexes into. None for zero, negative, or past
+    the end, never an `IndexError`; None also when `MODELS` is empty, since
+    there is then no displayed order to index into."""
+    if not MODELS or n < 1 or n > len(MODELS):
+        return None
+    return MODELS[n - 1]
+
+
 def list_models(current_model):
-    """Show configured models from config.py."""
+    """Show configured models from config.py, numbered in display order so
+    `/model <n>` can be typed straight off this list."""
     if not MODELS:
         console.print("No MODELS list in config.py.")
         console.print("You can still switch with "
@@ -599,13 +610,14 @@ def list_models(current_model):
         return
     table = Table(title="Available models",
                   border_style="dim")
+    table.add_column("#", justify="right", style="dim")
     table.add_column("Model", style="cyan")
     table.add_column("Status")
-    for m in MODELS:
+    for i, m in enumerate(MODELS, 1):
         if m == current_model:
-            table.add_row(m, "<-- current")
+            table.add_row(str(i), m, "<-- current")
         else:
-            table.add_row(m, "")
+            table.add_row(str(i), m, "")
     console.print(table)
     console.print()
 
@@ -731,11 +743,11 @@ def show_token_stats(conn, session_id, current_model,
 #    session, not a problem — most sessions don't want one. It is printed in
 #    the same voice as the rows that do have a value, and followed by what is
 #    available, because the reason to mention it at all is to make attaching
-#    one a single keystroke away rather than a trip through `:prompts`.
+#    one a single keystroke away rather than a trip through `/prompts`.
 # 2. **A curated list, not all of them.** The full command dump was forty-odd
 #    lines and scrolled the session header off the screen every time you opened
 #    a conversation — so the thing it existed to tell you was the thing it hid.
-#    Nine commands here, `:help` for the rest.
+#    Nine commands here, `/help` for the rest.
 
 def _names_in(directory):
     """Sorted stems of the .md files in a prompt/persona folder, or []. Never
@@ -794,7 +806,7 @@ def print_session_header(conn, session_id, model, title,
     #
     # Deliberately thinner than `/status`'s trait row, which also loads each
     # file to mark a missing one. This screen prints on every session open and
-    # after every `:new`; reading the pool off disk to decorate a header is a
+    # after every `/new`; reading the pool off disk to decorate a header is a
     # cost the header hasn't been paying, and "which of these has lost its
     # file" is a question `/status` exists to answer.
     if trait_names:
@@ -832,16 +844,16 @@ def print_session_header(conn, session_id, model, title,
 def show_status(conn, session_id, model, title, private=False,
                 system_prompt_name=None, persona_name=None, trait_names=(),
                 tools_on=True, db_on=True, injected=(), kind=None):
-    """`:status` — everything active in this session, on one screen.
+    """`/status` — everything active in this session, on one screen.
 
-    It absorbs eight bare commands (`:title`, `:tokens`, `:prompt`, `:persona`,
-    `:tags`, `/status`, `:model`, `:tools`), which is most of the cut the
-    taxonomy claims. The line between this and `:config` is ownership: this is
-    session state, `:config` is deployment settings. "Routine model" is a
+    It absorbs eight bare commands (`/title`, `/tokens`, `/prompt`, `/persona`,
+    `/tags`, `/status`, `/model`, `/tools`), which is most of the cut the
+    taxonomy claims. The line between this and `/config` is ownership: this is
+    session state, `/config` is deployment settings. "Routine model" is a
     deployment setting and lives there, not here.
 
-    `kind` prints one layer's *body* instead of the screen — `:status prompt`.
-    The bare `:prompt` used to be the only way to read an attached prompt
+    `kind` prints one layer's *body* instead of the screen — `/status prompt`.
+    The bare `/prompt` used to be the only way to read an attached prompt
     without opening the file, and folding it into a names-only screen would
     have quietly dropped that.
     """
@@ -958,7 +970,7 @@ def show_status(conn, session_id, model, title, private=False,
     console.print()
 
 
-# What `:list` can list, in the order the bare form prints them. Two of these
+# What `/list` can list, in the order the bare form prints them. Two of these
 # answer questions people think are one: `chats` is the picker's view — real
 # conversations — while `sessions` is everything, routine runs and wiki pages
 # included.
@@ -968,9 +980,9 @@ POOLS_ORDER = tuple(POOLS[k].singular for k in PRIORITY)
 
 
 def show_list(conn, what, current_model):
-    """`:list <kind>` — what exists. Bare, it prints the kinds.
+    """`/list <kind>` — what exists. Bare, it prints the kinds.
 
-    Singular and plural both work: `:list trait` and `:list traits` are the
+    Singular and plural both work: `/list trait` and `/list traits` are the
     same question, and making someone remember which one cfc wants is the sort
     of friction the whole taxonomy exists to remove.
     """
@@ -1003,7 +1015,7 @@ def show_list(conn, what, current_model):
 
 
 # (command, what it does). The nine that earn a place on the screen you look at
-# most; everything else is one `:help` away.
+# most; everything else is one `/help` away.
 _CORE_COMMANDS = [
     (f"{PREFIX}help", "every command"),
     (f"{PREFIX}q", "back to the session list"),
@@ -1062,7 +1074,8 @@ _ALL_COMMANDS = [
         (f"{PREFIX}title 5 Name", "rename session #5"),
     ]),
     ("settings", [
-        (f"{PREFIX}model name", f"switch model  ({PREFIX}list models to see them)"),
+        (f"{PREFIX}model name or number",
+         f"switch model  ({PREFIX}list models to see them)"),
         (f"{PREFIX}tools on|off", "toggle tools for this session"),
         (f"{PREFIX}database on|off", "toggle recall & remember this session"),
         (f"{PREFIX}connect", "where the embedder stands"),
@@ -1103,7 +1116,7 @@ def print_core_commands():
 
 
 def print_help():
-    """`:help` — everything, grouped, under one grammar line.
+    """`/help` — everything, grouped, under one grammar line.
 
     Twenty-four verbs rather than the old forty-seven forms. The grammar line
     is the point of the exercise: once every command is verb → kind → target →
@@ -2641,7 +2654,7 @@ def do_clear(arg):
 
 
 def _do_clear_notes():
-    from notes import NotesError, clear_batch, inventory
+    from notes import NotesError, archive_dir, clear_batch, inventory, notes_dir
 
     console.print()
     files, has_sub = inventory()
@@ -2655,11 +2668,15 @@ def _do_clear_notes():
         console.print()
         return
 
-    console.print(f"Notes inbox — {len(files)} note"
-                  f"{'s' if len(files) != 1 else ''}:")
+    archive = archive_dir()
+    console.print(f"Notes inbox ({notes_dir()})  →  archive "
+                  f"({archive if archive else 'unconfigured'})")
+    console.print(f"{len(files)} note{'s' if len(files) != 1 else ''} "
+                  f"to archive:")
     for f in files:
         console.print(f"  {f.name}")
-    raw = input("  Enter to confirm, or 'back': ").strip().lower()
+    console.print()
+    raw = input("Enter to confirm, or 'back': ").strip().lower()
     if raw == "back":
         console.print("  cancelled", style="dim")
         console.print()

@@ -52,7 +52,7 @@ JOURNAL_SUBFOLDER = "journal"
 # than refuse a draft that has no id (a dead end), filing STAMPS one: code
 # assigns it at approval time, so it is never the model's job to invent a unique
 # key. YYYYMMDDhhmmss is unique enough for one personal vault; the monotonic
-# bump below guarantees a `:file all` batch filed in the same second can't
+# bump below guarantees a `/file all` batch filed in the same second can't
 # collide (which would make import_wiki treat two pages as one).
 _last_wiki_id = 0
 
@@ -60,7 +60,7 @@ _last_wiki_id = 0
 # The outbox explains itself in a readme that lives inside it, so containment —
 # which is the whole proposal rule — admits it as a proposal. It never is one:
 # it has no destination and never will, so it sat permanently at the top of
-# `/list outbox` reading `REFUSED — no destination`, and `:file 1 drop` would happily
+# `/list outbox` reading `REFUSED — no destination`, and `/file 1 drop` would happily
 # file the folder's own documentation into the bin.
 #
 # Same shape as `tools.reserved_write_reason()` and for the same reason: a
@@ -343,7 +343,7 @@ def _journal_guard_reason():
     Filing into the journal **overwrites a live file** — that is what a
     rollover is, and it is the one place the mover's "a target that exists is a
     refusal" rule cannot hold. What replaces that rule is git: the journal is
-    inside the vault repo, so an overwrite is inspectable (`:wiki diff journal`)
+    inside the vault repo, so an overwrite is inspectable (`/wiki diff journal`)
     and reversible (`git checkout`) — but only if the corpus was clean when the
     move happened. Against a dirty corpus the diff mixes cfc's move with
     whatever was edited by hand, and there is no commit to go back to.

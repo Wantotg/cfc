@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""test_model_revert.py — an unverified model that the provider rejects is
-backed out of, instead of stranding the session on a dead id. No network.
+"""test_model_revert.py — a model switch that the provider rejects is backed
+out of, instead of stranding the session on a dead id. No network.
 
     python3 tests/test_model_revert.py
 
-`:model X` for an X that isn't in your configured models sets it anyway (MODELS
-is not exhaustive), but then persists it — so before this, a nonsense name 400ed
-on every turn and survived reopening the session, and you only found out by
-running `:models` and not seeing it selected. The fix arms an auto-revert when
-switching to an unverified model: the *first* turn that errors on it backs out
-to the model you were on. The scope is what makes it non-magical — it is armed
-only on a just-set unverified model, so it needs no "is this a model-not-found
-400?" string match, and a turn that succeeds disarms it (the model is real), so
-a known-good unlisted model never reverts later on a transient hiccup.
+`/model X` sets whatever you type, verified or not (MODELS is not exhaustive),
+then persists it — so before this, a nonsense name 400ed on every turn and
+survived reopening the session, and you only found out by running `/list
+models` and not seeing it selected. The fix arms an auto-revert on **every**
+switch: the *first* turn that errors on the new model backs out to the model
+you were on, unless that error is a status-coded transient (429/502/503/504,
+`W-1.1-03`) — a provider hiccup doesn't mean the id is dead, so it leaves the
+new model selected and the revert still armed for a following failure. A turn
+that succeeds disarms it (the model is real), so a known-good model never
+reverts later on a transient hiccup either.
 
 Driven through `run_session` with a stubbed stream, the same harness shape as
 test_private. `select_model` is stubbed to pass the raw query through (the user
@@ -158,6 +159,65 @@ def main_():
        "switched back" not in text3 and "upstream 500" in text3, text3)
     ok("...and stays selected", dbmod.get_session_model(conn, sid3) == "custom-x",
        dbmod.get_session_model(conn, sid3))
+
+    print("\n--- a status-coded transient right after a switch does not revert "
+          "(W-1.1-03) ---")
+    sid5 = dbmod.new_session(conn, title="t5", model="good-model")
+    calls5 = {"n": 0}
+
+    def transient_then_rejected(messages, model=None):
+        calls5["n"] += 1
+        if calls5["n"] == 1:
+            error = httpx.HTTPError("upstream 503")
+            error.status_code = 503
+            raise error
+        raise httpx.HTTPError("no such model: flaky-model")
+    main.stream_response = transient_then_rejected
+
+    text5 = drive(conn, sid5, "/tools off\n/model flaky-model\nhello\nhello\n/q\n")
+    ok("the transient prints as an ordinary error", "upstream 503" in text5,
+       text5)
+    ok("...and the revert stays armed, so the SECOND error still reverts",
+       "provider rejected 'flaky-model'" in text5
+       and "switched back to good-model" in text5, text5)
+    ok("...in that order: the transient did not revert before the rejection did",
+       text5.index("upstream 503") < text5.index("switched back to good-model"),
+       text5)
+    ok("...and the session ends on the reverted model, not the dead id",
+       dbmod.get_session_model(conn, sid5) == "good-model",
+       dbmod.get_session_model(conn, sid5))
+
+    print("\n--- /model <n> picks straight off the displayed list (W-1.1-10) ---")
+    # model_by_number is the pure lookup under test in test_model.py; here the
+    # session-level claim is what matters — a valid number switches and
+    # persists with no second picker, and an invalid one leaves the model
+    # alone with its own message rather than falling through to select_model.
+    main.model_by_number = lambda n: {1: "good-model", 2: "custom-y"}.get(n)
+
+    sid6 = dbmod.new_session(conn, title="t6", model="good-model")
+    main.stream_response = lambda messages, model=None: (
+        "an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
+    text6 = drive(conn, sid6, "/tools off\n/model 2\n/model\n/q\n")
+    ok("a valid number switches to the full configured id",
+       "Switched to model: custom-y" in text6, text6)
+    ok("...with no numbered picker in between",
+       "matches" not in text6 and "pick a number" not in text6, text6)
+    ok("...and the choice persists",
+       dbmod.get_session_model(conn, sid6) == "custom-y",
+       dbmod.get_session_model(conn, sid6))
+
+    sid7 = dbmod.new_session(conn, title="t7", model="good-model")
+    text7 = drive(conn, sid7, "/tools off\n/model 9\n/model\n/q\n")
+    ok("an out-of-range number leaves the model unchanged with a message",
+       "isn't a listed model number" in text7
+       and "Switched to model" not in text7, text7)
+    ok("...and zero is treated the same way",
+       "isn't a listed model number" in
+       drive(conn, dbmod.new_session(conn, title="t8", model="good-model"),
+             "/tools off\n/model 0\n/q\n"))
+    ok("...and the session stays on the model it started with",
+       dbmod.get_session_model(conn, sid7) == "good-model",
+       dbmod.get_session_model(conn, sid7))
 
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

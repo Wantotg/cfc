@@ -13,7 +13,7 @@
 # prompt_toolkit on a real terminal and plain `input()` when stdin is a pipe.
 # prompt_toolkit implements its own line editing and never consults readline —
 # so when the editor landed, the readline completer below silently stopped
-# running and `:attach` had no completion at all on the interactive path. It
+# running and `/attach` had no completion at all on the interactive path. It
 # did not break; it just quietly stopped existing, which is why nothing
 # failed. `AttachCompleter` is the prompt_toolkit half; `install()` is the
 # readline half and still covers the `input()` fallback. Both call

@@ -4,7 +4,7 @@ test_wikigit.py — the vault repo seen from the REPL. No API calls, no network.
 
     python3 tests/test_wikigit.py
 
-The case worth having is **scope containment**: `:wiki commit` must produce a
+The case worth having is **scope containment**: `/wiki commit` must produce a
 commit holding wiki changes and nothing else, *even when something outside the
 wiki is already staged*. `git add -- <spec>` alone does not give you that — the
 subsequent `git commit` would sweep up whatever was in the index already. Only

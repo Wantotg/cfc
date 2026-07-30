@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-test_model.py — the forgiving `:model` selector. No API calls.
+test_model.py — the forgiving `/model` selector. No API calls.
 
     python3 tests/test_model.py
 
-`:model` used to set whatever string you typed, verbatim. A one-character slip
+`/model` used to set whatever string you typed, verbatim. A one-character slip
 (`moonshotai/kimi-2.6:thinking` for `…kimi-k2.6…`) sailed straight through and
 came back as an opaque provider 400 a turn later. The selector resolves a loose
 query against the models you've configured (MODELS ∪ ROUTINE_MODELS) and either
@@ -206,6 +206,27 @@ def main():
     ok("'c' cancels", res is None, res)
     res, _ = run_select("minimax 3", POOL, ["9"])
     ok("out of range cancels rather than guessing", res is None, res)
+
+    print("\n--- model_by_number: 1-based, over MODELS's displayed order "
+          "(W-1.1-10) ---")
+    saved_models = commands.MODELS
+    try:
+        commands.MODELS = list(POOL)
+        ok("1 is the first row list_models would show",
+           commands.model_by_number(1) == POOL[0], commands.model_by_number(1))
+        ok("the last row is the last number",
+           commands.model_by_number(len(POOL)) == POOL[-1])
+        ok("0 is out of range, not a Python-style last element",
+           commands.model_by_number(0) is None)
+        ok("negative is out of range",
+           commands.model_by_number(-1) is None)
+        ok("past the end is out of range, not an IndexError",
+           commands.model_by_number(len(POOL) + 1) is None)
+        commands.MODELS = []
+        ok("no MODELS configured means every number is out of range",
+           commands.model_by_number(1) is None)
+    finally:
+        commands.MODELS = saved_models
 
     print("\n--- select_model: no configured models, no fuss ---")
     res, out = run_select("anything/at-all", [], [])

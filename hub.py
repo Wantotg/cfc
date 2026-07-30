@@ -9,7 +9,7 @@
 # The three-way return is why callers can't just test truthiness: session id 0
 # would be falsy, and None and "quit" mean different things.
 #
-# **The picker shows chats; `:list` shows everything.** A session's `provider`
+# **The picker shows chats; `/list` shows everything.** A session's `provider`
 # is the kind discriminator (see db.py), and the picker excludes wiki pages and
 # routine runs — the wiki alone is already 20 rows and grows every import, and
 # routine runs arrive one per trigger forever once the scheduler lands. Both
@@ -31,12 +31,12 @@ from ui import (connection_light, CONNECTION_STYLE, console,
 # (a tag is rare, and Model only ever printed when a session overrode the
 # default), and every column they occupied came out of Title's budget — which is
 # the one field you actually pick a session by. Dropping them also drops the
-# GROUP_CONCAT subquery that fed Tags. `:tags` still shows a session's tags.
+# GROUP_CONCAT subquery that fed Tags. `/tags` still shows a session's tags.
 
 HUB_CHATS = 10     # chats on the picker
-HUB_ROUTINES = 5   # routines on the picker
+HUB_ROUTINES = 7   # routines on the picker
 
-# Not a chat: excluded from the picker, still visible in `:list`.
+# Not a chat: excluded from the picker, still visible in `/list`.
 _NON_CHAT = (PROVIDER_WIKI, PROVIDER_ROUTINE)
 
 # Everything the flexible three don't get: ID, Latest message, Msgs, Ctx, plus
@@ -110,7 +110,7 @@ def _session_table(title):
 
 
 # tokens_in/tokens_out of the last message that recorded any: the same "current
-# context" definition db.get_context_info uses, so the hub and `:tokens` cannot
+# context" definition db.get_context_info uses, so the hub and `/tokens` cannot
 # disagree about how full a session is.
 _LAST_TOKENS = (
     "(SELECT m.tokens_in FROM messages m WHERE m.session_id = s.id "
@@ -376,7 +376,7 @@ def recent_chats(conn, limit=HUB_CHATS):
 
 
 def show_recent_chats(conn):
-    """`:list chats` — the picker's view, printed from inside a session.
+    """`/list chats` — the picker's view, printed from inside a session.
 
     Deliberately the same rows as `pick_session` (`recent_chats`), not a second
     query: "which conversations do I have" must have one answer whether it is

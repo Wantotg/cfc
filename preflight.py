@@ -3,7 +3,7 @@
 preflight.py — make sure the embedder is up before cfc starts.
 
 Everything memory-shaped in cfc quietly assumes LM Studio is running with
-bge-m3 loaded: `:recall`, `:remember`, `:updatedb`, and the per-turn auto-embed
+bge-m3 loaded: `/recall`, `/remember`, `/updatedb`, and the per-turn auto-embed
 hook. When it isn't, none of them say "the embedder is down" — auto-embed is
 best-effort and warns quietly by design, and recall just comes back empty,
 which is indistinguishable from "memory has nothing on that". This retires that

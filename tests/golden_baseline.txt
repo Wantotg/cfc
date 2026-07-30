@@ -70,7 +70,7 @@ chats · sessions · outbox
     /title 5 Name           rename session #5
 
   settings
-    /model name             switch model  (/list models to see them)
+    /model name or number   switch model  (/list models to see them)
     /tools on|off           toggle tools for this session
     /database on|off        toggle recall & remember this session
     /connect                where the embedder stands
@@ -132,13 +132,13 @@ Available traits (<ROOT>/tests/_fixture_traits):
   epsilon                   epsilon
   zeta                      zeta
 
-you>           Available models
-┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
-┃ Model              ┃ Status      ┃
-┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
-│ glm-5.2            │ <-- current │
-│ fixture/tool-model │             │
-└────────────────────┴─────────────┘
+you>             Available models
+┏━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ # ┃ Model              ┃ Status      ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ 1 │ glm-5.2            │ <-- current │
+│ 2 │ fixture/tool-model │             │
+└───┴────────────────────┴─────────────┘
 
 you>       All tags
 ┏━━━━━━━━┳━━━━━━━━━━┓
@@ -297,13 +297,13 @@ Available prompts (<ROOT>/tests/_fixture_prompts):
   alpha                     alpha
   beta                      beta
 
-you>           Available models
-┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
-┃ Model              ┃ Status      ┃
-┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
-│ glm-5.2            │ <-- current │
-│ fixture/tool-model │             │
-└────────────────────┴─────────────┘
+you>             Available models
+┏━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ # ┃ Model              ┃ Status      ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ 1 │ glm-5.2            │ <-- current │
+│ 2 │ fixture/tool-model │             │
+└───┴────────────────────┴─────────────┘
 
 you>       All tags
 ┏━━━━━━━━┳━━━━━━━━━━┓
@@ -367,10 +367,13 @@ Outbox (top level)
   file (number, or 'back'):   cancelled
 
 you>
-Notes inbox — 2 notes:
+Notes inbox (<ROOT>/tests/_fixture_filed/notes)  →  archive
+(<ROOT>/tests/_fixture_filed/notes archive)
+2 notes to archive:
   one.md
   two.md
-  Enter to confirm, or 'back':   cancelled
+
+Enter to confirm, or 'back':   cancelled
 
 you> Usage: /clear notes
 you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]

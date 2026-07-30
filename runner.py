@@ -4,7 +4,7 @@
 # light) because this is the half that reaches for the API, the database and
 # the tool loop.
 #
-# **This is the headless entry point in everything but name.** `:routine <name>`
+# **This is the headless entry point in everything but name.** `/routine <name>`
 # and a future `--run-routine <name>` both call run_routine() with nothing
 # between them and it, which is the whole reason the scheduler was deferred
 # rather than designed around: when the OS scheduler arrives it calls this

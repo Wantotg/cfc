@@ -507,15 +507,8 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
             console.print(msg["content"], style="dim")
 
         # **Every call in this message gets exactly one result, on every path
-        # out of here — including an exception.** That is the invariant this
-        # try/finally exists for, and it is not a tidiness rule: a conversation
-        # holding an assistant message whose calls were never answered is
-        # rejected by the API forever after. db.load_history drops such orphans
-        # on *replay*, so reopening a session repaired it; the live `history`
-        # the REPL keeps replaying from never got that treatment. Ctrl-C at the
-        # approval prompt therefore poisoned the session in place — every
-        # later message 400ed, and `:q` + reopen silently fixed it, which is
-        # what made it look intermittent and provider-shaped.
+        # out of here — including an exception.** An unanswered call rejects
+        # the conversation forever after. See HANDOVER.md standing decision 2.
         answered = set()
         try:
             for call in calls:

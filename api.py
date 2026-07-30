@@ -174,9 +174,11 @@ EMPTY_COMPLETION_RETRIES = 2
 
 # A status code is a provider contract; an error message is not.  Keep this
 # deliberately small: 400 and 401 describe a request/auth problem that another
-# identical call cannot repair, while these three are the temporary admission
-# and availability failures an unattended routine can reasonably outwait.
-TRANSIENT_STATUS_CODES = frozenset((429, 502, 503))
+# identical call cannot repair, while these four are the temporary admission
+# and availability failures an unattended routine can reasonably outwait. 408
+# is deliberately not here: it's the *client* giving up on a slow request, and
+# resending an identical one that was already too slow buys nothing.
+TRANSIENT_STATUS_CODES = frozenset((429, 502, 503, 504))
 
 
 def is_transient_status(error):

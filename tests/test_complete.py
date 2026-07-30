@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_complete.py — `:attach` tab completion. No API calls.
+test_complete.py — `/attach` tab completion. No API calls.
 
     python3 tests/test_complete.py
 
@@ -17,7 +17,7 @@ The rest:
   being reached for, and the first candidate is what Tab accepts without a
   second keystroke.
 - **The jail holds.** A completer is a courtesy, not a control — `do_attach`'s
-  guard is the boundary — but offering a path that `:attach` will then refuse
+  guard is the boundary — but offering a path that `/attach` will then refuse
   wastes an afternoon, so denied and out-of-root paths are never offered.
 - **MIN_CHARS.** Tab on a bare fragment must not dump a directory.
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-test_attach.py — :attach / :attached / :detach.
+test_attach.py — /attach / /attached / /detach.
 
     python3 tests/test_attach.py
 
 The interesting cases are the refusals and the persistence. path_guard has its
-own suite (test_paths.py); this checks that :attach actually calls it, and that
+own suite (test_paths.py); this checks that /attach actually calls it, and that
 each refusal reports the most specific reason rather than the first one.
 """
 import contextlib

@@ -12,7 +12,7 @@
 #      ambiguity; use code for anything with a right answer.
 #
 #   2. **Scoped by default, widened only on the word `all`.** The wiki corpus
-#      is what recall reads, so it is what `:wiki` watches. The rest of the
+#      is what recall reads, so it is what `/wiki` watches. The rest of the
 #      vault — `02 areas` holds medical material — is reachable, but only when
 #      you type the extra word. A narrow default that can be widened
 #      deliberately beats a wide default nobody remembers is wide.
@@ -194,7 +194,7 @@ class Change:
     @property
     def label(self):
         """The porcelain code as a word. Index and worktree collapse into one
-        because this is a review screen, not a staging UI — `:wiki commit` adds
+        because this is a review screen, not a staging UI — `/wiki commit` adds
         everything in scope anyway, so 'staged or not' is not a distinction the
         human has to act on."""
         if self.untracked:
@@ -263,7 +263,7 @@ def status(scope=WIKI, root=None, paths=None):
 
 
 def summary():
-    """(wiki_changes, other_changes) — what `:wiki` prints with no argument.
+    """(wiki_changes, other_changes) — what `/wiki` prints with no argument.
 
     The vault count is computed as everything minus the wiki's own, so the two
     lines can never disagree with each other the way two separate git calls

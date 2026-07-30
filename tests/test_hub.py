@@ -379,6 +379,44 @@ def main():
     finally:
         routines.routine_dir = saved
 
+    print("\n--- the picker shows all seven current routines (W-1.1-04) ---")
+    # The cap was 5; a seventh routine used to fall off the panel with no
+    # signal it existed. Bumped to 7 — still a bounded display limit, not
+    # derived from however many routines the vault holds.
+    ok("the cap itself is 7, not 5", hub.HUB_ROUTINES == 7)
+    try:
+        ids = [f"r{i}" for i in range(1, 8)]
+        rs = [routine(rid=rid) for rid in ids]
+        routines_mod.list_routines = lambda: (rs, [])
+        # Newest-first: r1 ran most recently, r7 longest ago.
+        stamps = {rid: at(i) for i, rid in enumerate(ids, start=1)}
+        routines_mod.last_run = lambda rid: ("ok", stamps[rid], False)
+        rows = hub._routine_rows()
+        ok("all seven routines appear, none dropped by the old cap",
+           len(rows) == 7, rows)
+        ok("...newest-first order is preserved",
+           [r[0] for r in rows] == ids, rows)
+    finally:
+        routines_mod.list_routines, routines_mod.last_run = saved_list, saved_lr
+
+    print("\n--- never-run routines still sort last, even at the new cap ---")
+    try:
+        ids = [f"s{i}" for i in range(1, 7)]  # six ever-run
+        rs = [routine(rid=rid) for rid in ids] + [routine(rid="never")]
+        routines_mod.list_routines = lambda: (rs, [])
+        stamps = {rid: at(i) for i, rid in enumerate(ids, start=1)}
+
+        def lr(rid):
+            if rid == "never":
+                raise RuntimeError("no log for a routine that never ran")
+            return ("ok", stamps[rid], False)
+        routines_mod.last_run = lr
+        rows = hub._routine_rows()
+        ok("the seven fit under the new cap with the never-run one last",
+           [r[0] for r in rows] == ids + ["never"], rows)
+    finally:
+        routines_mod.list_routines, routines_mod.last_run = saved_list, saved_lr
+
     print("\n--- column widths stay fixed, never flexible ---")
     from ui import console
     saved_w = console.width

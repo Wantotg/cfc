@@ -356,7 +356,7 @@ it back**. `/remove` never destroys anything.
 
 | Command | Action |
 |---------|--------|
-| `/model <name>` | Switch the session's model (loose names resolve) |
+| `/model <name or number>` | Switch the session's model (loose names resolve; number is `/list models`'s row) |
 | `/tools` | Whether tools are active, and which switch is blocking |
 | `/tools on` / `/tools off` | Toggle tools for this session |
 | `/database on` / `/database off` | Enable or disable `/recall` and `/remember` here (alias `/db`) |

@@ -27,6 +27,47 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-30 — v1.1.1: a status-coded hiccup no longer costs a model switch, and four playtest fixes
+The v1.1 playtest patch. Six fixes, no new roadmap capability.
+
+**`W-1.1-03`: auto-revert now tells a hiccup from a rejection.**
+`api.TRANSIENT_STATUS_CODES` gains 504 alongside 429/502/503 (`D-1.1-05`; 408
+stays out — resending a request the client itself timed out proves nothing).
+`handle_turn_error` now checks `api.is_transient_status` before reverting a
+just-switched model: a transient leaves the new model selected and the revert
+armed for a real rejection, while only a rejection or an untyped error backs
+out to the model you were on. `D-12`'s remaining stale claim — a
+`tests/test_model_revert.py` docstring that still described arming as scoped
+to unverified models rather than every switch — is corrected in the same edit.
+
+**`/clear notes` says where it's moving things (`D-1.1-08`).** The preview
+now names the guarded notes-inbox path and the cleared-notes archive root, and
+the confirmation prompt is no longer indented into the filename list, where a
+seventh line could read as an eighth note.
+
+**The hub picker shows all seven current routines (`W-1.1-04`).**
+`hub.HUB_ROUTINES` was 5; a seventh routine fell off the panel with no signal
+it existed. Still a bounded display cap, not derived from the vault.
+
+**`/model` takes a number as well as a name (`W-1.1-10`).** `/list models`
+numbers its rows in displayed order; `/model <n>` switches straight to that
+id, with no second picker, and an out-of-range number leaves the model
+unchanged with its own message.
+
+**Retired `:` command spellings are swept from source comments and four test
+docstrings (`D-1.1-09`)** — about 25 instances across nine modules.
+`agent.py`'s long invariant comment above the tool-loop `try/finally` is cut
+to three lines and a pointer to `HANDOVER.md` standing decision 2, which is
+what it was restating in full.
+
+- Files: api.py, main.py, commands.py, hub.py, mover.py, runner.py, wikigit.py,
+  preflight.py, complete.py, ui.py, agent.py, README.md,
+  tests/test_routines.py, tests/test_model_revert.py, tests/test_model.py,
+  tests/test_hub.py, tests/test_attach.py, tests/test_complete.py,
+  tests/test_wikigit.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-30 — Put the proposal's title last on its line
 The v1.1 playtest's one tag-blocking finding (`W-1.1-07`). `/file <title>`
 matched correctly the whole time; the screen it was read off did not let you

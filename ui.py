@@ -323,7 +323,7 @@ def make_snippet(content, query, context=40):
 _prompt_session = None
 
 
-# The `:attach` completer, injected by main.py via set_completer(). It is not
+# The `/attach` completer, injected by main.py via set_completer(). It is not
 # imported here: ui.py sits at the bottom of the dependency graph (see the
 # module header) and complete.py pulls in paths + config, so importing it would
 # put a cycle where the invariant says there is none. ui.py holds it as an
@@ -381,7 +381,7 @@ def _make_prompt_session():
     #
     # complete_while_typing is off: completion is Tab-triggered on purpose, to
     # match complete.py's MIN_CHARS rule. A menu that opens as you type would
-    # pop up over the conversation on every ':attach ~/p' keystroke, and the
+    # pop up over the conversation on every '/attach ~/p' keystroke, and the
     # candidate list is a directory scan across /mnt/c, which is slow enough
     # that doing it per keypress would be felt.
     return PromptSession(multiline=True, key_bindings=kb, erase_when_done=True,

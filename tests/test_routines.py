@@ -605,14 +605,31 @@ def main():
             ok("...and re-runs the identical turn once", len(attempts) == 2,
                len(attempts))
 
+            attempts = []
+
+            def gateway_timeout_once(*a, **kw):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    error = httpx.HTTPError("upstream didn't answer in time")
+                    error.status_code = 504
+                    raise error
+                return {"role": "assistant", "content": "recovered"}
+
+            runner.agent_turn = gateway_timeout_once
+            ok_status, summary, _ = runner.run_routine("empty", conn, model="m")
+            ok("a 504 does not spend the scheduled-run failure either",
+               ok_status is True, summary)
+            ok("...and re-runs the identical turn once", len(attempts) == 2,
+               len(attempts))
+
             # Exact status matching is the safety boundary: a provider may
             # reword an error at any time, and a 400 must not become retryable
             # merely because its text happens to sound temporary.
-            for status in (429, 502, 503):
+            for status in (429, 502, 503, 504):
                 error = httpx.HTTPError("arbitrary provider wording")
                 error.status_code = status
                 ok(f"HTTP {status} is retryable", runner.is_transient_status(error))
-            for status in (400, 401, 500):
+            for status in (400, 401, 408, 500):
                 error = httpx.HTTPError("HTTP 503 in the message is irrelevant")
                 error.status_code = status
                 ok(f"HTTP {status} is not retryable", not runner.is_transient_status(error))
