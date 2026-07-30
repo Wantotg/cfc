@@ -33,8 +33,7 @@ claude_export/
 /MANAGER.md
 /REVIEWER.md
 
-# One update's loop files. Overwritten each loop; the durable record is the
-# repo's own documents.
+# Update loop handovers.
 /Start.md
 /Idea.md
 /Concept.md
