@@ -10,7 +10,7 @@ __pycache__/
 *.db
 chat.db
 
-# Personal data — the Anthropic export is your whole history, keep it local
+# Personal data
 claude_export/
 
 # Editor / OS cruft
@@ -44,28 +44,19 @@ claude_export/
 
 # Superseded by the six specialist files above, kept locally for reference.
 legacy/LEGACY_CLAUDE.md
-BRAINSTORM CLAUDE.md
-CODER CLAUDE.md
-DESIGNER CLAUDE.md
-DRAFT CLAUDE.md
-DEBUG CLAUDE.md
-MANAGER CLAUDE.md
+legacy/BRAINSTORM CLAUDE.md
+legacy/CODER CLAUDE.md
+legacy/DESIGNER CLAUDE.md
+legacy/DRAFT CLAUDE.md
+legacy/DEBUG CLAUDE.md
+legacy/MANAGER CLAUDE.md
 
 # golden harness scratch
 tests/_fixture.db
 
-# personal idea capture, not project history
+# personal repo files
 WISHLIST.md
-
-# roadmap planning detail for versions not yet shipped — see ROADMAP.md
 ROADMAP_PRIVATE.md
-
-# grouped, ordered ideas beyond v1.0, no version numbers yet — see ROADMAP.md
 ROADMAP_BEYOND.md
-
-# one line per open issue, assigned to a version — an index over BUGS.md,
-# BACKLOG.md and the roadmaps, not a fourth place to describe anything
 TRACKER.md
-
-# Codex's private pre-1.0 tour handoff; a session aid, not project doctrine.
 Archive/CODEX_TOUR_REPORT.md
