@@ -551,6 +551,64 @@ def main():
     ok("answered call kept, orphan dropped",
        len(calls) == 1 and calls[0]["id"] == "a1", calls)
 
+    print("\n--- the governor's envelope: one direction, pinned before the "
+          "whole tool loop ---")
+    # A multi-tool-call sequence: two rounds of calls before the model
+    # answers, driven with a First Message and a compiled direction. What
+    # matters is where the direction sits on *every* request, not just the
+    # first — Concept.md's "the two turn paths disagree" failure mode is
+    # exactly a direction that migrates after a tool result.
+    conn.execute("DELETE FROM messages")
+    conn.commit()
+    fm = {"name": "muse.md", "text": "Good morning.", "at": "2026-01-01"}
+    fake = FakeAPI([
+        reply(None, [("read_file", {"path": str(jail / "notes.md")})]),
+        reply(None, [("read_file", {"path": str(jail / "notes.md")})]),
+        reply("Done — read it twice."),
+    ])
+    agent.call_api = fake
+    hist = [{"role": "user", "content": "read it"}]
+    final, out = drive(agent.agent_turn, [{"role": "system", "content": "SYS"}],
+                       hist, "m", conn, 1, keys="a\na\n",
+                       first_message=fm, instruction="stay on task")
+    ok("the loop still answers normally", final["content"] == "Done — read it twice.",
+       final)
+
+    wrapped = f"[cfc direction]\nstay on task\n[/cfc direction]"
+    for i, call in enumerate(fake.seen):
+        msgs = call["messages"]
+        directions = [j for j, m in enumerate(msgs)
+                     if m.get("content") == wrapped]
+        ok(f"call {i}: exactly one direction message", len(directions) == 1,
+           msgs)
+        fms = [j for j, m in enumerate(msgs)
+              if m.get("role") == "assistant"
+              and m.get("content") == "Good morning."]
+        ok(f"call {i}: the First Message is present, right after the prefix",
+           fms == [1], msgs)
+
+    # Explicit position check, call by call — the direction's index must never
+    # move forward as the loop's own tool_call/tool_result messages pile up
+    # after it.
+    first_call_direction_idx = [j for j, m in enumerate(fake.seen[0]["messages"])
+                                if m.get("content") == wrapped][0]
+    for i, call in enumerate(fake.seen[1:], start=1):
+        idx = [j for j, m in enumerate(call["messages"])
+              if m.get("content") == wrapped][0]
+        ok(f"call {i}: the direction stays at its original position "
+           f"({first_call_direction_idx}), not re-appended at the end",
+           idx == first_call_direction_idx, (idx, first_call_direction_idx))
+        # Everything after the direction on this call is machinery the loop
+        # itself produced since the first call (its own tool_calls/results).
+        after = call["messages"][idx + 1:]
+        ok(f"call {i}: the tool loop's own messages land after the direction, "
+           f"never before it",
+           all(m.get("role") in ("assistant", "tool") for m in after), after)
+
+    ok("the direction never leaked into persisted history",
+       all(m.get("content") != wrapped for m in dbmod.load_history(conn, 1)),
+       dbmod.load_history(conn, 1))
+
     agent.call_api = real_call
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

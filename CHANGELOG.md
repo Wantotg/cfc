@@ -27,6 +27,84 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-31 — The active conversation governor (1.3)
+One request envelope (`governor.py`) now carries every cfc-authored direction
+that must reach the model without becoming a line in the conversation —
+First Message, `/continue`, OOC, periodic trait refresh and the bounded tone
+cue are five triggers over that one primitive, not five prompt formats. A
+directed turn prints one dim line naming what cfc added
+(`cfc -> tone check · trait: relax`) immediately before the answer; the
+direction itself never touches `messages`, replay, export or the memory
+index, in both a normal chat and a private one.
+
+**The envelope and its order.** `governor.compile_messages(prefix,
+first_message, history, instruction, split=...)` builds the request in one
+place for both turn paths: persona/system/traits, the session's frozen First
+Message as an assistant turn, durable history, then at most one wrapped
+`[cfc direction]…[/cfc direction]` message in a `user` slot. `split` is what
+keeps the direction pinned at its original position across a growing tool
+loop — `agent_turn` computes it once at entry, so a multi-call turn never
+re-appends the direction after a tool result. Tone applies to every ordinary
+turn; a trait reminder joins it on a cadence turn (`GOVERNOR_TRAIT_INTERVAL`,
+default 6, a pure function of `db.count_chat_user_turns` so it re-derives the
+same answer across a reopen); OOC and `/continue` suppress both and carry
+their own single instruction instead. Driven against the real configured
+provider (nano-gpt, GLM-5.2:thinking): an ordinary directed turn, OOC,
+`/continue` after a First Message, and a later replay with two consecutive
+assistant rows all round-tripped cleanly — the shape is accepted.
+
+**First Message.** A persona with a matching `.md` file in
+`FIRST_MESSAGES_DIR` freezes that text onto a session the first time it opens
+with no chat turns yet — a name, text and opening time snapshot, never a
+`messages` row, so editing the source file only ever changes a *new*
+session's opening. Shown on every reopen, inserted before durable history on
+every request, counted in the hub's Messages column and an export's
+`total_messages`, and included at the export's head. An unreadable companion
+is a visible failure; a missing one is silent, and the two must not read the
+same.
+
+**`/continue`** spends its reserved verb: one direction asking the model to
+continue its last substantive answer (the First Message counts), no new user
+row, no title generation, no tone/trait. Refuses visibly with no API call
+when there is nothing to continue from, or when given arguments.
+
+**OOC** has exactly one grammar (`parse.parse_ooc`): a whole line of the form
+`((direction))`, start to end. Inline markers, unmatched parens and trailing
+text are ordinary prose — the failure mode this guards is a sentence that
+happens to contain double parentheses silently vanishing from the
+transcript. An empty `(( ))` refuses without a provider call.
+
+**Five smaller fixes travelled with it, all from the carried tracker rows.**
+`run` from the routines screen now resolves like `/routine <name>` would —
+the chat model that opened the screen, an unpinned routine's own pin still
+winning (`B-05`). Ctrl-C during a routine records `cancelled` rather than
+crashing the REPL uncaught, keeps the transcript and touched-file evidence,
+skips `on_failure`, and — via `routines.last_settled`, which schedule.py now
+reads instead of `last_run` — cannot make a due routine look satisfied for
+the day or spend a retry slot a real failure would have (`W-0.9.1-06`). The
+golden harness's `/tools` fixture points `commands.TOOLS_ROOTS`/`WRITE_ROOTS`
+at a real temp directory outside the checkout instead of Cas's own configured
+roots, guarded by a new `assert_not_repo_or_real_roots` (`D-11`); a prior
+attempt at this had repointed the *real* `config.WRITE_ROOTS` at a path
+inside the repo and hit `ScopeError` for exactly the right reason, which is
+why this version patches the display copy at its own seam instead. The
+picker's `Msgs` column is `Messages` (`W-0.9.1-02`); `/connect embed` is
+accepted alongside `embedder`/`embeddings` (`W-0.9.1-08`); an unknown
+`/connect` target says "connection" and "available connections"
+(`W-1.1.1-01`); entering a command screen says `help` exists, the same
+pointer the screen's own refusal already gives (`W-1.2.1-02`).
+- Files: governor.py (new), main.py, agent.py, parse.py, db.py, pools.py,
+  export.py, hub.py, commands.py, screens.py, routines.py, runner.py,
+  schedule.py, config.example.py, tests/test_governor.py (new),
+  tests/test_first_message.py (new), tests/test_export.py (new),
+  tests/test_golden_fixture.py (new), tests/test_schema.py, tests/test_pools.py,
+  tests/test_agent.py, tests/test_turn_paths.py, tests/test_private.py,
+  tests/test_parse.py, tests/test_routines.py, tests/test_schedule.py,
+  tests/test_screens.py, tests/test_hub.py, tests/test_model_revert.py,
+  tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-31 — Honest model recovery and repairable advice (1.2.1)
 Three changes, all about a model config or a recovery path saying more than it
 actually knows.

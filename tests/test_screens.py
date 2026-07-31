@@ -681,6 +681,53 @@ def test_routines_run_and_new():
            "next line you type is a message" not in out, out)
 
 
+def test_chat_model_threading():
+    print("\n--- B-05: 'run' resolves like /routine <name> would, from the "
+          "chat that opened this screen ---")
+    import commands
+    with tempfile.TemporaryDirectory() as tmp, Store(tmp):
+        conn = dbmod.db(":memory:")
+        real = commands.do_routine
+        calls = []
+        commands.do_routine = lambda c, name, model=None: calls.append(
+            (name, model))
+        try:
+            # Entered straight from the hub: no chat model to carry.
+            table = screens.build_table("routine")
+            table.dispatch["run"]("nightly", conn, table)
+            ok("no chat_model given -> do_routine sees model=None",
+               calls[-1] == ("nightly", None), calls[-1])
+
+            # Entered from a chat pinned to a specific model.
+            table = screens.build_table("routine",
+                                        chat_model="deepseek/deepseek-v4-pro")
+            table.dispatch["run"]("nightly", conn, table)
+            ok("the opening chat's model reaches do_routine",
+               calls[-1] == ("nightly", "deepseek/deepseek-v4-pro"),
+               calls[-1])
+
+            # Switching screens must not drop it.
+            table2 = screens.build_table(
+                "config", chat_model=table.chat_model)
+            ok("the model survives a screen switch",
+               table2.chat_model == "deepseek/deepseek-v4-pro")
+        finally:
+            commands.do_routine = real
+
+    print("\n--- W-1.2.1-02: entering a screen says help exists ---")
+    with tempfile.TemporaryDirectory() as tmp, Store(tmp):
+        conn = dbmod.db(":memory:")
+        table = screens.build_table("config")
+        import io
+        buf = io.StringIO()
+        screens.console.file = buf
+        screens.render(table, conn)
+        screens.console.file = sys.stdout
+        out = buf.getvalue()
+        ok("the config screen names 'help' on the way in, unprompted",
+           "help" in out.lower(), out)
+
+
 def test_routines_narrow_and_wide():
     print("\n--- routines: neither width elides a value ---")
     long_model = "provider/deepseek-v4-pro-cheaper-and-considerably-longer:thinking"
@@ -761,6 +808,7 @@ def main():
     test_wiki_quick_forms_unaffected()
     test_routines_show_history_open()
     test_routines_run_and_new()
+    test_chat_model_threading()
     test_routines_narrow_and_wide()
     test_private_screen_uses_app_conn()
 

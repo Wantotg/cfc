@@ -40,12 +40,13 @@ HUB_ROUTINES = 7   # routines on the picker
 # Not a chat: excluded from the picker, still visible in `/list`.
 _NON_CHAT = (PROVIDER_WIKI, PROVIDER_ROUTINE)
 
-# Everything the flexible three don't get: ID, Latest message, Msgs, Ctx, plus
-# Rich's per-column padding and the vertical rules. The ID column is 4 wide for
-# every view now — it used to be declared 3 here and then widened to 4 in
-# `list_sessions`/`show_recent_chats` *after* `_widths()` had already divided up
-# the terminal, so those two tables were quietly one column over budget.
-_CHROME = 4 + 17 + 4 + 7 + (7 * 2) + 8
+# Everything the flexible three don't get: ID, Latest message, Messages, Ctx,
+# plus Rich's per-column padding and the vertical rules. The ID column is 4
+# wide for every view now — it used to be declared 3 here and then widened to
+# 4 in `list_sessions`/`show_recent_chats` *after* `_widths()` had already
+# divided up the terminal, so those two tables were quietly one column over
+# budget.
+_CHROME = 4 + 17 + 8 + 7 + (7 * 2) + 8
 
 _TITLE_MIN = 20     # below this a title stops being recognisable
 _TITLE_ENOUGH = 50  # past this, slack is worth more to Prompt/Persona
@@ -99,7 +100,7 @@ def _session_table(title):
     table = Table(title=title, border_style="dim")
     table.add_column("ID", style="cyan", justify="right", width=4)
     table.add_column("Latest message", width=17)
-    table.add_column("Msgs", justify="right", width=4)
+    table.add_column("Messages", justify="right", width=8)
     table.add_column("Ctx", justify="right", width=7)
     table.add_column("Title", no_wrap=True, overflow="ellipsis",
                      width=title_w)
@@ -129,7 +130,11 @@ _SELECT = (
     "s.system_prompt_name, "
     "s.persona_name, "
     "s.model, "
-    f"{_LAST_TOKENS}, {_LAST_TOKENS_OUT} "
+    f"{_LAST_TOKENS}, {_LAST_TOKENS_OUT}, "
+    # The frozen opening is visible conversation but not a `messages` row
+    # (Concept.md's First Message section) — counted here so the picker's
+    # Messages column agrees with /status and the export's total_messages.
+    "(s.first_message_text IS NOT NULL) as has_first_message "
     "FROM sessions s"
 )
 _ORDER = " ORDER BY s.updated_at DESC"
@@ -170,11 +175,11 @@ def _add_rows(table, rows):
     command. One number everywhere costs a little more typing and removes the
     class."""
     for (sid, title, ts, msg_count, prompt_name, persona_name,
-         model, tok_in, tok_out) in rows:
+         model, tok_in, tok_out, has_first_message) in rows:
         table.add_row(
             str(sid),
             format_ts(ts),
-            str(msg_count),
+            str(msg_count + (1 if has_first_message else 0)),
             _context_cell(model, tok_in, tok_out),
             title,
             _strip_md(prompt_name),
@@ -448,7 +453,7 @@ HUB_KEYS = (
     (("p", "private"), "private",
      "start a private chat — in memory, nothing written to disk"),
     (("h", "?", "help"), _SHOW_HELP, "this screen"),
-    (("q", "quit"), "quit", "leave cfc"),
+    (("q", "quit"), "quit", "leave cooking for cats"),
 )
 
 # Typed key → what pick_session returns. Built from the table rather than

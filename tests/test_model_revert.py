@@ -294,7 +294,8 @@ def main_():
     calls_tools = {"a": 0}
 
     def reject_a_once_then_b_tools(prefix, history, model, conn, session_id,
-                                   ctx=None):
+                                   ctx=None, max_calls=None, touched=None,
+                                   first_message=None, instruction=None):
         if model == "flaky-a":
             calls_tools["a"] += 1
             if calls_tools["a"] == 1:

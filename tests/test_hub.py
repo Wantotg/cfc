@@ -61,7 +61,9 @@ def build(path):
         CREATE TABLE sessions (
             id INTEGER PRIMARY KEY, title TEXT, model TEXT, provider TEXT,
             created_at TEXT, updated_at TEXT, system_prompt TEXT,
-            system_prompt_name TEXT, persona TEXT, persona_name TEXT);
+            system_prompt_name TEXT, persona TEXT, persona_name TEXT,
+            first_message_name TEXT, first_message_text TEXT,
+            first_message_at TEXT);
         CREATE TABLE messages (
             id INTEGER PRIMARY KEY, session_id INTEGER, role TEXT,
             content TEXT, model TEXT, tokens_in INTEGER, tokens_out INTEGER,
@@ -235,11 +237,13 @@ def main():
     # threshold, which is why they survive: they were never about the rule.
     #
     # The colour now renders `schedule.why_not_due()`. `schedule` binds
-    # `last_run` at import (`from routines import ... last_run`), so the seam to
-    # patch is `schedule.last_run` and NOT `routines.last_run` — patching the
-    # latter is the mistake `HANDOVER.md` names under "patch the seam, not
-    # config", and it would leave every due assertion silently reading Cas's
-    # real run logs.
+    # `last_settled` at import (`from routines import ... last_settled`) —
+    # 1.3's `why_not_due` reads that instead of `last_run` so a cancelled run
+    # can't make a due routine look done for the day — so the seam to patch
+    # is `schedule.last_settled` and NOT `routines.last_run` or
+    # `routines.last_settled`. Patching the latter is the mistake
+    # `HANDOVER.md` names under "patch the seam, not config", and it would
+    # leave every due assertion silently reading Cas's real run logs.
     import schedule as sched
     from routines import Routine
 
@@ -253,13 +257,13 @@ def main():
                        enabled=enabled)
 
     def with_last_run(ts, fn):
-        """Run `fn` with `schedule.last_run` pinned to one logged run."""
-        saved = sched.last_run
+        """Run `fn` with `schedule.last_settled` pinned to one settled run."""
+        saved = sched.last_settled
         try:
-            sched.last_run = lambda _id: ("ok", ts, False)
+            sched.last_settled = lambda _id: ("ok", ts, False)
             return fn()
         finally:
-            sched.last_run = saved
+            sched.last_settled = saved
 
     # --- the two that are about the label, and are unchanged ---
     ok("never run is dim, not red",
@@ -476,11 +480,55 @@ def main():
     conn.close()
     test_format_date_localises()
     test_hub_help_is_derived()
+    test_first_message_counts()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
     return 1 if FAIL else 0
+
+
+def test_first_message_counts():
+    """1.3: a frozen opening is not a `messages` row, but the picker's
+    Messages column counts it anyway — the same human-facing total
+    `/status` and an export show (tests/test_export.py pins the export
+    half)."""
+    print("\n--- the Messages column counts a First Message too ---")
+    import db as dbmod
+    tmp = Path(tempfile.mkdtemp())
+    dbmod.DB_PATH = tmp / "chat.db"
+    conn = dbmod.db()
+
+    plain = dbmod.new_session(conn, title="plain")
+    dbmod.save_message(conn, plain, "user", "hi")
+    dbmod.save_message(conn, plain, "assistant", "hello")
+
+    opened = dbmod.new_session(conn, title="opened")
+    dbmod.set_first_message(conn, opened, "muse.md", "Good morning.")
+    dbmod.save_message(conn, opened, "user", "hi")
+    dbmod.save_message(conn, opened, "assistant", "hello")
+
+    import hub
+    rows = {r[0]: r for r in conn.execute(hub._SELECT + hub._ORDER).fetchall()}
+    ok("a session with no First Message: msg_count is the raw row count",
+       rows[plain][3] == 2, rows[plain])
+    ok("has_first_message is false for it",
+       rows[plain][-1] == 0, rows[plain])
+    ok("a session with a First Message: has_first_message is true",
+       rows[opened][-1] == 1, rows[opened])
+
+    class _T:
+        def add_row(self, *a):
+            self.last = a
+    t_plain, t_opened = _T(), _T()
+    hub._add_rows(t_plain, [rows[plain]])
+    hub._add_rows(t_opened, [rows[opened]])
+    ok("the rendered Messages cell is the raw count for a plain session",
+       t_plain.last[2] == "2", t_plain.last)
+    ok("...and raw+1 for a session with a First Message",
+       t_opened.last[2] == "3", t_opened.last)
+    conn.close()
+
 
 def test_format_date_localises():
     """`ui.format_date` — the three `[:10]` sites Block 9 replaced.

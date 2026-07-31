@@ -353,6 +353,100 @@ def main_():
         priv6.close()
         routines.routine_dir = saved_rdir
 
+    print("\n--- 1.3: First Message snapshots through conn, private "
+          "included ---")
+    # decision 10: private isolation is the connection, not a flag. Attaching
+    # a persona with a matching companion in a private chat should freeze the
+    # opening exactly as a normal chat does — into the private in-memory row,
+    # never the real db — with no `if private` branch anywhere in the path
+    # that does it (main.py has none).
+    import pools
+    persona_dir = Path(tempfile.mkdtemp())
+    fm_dir = Path(tempfile.mkdtemp())
+    (persona_dir / "muse.md").write_text("You are Muse.\n", encoding="utf-8")
+    (fm_dir / "muse.md").write_text("Good evening — shall we begin?\n",
+                                    encoding="utf-8")
+    saved_persona_dir = pools.POOLS["persona"].configured
+    saved_fm_dir = pools.FIRST_MESSAGES_DIR
+    pools.POOLS["persona"].configured = str(persona_dir)
+    pools.FIRST_MESSAGES_DIR = str(fm_dir)
+    try:
+        priv8 = dbmod.db(":memory:")
+        p8 = dbmod.new_session(priv8, title="(untitled)")
+        real_before = count_msgs(real)
+        drive(priv8, p8, private=True, keys="/add persona muse\n/q\n")
+        snap = dbmod.get_first_message(priv8, p8)
+        ok("the private chat's own row got the snapshot",
+           snap is not None and snap["text"] == "Good evening — shall we "
+           "begin?", snap)
+        ok("...and the real db never heard about it",
+           count_msgs(real) == real_before, (real_before, count_msgs(real)))
+        priv8.close()
+    finally:
+        pools.POOLS["persona"].configured = saved_persona_dir
+        pools.FIRST_MESSAGES_DIR = saved_fm_dir
+
+    print("\n--- 1.3: the governor's direction is request-only, in both "
+          "chats ---")
+    # Adding the governor must not create a fifth path around private-chat
+    # isolation (Concept.md's own words). The marker rides on an OOC turn —
+    # the trigger most likely to be typed with something worth keeping
+    # private in it — and the proof is the standard one this file already
+    # uses: a normal chat as the control (the marker reaches the request but
+    # never durable storage either), then the same drive against a private
+    # connection, plus the two channels 1.3 adds beyond `messages`: replay
+    # and export.
+    import export as exportmod
+    MARK = "zx-governor-direction-must-not-persist"
+    main.stream_response = lambda messages, model=None: (
+        "an ordinary answer", {"prompt_tokens": 3, "completion_tokens": 2}, "")
+
+    def _no_marker_anywhere(conn, sid, label):
+        rows = conn.execute(
+            "SELECT content FROM messages WHERE session_id=?",
+            (sid,)).fetchall()
+        joined = " ".join(r[0] or "" for r in rows)
+        ok(f"{label}: the direction never lands in messages",
+           MARK not in joined, joined)
+        ok(f"{label}: ...nor in replay",
+           all(MARK not in (m.get("content") or "")
+              for m in dbmod.load_history(conn, sid)),
+           dbmod.load_history(conn, sid))
+        ok(f"{label}: the answer itself is still there",
+           "an ordinary answer" in joined, joined)
+
+    ooc_script = f"/tools off\n(({MARK}))\n/q\n"
+
+    print("  (control: a normal chat)")
+    ctl_sid = dbmod.new_session(real, title="gov-control")
+    drive(real, ctl_sid, private=False, keys=ooc_script)
+    _no_marker_anywhere(real, ctl_sid, "normal chat")
+
+    vault_tmp = Path(tempfile.mkdtemp())
+    saved_vault = exportmod.VAULT_PATH
+    exportmod.VAULT_PATH = str(vault_tmp)
+    try:
+        exportmod.export_session(real, ctl_sid, quiet=True)
+        exported_text = "\n".join(
+            p.read_text(encoding="utf-8") for p in vault_tmp.glob("*.md"))
+        ok("normal chat: the direction never reaches an export either",
+           MARK not in exported_text, exported_text)
+        ok("...though the answer does", "an ordinary answer" in exported_text,
+           exported_text)
+    finally:
+        exportmod.VAULT_PATH = saved_vault
+
+    print("  (a private chat, driving the identical OOC turn)")
+    priv7 = dbmod.db(":memory:")
+    p7 = dbmod.new_session(priv7, title="(untitled)")
+    drive(priv7, p7, private=True, keys=ooc_script)
+    _no_marker_anywhere(priv7, p7, "private chat")
+    ok("...and it never reached the real db either",
+       MARK not in " ".join(
+           r[0] or "" for r in real.execute(
+               "SELECT content FROM messages").fetchall()))
+    priv7.close()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

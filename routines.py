@@ -742,9 +742,15 @@ def last_success(routine_id):
     finished but the result wants a glance". The run happened and the file was
     written, so re-running it would process the same period twice. The two
     signals stay separate here for the same reason they do everywhere else.
+
+    A `cancelled` run — Ctrl-C — is not a success either: nothing was
+    absorbed, so it must not make a weekly job think its week is done. Only
+    `status == "ok"` counts, which is also what keeps this correct should a
+    fourth outcome ever join `ok`/`failed`/`cancelled` — a caller does not
+    have to remember to add it here too.
     """
     for rec in reversed(read_log(routine_id)):
-        if rec.status == "failed":
+        if rec.status != "ok":
             continue
         try:
             return datetime.datetime.strptime(rec.timestamp,
@@ -754,3 +760,23 @@ def last_success(routine_id):
             # line we cannot read is not evidence that anything succeeded.
             return None
     return None
+
+
+def last_settled(routine_id):
+    """(status, timestamp, review) of the most recent run that was `ok` or
+    `failed` — skipping any `cancelled` runs — or (None, None, False).
+
+    `last_run` answers "what happened most recently", and a cancelled run is
+    real history that belongs there (Concept.md: it "remains the latest
+    visible history row"). This answers a different question — "what does
+    the schedule have to react to" — and a cancellation absorbed nothing, so
+    it must not look like a completed run today: `schedule.why_not_due` calls
+    this, not `last_run`, precisely so a manual Ctrl-C cannot make a due
+    routine look done for the day, and so it cannot spend a retry slot a real
+    failure would have.
+    """
+    for rec in reversed(read_log(routine_id)):
+        if rec.status == "cancelled":
+            continue
+        return rec.status, rec.timestamp, rec.review
+    return None, None, False

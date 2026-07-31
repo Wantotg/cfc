@@ -14,7 +14,7 @@ network — the chat path and :recall/:remember are covered by hand instead.
 
 If `check` fails after a pure move, the move was not pure.
 """
-import io, os, re, sys, sqlite3, difflib, contextlib, shutil
+import io, os, re, sys, sqlite3, difflib, contextlib, shutil, tempfile
 from pathlib import Path
 from rich.console import Console
 
@@ -167,6 +167,17 @@ SCRIPT = [
     # model, not just a status dump.
     f"{PREFIX}tools",
     f"{PREFIX}database",
+    # Only the usage error is safe here: session 1 already has an assistant
+    # turn from build_fixture(), so a bare /continue would make a real API
+    # call — the refusal path (nothing to continue from) is covered instead
+    # in tests/test_turn_paths.py, against a stubbed provider.
+    f"{PREFIX}continue extra argument",
+    # An unknown /connect target, and the accepted 'embed' alias — both are
+    # local, no-API-call checks (`W-0.9.1-08`, `W-1.1.1-01`). Deterministic
+    # here because `preflight.connection_state` is stubbed to "hosted" below,
+    # which `preflight.ensure` returns early on, before any subprocess call.
+    f"{PREFIX}connect nonsense",
+    f"{PREFIX}connect embed",
     # Kinds are required where something is destroyed, and refused where the
     # kind is unknown. Both print and act on nothing, which is the point.
     f"{PREFIX}delete",
@@ -268,6 +279,31 @@ def assert_not_real(path, what):
     if p == REAL_DB.expanduser().resolve():
         raise AssertionError(f"{what}: refusing to touch the real database "
                              f"at {p}")
+
+
+def assert_not_repo_or_real_roots(path, what):
+    """Refuse a `/tools` fixture root that is the cfc source tree, or one of
+    Cas's own configured `TOOLS_ROOTS`/`WRITE_ROOTS` (`D-11`).
+
+    `/tools` prints permission-model prose, not a status dump — read-roots-
+    are-not-write-roots is the load-bearing half of it — so a fixture root
+    that happens to coincide with the real thing would make the baseline a
+    property of *this machine's config.py* again, exactly the `config.py.bak`
+    class of bug this harness exists to keep out. Checked before the values
+    are assigned, never after, same as every other guard here.
+    """
+    p = Path(path).expanduser().resolve()
+    if p == ROOT or ROOT in p.parents:
+        raise AssertionError(f"{what}: refuses a /tools fixture root under "
+                             f"the cfc source tree ({ROOT})")
+    try:
+        from config import TOOLS_ROOTS as real_tools, WRITE_ROOTS as real_write
+        real_roots = tuple(Path(r).expanduser().resolve()
+                          for r in (tuple(real_tools) + tuple(real_write)))
+    except Exception:
+        real_roots = ()
+    if p in real_roots:
+        raise AssertionError(f"{what}: refuses Cas's own configured root {p}")
 
 
 def build_prompt_fixtures():
@@ -533,15 +569,26 @@ def capture():
     for root in mover.outbox_roots():
         assert_not_real_vault(root, "mover.outbox_roots")
 
-    # **`/tools` still pins two config values and this block does not fix it**
-    # — `D-11`, found here and written up rather than forced through. The
-    # attempt is worth recording because of how it failed: repointing
-    # `WRITE_ROOTS` at a fixture under `tests/` raised `ScopeError`, since
-    # standing decision 4 refuses a write root overlapping the cfc source. The
-    # guard was right and the fix was wrong, which is a different situation
-    # from the outbox above — `mover` validates against its own `MOVE_ROOTS`,
-    # so a fixture inside the repo is fine there and is not fine here. See
-    # `BACKLOG.md`.
+    # `/tools` prints `commands.TOOLS_ROOTS`/`commands.WRITE_ROOTS` — its own
+    # bound copies, read from config at commands.py's import time, never
+    # `context.chat_context()`'s live read of the real `config` module. So
+    # this patches those two names directly, the same seam every other fixture
+    # here uses, and does NOT touch `config.WRITE_ROOTS` or go anywhere near
+    # `context.ScopeError` (`D-11`).
+    #
+    # **The earlier attempt was pointed at the wrong thing, not the wrong
+    # idea.** Repointing the real `config.WRITE_ROOTS` at a path under
+    # `tests/` raised `ScopeError` — standing decision 4 refuses a write root
+    # overlapping the cfc source — because that path *is* inside the source
+    # tree. A real temp directory, created here and torn down in the
+    # `finally` below, is outside it by construction and needs no exception
+    # to the guard. `SCRUB` already collapses `/tmp/...` to `<TMP>`, so the
+    # baseline is deterministic for free once the directory exists.
+    _tools_dir = Path(tempfile.mkdtemp(prefix="cfc-golden-tools-"))
+    assert_not_repo_or_real_roots(_tools_dir, "capture (/tools fixture)")
+    import commands as _commands
+    _commands.TOOLS_ROOTS = (_tools_dir,)
+    _commands.WRITE_ROOTS = (_tools_dir,)
 
     # Same class of bug as the API key, one layer up: :config, :models and
     # :tools all print config.py's model lists straight into the baseline, so
@@ -634,6 +681,7 @@ def capture():
         clean_prompt_fixtures()
         clean_notes_fixture()
         clean_outbox_fixture()
+        shutil.rmtree(_tools_dir, ignore_errors=True)
 
     # The baseline pins the `[auto-exported: …]` line, which proves the message
     # printed. This proves a document landed: safe_export swallows its own

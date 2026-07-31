@@ -23,7 +23,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
-from parse import parse, Cmd, PREFIX, ALIASES, VERBS, RESERVED
+from parse import parse, parse_ooc, Cmd, PREFIX, ALIASES, VERBS, RESERVED
 
 PASS, FAIL = [], []
 
@@ -154,7 +154,7 @@ def main():
        "handlers receive the parse, they don't edit it")
 
     print("\n--- the surface: two lists that have to agree ---")
-    ok("twenty-four verbs", len(VERBS) == 24, len(VERBS))
+    ok("twenty-five verbs", len(VERBS) == 25, len(VERBS))
     ok("no verb is listed twice", len(set(VERBS)) == len(VERBS))
     ok("no alias collides with a live verb",
        not (set(ALIASES) & set(VERBS)), set(ALIASES) & set(VERBS))
@@ -191,6 +191,28 @@ def main():
     c = parse(f"{PREFIX}prompts extra")
     ok("a phrase alias puts its own words first",
        (c.verb, c.args) == ("list", ("prompts", "extra")), (c.verb, c.args))
+
+    print("\n--- OOC: one grammar, exact positive and near-miss cases ---")
+    ok("a plain marker is OOC", parse_ooc("((be gentler))") == "be gentler")
+    ok("surrounding whitespace is trimmed",
+       parse_ooc("  ((be gentler))  ") == "be gentler")
+    ok("an empty marker is OOC but empty",
+       parse_ooc("(( ))") == "", repr(parse_ooc("(( ))")))
+    ok("a marker with nothing between the parens is OOC but empty",
+       parse_ooc("(())") == "")
+    ok("not OOC at all", parse_ooc("just chatting") is None)
+    ok("trailing text after the marker is prose, not OOC",
+       parse_ooc("((be gentler)) please") is None)
+    ok("leading text before the marker is prose, not OOC",
+       parse_ooc("please ((be gentler))") is None)
+    ok("an unmatched opening is prose, not OOC",
+       parse_ooc("((be gentler") is None)
+    ok("an unmatched closing is prose, not OOC",
+       parse_ooc("be gentler))") is None)
+    ok("a sentence that merely contains double parens is prose",
+       parse_ooc("he said ((hi)) to her and left") is None)
+    ok("continue is a spent verb, not reserved any more",
+       "continue" in VERBS and "continue" not in RESERVED)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

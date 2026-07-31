@@ -2204,15 +2204,20 @@ def do_routine(conn, arg, model=None):
             console.print("  cancelled", style="dim")
             console.print()
             return
-    console.print(f"Running routine: {routine.name}")
-    ok, summary, session_id = run_routine(
+    # Ctrl-C during a routine used to propagate uncaught all the way out of
+    # the REPL (`W-0.9.1-06`) — runner.py catches it now and logs `cancelled`,
+    # but the person at the keyboard still has to be told the key does
+    # something sane before they press it.
+    console.print(f"Running routine: {routine.name}  "
+                  f"(Ctrl-C cancels)")
+    status, summary, session_id = run_routine(
         routine, conn, model=model,
         # A human is present for an on-command run. The scheduled path passes
         # False, which is what ToolContext.interactive is reserved for.
         interactive=True,
         on_event=lambda m: console.print(f"  {m}", style="dim"),
     )
-    if ok:
+    if status == "ok":
         console.print(f"  done — {summary}", style="green")
         # The loop worked, but if the model's own words read like it hit a wall,
         # say so — the same 'ok (review)' the hub shows, surfaced live so you
@@ -2220,6 +2225,8 @@ def do_routine(conn, arg, model=None):
         if looks_unclear(summary):
             console.print("  result looks unclear — flagged for review; "
                           "open the transcript", style="yellow")
+    elif status == "cancelled":
+        console.print(f"  cancelled — {summary}", style="yellow")
     else:
         console.print(f"  FAILED — {summary}", style="red")
     if session_id:

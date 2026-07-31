@@ -33,8 +33,8 @@ import sys
 from pathlib import Path
 
 import routines
-from routines import (RoutineError, last_run, last_success, list_routines,
-                      load_routine)
+from routines import (RoutineError, last_settled, last_success,
+                      list_routines, load_routine)
 
 # How many times a failing routine may be retried within one day.
 #
@@ -162,9 +162,12 @@ def why_not_due(routine, now):
     if now < today_at:
         return f"not yet — due at {at.strftime('%H:%M')}"
 
-    status, ts, _ = last_run(routine.id)
+    # `last_settled`, not `last_run`: a Ctrl-C cancellation absorbed nothing,
+    # so due-ness looks past it to the latest `ok`/`failed` run — otherwise a
+    # manual cancel today would make a due routine look done for the day.
+    status, ts, _ = last_settled(routine.id)
     if status is None:
-        return None                       # never run: due
+        return None                       # never settled: due
 
     when = _parse_ts(ts)
     if when is None:
@@ -275,13 +278,16 @@ def _run(keys, model=None, verbose=True):
             name = getattr(key, "id", key)
             print(f"[{datetime.datetime.now().strftime(_TS_FMT)}] {name}: "
                   f"starting")
-            ok, summary, session_id = run_routine(
+            status, summary, session_id = run_routine(
                 key, conn, model=model,
                 on_event=(lambda m, n=name: print(f"  {n}: {m}"))
                 if verbose else None)
             print(f"[{datetime.datetime.now().strftime(_TS_FMT)}] {name}: "
-                  f"{'ok' if ok else 'FAILED'} — {summary}")
-            if not ok:
+                  f"{'FAILED' if status == 'failed' else status} — {summary}")
+            # `cancelled` has no human at the wheel on this path — a scheduled
+            # tick has nobody to press Ctrl-C — but the exit code only ever
+            # meant "did something fail", and cancelled isn't that.
+            if status == "failed":
                 failed += 1
     finally:
         conn.close()

@@ -135,6 +135,46 @@ def main():
            pools.load("trait", "relax") == (None, None))
         pools.POOLS["trait"].configured = saved
 
+        print("\n--- First Message: not a fourth pool, but the same shape ---")
+        fm_dir = root / "first_messages"
+        saved_fm = pools.FIRST_MESSAGES_DIR
+        pools.FIRST_MESSAGES_DIR = str(fm_dir)
+        try:
+            ok("no folder yet: absent, not an error",
+               pools.load_first_message("muse.md") is None)
+
+            fm_dir.mkdir(parents=True, exist_ok=True)
+            ok("a folder with no matching file is absent too",
+               pools.load_first_message("muse.md") is None)
+
+            (fm_dir / "muse.md").write_text("Good morning.\n",
+                                            encoding="utf-8")
+            ok("the persona filename's stem is the key",
+               pools.load_first_message("muse.md") == "Good morning.")
+            ok("a bare name (no .md) resolves the same way",
+               pools.load_first_message("muse") == "Good morning.")
+            ok("an empty name is absent, not every file in the folder",
+               pools.load_first_message("") is None)
+            ok("a persona with no companion file is absent",
+               pools.load_first_message("other.md") is None)
+
+            print("\n--- optional and broken must not look identical ---")
+            # A missing companion (above) returns None, silently. A directory
+            # that exists but can't be listed, or a file that can't be read,
+            # must be a visible failure instead — Concept.md's named failure
+            # mode. Simulated with a directory in place of the expected file,
+            # which IsADirectoryError makes unreadable as text.
+            (fm_dir / "broken.md").mkdir()
+            try:
+                pools.load_first_message("broken.md")
+                ok("an unreadable companion raises FirstMessageError", False,
+                   "did not raise")
+            except pools.FirstMessageError as e:
+                ok("an unreadable companion raises FirstMessageError", True)
+                ok("...naming the path", "broken.md" in str(e), e)
+        finally:
+            pools.FIRST_MESSAGES_DIR = saved_fm
+
         print("\n--- a session's traits are names, never bodies ---")
         conn = temp_db(root / "traits.db")
         sid = dbmod.new_session(conn)

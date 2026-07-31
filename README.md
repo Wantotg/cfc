@@ -81,6 +81,8 @@ Worth knowing about:
 | | |
 |---|---|
 | `VAULT_ROOT` | your vault's top folder. Display only — cfc never builds a path from it, it just trims the machine's prefix off paths it prints. Leave empty for full paths |
+| `FIRST_MESSAGES_DIR` | optional per-persona opening lines — see First Message, below |
+| `GOVERNOR_TRAIT_INTERVAL` | how often (in your own chat turns) an active trait gets a recency reminder (default 6; `0` disables it) |
 | `AUTO_EMBED` | index new chat messages after each turn (default on) |
 | `SPLASH_ART` | a name from `assets/`, a list to pick from, or `"*"` for all (default `"*"`) |
 | `CONTEXT_GREEN_MAX` / `CONTEXT_ORANGE_MAX` | when the context bar turns orange and red, as a percent of the model's claimed limit (default 15 / 35) |
@@ -324,7 +326,33 @@ personas — the filename is the name, no id, no combined file. Unlike those two
 they **stack**: prompts and personas are singular and get overwritten, traits
 append in the order you attach them. The session stores the *names*, not the
 text, so editing a trait file changes what every session carrying it sends, with
-no re-attaching.
+no re-attaching. An active trait also gets a **recency reminder** every few
+turns (`GOVERNOR_TRAIT_INTERVAL`, default 6) — traits reach the model on every
+request already, but a short description has to keep steering an entire, and
+growing, conversation, so it's nudged back into attention periodically rather
+than only said once at attach time.
+
+**First Message.** Drop a `.md` file into `FIRST_MESSAGES_DIR` named after a
+persona (`muse.md` for the persona `muse.md`) and that persona opens a brand
+new, empty session with that text instead of a blank box — attaching the
+persona is the only action, there's no separate command. The words are frozen
+onto the session the moment it happens, so editing the file only ever changes
+what a *future* new session opens with; a conversation that's already started
+keeps what it actually said. Optional per persona — nothing breaks if the file
+isn't there.
+
+**`((double parentheses))`** on a line by themselves are a direction to cfc,
+not a message — `((answer in one word))` gets that turn's answer shaped
+without adding a bubble to the conversation. It has to be the *whole* line;
+`((relax)) please` or a sentence that merely contains a `((...))` anywhere in
+it is ordinary text. `/continue` (above) is the same mechanism, spent as its
+own verb.
+
+Whenever cfc adds one of these — an OOC direction, `/continue`, the tone
+nudge every ordinary turn gets, or a trait's periodic reminder — it prints one
+dim line right before the answer naming what it added, e.g.
+`cfc -> tone check · trait: relax`. None of it is saved: not in this
+session's history, not in an export, not in what gets indexed for `/recall`.
 
 **destroy**
 
@@ -351,6 +379,7 @@ it back**. `/remove` never destroys anything.
 | `/new p` | Start a private chat from here |
 | `/q` | Back to the hub (auto-exports if enabled) |
 | `/title <n> <name>` | Rename session `n` |
+| `/continue` | Ask the model to continue its last answer — no arguments, no new message of yours in the transcript |
 
 **settings**
 
@@ -361,7 +390,7 @@ it back**. `/remove` never destroys anything.
 | `/tools on` / `/tools off` | Toggle tools for this session |
 | `/database on` / `/database off` | Enable or disable `/recall` and `/remember` here (alias `/db`) |
 | `/connect` | Where the embedder stands, and what can be connected |
-| `/connect embedding` | Start LM Studio and its server if they aren't up, and verify |
+| `/connect embedding` | Start LM Studio and its server if they aren't up, and verify (`embed`/`embedder`/`embeddings` all work too) |
 
 **wiki, routines, filing**
 
@@ -495,6 +524,13 @@ the vault and is fully editable in Obsidian.
 taken costs you that one line rather than the whole form. Ctrl-C at any prompt
 abandons the routine — and says so, because the next line you type after that is
 a chat message, not an answer.
+
+**Ctrl-C also cancels a routine that's actually running** (`/routine <name>` or
+`run <routine>` from the routines screen say so as they start). It's logged
+`cancelled` rather than `failed` — whatever the transcript and any files it had
+written by that point are kept, but the run doesn't count against a scheduled
+routine's cadence and doesn't trigger `on_failure`, so a manual cancel today
+doesn't make tomorrow's tick think today's job already happened.
 
 A routine's `trigger:` is one of three things:
 

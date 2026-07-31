@@ -469,7 +469,7 @@ def main():
             good = make(id="crash", read_roots=[str(store.pdir)])
             routines.save_routine(good)
             ok2, summary, sid = runner.run_routine("crash", conn, model="m")
-            ok("a crashing run returns False, not an exception", ok2 is False)
+            ok("a crashing run returns 'failed', not an exception", ok2 == "failed", ok2)
             ok("...names the failure", "provider went away" in summary, summary)
             ok("...still opened a session to read afterwards", sid is not None)
             status, _, _ = routines.last_run("crash")
@@ -484,7 +484,7 @@ def main():
                                                  on_event=events.append)
             ok("the next run reads the failure from the log",
                any("last run failed" in e for e in events), events)
-            ok("...and can then succeed", ok3 is True, summary)
+            ok("...and can then succeed", ok3 == "ok", summary)
             ok("the log now ends ok", routines.last_run("crash")[0] == "ok")
 
             print("\n--- the log names what the run wrote ---")
@@ -501,7 +501,7 @@ def main():
             routines.save_routine(half)
             okh, _, _ = runner.run_routine("halfway", conn, model="m")
             text = routines.log_path("halfway").read_text(encoding="utf-8")
-            ok("a half-finished run is still a failure", okh is False)
+            ok("a half-finished run is still a failure", okh == "failed", okh)
             # This is the whole point of the entry: when a run stops partway,
             # the first question is which files it got to, and the log was the
             # one place that could answer without reading the transcript back.
@@ -517,7 +517,7 @@ def main():
             runner.agent_turn = wrote_and_finished
             oks, _, _ = runner.run_routine("halfway", conn, model="m")
             text = routines.log_path("halfway").read_text(encoding="utf-8")
-            ok("a successful run reports its writes too", oks is True)
+            ok("a successful run reports its writes too", oks == "ok", oks)
             ok("...naming them", "digest.md" in text, text)
 
             # A run that wrote nothing must not grow an empty "wrote" clause —
@@ -531,6 +531,45 @@ def main():
             ok("a run that wrote nothing says nothing about writes",
                "wrote" not in last, last)
 
+            print("\n--- Ctrl-C during a run is 'cancelled', not a crash or "
+                  "a failure ---")
+            # W-0.9.1-06: before this, KeyboardInterrupt propagated straight
+            # out of run_routine, uncaught — the same shape as a real Ctrl-C
+            # taking the whole REPL down. It keeps the transcript and touched-
+            # file evidence collected up to that point, exactly like a normal
+            # failure does, because agent_turn persists and collects as it
+            # goes rather than at the end.
+            def wrote_then_interrupted(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/partial.md"))
+                raise KeyboardInterrupt()
+
+            runner.agent_turn = wrote_then_interrupted
+            cancel = make(id="cancelled-run", read_roots=[str(store.pdir)])
+            routines.save_routine(cancel)
+            status_c, detail_c, sid_c = runner.run_routine(
+                "cancelled-run", conn, model="m")
+            ok("run_routine returns 'cancelled', not raising",
+               status_c == "cancelled", status_c)
+            ok("...naming what happened", "Ctrl-C" in detail_c, detail_c)
+            ok("...and still opened a session to read afterwards",
+               sid_c is not None)
+            ok("the log records it as cancelled",
+               routines.last_run("cancelled-run")[0] == "cancelled",
+               routines.last_run("cancelled-run"))
+            log_text = routines.log_path("cancelled-run").read_text(
+                encoding="utf-8")
+            ok("...and names the file it managed to write first",
+               "partial.md" in log_text, log_text)
+            transcript = conn.execute(
+                "SELECT content FROM messages WHERE session_id=? AND "
+                "role='assistant'", (sid_c,)).fetchall()
+            ok("the transcript records the cancellation, kept, not discarded",
+               any("cancelled" in (r[0] or "").lower() for r in transcript),
+               transcript)
+            ok("last_settled looks past a lone cancellation: never settled",
+               routines.last_settled("cancelled-run") == (None, None, False),
+               routines.last_settled("cancelled-run"))
+
             print("\n--- a routine that cannot run is refused before the API ---")
             invalid = routines.Routine(id="broken", name="Broken",
                                        prompt="gone.md")
@@ -542,12 +581,12 @@ def main():
             runner.agent_turn = explode          # would raise if reached
             ok4, summary, sid = runner.run_routine("broken", conn, model="m")
             ok("an invalid routine fails without calling the model",
-               ok4 is False and "prompt file not found" in summary, summary)
+               ok4 == "failed" and "prompt file not found" in summary, summary)
             ok("...is logged as failed", routines.last_run("broken")[0] == "failed")
             ok("...and never opened a session", sid is None)
 
             disabled = runner.run_routine("off", conn, model="m")
-            ok("a disabled routine does not run", disabled[0] is False)
+            ok("a disabled routine does not run", disabled[0] == "failed", disabled[0])
             ok("...and says so in the log",
                routines.last_run("off")[0] == "skipped")
 
@@ -565,7 +604,7 @@ def main():
             empty = make(id="empty", read_roots=[str(store.pdir)])
             routines.save_routine(empty)
             ok5, summary, _ = runner.run_routine("empty", conn, model="m")
-            ok("an empty completion fails the run", ok5 is False, summary)
+            ok("an empty completion fails the run", ok5 == "failed", summary)
             ok("...and is logged as failed",
                routines.last_run("empty")[0] == "failed")
             ok("...not as ok with a blank summary",
@@ -583,7 +622,7 @@ def main():
 
             runner.agent_turn = empty_once_then_answer
             ok6, summary, _ = runner.run_routine("empty", conn, model="m")
-            ok("one hiccup does not cost the run", ok6 is True, summary)
+            ok("one hiccup does not cost the run", ok6 == "ok", summary)
             ok("...and the answer is the retried one", summary == "did it",
                summary)
 
@@ -600,7 +639,7 @@ def main():
 
             runner.agent_turn = unavailable_once
             ok_status, summary, _ = runner.run_routine("empty", conn, model="m")
-            ok("a 503 does not spend the scheduled-run failure", ok_status is True,
+            ok("a 503 does not spend the scheduled-run failure", ok_status == "ok",
                summary)
             ok("...and re-runs the identical turn once", len(attempts) == 2,
                len(attempts))
@@ -618,7 +657,7 @@ def main():
             runner.agent_turn = gateway_timeout_once
             ok_status, summary, _ = runner.run_routine("empty", conn, model="m")
             ok("a 504 does not spend the scheduled-run failure either",
-               ok_status is True, summary)
+               ok_status == "ok", summary)
             ok("...and re-runs the identical turn once", len(attempts) == 2,
                len(attempts))
 
@@ -641,7 +680,7 @@ def main():
             runner.agent_turn = lambda *a, **kw: {"role": "assistant",
                                                   "content": "   \n  "}
             ok7, _, _ = runner.run_routine("empty", conn, model="m")
-            ok("whitespace-only counts as empty", ok7 is False)
+            ok("whitespace-only counts as empty", ok7 == "failed", ok7)
 
             print("\n--- hitting the tool ceiling is a failed run, not an ok one ---")
             # LIMIT_MESSAGE is non-empty, so it used to sail past the empty
@@ -657,7 +696,7 @@ def main():
 
             runner.agent_turn = hits_the_ceiling
             ok8, summary, _ = runner.run_routine("empty", conn, model="m")
-            ok("the call limit fails the run", ok8 is False, summary)
+            ok("the call limit fails the run", ok8 == "failed", summary)
             ok("...and is logged as failed",
                routines.last_run("empty")[0] == "failed")
             ok("...naming the ceiling it hit",
@@ -756,7 +795,7 @@ def main():
             okc, _, scid = runner.run_routine("crashlog", conn, model="m")
             logtext = routines.log_path("crashlog").read_text(encoding="utf-8")
             ok("a failed run records its session id in the log",
-               okc is False and f"session {scid}" in logtext, logtext)
+               okc == "failed" and f"session {scid}" in logtext, logtext)
 
             print("\n--- RunRecord: an explicit field, not recovered from prose ---")
             # The whole point of D-10's `RunRecord` work: session_id is now a
@@ -889,6 +928,63 @@ def main():
             runner.agent_turn = real_turn
             conn.close()
             dbmod.DB_PATH = saved_path
+
+    print("\n--- do_routine renders all three outcomes distinctly ---")
+    # commands.do_routine is the on-command reader of run_routine's three-way
+    # outcome; a stubbed run_routine proves the rendering without a real turn.
+    # `load_routine` is NOT stubbed — do_routine imports it fresh from
+    # `routines` on every call, so the seam that actually works is a routine
+    # that genuinely exists on disk, the same fixture pattern as everywhere
+    # else in this file.
+    import io
+    from contextlib import redirect_stdout
+
+    import commands
+    import db as dbmod2
+    import models as models_mod
+    import runner as runner_mod
+
+    with tempfile.TemporaryDirectory() as tmp2, Store(tmp2) as store2:
+        dbmod2.DB_PATH = Path(tmp2) / "chat.db"
+        conn2 = dbmod2.db()
+        routines.save_routine(make(id="rr", read_roots=[str(store2.pdir)]))
+        saved_ids = models_mod.routine_ids
+        models_mod.routine_ids = lambda: ()   # nothing vetted -> no nag prompt
+
+        def render(outcome_status, summary="a summary"):
+            saved_run = runner_mod.run_routine
+            try:
+                runner_mod.run_routine = lambda *a, **kw: (
+                    outcome_status, summary, 42)
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    commands.console.file = buf
+                    commands.do_routine(conn2, "rr")
+                commands.console.file = sys.stdout
+                return buf.getvalue()
+            finally:
+                runner_mod.run_routine = saved_run
+
+        try:
+            out_ok = render("ok")
+            ok("an 'ok' run says done", "done — a summary" in out_ok, out_ok)
+            ok("...and starting says Ctrl-C cancels",
+               "Ctrl-C cancels" in out_ok, out_ok)
+
+            out_failed = render("failed")
+            ok("a 'failed' run says FAILED",
+               "FAILED — a summary" in out_failed, out_failed)
+            ok("...and not 'done' or the cancelled wording",
+               "done — a summary" not in out_failed
+               and "cancelled — a summary" not in out_failed, out_failed)
+
+            out_cancelled = render("cancelled")
+            ok("a 'cancelled' run says cancelled, distinctly from FAILED",
+               "cancelled — a summary" in out_cancelled
+               and "FAILED" not in out_cancelled, out_cancelled)
+        finally:
+            models_mod.routine_ids = saved_ids
+            conn2.close()
 
     test_creation_flow()
 

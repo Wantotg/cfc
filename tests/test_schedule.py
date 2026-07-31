@@ -178,6 +178,57 @@ def main():
     ok("a new day resets the count",
        schedule.why_not_due(r, at("2026-07-24", "0301")) is None)
 
+    print("\n--- cancellation is ignored for cadence, after both an older "
+          "success and an older failure ---")
+    # A manual Ctrl-C must not make a due routine look done for the day, and
+    # must not spend a retry slot a real failure would have — schedule.py
+    # reads routines.last_settled, which skips 'cancelled' rows entirely.
+    r = make("cancel-after-ok", on_failure="retry")
+    log("cancel-after-ok", "ok", at("2026-07-23", "0300"))
+    log("cancel-after-ok", "cancelled", at("2026-07-23", "0900"))
+    ok("last_run sees the cancellation — the latest visible history row",
+       routines.last_run("cancel-after-ok")[0] == "cancelled",
+       routines.last_run("cancel-after-ok"))
+    ok("last_settled looks past it to the ok run",
+       routines.last_settled("cancel-after-ok")[0] == "ok",
+       routines.last_settled("cancel-after-ok"))
+    ok("...so due-ness still reads 'already ran today', not 'never settled'",
+       schedule.why_not_due(r, at("2026-07-23", "1000")) is not None,
+       schedule.why_not_due(r, at("2026-07-23", "1000")))
+
+    r = make("cancel-after-fail", on_failure="retry")
+    log("cancel-after-fail", "failed", at("2026-07-23", "0300"))
+    log("cancel-after-fail", "cancelled", at("2026-07-23", "0900"))
+    ok("last_settled looks past a cancellation to the earlier failure",
+       routines.last_settled("cancel-after-fail")[0] == "failed",
+       routines.last_settled("cancel-after-fail"))
+    ok("...so the routine is still due for its retry, not stuck on 'ran today'",
+       schedule.why_not_due(r, at("2026-07-23", "1000")) is None,
+       schedule.why_not_due(r, at("2026-07-23", "1000")))
+    ok("...and the cancellation itself doesn't count toward the retry limit",
+       len([x for x in routines.read_log("cancel-after-fail")
+           if x.status == "failed"]) == 1)
+
+    print("\n--- a routine that has only ever been cancelled has never "
+          "settled ---")
+    r = make("never-settled")
+    log("never-settled", "cancelled", at("2026-07-23", "0300"))
+    ok("last_settled finds nothing", routines.last_settled("never-settled")
+       == (None, None, False), routines.last_settled("never-settled"))
+    ok("due-ness treats it as never run",
+       schedule.why_not_due(r, at("2026-07-23", "0301")) is None)
+
+    print("\n--- a cancellation does not count as a weekly absorption ---")
+    wk = make("weekly-cancel", trigger="weekly 0300")
+    log("weekly-cancel", "ok", at("2026-07-20", "0305"))    # absorbed 13-19
+    log("weekly-cancel", "cancelled", at("2026-07-27", "0305"))
+    ok("last_success looks past the cancellation to the earlier ok run",
+       routines.last_success("weekly-cancel") == at("2026-07-20", "0305"),
+       routines.last_success("weekly-cancel"))
+    ok("the week that just ended is still owed — the cancel absorbed nothing",
+       schedule.why_not_due(wk, at("2026-07-27", "0310")) is None,
+       schedule.why_not_due(wk, at("2026-07-27", "0310")))
+
     print("\n--- a corrupt log does not cause a run storm ---")
     # Reading an unparseable timestamp as "never run" would fire on every tick
     # for the rest of the day. Refusing is the safe direction.

@@ -90,7 +90,9 @@ def db(path=None):
         );
     """)
     for col in ["system_prompt", "system_prompt_name",
-                "persona", "persona_name", "traits"]:
+                "persona", "persona_name", "traits",
+                "first_message_name", "first_message_text",
+                "first_message_at"]:
         try:
             conn.execute(
                 f"ALTER TABLE sessions ADD COLUMN {col} TEXT"
@@ -654,6 +656,74 @@ def set_traits(conn, session_id, names):
         (json.dumps(names) if names else None, session_id),
     )
     conn.commit()
+
+
+def get_first_message(conn, session_id):
+    """The frozen opening snapshot for this session, or None if it never got
+    one — {"name", "text", "at"}. A dict rather than a tuple: the readers
+    (governor, export, hub) are far from here, and a positional tuple would
+    make each guess which field is which.
+    """
+    row = conn.execute(
+        "SELECT first_message_name, first_message_text, first_message_at "
+        "FROM sessions WHERE id=?",
+        (session_id,),
+    ).fetchone()
+    if not row or not row[1]:
+        return None
+    return {"name": row[0], "text": row[1], "at": row[2]}
+
+
+def set_first_message(conn, session_id, name, text, at=None):
+    """Freeze a persona's opening onto this session. Meant to be called
+    once — the caller (main.py) has already checked the session carries no
+    chat turns yet and has no snapshot of its own; this just writes, the same
+    division `set_persona` draws between deciding and doing.
+
+    `at` defaults to now in UTC, matching the only other place this module
+    stores a timestamp (`new_session`, `save_message`) — see HANDOVER's "two
+    time bases" note. A caller passing its own `at` is what lets a test freeze
+    the moment without patching the clock.
+    """
+    at = at or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE sessions SET first_message_name=?, first_message_text=?, "
+        "first_message_at=? WHERE id=?",
+        (name, text, at, session_id),
+    )
+    conn.commit()
+
+
+def has_chat_messages(conn, session_id):
+    """Whether this session has any ordinary chat turn yet.
+
+    First Message eligibility and `/continue`'s refusal both key off this
+    rather than a bare row count: an attachment or a recall marker is
+    machinery, not a chat turn, and must not count as one.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM messages WHERE session_id=? AND kind='chat' LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return row is not None
+
+
+def count_chat_user_turns(conn, session_id):
+    """Durable user chat turns in this session — the governor's trait-cadence
+    clock (`governor.trait_refresh`).
+
+    `kind='chat', role='user'` only: OOC and `/continue` add no user row
+    (governor.py), and attachments/recall markers are their own kinds — so
+    none of them can advance a count meant to answer "how many times has the
+    person actually spoken". Reopening a session costs nothing either, since
+    this is read straight from durable rows rather than kept in memory.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM messages "
+        "WHERE session_id=? AND kind='chat' AND role='user'",
+        (session_id,),
+    ).fetchone()
+    return row[0] if row else 0
 
 
 def delete_session(conn, session_id):

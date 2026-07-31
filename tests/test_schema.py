@@ -194,6 +194,76 @@ def main():
     ok("fresh db has meta", "meta" in cols)
     c.close()
 
+    print("\n--- the First Message columns migrate onto an existing db too ---")
+    # A normal connection and db(":memory:") must use the same schema
+    # (decision 10) — proven here by running the same migration against a
+    # legacy on-disk db (built with no first_message_* columns at all) and a
+    # fresh :memory: connection, and checking both end up identical.
+    legacy2 = tmp / "legacy2.db"
+    legacy_db(legacy2)
+    dbmod.DB_PATH = legacy2
+    disk_conn = dbmod.db()
+    mem_conn = dbmod.db(":memory:")
+    disk_cols = sorted(r[1] for r in
+                       disk_conn.execute("PRAGMA table_info(sessions)"))
+    mem_cols = sorted(r[1] for r in
+                      mem_conn.execute("PRAGMA table_info(sessions)"))
+    ok("a migrated on-disk db and a fresh :memory: db have the same columns",
+       disk_cols == mem_cols, (disk_cols, mem_cols))
+    for c in ("first_message_name", "first_message_text", "first_message_at"):
+        ok(f"{c} is on the disk connection", c in disk_cols)
+        ok(f"{c} is on the memory connection", c in mem_cols)
+
+    print("\n--- get/set_first_message ---")
+    sid = dbmod.new_session(disk_conn, title="fm")
+    ok("no snapshot yet", dbmod.get_first_message(disk_conn, sid) is None)
+    ok("has_chat_messages is false for an empty session",
+       dbmod.has_chat_messages(disk_conn, sid) is False)
+
+    dbmod.set_first_message(disk_conn, sid, "muse.md", "Good evening.",
+                            at="2026-07-31T09:00:00+00:00")
+    snap = dbmod.get_first_message(disk_conn, sid)
+    ok("snapshot round-trips: name", snap["name"] == "muse.md", snap)
+    ok("snapshot round-trips: text", snap["text"] == "Good evening.", snap)
+    ok("snapshot round-trips: at", snap["at"] == "2026-07-31T09:00:00+00:00",
+       snap)
+
+    dbmod.save_message(disk_conn, sid, "user", "hello", kind="chat")
+    ok("has_chat_messages is true once a chat row exists",
+       dbmod.has_chat_messages(disk_conn, sid) is True)
+
+    # kind='attachment' is not a chat turn — First Message eligibility and
+    # /continue's refusal both key off has_chat_messages precisely so an
+    # attach doesn't count as the conversation starting.
+    sid2 = dbmod.new_session(disk_conn, title="fm2")
+    dbmod.save_message(disk_conn, sid2, "user", "a file", kind="attachment")
+    ok("an attachment is not a chat turn",
+       dbmod.has_chat_messages(disk_conn, sid2) is False)
+
+    print("\n--- count_chat_user_turns: the governor's cadence clock ---")
+    sid3 = dbmod.new_session(disk_conn, title="cadence")
+    ok("zero turns in a fresh session",
+       dbmod.count_chat_user_turns(disk_conn, sid3) == 0)
+    dbmod.save_message(disk_conn, sid3, "user", "one", kind="chat")
+    dbmod.save_message(disk_conn, sid3, "assistant", "reply", kind="chat")
+    ok("the assistant row does not count",
+       dbmod.count_chat_user_turns(disk_conn, sid3) == 1)
+    dbmod.save_message(disk_conn, sid3, "user", "two", kind="chat")
+    ok("a second user turn advances the count",
+       dbmod.count_chat_user_turns(disk_conn, sid3) == 2)
+    # OOC and /continue add no user row at all — governor.py's contract — so
+    # the only way to prove they don't advance the count is that nothing
+    # simulating them (a tool_call/tool_result/attachment/recall_marker row)
+    # does either.
+    dbmod.save_message(disk_conn, sid3, "user", "a file", kind="attachment")
+    dbmod.save_message(disk_conn, sid3, "user",
+                       '[:remember "x" → 1 excerpts injected (ephemeral)]',
+                       kind="recall_marker")
+    ok("attachments and recall markers are machinery, not conversation",
+       dbmod.count_chat_user_turns(disk_conn, sid3) == 2)
+    disk_conn.close()
+    mem_conn.close()
+
     print("\n--- deleting reaches the index that points at what was deleted ---")
     # chunks/vec_chunks are an index over messages with no foreign key to
     # enforce it, so the cascade is code. Three failures, and only the first

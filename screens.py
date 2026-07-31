@@ -55,7 +55,7 @@ class ScreenTable:
     visit (the wiki screen's transient review, below).
     """
 
-    def __init__(self, mode, entries, phrase_aliases=None):
+    def __init__(self, mode, entries, phrase_aliases=None, chat_model=None):
         self.mode = mode
         self.entries = entries
         self.phrase_aliases = phrase_aliases or {}
@@ -65,6 +65,12 @@ class ScreenTable:
             for a in aliases:
                 self.dispatch[a] = handler
         self.state = {}
+        # The model of the chat this screen was entered from — `None` when
+        # entered straight from the hub, where there is no chat model to
+        # carry (`B-05`). Kept on the table itself, not in `state`, because
+        # it must survive a screen switch, which rebuilds `state` fresh but
+        # is handed this same value again — see `enter()`.
+        self.chat_model = chat_model
 
 
 def classify(table, line):
@@ -573,7 +579,13 @@ def _routine_run(rest, conn, table):
     if not name:
         console.print("Usage: run <routine>", style="dim")
         return
-    _commands.do_routine(conn, name)
+    # `B-05`: an unpinned routine run from here used to fall through to
+    # `runner.default_routine_model()` because nothing passed a model at
+    # all, silently running on a different model than `/routine <name>`
+    # from the chat that opened this screen would have used. `table.chat_model`
+    # is that chat's model (None if this screen was opened straight from the
+    # hub); a routine's own `model:` pin still wins inside `do_routine`.
+    _commands.do_routine(conn, name, model=table.chat_model)
 
 
 def _routine_new(rest, conn, table):
@@ -634,15 +646,17 @@ def _leave_ok(table, destination):
     return ans in ("y", "yes")
 
 
-def build_table(mode):
+def build_table(mode, chat_model=None):
     if mode == "config":
-        return ScreenTable("config", _config_entries() + _nav_entries("config"))
+        return ScreenTable("config", _config_entries() + _nav_entries("config"),
+                           chat_model=chat_model)
     if mode == "wiki":
         return ScreenTable("wiki", _wiki_entries() + _nav_entries("wiki"),
-                           phrase_aliases=PHRASE_ALIASES)
+                           phrase_aliases=PHRASE_ALIASES, chat_model=chat_model)
     if mode == "routine":
         return ScreenTable("routine",
-                           _routine_entries() + _nav_entries("routine"))
+                           _routine_entries() + _nav_entries("routine"),
+                           chat_model=chat_model)
     raise ValueError(f"unknown screen: {mode!r}")
 
 
@@ -655,9 +669,14 @@ def render(table, conn):
         _commands.show_wiki_status(lead="")
     elif table.mode == "routine":
         _render_routines(conn)
+    # Said once, on the way in — the same pointer the "not a command" refusal
+    # already gives, so entering clean and mistyping the first line no longer
+    # teach two different things (`W-1.2.1-02`).
+    console.print()
+    console.print("Type help to see what works here.", style="dim")
 
 
-def enter(conn, mode="config"):
+def enter(conn, mode="config", chat_model=None):
     """Run the screen controller. Returns None (leave to the session picker)
     or a session id (open that persisted routine transcript as an ordinary
     chat).
@@ -665,8 +684,13 @@ def enter(conn, mode="config"):
     One loop, one current screen — switching replaces `table` rather than
     calling `enter()` again, which is what keeps "config -> wiki -> routine
     -> q" from either recursing or reopening the chat that launched it.
+
+    `chat_model` is the model of the chat this screen was entered from (or
+    `None` from the hub); it rides on every `table` a switch builds so the
+    routines screen's `run <routine>` resolves like `/routine <name>` would
+    have, and survives navigating between screens (`B-05`).
     """
-    table = build_table(mode)
+    table = build_table(mode, chat_model=chat_model)
     render(table, conn)
     while True:
         try:
@@ -697,7 +721,7 @@ def enter(conn, mode="config"):
         kind, value = result
         if kind == "switch":
             if _leave_ok(table, f"the {value} screen"):
-                table = build_table(value)
+                table = build_table(value, chat_model=chat_model)
                 render(table, conn)
             continue
         if kind == "transcript":

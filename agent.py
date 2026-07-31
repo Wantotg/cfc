@@ -26,6 +26,7 @@ from rich.text import Text
 from api import call_api
 from commands import DENIED, SKIPPED, TurnApproval, gate_and_dispatch
 from db import save_message
+import governor
 from tools import TOOL_SCHEMAS, written_path
 from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
 
@@ -357,12 +358,21 @@ def _say_empty():
 
 
 def agent_turn(prefix, history, model, conn, session_id, ctx=None,
-               max_calls=None, touched=None):
+               max_calls=None, touched=None, first_message=None,
+               instruction=None):
     """Run a turn that may use tools. Returns the final assistant message.
 
     Takes the system `prefix` and `history` separately, and appends every
     message it produces to `history` — which is the list the REPL replays from
     on the next turn.
+
+    `first_message` and `instruction` are the governor's envelope pieces (see
+    `governor.compile_messages`): the session's frozen opening and at most one
+    compiled cfc direction. `split` is captured once, here, at `len(history)`
+    before the loop appends anything — which is what keeps the direction
+    pinned at its original position across every call in the loop instead of
+    being re-appended after each tool result. Neither is ever written into
+    `history`, so neither is persisted or replayed.
 
     The handoff's signature was agent_turn(messages, ...), mutating one
     combined list. That list is rebuilt each turn from history + system
@@ -411,9 +421,13 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
     # guarantees the loop terminates.
     calls_used = 0
     result_chars = 0
+    # Captured before the loop appends anything of its own — see the
+    # docstring's note on `split`.
+    split = len(history)
 
     while calls_used < max_calls:
-        messages = list(prefix) + history
+        messages = governor.compile_messages(
+            prefix, first_message, history, instruction, split=split)
 
         too_big = _oversize_reason(messages, model)
         if too_big:

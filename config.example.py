@@ -34,6 +34,15 @@ PROMPTS_DIR = "PLACEHOLDER"
 PERSONAS_DIR = "PLACEHOLDER"
 TRAITS_DIR = "PLACEHOLDER"
 
+# Optional opening lines for a persona, one .md file per persona filename —
+# `muse.md` here is the First Message for the persona `muse.md`. Not a fourth
+# pool: it isn't attachable and has no name of its own, only the persona's.
+# When a persona with a matching file here first becomes active in a session
+# with no chat turns yet, cfc snapshots that file's text onto the session as
+# a frozen opening AI turn. Leave unset (or the file absent) and personas work
+# exactly as before — a companion is optional per persona, not required.
+FIRST_MESSAGES_DIR = "PLACEHOLDER"
+
 # Models available on your plan, and everything cfc needs to know about each
 # one — one place instead of four. Order is what /list models and /model <n>
 # show; nothing here has to be exhaustive, an unlisted id can still be typed
@@ -160,6 +169,15 @@ TOOLS_MAX_TURN_RESULT_CHARS = 120_000  # all tool output in one turn (~30k tok)
 # (the turn ends, you type "continue"), and unattended there is nobody to type
 # it. Hitting this is a *failed* run, not a silently truncated ok one.
 ROUTINE_MAX_CALLS_PER_TURN = 30
+
+# How often the active conversation governor (governor.py) refreshes a trait
+# into the model's attention, in durable user chat turns. Traits already reach
+# the model on every request as a system message; this is a recency aid on top
+# of that, not a second trait system. 6 is a starting policy, not a measured
+# constant — playtest before trusting it. A positive integer sets the
+# interval; 0 disables automatic refresh only (traits still ride every
+# request as system messages either way).
+GOVERNOR_TRAIT_INTERVAL = 6
 
 # --- routines --------------------------------------------------------------
 # A routine is a task the model runs on demand (/routine <name>) or on a

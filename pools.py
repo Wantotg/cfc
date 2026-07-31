@@ -38,6 +38,10 @@ try:
     from config import TRAITS_DIR
 except ImportError:
     TRAITS_DIR = ""
+try:
+    from config import FIRST_MESSAGES_DIR
+except ImportError:
+    FIRST_MESSAGES_DIR = ""
 
 
 class Pool:
@@ -318,3 +322,58 @@ def load(kind, name):
         if path.is_file():
             return path.read_text(encoding="utf-8").strip(), path.name
     return None, None
+
+
+# --- First Message: a persona's optional frozen opening -------------------
+#
+# Not a fourth pool. It isn't attachable, has no listing of its own and no
+# separate name to keep in step — a persona's own filename is its whole
+# identity here too. Kept in this module anyway because it is the same shape
+# as the three pools above (a folder of .md files, filename is the key) and
+# because `stem()` is what both need to compare a stored `persona_name`
+# ("muse.md") against a bare query.
+
+
+def first_messages_dir():
+    """Where a persona's frozen opening lives, one .md per persona filename."""
+    return (Path(FIRST_MESSAGES_DIR).expanduser() if FIRST_MESSAGES_DIR
+            else Path.home() / ".cfc" / "first_messages")
+
+
+class FirstMessageError(Exception):
+    """The folder or the matching file exists but couldn't be read.
+
+    Kept distinct from "no companion for this persona" (a plain `None`
+    return) on purpose — Concept.md names this failure mode directly:
+    optional and broken must never look identical.
+    """
+
+
+def load_first_message(persona_name):
+    """The opening text for a persona's filename, or None if it has no
+    companion. Raises FirstMessageError for anything that reads as broken —
+    an unreadable directory or an unreadable file — rather than returning
+    the same None a missing companion does.
+    """
+    name = stem(persona_name or "")
+    if not name:
+        return None
+    d = first_messages_dir()
+    try:
+        is_dir = d.is_dir()
+    except OSError as e:
+        raise FirstMessageError(f"can't read {d}: {e}") from e
+    if not is_dir:
+        return None
+    path = d / f"{name}.md"
+    if not path.exists():
+        return None
+    if not path.is_file():
+        # Something is there and it isn't a file — a directory sitting where
+        # the companion should be, say. Absent and broken must not read the
+        # same: a missing companion is silent, this is not.
+        raise FirstMessageError(f"{path} is not a file")
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        raise FirstMessageError(f"can't read {path}: {e}") from e

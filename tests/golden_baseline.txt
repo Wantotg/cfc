@@ -97,22 +97,22 @@ you>
   prompts · personas · traits · models · routines · tags · chats · sessions · outbox
 
 you>                                               Sessions
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
-┃   ID ┃ Latest message    ┃ Msgs ┃     Ctx ┃ Title                          ┃ Prompt   ┃ Persona  ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│    1 │ <TS>  │    4 │       8 │ Golden session one             │          │          │
-│    2 │ <TS>  │    2 │       3 │ Golden session two             │          │          │
-│    3 │ <TS>  │    0 │       — │ (untitled)                     │          │          │
-└──────┴───────────────────┴──────┴─────────┴────────────────────────────────┴──────────┴──────────┘
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃   ID ┃ Latest message    ┃ Messages ┃     Ctx ┃ Title                      ┃ Prompt   ┃ Persona  ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│    1 │ <TS>  │        4 │       8 │ Golden session one         │          │          │
+│    2 │ <TS>  │        2 │       3 │ Golden session two         │          │          │
+│    3 │ <TS>  │        0 │       — │ (untitled)                 │          │          │
+└──────┴───────────────────┴──────────┴─────────┴────────────────────────────┴──────────┴──────────┘
 
 you>                                             Recent chats
-┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
-┃   ID ┃ Latest message    ┃ Msgs ┃     Ctx ┃ Title                          ┃ Prompt   ┃ Persona  ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│    1 │ <TS>  │    4 │       8 │ Golden session one             │          │          │
-│    2 │ <TS>  │    2 │       3 │ Golden session two             │          │          │
-│    3 │ <TS>  │    0 │       — │ (untitled)                     │          │          │
-└──────┴───────────────────┴──────┴─────────┴────────────────────────────────┴──────────┴──────────┘
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃   ID ┃ Latest message    ┃ Messages ┃     Ctx ┃ Title                      ┃ Prompt   ┃ Persona  ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│    1 │ <TS>  │        4 │       8 │ Golden session one         │          │          │
+│    2 │ <TS>  │        2 │       3 │ Golden session two         │          │          │
+│    3 │ <TS>  │        0 │       — │ (untitled)                 │          │          │
+└──────┴───────────────────┴──────────┴─────────┴────────────────────────────┴──────────┴──────────┘
 
 you>
 Available prompts (<ROOT>/tests/_fixture_prompts):
@@ -260,14 +260,19 @@ Tools: inactive this turn
   session toggle (/tools on|off): on
   model glm-5.2: does not support tools
     tool-capable models: tool-model
-  read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
-  write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
+  read roots: <TMP>
+  write roots: <TMP>
   approval: every call is gated (no auto-approve exists)
   max calls per turn: 25
   max tool output per turn: 120,000 chars
   available: list_dir, read_file, grep (read), write_file (write)
 
 you> Database is on for this session.
+you> Usage: /continue   (no arguments)
+you> Unknown connection 'nonsense'. Available connections: embedding
+you>   embedder: http://localhost:1233/v1
+  ✗ hosted embedder unreachable — golden harness stub
+    not something cfc can start; memory will be degraded.
 you> Usage: /delete chat [<id>]   (deletes this conversation and its messages)
   /remove is the reversible one — prompts, personas, traits, attachments, excerpts.
 you> Don't know how to delete 'wombat'. Deletable: chat.
@@ -377,6 +382,8 @@ Export            <ROOT>/tests/_fixture_vault
 
 Wiki              unavailable — WIKI_DIR is not configured
 Routines          nothing needs attention · open with: routine
+
+Type help to see what works here.
 config>
 cooking for cats: config
 
@@ -406,6 +413,8 @@ cooking for cats: wiki
 
   WIKI_DIR is not configured
 
+
+Type help to see what works here.
 wiki>
   WIKI_DIR is not configured
 
@@ -423,6 +432,8 @@ wiki>
 cooking for cats: routines
 
 (none yet — 'new' to make one)
+
+Type help to see what works here.
 routine>
 routine commands
   show     show <routine> — the complete routine

@@ -12,7 +12,7 @@ from pathlib import Path
 from config import VAULT_PATH
 
 from ui import console, format_date, format_ts
-from db import get_session_tags
+from db import get_session_tags, get_first_message
 
 
 def _attachment_line(content, meta):
@@ -98,6 +98,13 @@ def export_session(conn, session_id, quiet=False):
     total_in = sum(m[2] or 0 for m in messages)
     total_out = sum(m[3] or 0 for m in messages)
 
+    first_message = get_first_message(conn, sid)
+    # Counted in the human-facing total: it is visible conversation (an
+    # opening AI turn), just not a `messages` row — see Concept.md's First
+    # Message section. It carries no tokens of its own, so total_in/total_out
+    # above are unaffected.
+    total_message_count = len(messages) + (1 if first_message else 0)
+
     tags = get_session_tags(conn, sid)
 
     bad_chars = '\\/:*?"<>|'
@@ -124,7 +131,7 @@ def export_session(conn, session_id, quiet=False):
     lines.append(f"provider: {provider}")
     lines.append(f"created_at: {created_at}")
     lines.append(f"updated_at: {updated_at}")
-    lines.append(f"total_messages: {len(messages)}")
+    lines.append(f"total_messages: {total_message_count}")
     lines.append(f"total_tokens_in: {total_in}")
     lines.append(f"total_tokens_out: {total_out}")
     if sys_prompt_name:
@@ -159,6 +166,18 @@ def export_session(conn, session_id, quiet=False):
         lines.append(f"*{sys_prompt_name}*")
         lines.append("")
         lines.append(sys_prompt)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    if first_message:
+        # At the head of the transcript, not the appendices above: it is the
+        # conversation's opening turn, unlike the persona/system-prompt bodies
+        # it sits below, which are configuration rather than something said.
+        lines.append("## AI")
+        lines.append(f"*{format_ts(first_message['at'])}*")
+        lines.append("")
+        lines.append(first_message["text"])
         lines.append("")
         lines.append("---")
         lines.append("")

@@ -335,13 +335,14 @@ def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event,
 
 
 def run_routine(key, conn, model=None, interactive=False, on_event=None):
-    """Run one routine. Returns (ok, summary, session_id).
+    """Run one routine. Returns `(status, summary, session_id)`.
 
-    Never raises for an expected failure — a routine that dies must still get
-    a log line, so failures come back as `(False, reason, session_id)` and the
-    log is written on every path out of here. `on_event(str)` is optional
-    progress reporting, so the REPL can narrate without this module owning a
-    console.
+    `status` is an explicit outcome — `"ok"`, `"failed"` or `"cancelled"` —
+    rather than one bool asked to mean all three. Never raises for an
+    expected failure — a routine that dies must still get a log line, so
+    failures come back as `("failed", reason, session_id)` and the log is
+    written on every path out of here. `on_event(str)` is optional progress
+    reporting, so the REPL can narrate without this module owning a console.
     """
     def event(msg):
         if on_event:
@@ -350,17 +351,17 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     try:
         routine = key if hasattr(key, "id") else load_routine(key)
     except RoutineError as e:
-        return False, str(e), None
+        return "failed", str(e), None
 
     if not routine.enabled:
         append_log(routine.id, "skipped", "routine is disabled")
-        return False, f"{routine.id} is disabled", None
+        return "failed", f"{routine.id} is disabled", None
 
     problems = routine.validate()
     if problems:
         detail = "; ".join(problems)
         append_log(routine.id, "failed", f"invalid: {detail}")
-        return False, f"{routine.id} is invalid: {detail}", None
+        return "failed", f"{routine.id} is invalid: {detail}", None
 
     # The previous outcome is read from the log, not from memory — a scheduled
     # run is a fresh process and has no memory to read. on_failure is stored
@@ -402,7 +403,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         task = routine.prompt_text()
     except RoutineError as e:
         append_log(routine.id, "failed", str(e), session_id=session_id)
-        return False, str(e), session_id
+        return "failed", str(e), session_id
 
     task, unfilled = fill_placeholders(task, started, routine.id)
     if unfilled:
@@ -430,6 +431,23 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     try:
         final = _turn_with_retry(prefix, task, model, conn, session_id, ctx,
                                  event, touched=touched)
+    except KeyboardInterrupt:
+        # On-command only — the scheduled path has nobody at the terminal to
+        # press it. Neither a success nor a failure: `agent_turn` persists
+        # every message and collects `touched` as it goes rather than at the
+        # end, so the transcript and the touched-file evidence up to this
+        # moment are already real and are kept exactly as they are. Logging
+        # `cancelled` (not `failed`) is what keeps `on_failure` from firing
+        # and `schedule.last_settled` from treating today's cadence as
+        # satisfied — a manual cancel must not look like the job ran.
+        elapsed = (datetime.datetime.now() - started).total_seconds()
+        detail = f"interrupted (Ctrl-C) after {elapsed:.0f}s"
+        save_message(conn, session_id, "assistant",
+                     f"[routine cancelled]\n\n{detail}", model=model)
+        conn.commit()
+        append_log(routine.id, "cancelled", detail, touched=touched,
+                   session_id=session_id)
+        return "cancelled", detail, session_id
     except Exception as e:                      # noqa: BLE001 — see below
         # Deliberately broad. Anything from an HTTP timeout to a provider
         # returning a shape we don't expect has to reach the log, because an
@@ -468,7 +486,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # own `transcript: session #N` line stays the single on-screen source.
         append_log(routine.id, "failed", f"{detail} ({elapsed:.0f}s)",
                    touched=touched, session_id=session_id)
-        return False, detail, session_id
+        return "failed", detail, session_id
 
     conn.commit()
     content = final.get("content", "")
@@ -481,4 +499,4 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     # status, not inside it.
     append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s)",
                touched=touched, review=review, session_id=session_id)
-    return True, summary, session_id
+    return "ok", summary, session_id

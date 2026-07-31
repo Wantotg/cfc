@@ -47,6 +47,7 @@ sys.dont_write_bytecode = True
 import agent
 import commands
 import db as dbmod
+import governor
 import main
 import models
 
@@ -205,6 +206,124 @@ def main_():
     t_ctx = commands.get_context_info(conn, tool_sid, MODEL)
     ok("both sessions report the same context afterwards", s_ctx == t_ctx,
        f"{s_ctx} != {t_ctx}")
+
+    print("\n--- the governor's envelope, captured from both paths ---")
+    # Capturing stubs — same shape as test_agent.py's FakeAPI, but recording
+    # what each path was actually asked, so the direction can be found in
+    # the real assembled request rather than inferred from behaviour.
+    stream_calls, tool_calls_seen = [], []
+
+    def capturing_stream(messages, model=None):
+        stream_calls.append([dict(m) for m in messages])
+        return ANSWER, dict(USAGE), ""
+
+    def capturing_call_api(messages, model=None, tools=None):
+        tool_calls_seen.append([dict(m) for m in messages])
+        return {"choices": [{"message": {"role": "assistant",
+                                         "content": ANSWER}}],
+               "usage": dict(USAGE)}
+
+    main.stream_response = capturing_stream
+    agent.call_api = capturing_call_api
+
+    tone_wrapped = f"[cfc direction]\n{governor.TONE_INSTRUCTION}\n" \
+                  f"[/cfc direction]"
+
+    s_sid = dbmod.new_session(conn, title="gov-stream", model=MODEL)
+    drive(conn, s_sid, "/tools off\nhello\n/q\n")
+    t_sid = dbmod.new_session(conn, title="gov-tools", model=MODEL)
+    drive(conn, t_sid, "hello\n/q\n")
+
+    ok("the streaming path's request carries the tone-check direction",
+       any(m.get("content") == tone_wrapped for m in stream_calls[-1]),
+       stream_calls[-1])
+    ok("the tool path's request carries the same direction",
+       any(m.get("content") == tone_wrapped for m in tool_calls_seen[-1]),
+       tool_calls_seen[-1])
+    ok("both requests carry exactly one direction message",
+       sum(1 for m in stream_calls[-1] if m.get("content") == tone_wrapped)
+       == 1 == sum(1 for m in tool_calls_seen[-1]
+                   if m.get("content") == tone_wrapped))
+
+    print("\n--- the dim governor line names what it added ---")
+    out, _ = drive(conn, dbmod.new_session(conn, title="gov-line", model=MODEL),
+                   "/tools off\nhi again\n/q\n")
+    ok("an ordinary turn prints 'cfc -> tone check'",
+       "cfc -> tone check" in out, out)
+
+    print("\n--- /continue: usage, refusal, and a real directed turn ---")
+    stream_calls.clear()
+    bare_sid = dbmod.new_session(conn, title="continue-bare", model=MODEL)
+    out, _ = drive(conn, bare_sid, "/tools off\n/continue extra args\n/q\n")
+    ok("/continue with arguments is a usage error, not a turn",
+       "Usage: /continue" in out, out)
+    ok("...and makes no API call", stream_calls == [])
+
+    empty_sid = dbmod.new_session(conn, title="continue-empty", model=MODEL)
+    out, _ = drive(conn, empty_sid, "/tools off\n/continue\n/q\n")
+    ok("/continue with nothing to continue from refuses visibly",
+       "Nothing to continue yet" in out, out)
+    ok("...and makes no API call either", stream_calls == [])
+
+    cont_sid = dbmod.new_session(conn, title="continue-real", model=MODEL)
+    drive(conn, cont_sid, "/tools off\nhello\n/q\n")   # one ordinary turn first
+    stream_calls.clear()
+    before_rows = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id=?",
+        (cont_sid,)).fetchone()[0]
+    out, _ = drive(conn, cont_sid, "/tools off\n/continue\n/q\n")
+    after_rows = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id=?",
+        (cont_sid,)).fetchone()[0]
+    ok("/continue makes exactly one API call", len(stream_calls) == 1,
+       stream_calls)
+    continue_wrapped = (f"[cfc direction]\n{governor.CONTINUE_INSTRUCTION}\n"
+                        f"[/cfc direction]")
+    ok("...whose request carries the continue direction, not tone/trait",
+       any(m.get("content") == continue_wrapped for m in stream_calls[0])
+       and not any(m.get("content") == tone_wrapped for m in stream_calls[0]),
+       stream_calls[0])
+    ok("...and adds exactly one durable row (the answer), no user row",
+       after_rows - before_rows == 1, (before_rows, after_rows))
+    last_two = conn.execute(
+        "SELECT role FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 2",
+        (cont_sid,)).fetchall()
+    ok("...leaving two consecutive assistant rows in durable history",
+       [r[0] for r in last_two] == ["assistant", "assistant"], last_two)
+    ok("the dim line names it", "cfc -> continue" in out, out)
+
+    print("\n--- OOC: exact grammar, no user row, suppresses tone/trait ---")
+    stream_calls.clear()
+    ooc_sid = dbmod.new_session(conn, title="ooc", model=MODEL)
+    before_rows = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id=?",
+        (ooc_sid,)).fetchone()[0]
+    out, _ = drive(conn, ooc_sid, "/tools off\n((be gentler))\n/q\n")
+    after_rows = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id=?",
+        (ooc_sid,)).fetchone()[0]
+    ooc_wrapped = "[cfc direction]\nbe gentler\n[/cfc direction]"
+    ok("OOC makes exactly one API call", len(stream_calls) == 1, stream_calls)
+    ok("...whose request carries the typed text as the whole direction",
+       any(m.get("content") == ooc_wrapped for m in stream_calls[0]),
+       stream_calls[0])
+    ok("...and no tone-check direction rides alongside it",
+       not any(m.get("content") == tone_wrapped for m in stream_calls[0]),
+       stream_calls[0])
+    ok("no user row for the OOC marker itself — only the answer is durable",
+       after_rows - before_rows == 1, (before_rows, after_rows))
+    ok("the marker text was never saved as a message",
+       conn.execute("SELECT COUNT(*) FROM messages WHERE session_id=? AND "
+                    "content LIKE '%be gentler%' AND role='user'",
+                    (ooc_sid,)).fetchone()[0] == 0)
+    ok("the dim line names it", "cfc -> ooc" in out, out)
+
+    stream_calls.clear()
+    empty_ooc_sid = dbmod.new_session(conn, title="ooc-empty", model=MODEL)
+    out, _ = drive(conn, empty_ooc_sid, "/tools off\n(( ))\n/q\n")
+    ok("an empty OOC marker refuses without a provider call",
+       "Empty OOC direction" in out, out)
+    ok("...and really makes no call", stream_calls == [])
 
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

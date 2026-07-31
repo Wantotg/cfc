@@ -19,6 +19,7 @@
 # a trap fixed by a comment rather than structurally, and one that comes back
 # every time a command is added whose name prefixes another. Exact verb
 # matching cannot have that bug.
+import re
 from dataclasses import dataclass
 
 # The command prefix. It is one constant on purpose: flipping it in v0.8 was a
@@ -101,7 +102,7 @@ VERBS = (
     "delete",                                         # destroy
     "export",                                         # data
     "recall", "remember", "update",                   # memory
-    "new", "q", "title",                              # session
+    "new", "q", "title", "continue",                  # session
     "model", "tools", "database", "connect",          # settings
     "wiki", "routine", "file", "move", "clear",       # feature areas
 )
@@ -109,8 +110,10 @@ VERBS = (
 # Verbs held but deliberately unspent. Reserving costs nothing; spending one
 # does, which is why `:routine name` stayed `/routine name` rather than becoming
 # `/start name`. `connect` was spent in v0.9 — it had been held since v0.8
-# precisely for this, which is the reservation working as intended.
-RESERVED = ("start", "launch", "swap", "continue", "refresh", "import")
+# precisely for this, which is the reservation working as intended. `continue`
+# was spent in v1.3, for the governor's own reserved-turn trigger — held since
+# v0.8 for exactly this.
+RESERVED = ("start", "launch", "swap", "refresh", "import")
 
 
 @dataclass(frozen=True)
@@ -189,6 +192,32 @@ def parse(line, prefix=PREFIX):
         raw=raw,
         args=tuple(raw.split()),
     )
+
+
+# OOC: exactly one grammar, one parser, pinned by exact positive and
+# near-miss examples (tests/test_parse.py) rather than by rewording it and
+# hoping — the same discipline HANDOVER asks of every producer/parser pair.
+# The whole line must be `((...))`, start to end: a marker with anything
+# before or after it, an unmatched paren, or an inline `(( ))` in the middle
+# of a sentence is ordinary prose, never OOC. That is what stops a sentence
+# that happens to contain double parentheses from silently disappearing from
+# the transcript.
+_OOC_RE = re.compile(r"^\(\((?P<body>.*)\)\)$", re.DOTALL)
+
+
+def parse_ooc(line):
+    """The inner text of an exact `((direction))` line, or None if this line
+    isn't OOC at all.
+
+    An empty `(( ))` returns `""` rather than None — it *is* OOC, just with
+    nothing in it, and the caller (main.py) is the one that refuses it
+    without a provider call. Collapsing that into "not OOC" would make an
+    empty marker read as an ordinary chat message instead of a mistake.
+    """
+    m = _OOC_RE.match((line or "").strip())
+    if not m:
+        return None
+    return m.group("body").strip()
 
 
 def looks_like_path(fragment):

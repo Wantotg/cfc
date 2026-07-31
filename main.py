@@ -35,9 +35,11 @@ except ImportError:
 from splash import splash
 from rich.text import Text
 
-from parse import parse, looks_like_path, VERBS, PREFIX
+from parse import parse, parse_ooc, looks_like_path, VERBS, PREFIX
 from assemble import assemble_system
-from pools import bodies as pool_bodies, pool as pool_of, stem
+import governor
+from pools import (bodies as pool_bodies, pool as pool_of, stem,
+                   load_first_message, FirstMessageError)
 
 from ui import console, human_panel, read_input, set_completer
 # `db` is both the module and its connect function; main.py wants the
@@ -52,6 +54,8 @@ from db import (
     set_system_prompt, clear_system_prompt,
     get_persona, get_persona_name, set_persona, clear_persona,
     get_traits, set_traits,
+    get_first_message, set_first_message, has_chat_messages,
+    count_chat_user_turns,
     delete_session,
 )
 from agent import agent_turn, render_answer, tools_guidance
@@ -263,10 +267,50 @@ def run_session(conn, session_id, private=False, app_conn=None,
     # editing a trait file updates every session carrying its name. See
     # db.get_traits.
     trait_names = get_traits(conn, session_id)
+    # The frozen opening, if this session has one. `private` needs no branch
+    # here (decision 10/15): `conn` is already the isolated `:memory:`
+    # connection for a private chat, so `set_first_message` below is already
+    # writing nowhere durable without anyone having to remember to check.
+    first_message = get_first_message(conn, session_id)
+
+    def _snapshot_first_message_if_eligible():
+        """Freeze this persona's opening onto the session the first moment
+        it can: a persona is attached, no chat turn has happened yet, and
+        nothing is frozen already. Called at session open (an existing empty
+        session may acquire one the first time it opens with a matching
+        persona) and right after a persona is attached mid-session. Returns
+        the text if it just froze one, else None — including when there was
+        already a snapshot, which the caller tells apart by `first_message`
+        itself already being set.
+        """
+        nonlocal first_message
+        if first_message is not None or not persona_name:
+            return None
+        if has_chat_messages(conn, session_id):
+            return None
+        try:
+            text = load_first_message(persona_name)
+        except FirstMessageError as e:
+            console.print(f"[First Message unavailable: {e}]", style="yellow")
+            return None
+        if text is None:
+            return None
+        set_first_message(conn, session_id, persona_name, text)
+        first_message = get_first_message(conn, session_id)
+        return text
+
+    _snapshot_first_message_if_eligible()
 
     print_session_header(conn, session_id, current_model, current_title,
                          system_prompt_name, persona_name, private=private,
                          trait_names=trait_names)
+    if first_message:
+        # Shown on every reopen, whether it was already frozen or was just
+        # acquired above — visible conversation, never a message row (see
+        # HANDOVER's persistence discipline for direction; this is the one
+        # thing 1.3 persists on purpose, and it persists as session metadata,
+        # not as a `messages` row).
+        render_answer(first_message["text"])
     if routine_transcript:
         # State it, don't warn it — same voice as the private-chat notice
         # below, and for the same reason: the label is the only thing that
@@ -402,6 +446,214 @@ def run_session(conn, session_id, private=False, app_conn=None,
         if not revert_bad_model():
             console.print(f"\n[error] {e}\n")
 
+    def _has_answer_to_continue():
+        """Whether `/continue` has anything to continue from.
+
+        The First Message counts even before any chat turn exists — it is a
+        visible assistant turn, just not a `messages` row (governor.py /
+        Concept.md's First Message section).
+        """
+        if first_message is not None:
+            return True
+        return any(m.get("role") == "assistant"
+                  and (m.get("content") or "").strip() for m in history)
+
+    def _run_turn(kind, user_text=None):
+        """One directed or ordinary chat turn — the one place both API paths
+        are assembled from, which is what keeps them from drifting apart
+        (standing decision 7, now extended to include the governor's
+        envelope).
+
+        `kind` is `"chat"`, `"continue"` or `"ooc"`. `user_text` is the typed
+        line for `"chat"` and the OOC body for `"ooc"`; `"continue"` needs
+        neither. Only `"chat"` prints the human panel, saves a user row,
+        advances the trait cadence and generates a title — `/continue` and
+        OOC add no user row and run no automatic tone/trait selection
+        (governor.ordinary_instruction is never called for them), matching
+        Concept.md's persistence and "governor piles on" rules.
+        """
+        nonlocal current_title, turns_interrupted, revert_model
+
+        if kind == "chat":
+            console.print(human_panel(user_text))
+            save_message(conn, session_id, "user", user_text,
+                        model=current_model)
+            history.append({"role": "user", "content": user_text})
+            turn_count = count_chat_user_turns(conn, session_id)
+            trait_bodies = {n: load_pool_file("trait", n)[0]
+                           for n in trait_names}
+            instruction, labels = governor.ordinary_instruction(
+                trait_names, turn_count, trait_bodies)
+        elif kind == "continue":
+            instruction, labels = governor.continue_instruction()
+        else:
+            instruction, labels = governor.ooc_instruction(user_text)
+
+        # One place builds the system layers, so a new one is added there and
+        # not in each turn path. Same order as before it was a function.
+        prefix = assemble_system(system_prompt, persona,
+                                 pool_bodies("trait", trait_names))
+
+        # Tools need all three switches on. Otherwise the original single
+        # streamed call, unchanged.
+        use_tools = (TOOLS_ENABLED and tools_on
+                     and models.supports_tools(current_model))
+        if use_tools:
+            # Only on the turn that actually offers tools, and only in the
+            # prefix — so a tools-off turn is byte-for-byte the request it
+            # always was, and nothing about our budgets reaches the transcript.
+            prefix = prefix + tools_guidance()
+
+        # Printed once, before the request goes out — "an active governor,
+        # but not an invisible one" (Concept.md). Every ordinary turn carries
+        # at least a tone check, so this line accompanies every directed
+        # answer, not only /continue and OOC.
+        if labels:
+            console.print(f"cfc -> {' · '.join(labels)}", style="dim")
+
+        if use_tools:
+            # Re-roll an empty tool turn instead of painting a blank panel.
+            # The decision is `commands.empty_completion_decision`, the same
+            # one the streaming path below uses — standing decision 7 exists
+            # because these two drifted once, and the tool path silently not
+            # offering this retry was that drift. `agent_turn` has already
+            # said *what* happened by the time we get here (`agent._say_empty`).
+            empty_attempts = 0
+            final = None
+            while True:
+                try:
+                    final = agent_turn(prefix, history, current_model,
+                                       conn, session_id, ctx=chat_ctx,
+                                       first_message=first_message,
+                                       instruction=instruction)
+                except KeyboardInterrupt:
+                    console.print("\n[tool turn cancelled]\n")
+                    turns_interrupted += 1
+                    final = None
+                    break
+                except httpx.HTTPError as e:
+                    handle_turn_error(e)
+                    final = None
+                    break
+                revert_model = None   # the model answered — it's real; disarm
+                if (final.get("content") or "").strip():
+                    break
+                retry, empty_attempts = empty_completion_decision(
+                    chat_ctx.interactive, empty_attempts,
+                    EMPTY_COMPLETION_RETRIES)
+                if not retry:
+                    final = None
+                    break
+            if final is None:
+                console.print()
+                return
+            render_answer(final.get("content"))
+            # Same context bar as the streaming path — agent_turn persisted the
+            # final turn's usage, so read it back from the row it just wrote.
+            t_in, t_out, _ = get_context_info(
+                conn, session_id, current_model)
+            print_context_bar(current_model, t_in, t_out)
+            console.print()
+            if kind == "chat" and current_title == "(untitled)" and not private:
+                new_title = generate_title(user_text)
+                if new_title != "(untitled)":
+                    set_session_title(conn, session_id, new_title)
+                    current_title = new_title
+                    console.print(f"[title: {new_title}]\n")
+            if not private:
+                auto_embed()   # index this turn's messages (best-effort)
+            return
+
+        api_messages = governor.compile_messages(
+            prefix, first_message, history, instruction)
+
+        console.print()  # blank line before AI panel
+
+        assistant = ""
+        usage = None
+        empty_attempts = 0
+        while True:
+            try:
+                assistant, usage, reasoning = stream_response(
+                    api_messages, model=current_model
+                )
+            except KeyboardInterrupt:
+                console.print("\n[streaming cancelled]\n")
+                turns_interrupted += 1
+                assistant = ""
+                break
+            except httpx.HTTPError as e:
+                handle_turn_error(e)
+                assistant = ""
+                break
+            revert_model = None   # a response came back — the model is real
+
+            if assistant.strip():
+                break
+
+            # Empty completion. Thinking models (e.g. GLM-5.2:thinking) do this
+            # now and then — a provider-side hiccup, not a size limit. Say which
+            # kind it was; the same context usually answers on a re-roll.
+            if reasoning.strip():
+                console.print(
+                    "\n[the model thought but returned no answer — "
+                    "provider hiccup, common on thinking models]")
+            else:
+                console.print("\n[empty response]")
+
+            # The re-roll policy now lives in one place, shared with the tool
+            # path above. What stays here is the diagnosis: this path can see
+            # whether the model thought before returning nothing, which the
+            # tool path's provider hides behind a 400.
+            retry, empty_attempts = empty_completion_decision(
+                chat_ctx.interactive, empty_attempts, EMPTY_COMPLETION_RETRIES)
+            if retry:
+                continue
+            break
+
+        if not assistant.strip():
+            console.print()
+            return
+
+        tok_in = (usage or {}).get("prompt_tokens") or 0
+        tok_out = (usage or {}).get("completion_tokens") or 0
+
+        save_message(
+            conn, session_id, "assistant", assistant,
+            tok_in=tok_in or None,
+            tok_out=tok_out or None,
+            model=current_model,
+        )
+
+        # Show context usage after response
+        print_context_bar(current_model, tok_in, tok_out)
+        console.print()  # Blank line before next prompt
+
+        history.append(
+            {"role": "assistant", "content": assistant}
+        )
+
+        if kind == "chat" and current_title == "(untitled)" and not private:
+            new_title = generate_title(user_text)
+            if new_title != "(untitled)":
+                set_session_title(conn, session_id,
+                                  new_title)
+                current_title = new_title
+                console.print(f"[title: {new_title}]\n")
+
+        if not private:
+            auto_embed()   # index this turn's messages (best-effort)
+
+    def h_continue(cmd):
+        if cmd.raw:
+            console.print("Usage: /continue   (no arguments)")
+            return
+        if not _has_answer_to_continue():
+            console.print("Nothing to continue yet — no earlier answer in "
+                          "this session.", style="dim")
+            return
+        _run_turn("continue")
+
     # --- Command handlers ---
     #
     # One nested function per verb, reached through HANDLERS below. Each takes
@@ -498,7 +750,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
         nonlocal outcome
         if AUTO_EXPORT and history and not private:
             safe_export(conn, session_id)
-        result = screens.enter(app_conn, mode=target)
+        result = screens.enter(app_conn, mode=target, chat_model=current_model)
         if result is not None:
             outcome = _Open(result, routine_transcript=True)
         return _LEAVE
@@ -702,12 +954,16 @@ def run_session(conn, session_id, private=False, app_conn=None,
                           f"{pool_of(kind).plural}.")
             return
         label = pool_of(kind).label
+        opened = None
         if kind == "prompt":
             set_system_prompt(conn, session_id, body, filename)
             system_prompt, system_prompt_name = body, filename
         elif kind == "persona":
             set_persona(conn, session_id, body, filename)
             persona, persona_name = body, filename
+            # This persona may be the one whose opening this empty session
+            # has been waiting for — the moment it "first becomes active".
+            opened = _snapshot_first_message_if_eligible()
         else:
             # Traits stack. Re-adding an active one is a clear no-op rather
             # than a duplicate: two copies of a trait in the prompt is not
@@ -718,6 +974,8 @@ def run_session(conn, session_id, private=False, app_conn=None,
             trait_names = trait_names + [name]
             set_traits(conn, session_id, trait_names)
         console.print(f"added {name} — {label} ({len(body)} characters)")
+        if opened:
+            render_answer(opened)
 
     def h_add(cmd):
         if not cmd.args:
@@ -910,11 +1168,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
         target = cmd.arg(0).lower()
         if not target:
             connect_status()
-        elif target in ("embedding", "embedder", "embeddings"):
+        elif target in ("embedding", "embed", "embedder", "embeddings"):
             connect_embedding()
         else:
-            console.print(f"Unknown connect target '{target}'. "
-                          "Targets: embedding")
+            console.print(f"Unknown connection '{target}'. "
+                          "Available connections: embedding")
 
     # --- The two absorbing verbs ---
 
@@ -997,6 +1255,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
         "new": h_new,
         "q": h_quit,
         "title": h_title,
+        "continue": h_continue,
         # settings
         "model": h_model,
         "tools": h_tools,
@@ -1042,160 +1301,21 @@ def run_session(conn, session_id, private=False, app_conn=None,
             # exactly as an unmatched startswith did. cfc does not claim the
             # whole prefix namespace.
 
-        # --- Chat ---
-
-        # Frame what was just sent, so the human turn reads as a peer to the AI
-        # panels below it rather than a bare `you>` line.
-        console.print(human_panel(user))
-
-        save_message(conn, session_id, "user", user,
-                     model=current_model)
-        history.append({"role": "user", "content": user})
-
-        # One place builds the system layers, so a new one is added there and
-        # not in each turn path. Same order as before it was a function.
-        prefix = assemble_system(system_prompt, persona,
-                                 pool_bodies("trait", trait_names))
-
-        # Tools need all three switches on. Otherwise the original single
-        # streamed call, unchanged.
-        use_tools = (TOOLS_ENABLED and tools_on
-                     and models.supports_tools(current_model))
-
-        if use_tools:
-            # Only on the turn that actually offers tools, and only in the
-            # prefix — so a tools-off turn is byte-for-byte the request it
-            # always was, and nothing about our budgets reaches the transcript.
-            prefix = prefix + tools_guidance()
-            # Re-roll an empty tool turn instead of painting a blank panel.
-            # The decision is `commands.empty_completion_decision`, the same
-            # one the streaming path below uses — standing decision 7 exists
-            # because these two drifted once, and the tool path silently not
-            # offering this retry was that drift. `agent_turn` has already said
-            # *what* happened by the time we get here (see `agent._say_empty`).
-            empty_attempts = 0
-            final = None
-            while True:
-                try:
-                    final = agent_turn(prefix, history, current_model,
-                                       conn, session_id, ctx=chat_ctx)
-                except KeyboardInterrupt:
-                    console.print("\n[tool turn cancelled]\n")
-                    turns_interrupted += 1
-                    final = None
-                    break
-                except httpx.HTTPError as e:
-                    handle_turn_error(e)
-                    final = None
-                    break
-                revert_model = None   # the model answered — it's real; disarm
-                if (final.get("content") or "").strip():
-                    break
-                retry, empty_attempts = empty_completion_decision(
-                    chat_ctx.interactive, empty_attempts,
-                    EMPTY_COMPLETION_RETRIES)
-                if not retry:
-                    final = None
-                    break
-            if final is None:
+        # OOC: checked before falling to chat, same way a command is —
+        # exactly one grammar (parse.parse_ooc), never a second dialect
+        # written here. An empty `(( ))` refuses with no provider call.
+        ooc_body = parse_ooc(user)
+        if ooc_body is not None:
+            if not ooc_body:
+                console.print("Empty OOC direction — nothing to send.",
+                              style="dim")
                 console.print()
                 continue
-            render_answer(final.get("content"))
-            # Same context bar as the streaming path — agent_turn persisted the
-            # final turn's usage, so read it back from the row it just wrote.
-            t_in, t_out, _ = get_context_info(
-                conn, session_id, current_model)
-            print_context_bar(current_model, t_in, t_out)
-            console.print()
-            if current_title == "(untitled)" and not private:
-                new_title = generate_title(user)
-                if new_title != "(untitled)":
-                    set_session_title(conn, session_id, new_title)
-                    current_title = new_title
-                    console.print(f"[title: {new_title}]\n")
-            if not private:
-                auto_embed()   # index this turn's messages (best-effort)
+            _run_turn("ooc", ooc_body)
             continue
 
-        api_messages = list(prefix)
-        api_messages.extend(history)
-
-        console.print()  # blank line before AI panel
-
-        assistant = ""
-        usage = None
-        empty_attempts = 0
-        while True:
-            try:
-                assistant, usage, reasoning = stream_response(
-                    api_messages, model=current_model
-                )
-            except KeyboardInterrupt:
-                console.print("\n[streaming cancelled]\n")
-                turns_interrupted += 1
-                assistant = ""
-                break
-            except httpx.HTTPError as e:
-                handle_turn_error(e)
-                assistant = ""
-                break
-            revert_model = None   # a response came back — the model is real
-
-            if assistant.strip():
-                break
-
-            # Empty completion. Thinking models (e.g. GLM-5.2:thinking) do this
-            # now and then — a provider-side hiccup, not a size limit. Say which
-            # kind it was; the same context usually answers on a re-roll.
-            if reasoning.strip():
-                console.print(
-                    "\n[the model thought but returned no answer — "
-                    "provider hiccup, common on thinking models]")
-            else:
-                console.print("\n[empty response]")
-
-            # The re-roll policy now lives in one place, shared with the tool
-            # path above. What stays here is the diagnosis: this path can see
-            # whether the model thought before returning nothing, which the
-            # tool path's provider hides behind a 400.
-            retry, empty_attempts = empty_completion_decision(
-                chat_ctx.interactive, empty_attempts, EMPTY_COMPLETION_RETRIES)
-            if retry:
-                continue
-            break
-
-        if not assistant.strip():
-            console.print()
-            continue
-
-        tok_in = (usage or {}).get("prompt_tokens") or 0
-        tok_out = (usage or {}).get("completion_tokens") or 0
-
-        save_message(
-            conn, session_id, "assistant", assistant,
-            tok_in=tok_in or None,
-            tok_out=tok_out or None,
-            model=current_model,
-        )
-
-        # Show context usage after response
-        print_context_bar(current_model, tok_in, tok_out)
-        console.print()  # Blank line before next prompt
-
-        history.append(
-            {"role": "assistant", "content": assistant}
-        )
-
-        if current_title == "(untitled)" and not private:
-            new_title = generate_title(user)
-            if new_title != "(untitled)":
-                set_session_title(conn, session_id,
-                                  new_title)
-                current_title = new_title
-                console.print(f"[title: {new_title}]\n")
-
-        if not private:
-            auto_embed()   # index this turn's messages (best-effort)
+        # --- Chat ---
+        _run_turn("chat", user)
 
     return outcome
 
