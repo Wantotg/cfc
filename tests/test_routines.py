@@ -986,6 +986,50 @@ def main():
             models_mod.routine_ids = saved_ids
             conn2.close()
 
+    print("\n--- show_routines: every state is visible, not swallowed (W-02) ---")
+    with tempfile.TemporaryDirectory() as tmp3, Store(tmp3):
+        buf = io.StringIO()
+        commands.console.file = buf
+        with redirect_stdout(buf):
+            commands.show_routines()
+        commands.console.file = sys.stdout
+        out_empty = buf.getvalue()
+        ok("an empty store says so, not silently nothing",
+           "none yet" in out_empty, out_empty)
+
+    with tempfile.TemporaryDirectory() as tmp4, Store(tmp4) as store4:
+        routines.save_routine(make(id="healthy", read_roots=[str(store4.pdir)]))
+        routines.save_routine(make(id="paused", enabled=False,
+                                   read_roots=[str(store4.pdir)]))
+        # Hand-edited-in-Obsidian shape: valid enough to parse, invalid to
+        # run — written directly rather than through save_routine, which
+        # would refuse it (test_routines' own "cannot run is refused"
+        # coverage is the runner side of this; this is the listing side).
+        stale = routines.Routine(id="stale", name="Stale", prompt="gone.md")
+        (store4.rdir / "stale.md").write_text(stale.to_markdown(),
+                                              encoding="utf-8")
+        (store4.rdir / "junk.md").write_text("no frontmatter here",
+                                             encoding="utf-8")
+        routines.append_log("healthy", "ok", "wrote the digest")
+
+        buf = io.StringIO()
+        commands.console.file = buf
+        with redirect_stdout(buf):
+            commands.show_routines()
+        commands.console.file = sys.stdout
+        out_mixed = buf.getvalue()
+
+        ok("a healthy routine is listed with its last run",
+           "healthy" in out_mixed and "ok" in out_mixed, out_mixed)
+        ok("a disabled routine says so rather than being omitted",
+           "paused (disabled)" in out_mixed, out_mixed)
+        ok("a routine that parses but fails validation is flagged, not "
+           "listed as if it were runnable",
+           "! stale" in out_mixed and "prompt file not found" in out_mixed,
+           out_mixed)
+        ok("a file that doesn't even parse is reported by name, not dropped",
+           "junk.md" in out_mixed, out_mixed)
+
     test_creation_flow()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

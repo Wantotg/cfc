@@ -5,9 +5,15 @@ MODEL    = "zai-org/glm-5.2:thinking"                    # pick a model your pla
 RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /recall (grounded synthesis)
 
 # Path to a folder inside your Obsidian vault where chats will be exported.
-# Despite the name this is the *export destination*, not the vault itself —
-# see VAULT_ROOT below, which is the vault.
-VAULT_PATH = "PLACEHOLDER"
+# The name says both what it holds and that it's a directory — see VAULT_ROOT
+# below, which is the vault itself, for the thing this isn't.
+#
+# Renamed from VAULT_PATH in v1.3.1 (W-0.9.1-01): an existing config.py that
+# still defines only VAULT_PATH keeps exporting untouched — export.py resolves
+# CHAT_EXPORT_DIR first and falls back to the old name — but there is no
+# reason to write a new config with the old one. One-line migration: rename
+# your VAULT_PATH line to CHAT_EXPORT_DIR.
+CHAT_EXPORT_DIR = "PLACEHOLDER"
 
 # The vault's top folder. **Display only** — cfc never builds a path from this
 # and no behaviour depends on it. Every real path is configured on its own line

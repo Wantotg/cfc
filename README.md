@@ -72,7 +72,7 @@ Then edit `config.py`. The ones you must set:
 |---|---|
 | `API_KEY` / `API_BASE` | your provider |
 | `MODELS` / `MODEL_LIMITS` | the models your plan supports, and their context sizes |
-| `VAULT_PATH` | where exported chats are written. Despite the name this is the export folder, not the vault — see `VAULT_ROOT` below |
+| `CHAT_EXPORT_DIR` | where exported chats are written — not the vault itself, see `VAULT_ROOT` below. Renamed from `VAULT_PATH` in v1.3.1; a config.py still using the old name keeps exporting untouched |
 | `PROMPTS_DIR` / `PERSONAS_DIR` / `TRAITS_DIR` | your prompt, persona and trait folders |
 | `EMBED_BASE` / `EMBED_MODEL` / `EMBED_KEY` | the embedding endpoint; falls back to the chat provider's hosted `bge-m3` |
 
@@ -755,7 +755,7 @@ kills it.
 | the state: `chat.db`, snapshots, logs | `~/.cfc/` | ext4 | **no**, and see below |
 | the vault's *history* (`.git`) | `~/vaults/wiki.git` | ext4 | **no** — but it has a remote |
 | the vault's *files* | `/mnt/c/…/<vault>` | NTFS | yes |
-| exported chat transcripts | `/mnt/c/…` (`VAULT_PATH`) | NTFS | yes |
+| exported chat transcripts | `/mnt/c/…` (`CHAT_EXPORT_DIR`) | NTFS | yes |
 
 **The vault is split across both sides on purpose**, and it is the one piece of
 this that looks like a mistake and isn't. The notes live on the Windows side so
@@ -784,7 +784,7 @@ exists.
 |---|---|---|
 | the code | git | GitHub (public) |
 | the vault | git, **pushed by hand** | a private GitHub repo |
-| chat transcripts | cfc's auto-export, per session | `VAULT_PATH` on the Windows side |
+| chat transcripts | cfc's auto-export, per session | `CHAT_EXPORT_DIR` on the Windows side |
 | `chat.db` | `backup.py`, 10 rolling snapshots | `~/.cfc/backups/` — **the same disk** |
 
 **The database has no off-machine copy, and the exports are not one.** On this
@@ -962,10 +962,9 @@ intended — check the diff first, it exists to catch the changes you *didn't*
 intend. None of the suites need an API key.
 
 What they don't cover, and is verified by hand: the chat turn against a real API,
-retrieval quality, `/export`'s output, `/routine`'s listing commands, and how the
-splash actually looks. `HANDOVER.md` has the full list with the reason each one
-is hand-verified — some of them cannot be automated, and saying which is which
-is the point.
+retrieval quality, and how the splash actually looks. `HANDOVER.md` has the full
+list with the reason each one is hand-verified — some of them cannot be
+automated, and saying which is which is the point.
 
 ## Where things are
 

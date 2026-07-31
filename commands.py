@@ -88,7 +88,8 @@ from pools import (pool, pool_dir, load as load_pool,
                    tried as pools_tried, bad_name_reason,
                    match_active as pools_match_active, active_layers,
                    stem as pool_stem, names as pool_names, PRIORITY,
-                   POOLS)
+                   POOLS, first_message_status,
+                   FM_NO_DIR, FM_NONE, FM_OK, FM_BROKEN)
 import tools
 
 # How many chunks /recall and /remember pull. Also a diagnostic: if eight hits
@@ -825,6 +826,22 @@ def show_status(conn, session_id, model, title, private=False,
                 "magenta" if system_prompt_name else "dim")
     _header_row("Persona", _strip_md(persona_name) or "not set",
                 "green" if persona_name else "dim")
+    # Only when a persona is attached — the no-persona case is the ordinary
+    # majority and stays quiet rather than growing a fourth inactive row
+    # (W-09). Three visible states plus one failure state, all off the same
+    # seam `load_first_message` uses at session open, so `/status` cannot
+    # drift from what actually happens there.
+    if persona_name:
+        state, detail = first_message_status(persona_name)
+        if state == FM_OK:
+            _header_row("First Message", "ready", "green")
+        elif state == FM_NONE:
+            _header_row("First Message",
+                        f"none for {_strip_md(persona_name)}", "dim")
+        elif state == FM_NO_DIR:
+            _header_row("First Message", "not configured", "dim")
+        else:  # FM_BROKEN — visibly unavailable, never folded into "none"
+            _header_row("First Message", f"unavailable — {detail}", "yellow")
     if trait_names:
         # A trait whose file has gone is named here rather than warned about
         # every turn — this screen is where "what is this session carrying"

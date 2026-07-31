@@ -9,10 +9,30 @@
 import json
 from pathlib import Path
 
-from config import VAULT_PATH
+try:
+    from config import CHAT_EXPORT_DIR
+except ImportError:
+    CHAT_EXPORT_DIR = ""
+try:
+    # W-0.9.1-01: the pre-1.3.1 name for the same directory. Kept only so a
+    # config.py written before CHAT_EXPORT_DIR existed keeps exporting
+    # without a mandatory hand edit — see chat_export_dir() below. Never
+    # written to or renamed by cfc itself; that is the user's own file.
+    from config import VAULT_PATH
+except ImportError:
+    VAULT_PATH = ""
 
 from ui import console, format_date, format_ts
 from db import get_session_tags, get_first_message
+
+
+def chat_export_dir():
+    """Where exported chats are written. `CHAT_EXPORT_DIR` if the config
+    sets it, else the legacy `VAULT_PATH` name for the same directory — the
+    one seam both `export_session` and `/config`'s rendering resolve
+    through, so the two can't disagree about which folder is configured.
+    """
+    return CHAT_EXPORT_DIR or VAULT_PATH
 
 
 def _attachment_line(content, meta):
@@ -119,7 +139,7 @@ def export_session(conn, session_id, quiet=False):
     date_part = format_date(created_at) if created_at else "unknown"
     filename = f"{date_part}_Session-{sid}_{safe_title}.md"
 
-    vault = Path(VAULT_PATH).expanduser()
+    vault = Path(chat_export_dir()).expanduser()
     vault.mkdir(parents=True, exist_ok=True)
     filepath = vault / filename
 

@@ -143,6 +143,24 @@ def main_():
            "First Message unavailable" in out7, out7)
         ok("...but the persona itself still attached",
            "added broken" in out7, out7)
+
+        print("\n--- /status names the First Message state (W-09) ---")
+        out8 = drive(conn, sid, "/status\n/q\n")
+        ok("a readable companion reads 'ready' in /status",
+           "First Message" in out8 and "ready" in out8, out8)
+
+        out9 = drive(conn, empty_sid, "/status\n/q\n")
+        ok("no companion for this persona is named, not left blank",
+           "First Message" in out9 and "none for silent" in out9, out9)
+
+        out10 = drive(conn, broken_sid, "/status\n/q\n")
+        ok("an unreadable companion stays visibly unavailable in /status too",
+           "First Message" in out10 and "unavailable" in out10, out10)
+
+        no_persona_sid = dbmod.new_session(conn, title="no-persona")
+        out11 = drive(conn, no_persona_sid, "/status\n/q\n")
+        ok("no persona attached: no First Message row at all — stays quiet",
+           "First Message" not in out11, out11)
     finally:
         pools.POOLS["persona"].configured = saved_persona_dir
         pools.FIRST_MESSAGES_DIR = saved_fm_dir

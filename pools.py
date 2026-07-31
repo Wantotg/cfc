@@ -349,31 +349,70 @@ class FirstMessageError(Exception):
     """
 
 
+# The four states a persona's companion can be in. Named rather than left as
+# bare strings so `/status` (commands.py) and this module agree on the same
+# four words instead of each spelling them out.
+FM_NO_DIR = "no_dir"     # the First Message directory itself doesn't exist
+FM_NONE = "none"         # the directory exists; this persona has no companion
+FM_OK = "ok"             # a readable companion file
+FM_BROKEN = "broken"     # something is there and reading it failed
+
+
+def _first_message_lookup(persona_name):
+    """Where a persona's companion file would be, and what state it's in.
+
+    The one seam behind both `load_first_message` (session-open behaviour)
+    and `first_message_status` (`/status`) — one filename-matching
+    implementation rather than two that can drift apart, and the reason
+    `/status` doesn't reimplement this lookup itself.
+
+    Returns `(state, path_or_None, detail_or_None)`. `detail` is only set
+    for `FM_BROKEN`, and is the same message `load_first_message` used to
+    raise verbatim.
+    """
+    name = stem(persona_name or "")
+    if not name:
+        return FM_NONE, None, None
+    d = first_messages_dir()
+    try:
+        is_dir = d.is_dir()
+    except OSError as e:
+        return FM_BROKEN, None, f"can't read {d}: {e}"
+    if not is_dir:
+        return FM_NO_DIR, None, None
+    path = d / f"{name}.md"
+    if not path.exists():
+        return FM_NONE, None, None
+    if not path.is_file():
+        # Something is there and it isn't a file — a directory sitting where
+        # the companion should be, say. Absent and broken must not read the
+        # same: a missing companion is silent, this is not.
+        return FM_BROKEN, path, f"{path} is not a file"
+    return FM_OK, path, None
+
+
 def load_first_message(persona_name):
     """The opening text for a persona's filename, or None if it has no
     companion. Raises FirstMessageError for anything that reads as broken —
     an unreadable directory or an unreadable file — rather than returning
     the same None a missing companion does.
     """
-    name = stem(persona_name or "")
-    if not name:
+    state, path, detail = _first_message_lookup(persona_name)
+    if state == FM_BROKEN:
+        raise FirstMessageError(detail)
+    if state != FM_OK:
         return None
-    d = first_messages_dir()
-    try:
-        is_dir = d.is_dir()
-    except OSError as e:
-        raise FirstMessageError(f"can't read {d}: {e}") from e
-    if not is_dir:
-        return None
-    path = d / f"{name}.md"
-    if not path.exists():
-        return None
-    if not path.is_file():
-        # Something is there and it isn't a file — a directory sitting where
-        # the companion should be, say. Absent and broken must not read the
-        # same: a missing companion is silent, this is not.
-        raise FirstMessageError(f"{path} is not a file")
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError as e:
         raise FirstMessageError(f"can't read {path}: {e}") from e
+
+
+def first_message_status(persona_name):
+    """`(state, detail)` for `/status`: one of `FM_NO_DIR`/`FM_NONE`/`FM_OK`/
+    `FM_BROKEN`, `detail` set only for `FM_BROKEN`. Doesn't read the
+    companion's contents — naming the state is all `/status` needs;
+    `load_first_message` is what actually loads it.
+    """
+    state, _path, detail = _first_message_lookup(persona_name)
+    return state, detail

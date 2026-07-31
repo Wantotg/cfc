@@ -172,6 +172,29 @@ def main():
             except pools.FirstMessageError as e:
                 ok("an unreadable companion raises FirstMessageError", True)
                 ok("...naming the path", "broken.md" in str(e), e)
+
+            print("\n--- first_message_status: the seam /status reads ---")
+            # Same lookup load_first_message uses, but naming the state
+            # instead of raising or returning bare None — W-09's /status row.
+            ok("a readable companion is 'ok'",
+               pools.first_message_status("muse.md") == (pools.FM_OK, None))
+            ok("no companion for this persona is 'none'",
+               pools.first_message_status("other.md") == (pools.FM_NONE, None))
+            state, detail = pools.first_message_status("broken.md")
+            ok("an unreadable companion is 'broken', not folded into 'none'",
+               state == pools.FM_BROKEN, state)
+            ok("...and carries the same detail load_first_message raises",
+               "broken.md" in detail, detail)
+        finally:
+            pools.FIRST_MESSAGES_DIR = saved_fm
+
+        print("\n--- first_message_status: no directory at all ---")
+        no_dir = root / "no-first-messages-here"
+        saved_fm = pools.FIRST_MESSAGES_DIR
+        pools.FIRST_MESSAGES_DIR = str(no_dir)
+        try:
+            ok("an unconfigured/missing directory is 'no_dir'",
+               pools.first_message_status("muse.md") == (pools.FM_NO_DIR, None))
         finally:
             pools.FIRST_MESSAGES_DIR = saved_fm
 

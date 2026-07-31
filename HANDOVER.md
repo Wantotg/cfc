@@ -735,8 +735,8 @@ carries the layout; this is the failure modes.
 **One computer, two filesystems that fail independently.** ext4 (`~`) is erased
 by `wsl --unregister`; NTFS (`/mnt/c`) is not. The code and `~/.cfc/` — `chat.db`,
 `backups/`, `errors.log`, `schedule.log` — are on ext4; the vault's files and
-`VAULT_PATH`'s exports are on NTFS. Every durability question reduces to which
-side a file is on.
+`CHAT_EXPORT_DIR`'s exports are on NTFS. Every durability question reduces to
+which side a file is on.
 
 **The vault straddling both sides is deliberate and the split is load-bearing.**
 Files on NTFS so Obsidian and Windows' backup reach them; `.git` on ext4 via a
@@ -745,10 +745,16 @@ files but not the history, and losing WSL loses only the history since the last
 push** — two independent failures, neither individually fatal. That property is
 worth not breaking by "tidying" the `.git` back into the vault.
 
-**`VAULT_PATH` is not the vault** and this is the one naming trap in the layout
-(`W-0.9.1-01`, still open). It is the chat *export* destination — a different
-folder on the Windows side. `VAULT_ROOT`, three lines below it in `config.py`, is
-the actual vault. Nothing enforces the distinction and both are strings.
+**`CHAT_EXPORT_DIR` is the chat export destination, not the vault** — the naming
+trap this used to be (`VAULT_PATH`, `W-0.9.1-01`, fixed v1.3.1) is closed by the
+rename itself: the name now says both what it holds and that it's a directory.
+`VAULT_ROOT`, three lines below it in `config.py`, is the actual vault. Nothing
+enforces the distinction structurally and both are still plain strings — pointing
+the export destination at the vault root would work exactly as configured — but
+the name no longer argues against noticing. An existing `config.py` that still
+only defines `VAULT_PATH` keeps exporting: `export.chat_export_dir()` resolves
+the new key first and falls back to the old one, so the rename costs a config
+edit only when you choose to make it, never a forced one.
 
 **cfc remains local-only** (`Q-01`, settled v1.1). `backup.py`'s ten rolling
 snapshots sit **on the same disk as the original** — right for what they defend
@@ -825,8 +831,6 @@ of the sentence:
 | retrieval quality | **not automatable.** A judgement, not an assertion. The *states* around it are pinned (`test_memory_states.py`); whether the right chunk came back is what `MAX_DISTANCE`'s 32 probes measured by hand, and re-measuring is the only honest method |
 | the two answer **panels** | **not comparable, and the reason is structural.** The tool path renders through `agent.render_answer`; the streaming path renders inside `api.stream_response`, delta by delta, because it paints as it arrives. Stubbing the provider — the right place — takes the streaming render with it |
 | how the splash **looks** | **not automatable.** The compositor and the import graph are pinned (`test_splash.py`); a one-pixel rim light on black is not |
-| `/export`'s output | **a real gap, and honestly automatable.** Owed, not impossible — write to a temp dir and read it back. Left out of v1.0 by scope, not by argument |
-| `/routine`'s listing and run commands | **a partial gap.** Creation is covered as of v1.0 (`test_routines.py`), `run_routine` since v0.5; `show_routines` and `do_routine` are not |
 
 **A list of what isn't tested goes stale in the safe-looking direction.** The
 picker sat on that table as hand-verified for two releases after `test_hub.py`

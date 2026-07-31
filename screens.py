@@ -223,13 +223,14 @@ def _render_config():
     import preflight
     from backfill import wiki_stale
     from db import DB_PATH
+    from export import chat_export_dir
     from ui import connection_light
 
     model = getattr(_config, "MODEL", "") or "(not set)"
     api_base = getattr(_config, "API_BASE", "")
     api_key = getattr(_config, "API_KEY", "")
     vault_root = (getattr(_config, "VAULT_ROOT", "") or "").strip()
-    vault_path = (getattr(_config, "VAULT_PATH", "") or "").strip()
+    vault_path = chat_export_dir().strip()
     embed_model = getattr(_config, "EMBED_MODEL", "")
 
     _config_row("Chat default", model)
@@ -286,6 +287,7 @@ def _render_config_paths():
     import commands as _commands
     import config as _config
     from db import DB_PATH
+    from export import chat_export_dir
     from mover import loser_dir, move_roots
     from notes import archive_dir, notes_dir
     from pools import pool_dir
@@ -298,7 +300,7 @@ def _render_config_paths():
     console.print("Paths", style="bold")
     _path_line("Database", DB_PATH)
     _path_line("Vault root", raw("VAULT_ROOT"))
-    _path_line("Chat export", raw("VAULT_PATH"))
+    _path_line("Chat export", chat_export_dir())
     _path_line("Prompts", pool_dir("prompt"))
     _path_line("Personas", pool_dir("persona"))
     _path_line("Traits", pool_dir("trait"))

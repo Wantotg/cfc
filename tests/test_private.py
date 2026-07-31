@@ -423,8 +423,8 @@ def main_():
     _no_marker_anywhere(real, ctl_sid, "normal chat")
 
     vault_tmp = Path(tempfile.mkdtemp())
-    saved_vault = exportmod.VAULT_PATH
-    exportmod.VAULT_PATH = str(vault_tmp)
+    saved_vault = exportmod.CHAT_EXPORT_DIR
+    exportmod.CHAT_EXPORT_DIR = str(vault_tmp)
     try:
         exportmod.export_session(real, ctl_sid, quiet=True)
         exported_text = "\n".join(
@@ -434,7 +434,7 @@ def main_():
         ok("...though the answer does", "an ordinary answer" in exported_text,
            exported_text)
     finally:
-        exportmod.VAULT_PATH = saved_vault
+        exportmod.CHAT_EXPORT_DIR = saved_vault
 
     print("  (a private chat, driving the identical OOC turn)")
     priv7 = dbmod.db(":memory:")

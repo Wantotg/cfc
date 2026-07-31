@@ -172,6 +172,7 @@ you>
 Session #1  ·  glm-5.2  ·  Golden session one
   System prompt   alpha
   Persona         gamma
+  First Message   none for gamma
   Traits          epsilon, zeta
   Attached        nothing
   Tags            memory, wsl

@@ -27,6 +27,51 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-31 — First Message visibility, export confidence, an honest path name (1.3.1)
+A light patch carrying one v1.3 finding and closing two open tracker rows: a
+First Message now has somewhere to be seen, the export destination has a name
+that says what it is, and `/export`/`/routine`'s listing were quietly already
+mostly tested but the docs still called them hand-verified.
+
+**`/status` names the First Message state (`W-09`).** One row, shown only
+when a persona is attached — the ordinary no-persona case stays quiet rather
+than growing a fourth inactive row. `pools.first_message_status()` shares its
+lookup with `load_first_message` (`pools._first_message_lookup`), so the row
+can't drift from what a session actually opens with: `ready`, `none for
+<persona>`, `not configured`, or `unavailable — <reason>` for an unreadable
+directory or file, which stays a visible failure rather than folding into
+"none". This was the finding underneath v1.3's `1.3-01`: the playtest lost
+half its time to a silently unconfigured feature with nowhere to check.
+
+**`CHAT_EXPORT_DIR` replaces `VAULT_PATH` as the export-destination key
+(`W-0.9.1-01`).** The old name was the one naming trap in the layout —
+indistinguishable at a glance from `VAULT_ROOT`, the actual vault, three
+lines below it. `export.chat_export_dir()` is the one seam that resolves it:
+the new key if set, else the legacy name, so an existing `config.py` that
+still only defines `VAULT_PATH` keeps exporting with no forced edit.
+`screens.py`'s two `/config` renderings read through the same function, so
+export and `/config` cannot disagree about which folder is configured.
+
+**`/export` and `/routine`'s listing are covered, not hand-verified
+(`W-02`).** `tests/test_export.py` now drives a representative exported
+document — system prompt, persona, tags, an attachment and a tool call/result
+pair — read back from a temp db and vault: frontmatter totals, transcript
+order, a title-safe filename that replaces rather than duplicates on
+re-export, and an absent session that creates nothing. `tests/test_routines.py`
+adds `show_routines()` coverage: an empty store, and a mixed one (healthy,
+disabled, invalid-but-parseable, and a file that doesn't parse at all) —
+`do_routine` and `run_routine` were already covered, which the stale
+`HANDOVER.md`/`README.md` claim had stopped reflecting.
+
+- Files: pools.py, commands.py, export.py, screens.py, config.example.py,
+  README.md, HANDOVER.md, tests/test_pools.py, tests/test_first_message.py,
+  tests/test_export.py, tests/test_private.py, tests/test_routines.py,
+  tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-31 — The active conversation governor (1.3)
 One request envelope (`governor.py`) now carries every cfc-authored direction
 that must reach the model without becoming a line in the conversation —

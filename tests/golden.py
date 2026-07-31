@@ -43,6 +43,14 @@ FIXTURE = HERE / "_fixture.db"
 FIXTURE_PROMPTS = HERE / "_fixture_prompts"
 FIXTURE_PERSONAS = HERE / "_fixture_personas"
 FIXTURE_TRAITS = HERE / "_fixture_traits"
+# 1.3.1: /status's First Message row (W-09) reads pools.FIRST_MESSAGES_DIR,
+# which was unpinned — on a checkout with no config.py at all this defaults
+# to ~/.cfc/first_messages, but left unpinned it would otherwise be exactly
+# the `config.py` scar this file already has two paragraphs about. Existing
+# and empty: gamma (attached below) then has no companion, which is the
+# ordinary case and the one worth pinning — the richer states are covered in
+# tests/test_pools.py and tests/test_first_message.py instead of faked here.
+FIXTURE_FIRST_MESSAGES = HERE / "_fixture_first_messages"
 # The script ends with :q, and :q honours AUTO_EXPORT — so every `check` used
 # to write the fixture session into Cas's real VAULT_PATH. Nothing was
 # corrupted (the files overwrite each other) but "the tests don't touch
@@ -235,16 +243,23 @@ def _real_vault():
     """The configured export folder, or None if there is no readable config.
 
     Read **once**, at import, into REAL_VAULT — before capture() rewrites
-    VAULT_PATH on every module that holds one, including config's own. Asking
-    config for the real path *after* that would compare the fixture against
-    itself and pass whatever it was handed, which is precisely the guard being
-    unable to fail. (Written the other way first; the guard caught it.)
+    CHAT_EXPORT_DIR on every module that holds one, including config's own.
+    Asking config for the real path *after* that would compare the fixture
+    against itself and pass whatever it was handed, which is precisely the
+    guard being unable to fail. (Written the other way first; the guard
+    caught it.)
+
+    Goes through export.chat_export_dir() rather than reading a config name
+    directly (`W-0.9.1-01`): that function is the resolved value — the new
+    key if set, else the legacy VAULT_PATH — and reading a name here instead
+    would silently stop matching what's actually exported the day one of the
+    two config keys changes without the other.
 
     None on a checkout with no config.py: this file must still run there.
     """
     try:
-        from config import VAULT_PATH
-        return Path(VAULT_PATH).expanduser().resolve()
+        import export
+        return Path(export.chat_export_dir()).expanduser().resolve()
     except Exception:
         return None
 
@@ -314,6 +329,9 @@ def build_prompt_fixtures():
         d.mkdir(exist_ok=True)
         for n in names:
             (d / f"{n}.md").write_text(f"# {n}\nfixture\n", encoding="utf-8")
+    # Present but empty — gamma/delta have no companion, so /status's First
+    # Message row renders its ordinary "none" state rather than "no_dir".
+    FIXTURE_FIRST_MESSAGES.mkdir(exist_ok=True)
 
 
 def build_outbox_fixture():
@@ -382,7 +400,8 @@ def clean_fixture_vault():
 
 
 def clean_prompt_fixtures():
-    for d in (FIXTURE_PROMPTS, FIXTURE_PERSONAS, FIXTURE_TRAITS):
+    for d in (FIXTURE_PROMPTS, FIXTURE_PERSONAS, FIXTURE_TRAITS,
+              FIXTURE_FIRST_MESSAGES):
         if d.is_dir():
             for f in d.glob("*.md"):
                 f.unlink()
@@ -510,24 +529,32 @@ def capture():
         raise AssertionError(f"errorlog.LOG_PATH: refusing to write to the "
                              f"real error log at {real_log}")
 
-    # Same treatment for VAULT_PATH, and for the same reason: export.py reads
-    # its module global at call time, and commands.py holds a second copy that
-    # :config prints. Patching one would leave the other pointing at the real
-    # folder — either a live write or a baseline line that depends on Cas's
-    # config.py rather than on the code. Both are the bug this loop exists for.
+    # Same treatment for CHAT_EXPORT_DIR, and for the same reason: export.py
+    # reads its module global at call time, and screens.py's /config now
+    # reads through export.chat_export_dir() rather than holding a second
+    # copy (W-0.9.1-01) — so patching this one seam is enough for both, where
+    # patching a name would leave the other pointing at the real folder,
+    # either a live write or a baseline line that depends on Cas's config.py
+    # rather than on the code. Both are the bug this loop exists for.
     assert_not_real_vault(FIXTURE_VAULT, "capture")
     FIXTURE_VAULT.mkdir(exist_ok=True)
     vaulted = []
     for name, mod in list(sys.modules.items()):
         if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
-            if hasattr(mod, "VAULT_PATH"):
-                setattr(mod, "VAULT_PATH", str(FIXTURE_VAULT))
+            if hasattr(mod, "CHAT_EXPORT_DIR"):
+                setattr(mod, "CHAT_EXPORT_DIR", str(FIXTURE_VAULT))
                 vaulted.append(name)
+            if hasattr(mod, "VAULT_PATH"):
+                # The legacy key chat_export_dir() falls back to. Blanked
+                # rather than left alone, so this harness pins the new-key
+                # path only — the legacy fallback itself is
+                # tests/test_export.py's job.
+                setattr(mod, "VAULT_PATH", "")
     if not vaulted:
-        raise SystemExit("refusing to run: found no VAULT_PATH to redirect")
+        raise SystemExit("refusing to run: found no CHAT_EXPORT_DIR to redirect")
     for name in vaulted:
-        assert_not_real_vault(getattr(sys.modules[name], "VAULT_PATH"),
-                              f"{name}.VAULT_PATH")
+        assert_not_real_vault(getattr(sys.modules[name], "CHAT_EXPORT_DIR"),
+                              f"{name}.CHAT_EXPORT_DIR")
 
     # Pin VAULT_ROOT for the same reason, and the reason is not hypothetical:
     # :config prints it, it is display-only, and it lands in config.py by hand.
@@ -647,6 +674,10 @@ def capture():
     _pools.POOLS["prompt"].configured = str(FIXTURE_PROMPTS)
     _pools.POOLS["persona"].configured = str(FIXTURE_PERSONAS)
     _pools.POOLS["trait"].configured = str(FIXTURE_TRAITS)
+    # Not a Pool (see pools.py's own note on why not), so it isn't reached by
+    # the loop above — patched directly, the same as FIRST_MESSAGES_DIR's own
+    # module-level fallback pattern.
+    _pools.FIRST_MESSAGES_DIR = str(FIXTURE_FIRST_MESSAGES)
 
     # Redirect the shared Console by mutating it, never by rebinding a module
     # attribute: once modules do `from ui import console`, setting chat.console
