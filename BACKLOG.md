@@ -27,6 +27,29 @@ The full entry with all its history is in the archive.
 
 ---
 
+## D-13 · A failed title call is silent and the next turn inherits the titling
+
+**Found:** 2026-07-31, in the v1.3.1 diagnosis. `generate_title()` swallows
+every exception and falls back to `(untitled)`. A failed title request is not
+shown in the console or written to `errors.log`, and the guard retries on the
+next message, so the next turn can receive the stale title job. The user-visible
+freeze and accidental input are `B-1.3.1-02`; this is the separate observability
+debt in the title path.
+
+**Owed:** make a failed title call visible and keep it from silently handing the
+work to whatever message comes next. It is not a v1.3.1 defect claim and is not
+a tag blocker.
+
+## D-14 · `ui.vault_relative`'s docstring names the retired export key
+
+**Found:** 2026-07-31, during the v1.3.1 config-key rename. The docstring says
+`config.VAULT_PATH`, but the function's caller passes `VAULT_ROOT` and the
+function never reads config. The behaviour is correct; the one-word reference
+is stale after `CHAT_EXPORT_DIR` replaced the old export-destination name.
+
+**Owed:** correct the docstring when that file is next touched. No code change
+is needed for the current release.
+
 ## D-11 · `/tools` puts two more config values in the golden baseline. 1.0, 29-07-2026
 
 **Found:** 2026-07-29, immediately after fixing `D-01` — the re-recorded

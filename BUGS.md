@@ -155,6 +155,26 @@ one happened rather than let an empty `BUGS.md` imply the stronger one.
 
 
 
+## B-1.3.1-02 · Typing while cfc is silently busy after a turn sends an unintended message
+
+**Found:** 2026-07-31, in the v1.3.1 playtest. After a turn paints the blank
+line that means "your turn", cfc still performs the title request and automatic
+embedding synchronously, without a prompt or other visible marker. Input typed
+during that window can be echoed by the terminal and later reach the chat as a
+line Cas did not write.
+
+The confirmed failure is broader than a bad title: the unintended line is saved
+in the database, sent to the provider, and can become the session title. The
+exact shape of the mangled input was not reproduced reliably in a pty, so that
+terminal explanation remains a hypothesis. The busy-after-the-prompt window is
+the finding, and the first remedies are to use a cheap explicit title model and
+move the visible wait marker after post-turn work; flushing pending input is a
+separate tradeoff because it discards deliberate type-ahead.
+
+**Assigned:** v1.4. The version's claims are unaffected; this is not a tag
+blocker.
+
+
 ## B-05 · `run` from the routines screen uses a different model than `/routine`, silently
 
 **Found:** 2026-07-31, in the v1.2.1 triage, by reading — the report

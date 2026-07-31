@@ -206,4 +206,24 @@ history. All five are one mechanism wearing five triggers, and a dim
 ```
 
 
-## v1.3.1 - Quality-of-life patch
+## v1.3.1 — First Message visibility — 2026-07-31
+
+A light patch. A First Message now has somewhere to be seen, the export
+destination has a name that says what it is rather than one that looks like the
+vault, and two commands that were called hand-verified stopped being.
+
+**Added**
+- **`/status` names the First Message state** — ready, none for this persona,
+  not configured, or unavailable with the reason, and only when a persona is
+  attached (W-09)
+
+**Fixed**
+- `CHAT_EXPORT_DIR` replaces `VAULT_PATH` as the export-destination key; an
+  existing config keeps working unchanged (W-0.9.1-01)
+- `/export` and `/routine`'s listing are covered by tests rather than by hand,
+  and the docs that said otherwise are corrected (W-02)
+
+> *Note: the hidden is unhidden!*
+```
+𐔌˙. 'visible.'
+```
