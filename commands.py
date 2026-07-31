@@ -2803,7 +2803,17 @@ def _print_changes(changes, indent="     "):
         console.print(f"{indent}{c.label:9} {c.path}", style=style)
 
 
-def show_wiki_status():
+# `lead` is how a wiki command is addressed *from where this output is being
+# read*: `/wiki ` in a chat, `` on the wiki screen. Suggested command lines are
+# the one thing these three functions print that isn't true in both places, and
+# v1.2 gave them a second reader (`B-1.2-01`) — the screen told you to type
+# `/wiki diff all` and then refused it.
+#
+# The default is the chat form on purpose. A screen call site that forgets to
+# pass `lead=""` reproduces exactly the visible refusal above; a default of `""`
+# would instead tell a chat user to type `diff`, which is not a verb and so goes
+# to the model as a message. Prefer the failure that is visible.
+def show_wiki_status(lead="/wiki "):
     """'/wiki' — what has changed, wiki first, the rest of the vault counted.
 
     The vault line is a count and a pointer, not a listing. It exists so that
@@ -2833,8 +2843,12 @@ def show_wiki_status():
                       style="green")
 
     if other:
+        # `vault`, not the `all` alias it used to print: decision 13's rule
+        # about never re-teaching a retired word applies to a suggested command
+        # line as much as to `config.example.py`, and `_scope_typed` exists for
+        # exactly this.
         console.print(f"  vault:   {len(other)} changed elsewhere "
-                      f"→ /wiki diff all", style="dim")
+                      f"→ {lead}diff vault", style="dim")
     else:
         console.print("  vault:   clean", style="dim")
 
@@ -2844,21 +2858,21 @@ def show_wiki_status():
         console.print(f"  {short}  {when}  {subject}", style="dim")
 
     console.print()
-    console.print("  /wiki diff [all] | /wiki commit [all] <message>",
+    console.print(f"  {lead}diff [vault] | {lead}commit [vault] <message>",
                   style="dim")
     console.print()
 
 
-def show_wiki_diff(arg=""):
+def show_wiki_diff(arg="", lead="/wiki "):
     """'/wiki diff [scope] [folder|file]' — the diff, whole-corpus or one file."""
     scope, gran, _ = _parse_wiki_args(arg)
     if gran == "file":
-        _wiki_diff_file(scope)
+        _wiki_diff_file(scope, lead)
     else:
-        _wiki_diff_folder(scope)
+        _wiki_diff_folder(scope, lead)
 
 
-def _wiki_diff_folder(scope):
+def _wiki_diff_folder(scope, lead="/wiki "):
     """The whole-corpus diff, plus untracked files by name."""
     import wikigit
     from rich.syntax import Syntax
@@ -2912,13 +2926,13 @@ def _wiki_diff_folder(scope):
     # A worked example rather than "<message>" — see _wiki_commit_folder for why.
     word = _scope_typed(scope)
     prefix = "" if scope == wikigit.WIKI else f"{word} "
-    console.print(f"  commit it:  /wiki commit {prefix}tidied the aquarium "
+    console.print(f"  commit it:  {lead}commit {prefix}tidied the aquarium "
                   "pages", style="dim")
-    console.print(f"  or one file:  /wiki diff {prefix}file", style="dim")
+    console.print(f"  or one file:  {lead}diff {prefix}file", style="dim")
     console.print()
 
 
-def _wiki_diff_file(scope):
+def _wiki_diff_file(scope, lead="/wiki "):
     """Pick one changed file and show just its diff."""
     import wikigit
     from rich.syntax import Syntax
@@ -2962,12 +2976,12 @@ def _wiki_diff_file(scope):
     console.print()
     word = _scope_typed(scope)
     prefix = "" if scope == wikigit.WIKI else f"{word} "
-    console.print(f"  commit just this one:  /wiki commit {prefix}file",
+    console.print(f"  commit just this one:  {lead}commit {prefix}file",
                   style="dim")
     console.print()
 
 
-def do_wiki_commit(arg=""):
+def do_wiki_commit(arg="", lead="/wiki "):
     """'/wiki commit [scope] [folder|file] <message>' — commit the corpus.
 
     The message is required and is never generated. A commit message written by
@@ -2978,10 +2992,10 @@ def do_wiki_commit(arg=""):
     if gran == "file":
         _wiki_commit_file(scope, message)
     else:
-        _wiki_commit_folder(scope, message)
+        _wiki_commit_folder(scope, message, lead)
 
 
-def _wiki_commit_folder(scope, message):
+def _wiki_commit_folder(scope, message, lead="/wiki "):
     """Stage and commit everything in `scope`."""
     import wikigit
 
@@ -2992,10 +3006,10 @@ def _wiki_commit_folder(scope, message):
         # a real first commit.
         console.print("The message is just plain text after the command:",
                       style="yellow")
-        console.print("  /wiki commit tidied the aquarium pages", style="dim")
-        console.print("  /wiki commit vault  (adds the rest of the vault too)",
+        console.print(f"  {lead}commit tidied the aquarium pages", style="dim")
+        console.print(f"  {lead}commit vault  (adds the rest of the vault too)",
                       style="dim")
-        console.print("  /wiki commit wiki file  (pick and commit one file)",
+        console.print(f"  {lead}commit wiki file  (pick and commit one file)",
                       style="dim")
         return
 

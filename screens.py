@@ -357,16 +357,19 @@ PHRASE_ALIASES = {
 }
 
 
+# `lead=""` on every call into commands.py: those functions print suggested
+# command lines, and here the command is `diff`, not `/wiki diff`. See the note
+# above `commands.show_wiki_status`.
 def _wiki_status(rest, conn, table):
     import commands as _commands
-    _commands.show_wiki_status()
+    _commands.show_wiki_status(lead="")
 
 
 def _wiki_diff(rest, conn, table):
     import commands as _commands
     import wikigit
     scope, _gran, _msg = _commands._parse_wiki_args(rest)
-    _commands.show_wiki_diff(rest)
+    _commands.show_wiki_diff(rest, lead="")
     # A successful diff arms the review for this scope; a failed one (a
     # GitError, already reported by show_wiki_diff) must not.
     try:
@@ -381,7 +384,7 @@ def _wiki_commit(rest, conn, table):
     import commands as _commands
     import wikigit
     scope, _gran, _msg = _commands._parse_wiki_args(rest)
-    _commands.do_wiki_commit(rest)
+    _commands.do_wiki_commit(rest, lead="")
     # The review is resolved only if THIS scope now has no changes — a
     # partial or differently-scoped commit leaves it armed, to be re-checked
     # as "changed since the diff" on the way out.
@@ -649,7 +652,7 @@ def render(table, conn):
         _render_config()
     elif table.mode == "wiki":
         import commands as _commands
-        _commands.show_wiki_status()
+        _commands.show_wiki_status(lead="")
     elif table.mode == "routine":
         _render_routines(conn)
 

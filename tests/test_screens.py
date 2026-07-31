@@ -410,6 +410,86 @@ def test_config_paths_and_connect():
 # --- wiki screen -------------------------------------------------------
 
 
+def test_screens_never_print_chat_syntax():
+    """`B-1.2-01`: a screen printed `/wiki diff all` and then refused it.
+
+    The general shape is that commands.py's wiki output was written for one
+    reader (a chat) and v1.2 gave it a second (the screen), so this asserts the
+    property rather than the five call sites that had it wrong: **nothing
+    printed on a screen names a chat command.** `/wiki`, `/routine` and
+    `/config` are the three, since those are the screens.
+
+    The lookbehind is what keeps a *path* out of it — the config screen prints
+    `03 resources/wiki db`, which is not an instruction to type anything.
+    """
+    import io
+    import re
+
+    print("\n--- no screen prints a chat command line ---")
+    chat_syntax = re.compile(r"(?<![\w/])/(?:wiki|routine|config)\b")
+
+    def captured(fn):
+        """`screens.console.file = buf`, the idiom the rest of this file uses.
+        `redirect_stdout` does not work here: ui.py's Console is built once at
+        import and every module shares that one object (decision 6), so the
+        capture has to go through it."""
+        buf = io.StringIO()
+        screens.console.file = buf
+        try:
+            fn()
+        except Exception:
+            pass
+        finally:
+            screens.console.file = sys.stdout
+        return buf.getvalue()
+
+    def leaks(mode, answers, conn):
+        out = captured(lambda: drive(mode, answers, conn))
+        return sorted({line.strip() for line in out.splitlines()
+                       if chat_syntax.search(line)})
+
+    with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
+        conn = dbmod.db(":memory:")
+        repo.edit()
+        (repo.root / "new page.md").write_text("fresh\n", encoding="utf-8")
+        found = leaks("wiki", ["status", "diff", "commit", "diff vault",
+                               "commit vault", "q", "y"], conn)
+        ok("the wiki screen never suggests /wiki", found == [], found)
+        conn.close()
+
+    with tempfile.TemporaryDirectory() as tmp, Store(tmp) as store:
+        conn = dbmod.db(":memory:")
+        found = leaks("routine", ["help", "q"], conn)
+        ok("the routine screen never suggests /routine", found == [], found)
+        found = leaks("config", ["help", "paths", "refresh", "q"], conn)
+        ok("the config screen never suggests /config", found == [], found)
+        conn.close()
+
+    # The other half, and it compares the two renderings to each other rather
+    # than to a literal — `test_turn_paths.py`'s idiom. The screen form must be
+    # the chat form with `/wiki ` taken out and nothing else: that fails the
+    # moment a site hardcodes the prefix again, and needs no edit when the
+    # wording changes. Whitespace is normalised because dropping six characters
+    # moves rich's wrapping.
+    print("\n--- the screen form is the chat form minus its prefix ---")
+    import commands
+
+    def rendered(fn, **kw):
+        return " ".join(captured(lambda: fn(**kw)).split())
+
+    with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
+        repo.edit()
+        for name, fn, arg in (
+                ("status", commands.show_wiki_status, {}),
+                ("diff", commands.show_wiki_diff, {"arg": ""}),
+                ("commit (no message)", commands.do_wiki_commit, {"arg": ""})):
+            chat = rendered(fn, lead="/wiki ", **arg)
+            screen = rendered(fn, lead="", **arg)
+            ok(f"{name}: chat output minus '/wiki ' is the screen output",
+               " ".join(chat.replace("/wiki ", "").split()) == screen,
+               (chat[:160], screen[:160]))
+
+
 def test_wiki_review():
     print("\n--- wiki: a successful diff arms review; leaving asks ---")
     with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
@@ -488,13 +568,13 @@ def test_wiki_quick_forms_unaffected():
         repo.edit()
         calls = []
         real = commands.show_wiki_diff
-        commands.show_wiki_diff = lambda arg: calls.append(arg)
+        commands.show_wiki_diff = lambda arg, lead=None: calls.append((arg, lead))
         try:
             wtable.dispatch["diff"]("vault", conn, wtable)
         finally:
             commands.show_wiki_diff = real
         ok("the screen's diff handler calls commands.show_wiki_diff",
-           calls == ["vault"], calls)
+           calls == [("vault", "")], calls)
 
 
 # --- routines screen -----------------------------------------------------
@@ -676,6 +756,7 @@ def main():
     test_no_side_effects_on_invalid_input()
     test_config_render()
     test_config_paths_and_connect()
+    test_screens_never_print_chat_syntax()
     test_wiki_review()
     test_wiki_quick_forms_unaffected()
     test_routines_show_history_open()

@@ -27,6 +27,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-31 — The wiki screen stops telling you to type `/wiki` (B-1.2-01)
+The wiki screen printed `/wiki diff [all] | /wiki commit [all] <message>` and
+then refused that exact line — commands.py's wiki output was written for a
+chat, and 1.2 gave it a second reader. `show_wiki_status`, `show_wiki_diff` and
+`do_wiki_commit` take a `lead` (`/wiki ` in a chat, empty on the screen); it
+defaults to the chat form so a screen call site that forgets reproduces a
+visible refusal rather than telling a chat user to type a word that goes to the
+model. The same lines said `all` where `vault` is the canonical scope word —
+decision 13's rule against re-teaching a retired word, in a suggested command
+line rather than in `config.example.py`.
+- Files: commands.py, screens.py, tests/test_screens.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-31 — Command screens: config, wiki, routines (1.2)
 Bare `/config`, `/wiki` and `/routine` now open a command screen instead of a
 one-shot print or, for `/wiki`/`/routine`, the direct-run form. A screen is a
