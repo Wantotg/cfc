@@ -145,9 +145,10 @@ main.py --run-due / --run-routine → schedule.cli → runner.run_routine   (hea
 ```
 
 A chat turn takes one of two paths, chosen per turn by
-`TOOLS_ENABLED and tools_on and model in TOOLS_MODELS`: `api.stream_response`
-(streaming, no tools) or `agent.agent_turn` (non-streaming tool loop). **They
-must end a turn identically** — see invariant 6.
+`TOOLS_ENABLED and tools_on and models.supports_tools(current_model)`:
+`api.stream_response` (streaming, no tools) or `agent.agent_turn`
+(non-streaming tool loop). **They must end a turn identically** — see
+invariant 6.
 
 | Module | Holds |
 |---|---|
@@ -161,6 +162,7 @@ must end a turn identically** — see invariant 6.
 | `api.py` | streaming and non-streaming calls, per-phase timeouts, provider error extraction |
 | `preflight.py` | the embedder probe: `connection_state()`, its two timeouts, `ensure`'s fixer |
 | `db.py` | connection, schema/migrations, every query, replay + orphan drop |
+| `models.py` | the one model-config boundary: `MODELS`, validated at import, and every question a caller asks of it (`supports_tools`, `is_routine_vetted`, `routine_default_id`, `context_limit`, `known_ids`, `listed_ids`) |
 | `hub.py` | session browser, picker, `HUB_KEYS` + the help it generates, routine freshness |
 | `context.py` | `ToolContext` — read roots, write roots, gated/interactive |
 | `routines.py` / `runner.py` | the routine object + its file store and run log / executing one |
@@ -299,6 +301,17 @@ Settled. Argue with them only with a reason, and say that you are.
     going through the session's connection inherits it. If yours doesn't, that
     is the signal to stop and think, not to add an `if private`. Decision 10 has
     the three paths that escape the connection.
+
+    **`q`-returns-to-previous-chat is a standing example of the exception, not
+    a gap** (`Q-1.2.1-03`, 2026-07-31). The plumbing exists for a normal
+    chat — `_enter_screens` ends the session the same way `/q` does, and
+    `screens.enter` already returns a session id `repl()` knows how to reopen.
+    A private chat has no id to return to: it runs against `db(":memory:")`
+    (decision 10), the screen is handed `app_conn` instead, and ending the
+    session destroys the database. Cas's call: a private chat not being
+    continuable is the design. If this is ever built, the private branch is a
+    stated refusal with a reason — never a silent no-op — which is what this
+    exception clause asks for.
 16. **The connection light renders `preflight.connection_state()` and never
     forms an opinion.** The hub's light, `/connect embedding` and the launch
     report are three renderings of one function. A light that decides for itself

@@ -155,3 +155,13 @@ path settings in one place — none of them ever hand a stray line to a model.
  (  /  )
   \(__)| 
 ```
+## v1.2.1 - 1.2 bug patch **completed, 31/07**
+Three small fixes
+- a revert no longer lands on a rejected model
+- improved /model <n> 
+- clarified user messages
+
+> *Note: added even more room for mistakes!*
+```
+₍^. .^₎⟆ 'more mistakes!'
+```
