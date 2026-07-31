@@ -206,7 +206,7 @@ history. All five are one mechanism wearing five triggers, and a dim
 ```
 
 
-## v1.3.1 — First Message visibility — 2026-07-31
+## v1.3.1 — First Message visibility — **completed, 31/07**
 
 A light patch. A First Message now has somewhere to be seen, the export
 destination has a name that says what it is rather than one that looks like the
