@@ -852,8 +852,11 @@ a changelog entry, not a paragraph here.
   given its structural fix, the last suspect (`api.wire_messages`) spent in
   v0.9. None of that is confirmation — there is no reproduction, so there is no
   test that any of it *worked*. It closes by recurring and being explained, or
-  by absence across a window whose length was never stated (`Q-0.9.2-01`), which
-  is the weaker claim and has to be named as such. `errorlog.py` makes the watch
+  by absence, and no window length is going to get set for the weaker claim
+  (`Q-0.9.2-01`, closed 2026-07-31) — an unmeasured absence was forcing a choice
+  between waiting on it forever or failing a tag over a bug nobody can
+  reproduce. Neither is right: `B-01` stays open and `watching` for as long as
+  it takes, and does not gate a tag by itself. `errorlog.py` makes the watch
   real: the error line is captured when it fires, so neither route depends on a
   human reading scrollback in time. Blind spots (private chats, non-`httpx`
   exceptions) are with the entry.
