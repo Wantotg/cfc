@@ -68,7 +68,7 @@ disabled, invalid-but-parseable, and a file that doesn't parse at all) —
   tests/test_export.py, tests/test_private.py, tests/test_routines.py,
   tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 011d604
 
 ---
 
