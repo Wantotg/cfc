@@ -753,6 +753,63 @@ def main():
             ok("a failed run records its session id in the log",
                okc is False and f"session {scid}" in logtext, logtext)
 
+            print("\n--- RunRecord: an explicit field, not recovered from prose ---")
+            # The whole point of D-10's `RunRecord` work: session_id is now a
+            # structured field append_log/parse_log_line agree on, not
+            # something a reader has to recover by pattern-matching the
+            # runner's wording.
+            rec = routines.read_log("crashlog")[-1]
+            ok("the current writer's session id round-trips as a field",
+               rec.session_id == scid, (rec.session_id, scid))
+            ok("...and detail keeps the elapsed time but not the marker",
+               "(session" not in rec.detail and "s)" in rec.detail, rec.detail)
+            ok("last_run is a consumer of the same parser",
+               routines.last_run("crashlog")[:2] ==
+               (rec.status, rec.timestamp), routines.last_run("crashlog"))
+
+            print("\n--- legacy '(session N)' lines still read ---")
+            # Written by hand, in both shapes runner.py used before this
+            # field existed: bare, and with the elapsed time in the same
+            # parenthetical. Old lines are never rewritten, so both must
+            # still parse — the id recovered, the prose untouched.
+            legacy_path = routines.log_path("legacy-session")
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_text(
+                "# Run log — legacy-session\n\n"
+                "- **2026-01-01 03:00:05** — failed — bad prompt (session 9)\n"
+                "- **2026-01-02 03:00:05** — ok — TimeoutError: x "
+                "(12s, session 11) — wrote 1 files: a.md\n",
+                encoding="utf-8")
+            legacy = routines.read_log("legacy-session")
+            ok("two legacy lines both parse", len(legacy) == 2, legacy)
+            ok("a bare '(session N)' recovers the id",
+               legacy[0].session_id == 9, legacy[0])
+            # A bare "(session N)" is byte-identical to the current writer's
+            # own marker, so it is stripped the same way — there is no way to
+            # tell the two shapes apart, and no reason to want to.
+            ok("...and is stripped from detail exactly like the new marker",
+               legacy[0].detail == "bad prompt", legacy[0].detail)
+            ok("'(NNs, session N)' also recovers the id",
+               legacy[1].session_id == 11, legacy[1])
+            ok("...its detail keeps the elapsed time exactly as written",
+               legacy[1].detail == "TimeoutError: x (12s, session 11)",
+               legacy[1].detail)
+            ok("...and touched still parses off the end",
+               legacy[1].touched == "a.md", legacy[1])
+            ok("last_run reads a legacy file too",
+               routines.last_run("legacy-session") ==
+               ("ok", "2026-01-02 03:00:05", False))
+
+            print("\n--- db.routine_session: the narrow provider check ---")
+            from db import PROVIDER_CHAT, new_session, routine_session
+            chat_sid = new_session(conn, title="an ordinary chat")
+            ok("a routine session is found",
+               routine_session(conn, scid) == (scid, routine_session(conn, scid)[1]))
+            ok("...and provider-checked: a chat session id is refused",
+               routine_session(conn, chat_sid) is None)
+            ok("a session id that doesn't exist is refused",
+               routine_session(conn, 999999) is None)
+
             print("\n--- {{date}} in a prompt body ---")
             # The hand-written prompts said "injected by script" while nothing
             # injected, so the model read the literal braces and was free to

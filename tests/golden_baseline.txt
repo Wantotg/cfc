@@ -150,19 +150,6 @@ you>       All tags
 you> Don't know how to list 'nonsense'. One of:
   prompts · personas · traits · models · routines · tags · chats · sessions · outbox
 you>
-Current configuration:
-  API base:      https://api.example.invalid/v1
-  API key:       <KEY>
-  Default model: glm-5.2
-  Session model: glm-5.2
-  Auto-export:   on
-  Stream usage:  on
-  Vault root:    <ROOT>/tests/_fixture_vault
-  Export path:   <ROOT>/tests/_fixture_vault
-  Prompts dir:   <ROOT>/tests/_fixture_prompts
-  Quick models:  glm-5.2, fixture/tool-model
-
-you>
 Session #1  ·  glm-5.2  ·  Golden session one
   System prompt   not set
   Persona         not set
@@ -377,3 +364,76 @@ Enter to confirm, or 'back':   cancelled
 
 you> Usage: /clear notes
 you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]
+
+cooking for cats: config
+
+Chat default      glm-5.2
+Chat API          https://api.example.invalid/v1 · key set
+Embedding         ● hosted embedder unreachable — not cfc's to start
+Wiki import       no update flagged
+Database          <ROOT>/tests/_fixture.db
+Vault             <ROOT>/tests/_fixture_vault
+Export            <ROOT>/tests/_fixture_vault
+
+Wiki              unavailable — WIKI_DIR is not configured
+Routines          nothing needs attention · open with: routine
+config>
+cooking for cats: config
+
+Chat default      glm-5.2
+Chat API          https://api.example.invalid/v1 · key set
+Embedding         ● hosted embedder unreachable — not cfc's to start
+Wiki import       no update flagged
+Database          <ROOT>/tests/_fixture.db
+Vault             <ROOT>/tests/_fixture_vault
+Export            <ROOT>/tests/_fixture_vault
+
+Wiki              unavailable — WIKI_DIR is not configured
+Routines          nothing needs attention · open with: routine
+config>
+config commands
+  refresh  re-evaluate this screen
+  connect  connect embedding — run the connection flow, then redraw
+  paths    the complete effective path inventory
+  help     this screen's commands
+  q        back to the session picker
+  wiki     switch to the wiki screen
+  routine  switch to the routine screen
+
+config>
+cooking for cats: wiki
+
+
+  WIKI_DIR is not configured
+
+wiki>
+  WIKI_DIR is not configured
+
+wiki>
+wiki commands
+  status   the vault repo summary
+  diff     diff [wiki|journal|vault] [file] — the diff for a scope
+  commit   commit [wiki|journal|vault] [file] <message>
+  help     this screen's commands
+  q        back to the session picker
+  config   switch to the config screen
+  routine  switch to the routine screen
+
+wiki>
+cooking for cats: routines
+
+(none yet — 'new' to make one)
+routine>
+routine commands
+  show     show <routine> — the complete routine
+  history  history <routine> — recent runs
+  open     open <session id> — a run's transcript
+  run      run <routine> — run it now
+  new      create a routine
+  refresh  re-evaluate this screen
+  help     this screen's commands
+  q        back to the session picker
+  config   switch to the config screen
+  wiki     switch to the wiki screen
+
+routine>

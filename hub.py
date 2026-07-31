@@ -501,6 +501,41 @@ def print_hub_help():
     console.print()
 
 
+def _routine_problem_count():
+    """Distinct routines with a problem: malformed files plus anything that
+    fails `validate()`. Closes `D-10` without touching `_freshness` — this is
+    a *validation* signal, deliberately separate from "is a run owed".
+
+    Never raises: the routine folder is a vault path over the /mnt/c bridge,
+    and a broken hub is a worse failure than a missing nudge.
+    """
+    try:
+        from routines import list_routines
+        good, bad = list_routines()
+    except Exception:
+        return 0
+    n = len(bad)
+    for r in good:
+        try:
+            if r.validate():
+                n += 1
+        except Exception:
+            n += 1
+    return n
+
+
+def _print_routine_problem_nudge():
+    """`! N routines have problems — open a chat and type /routine`, only
+    when there's something to say. This is the hub's only mention of the
+    command screens — no shortcut key, no health dashboard, just the pointer
+    the D-10 finding asked for."""
+    n = _routine_problem_count()
+    if n:
+        plural, verb = ("", "has") if n == 1 else ("s", "have")
+        console.print(f"! {n} routine{plural} {verb} problems "
+                      f"— open a chat and type /routine", style="red")
+
+
 def pick_session(conn):
     """Show recent chats and routine health, and let the user pick one or
     start new."""
@@ -511,6 +546,7 @@ def pick_session(conn):
     if not rows:
         if routines:
             _print_routines(routines)
+        _print_routine_problem_nudge()
         print_connection()
         console.print("\nNo sessions yet. Starting a new "
                       "one.\n")
@@ -522,6 +558,7 @@ def pick_session(conn):
     console.print()
     if routines:
         _print_routines(routines)
+    _print_routine_problem_nudge()
     print_connection()
     console.print("Type a chat ID to resume, 'n' for new "
                   "session, 'p' for private, 'h' for help, 'q' to quit.")

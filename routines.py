@@ -530,14 +530,108 @@ def save_routine(routine, overwrite=False):
 # log.
 
 _LOG_RE = re.compile(
-    r"^- \*\*(?P<ts>[^*]+)\*\* — (?P<status>\w+)(?P<review> \(review\))?")
+    r"^- \*\*(?P<ts>[^*]+)\*\* — (?P<status>\w+)(?P<review> \(review\))?"
+    r"(?: — (?P<rest>.*))?$")
+
+# The touched-files clause, wherever it sits in `rest`. Two shapes because
+# `rest` may or may not still carry the ` — ` that introduces it: `_LOG_RE`
+# already consumed the *first* ` — ` in the line, so a line with no other
+# clause has "wrote N files: …" sitting at the very start of `rest`, while a
+# line that also has detail/session text keeps its own leading ` — ` intact
+# inside `rest`. Matching both means "touched goes last" holds regardless of
+# what precedes it.
+_TOUCHED_RE = re.compile(r"(?:^| — )wrote \d+ files?: (?P<files>.*)$")
+
+# The *current* writer's session marker: its own field, always the last thing
+# before the touched clause (or end of line). Anchored at the end of whatever
+# remains once touched is stripped, so it can never be confused with a
+# filename that happens to contain the word "session".
+_NEW_SESSION_RE = re.compile(r"\(session (?P<sid>\d+)\)$")
+
+# Every session id ever spliced into `detail` by hand, before this field
+# existed. `runner.py` wrote two shapes: a bare "{detail} (session N)", which
+# is byte-identical to the current marker and so is caught (and stripped) by
+# `_NEW_SESSION_RE` above without any special-casing; and, on the ok/failed
+# paths, "{detail} (NNs, session N)" — a *different* shape, since the elapsed
+# time breaks the "(" immediately before "session" that the strict pattern
+# needs. This looser fallback recovers the id from that second shape only,
+# and leaves `detail` exactly as it was rendered: rewriting old lines is not
+# this parser's job, only reading them is.
+_LEGACY_SESSION_RE = re.compile(r"\bsession (?P<sid>\d+)\)")
+
+
+class RunRecord:
+    """One parsed line from a routine's run log.
+
+    `detail` is the free-text summary/reason, with a trailing session marker
+    stripped out — it is structured metadata now, not prose, and a bare
+    "(session N)" from before this field existed is indistinguishable from the
+    current one, so it is stripped the same way. The one shape left untouched
+    is the legacy "(NNs, session N)" combination, where the elapsed time makes
+    it genuinely different text; rewriting old lines is not this parser's job.
+    `touched` is the joined display string `append_log` already built, not a
+    re-split list: a filename may itself contain ", ", so there is no lossless
+    way back to individual names and nothing here needs one.
+    """
+
+    def __init__(self, timestamp, status, review, detail, touched, session_id):
+        self.timestamp = timestamp
+        self.status = status
+        self.review = review
+        self.detail = detail
+        self.touched = touched
+        self.session_id = session_id
+
+    def __repr__(self):
+        return (f"<RunRecord {self.timestamp} {self.status} "
+                f"review={self.review} session={self.session_id}>")
+
+
+def parse_log_line(line):
+    """A `RunRecord`, or None if this line isn't one.
+
+    Reads both the current format and every line ever written under the old
+    one — see the module comment above `_LEGACY_SESSION_RE`. `last_run()` and
+    the routines screen's history both read the log through this one
+    function, so there is exactly one place that understands a run-log line.
+    """
+    m = _LOG_RE.match(line.strip())
+    if not m:
+        return None
+    rest = m.group("rest") or ""
+
+    touched = ""
+    tm = _TOUCHED_RE.search(rest)
+    if tm:
+        touched = tm.group("files")
+        rest = rest[:tm.start()]
+
+    session_id = None
+    sm = _NEW_SESSION_RE.search(rest.rstrip())
+    if sm:
+        session_id = int(sm.group("sid"))
+        rest = rest[:sm.start()].rstrip()
+    else:
+        lm = _LEGACY_SESSION_RE.search(rest)
+        if lm:
+            session_id = int(lm.group("sid"))
+
+    return RunRecord(
+        timestamp=m.group("ts"),
+        status=m.group("status"),
+        review=bool(m.group("review")),
+        detail=rest,
+        touched=touched,
+        session_id=session_id,
+    )
 
 
 def log_path(routine_id):
     return log_dir() / f"{routine_id}.md"
 
 
-def append_log(routine_id, status, detail="", touched=(), review=False):
+def append_log(routine_id, status, detail="", touched=(), review=False,
+               session_id=None):
     """Record one run. `status` is 'ok' or 'failed'.
 
     `review` is a **second, orthogonal signal**, and the reason it isn't folded
@@ -548,6 +642,12 @@ def append_log(routine_id, status, detail="", touched=(), review=False):
     status — reading as `ok (review)` — so a person scanning the log sees it and
     `last_run` can parse it back, while `status` stays exactly 'ok' for the
     scheduler's on_failure logic, which must not retry a run that didn't fail.
+
+    `session_id` is the run's own session — data, not prose. `runner.py` used
+    to splice "(session N)" into `detail` itself, which made a session id
+    something you had to recover by reading the runner's wording rather than
+    something the log structurally carries. `parse_log_line` is the one place
+    that reads it back, on either shape.
 
     `touched` is the files the run wrote — filled by the collector
     `runner.run_routine` hands to `agent_turn`. Two things about how it renders,
@@ -569,8 +669,13 @@ def append_log(routine_id, status, detail="", touched=(), review=False):
     line = f"- **{ts}** — {status}"
     if review:
         line += " (review)"
+    notes = []
     if detail:
-        line += f" — {detail.strip()}"
+        notes.append(detail.strip())
+    if session_id is not None:
+        notes.append(f"(session {session_id})")
+    if notes:
+        line += " — " + " ".join(notes)
     if touched:
         names = ", ".join(Path(t).name for t in touched)
         plural = "" if len(touched) == 1 else "s"
@@ -584,6 +689,26 @@ def append_log(routine_id, status, detail="", touched=(), review=False):
     return path
 
 
+def read_log(routine_id):
+    """Every parseable `RunRecord` for this routine, oldest first (file
+    order). A line that doesn't parse is skipped rather than fatal — same
+    policy `list_routines()` gives a malformed file: one bad line must not
+    hide the rest of the history."""
+    path = log_path(routine_id)
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        rec = parse_log_line(line)
+        if rec is not None:
+            out.append(rec)
+    return out
+
+
 def last_run(routine_id):
     """(status, timestamp, review) of the most recent run, or (None, None, False).
 
@@ -592,18 +717,15 @@ def last_run(routine_id):
     the orthogonal 'loop ok but the output looks off' flag (see append_log); it
     is deliberately separate from `status` so a flagged run is not mistaken for
     a failed one.
+
+    A consumer of `read_log`/`parse_log_line`, same as the routines screen's
+    history — one parser, not a second regex that could drift from it.
     """
-    path = log_path(routine_id)
-    if not path.exists():
+    records = read_log(routine_id)
+    if not records:
         return None, None, False
-    match = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        m = _LOG_RE.match(line.strip())
-        if m:
-            match = m
-    if not match:
-        return None, None, False
-    return match.group("status"), match.group("ts"), bool(match.group("review"))
+    last = records[-1]
+    return last.status, last.timestamp, last.review
 
 
 def last_success(routine_id):
@@ -621,19 +743,11 @@ def last_success(routine_id):
     written, so re-running it would process the same period twice. The two
     signals stay separate here for the same reason they do everywhere else.
     """
-    path = log_path(routine_id)
-    if not path.exists():
-        return None
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for line in reversed(lines):
-        m = _LOG_RE.match(line.strip())
-        if not m or m.group("status") == "failed":
+    for rec in reversed(read_log(routine_id)):
+        if rec.status == "failed":
             continue
         try:
-            return datetime.datetime.strptime(m.group("ts"),
+            return datetime.datetime.strptime(rec.timestamp,
                                               "%Y-%m-%d %H:%M:%S")
         except (TypeError, ValueError):
             # Same direction as the scheduler's unreadable-timestamp rule: a

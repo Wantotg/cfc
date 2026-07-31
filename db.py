@@ -194,6 +194,22 @@ def new_session(conn, title="(untitled)", model=None,
     return cur.lastrowid
 
 
+def routine_session(conn, session_id):
+    """(id, title) if `session_id` exists and is a routine run, else None.
+
+    The narrow check the routines screen's `open <id>` needs before it hands a
+    number to `run_session`: a stale or hand-typed log reference must be
+    refused visibly rather than opening whatever chat happens to hold that id.
+    Provider-checked, not merely existence-checked — `open 3` on a wiki page's
+    id would otherwise resume it as if it were a conversation.
+    """
+    row = conn.execute(
+        "SELECT id, title FROM sessions WHERE id=? AND provider=?",
+        (session_id, PROVIDER_ROUTINE),
+    ).fetchone()
+    return row if row else None
+
+
 def save_message(conn, session_id, role, content,
                  tok_in=None, tok_out=None, model=None,
                  kind="chat", meta=None):

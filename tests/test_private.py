@@ -296,6 +296,63 @@ def main_():
         notes._cfg = saved_notes_cfg
         notes.move_roots = saved_notes_roots
 
+    print("\n--- 1.2: a screen entered from a private chat sees none of "
+          "its history ---")
+    # A command screen (bare /config, /wiki, /routine) is handed app_conn —
+    # the durable connection repl() carries in — never the private chat's
+    # own in-memory one, and it opens a routine transcript straight off
+    # app_conn. The marked payload proves the private chat's own history
+    # cannot reach either: not the durable database in general, and not the
+    # specific transcript the screen opens.
+    import routines
+    tmp_routines = Path(tempfile.mkdtemp())
+    saved_rdir = routines.routine_dir
+    routines.routine_dir = lambda: tmp_routines
+    SECRET2 = "zx-private-screen-payload-must-not-land"
+
+    # A real routine transcript, sitting on the durable db already — what
+    # the routines screen's 'open' is supposed to find.
+    routine_sid = dbmod.new_session(
+        real, title="routine: nightly", provider=dbmod.PROVIDER_ROUTINE)
+    dbmod.save_message(real, routine_sid, "assistant",
+                       "the routine's own transcript")
+    real_before = count_msgs(real)
+
+    priv6 = dbmod.db(":memory:")
+    p6 = dbmod.new_session(priv6, title="(untitled)")
+    dbmod.save_message(priv6, p6, "user", SECRET2)
+    try:
+        stdin = io.StringIO(f"/routine\nopen {routine_sid}\n")
+        buf = io.StringIO()
+        real_stdin = sys.stdin
+        sys.stdin = stdin
+        try:
+            with contextlib.redirect_stdout(buf):
+                main.console.file = buf
+                outcome = main.run_session(priv6, p6, private=True,
+                                           app_conn=real)
+        finally:
+            sys.stdin = real_stdin
+        ok("the routines screen resolved the transcript on the durable db",
+           outcome is not None and outcome.session_id == routine_sid,
+           outcome)
+        durable_text = " ".join(
+            r[0] for r in real.execute(
+                "SELECT content FROM messages").fetchall())
+        ok("the marked private message never reaches the durable database",
+           SECRET2 not in durable_text, durable_text[-300:])
+        transcript_text = " ".join(
+            r[0] for r in real.execute(
+                "SELECT content FROM messages WHERE session_id=?",
+                (routine_sid,)).fetchall())
+        ok("...nor the specific transcript the screen opened",
+           SECRET2 not in transcript_text, transcript_text)
+        ok("...and the durable db gained nothing but what the screen wrote",
+           count_msgs(real) == real_before, (real_before, count_msgs(real)))
+    finally:
+        priv6.close()
+        routines.routine_dir = saved_rdir
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

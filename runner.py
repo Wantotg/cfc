@@ -403,7 +403,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     try:
         task = routine.prompt_text()
     except RoutineError as e:
-        append_log(routine.id, "failed", f"{e} (session {session_id})")
+        append_log(routine.id, "failed", str(e), session_id=session_id)
         return False, str(e), session_id
 
     task, unfilled = fill_placeholders(task, started, routine.id)
@@ -468,9 +468,8 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # run is the one you most want to open, and on the scheduled path the
         # terminal line never existed. Return the bare detail so do_routine's
         # own `transcript: session #N` line stays the single on-screen source.
-        append_log(routine.id, "failed",
-                   f"{detail} ({elapsed:.0f}s, session {session_id})",
-                   touched=touched)
+        append_log(routine.id, "failed", f"{detail} ({elapsed:.0f}s)",
+                   touched=touched, session_id=session_id)
         return False, detail, session_id
 
     conn.commit()
@@ -482,6 +481,6 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     # looks like the model hit a wall it merely reported. The run did not fail —
     # on_failure must not treat this as a retry — so it rides alongside the
     # status, not inside it.
-    append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s, session {session_id})",
-               touched=touched, review=review)
+    append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s)",
+               touched=touched, review=review, session_id=session_id)
     return True, summary, session_id

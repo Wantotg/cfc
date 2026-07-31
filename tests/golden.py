@@ -100,6 +100,20 @@ FIXTURE_MODELS = ["glm-5.2", "fixture/tool-model"]
 FIXTURE_TOOLS_MODELS = ["fixture/tool-model"]
 FIXTURE_ROUTINE_MODELS = ["fixture/tool-model"]
 FIXTURE_API_BASE = "https://api.example.invalid/v1"
+# Truthy and fixed, never printed itself — the config screen renders only
+# whether a key is set, so a real key and an unset one must not disagree
+# about which line the baseline pins.
+FIXTURE_API_KEY = "fixture-key-not-real"
+
+# 1.2's command screens read the routine store and the wiki corpus live.
+# Both fixtures are deliberately empty — a routine store and a wiki repo
+# convincing enough to test the *rich* states (armed review, routines with
+# problems, narrow rendering) belong to tests/test_screens.py, which builds
+# them in a temp dir; this harness only needs the two screens' "nothing here
+# yet" / "unavailable" states to stay pinned.
+FIXTURE_ROUTINES = HERE / "_fixture_routines"
+FIXTURE_ROUTINE_PROMPTS = HERE / "_fixture_routine_prompts"
+FIXTURE_ROUTINE_LOGS = HERE / "_fixture_routine_logs"
 
 # Commands to drive. No API calls: no chat turns, no :recall, no :remember.
 SCRIPT = [
@@ -113,7 +127,9 @@ SCRIPT = [
     f"{PREFIX}list models",
     f"{PREFIX}list tags",
     f"{PREFIX}list nonsense",
-    f"{PREFIX}config",
+    # Bare /config is driven at the very end of this script now — it enters
+    # a command screen rather than printing once, so anything after it in
+    # SCRIPT would be read as a screen command instead of a chat command.
     f"{PREFIX}status",
     f"{PREFIX}status prompt",
     # The absorbing verbs, then the ones that change something. Order matters:
@@ -180,7 +196,24 @@ SCRIPT = [
     f"{PREFIX}clear notes",
     "back",
     f"{PREFIX}clear",
-    f"{PREFIX}q",
+    # 1.2's command screens. Bare /config now ends the chat session (the
+    # same cleanup /q does) and enters a screen — deliberately last in this
+    # script, and its own 'q' is what ends the driven session; there is no
+    # trailing /q after this block. The fixture has no routines and no wiki
+    # corpus, so both screens exercise their deterministic 'nothing here yet'
+    # / 'unavailable' states rather than a git repo or a routine store this
+    # harness would have to fake convincingly. Richer states (armed review,
+    # routines with problems, narrow rendering) are covered in
+    # tests/test_screens.py instead.
+    f"{PREFIX}config",
+    "refresh",
+    "help",
+    "wiki",
+    "status",
+    "help",
+    "routine",
+    "help",
+    "q",
 ]
 
 REAL_DB = Path.home() / ".cfc" / "chat.db"
@@ -528,11 +561,29 @@ def capture():
                               ("TOOLS_MODELS", FIXTURE_TOOLS_MODELS),
                               ("ROUTINE_MODELS", FIXTURE_ROUTINE_MODELS),
                               ("API_BASE", FIXTURE_API_BASE),
+                              ("API_KEY", FIXTURE_API_KEY),
                               ("NOTES_DIR", str(FIXTURE_NOTES)),
                               ("NOTES_ARCHIVE_DIR", str(FIXTURE_NOTES_ARCHIVE))):
                 if hasattr(mod, attr):
                     setattr(mod, attr, val if isinstance(val, str)
                             else list(val))
+
+    # 1.2: the config screen prints whether a key is set (never the key
+    # itself) and reads the routine store and wiki corpus live. Same rule as
+    # everything above — pin the seam, not config.py, or a real key/vault
+    # turns a baseline into a property of *this machine's* config again.
+    import preflight
+    import routines as _routines
+    import wikigit as _wikigit
+    _routines.routine_dir = lambda: FIXTURE_ROUTINES
+    _routines.prompt_dir = lambda: FIXTURE_ROUTINE_PROMPTS
+    _routines.log_dir = lambda: FIXTURE_ROUTINE_LOGS
+    _wikigit.wiki_dir = lambda: None
+    _wikigit.journal_dir = lambda: None
+    # A fixed, network-free answer — golden drives no chat turns and no API
+    # calls, and a live probe against FIXTURE_API_BASE would be both a
+    # network dependency and a wait for a DNS failure on every run.
+    preflight.connection_state = lambda: ("hosted", "golden harness stub")
 
     # Every path into a pool goes through Pool.dir(), which reads `configured`
     # at call time — so re-pointing the pool is enough and no call site needs to

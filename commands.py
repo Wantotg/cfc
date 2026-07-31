@@ -22,7 +22,6 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from config import API_BASE, API_KEY, MODEL, VAULT_PATH, AUTO_EXPORT
 # Display only, and optional: a config written before 0.8.2 doesn't have it, and
 # an empty value means "print paths in full". Read with getattr rather than
 # imported by name so an older config.py keeps working untouched — config.py is
@@ -42,10 +41,6 @@ try:
     from config import MODEL_LIMITS
 except ImportError:
     MODEL_LIMITS = {}
-try:
-    from config import STREAM_USAGE
-except ImportError:
-    STREAM_USAGE = True
 try:
     from config import AUTO_EMBED
 except ImportError:
@@ -619,30 +614,6 @@ def list_models(current_model):
         else:
             table.add_row(str(i), m, "")
     console.print(table)
-    console.print()
-
-
-def show_config(current_model):
-    """Display all current settings."""
-    key_preview = "..." + API_KEY[-4:] if API_KEY else "not set"
-    console.print(f"\nCurrent configuration:")
-    console.print(f"  API base:      {API_BASE}")
-    console.print(f"  API key:       {key_preview}")
-    console.print(f"  Default model: {MODEL}")
-    console.print(f"  Session model: {current_model}")
-    console.print(f"  Auto-export:   "
-                  f"{'on' if AUTO_EXPORT else 'off'}")
-    console.print(f"  Stream usage:  "
-                  f"{'on' if STREAM_USAGE else 'off'}")
-    # This said "Vault path" and pointed at VAULT_PATH, which is the *export
-    # destination* — a different folder entirely, and on this machine not even
-    # under the vault. Two lines now, each named for what it actually holds.
-    console.print(f"  Vault root:    {VAULT_ROOT or '(not set)'}")
-    console.print(f"  Export path:   {VAULT_PATH}")
-    console.print(f"  Prompts dir:   {get_prompts_dir()}")
-    if MODELS:
-        console.print(f"  Quick models:  "
-                      f"{', '.join(MODELS)}")
     console.print()
 
 
@@ -1976,7 +1947,7 @@ def _ask_until(prompt, default, problem):
         console.print(f"  {why}", style="red")
 
 
-def _routine_abandoned(why=""):
+def _routine_abandoned(why="", return_to="chat"):
     """End the creation flow out loud (`D-0.9.1-03`).
 
     **The half that actually bit was the exit, not the validation.** The flow
@@ -1985,11 +1956,21 @@ def _routine_abandoned(why=""):
     an error, it is an API call and a confidently wrong answer) reached through
     an abandoned prompt rather than a missing verb. `create_routine` announces
     one way out at the top; every other way out now announces itself.
+
+    `return_to` names where control actually lands — "chat" (the default, a
+    direct `/routine new`) or "routines" (the screen). The wording differs
+    because the risk differs: back in chat, the next line typed is a message
+    to the model; back in the routines screen, it is a command that is either
+    recognised or refused, never sent anywhere.
     """
     if why:
         console.print(f"  {why}", style="red")
-    console.print("  No routine created — back in the chat, so the next line "
-                  "you type is a message.", style="dim")
+    if return_to == "chat":
+        console.print("  No routine created — back in the chat, so the next "
+                      "line you type is a message.", style="dim")
+    else:
+        console.print(f"  No routine created — back in {return_to}.",
+                      style="dim")
     console.print()
 
 
@@ -2077,10 +2058,19 @@ def show_routines():
     console.print()
 
 
-def create_routine():
-    """/routine new — the sequential creation flow. No TUI."""
+def create_routine(return_to="chat"):
+    """/routine new — the sequential creation flow. No TUI.
+
+    `return_to` is "chat" for the direct quick form, or "routines" when the
+    routines screen reuses this same flow — parameterising the landing
+    message rather than duplicating the flow, so every exit says where it
+    actually returns.
+    """
     from routines import (Routine, RoutineError, on_failure_problem, prompt_dir,
                           routine_dir, save_routine, slugify, trigger_problem)
+
+    def abandon(why=""):
+        _routine_abandoned(why, return_to=return_to)
 
     console.print()
     console.print("New routine. Ctrl-C at any point abandons it.", style="dim")
@@ -2094,7 +2084,7 @@ def create_routine():
     while True:
         name = _ask("  name")
         if name is None:
-            _routine_abandoned()
+            abandon()
             return
         if not name:
             console.print("  A name is required.", style="red")
@@ -2116,7 +2106,7 @@ def create_routine():
         console.print(f"  No task prompts in {pdir}", style="red")
         console.print("  Create one there first — the prompt is the task.",
                       style="dim")
-        _routine_abandoned()
+        abandon()
         return
     console.print(f"  task prompts in {pdir}:", style="dim")
     for i, p in enumerate(available, 1):
@@ -2124,7 +2114,7 @@ def create_routine():
     while True:
         choice = _ask("  prompt (number or filename)")
         if choice is None:
-            _routine_abandoned()
+            abandon()
             return
         if not choice:
             console.print("  A prompt is required.", style="red")
@@ -2139,7 +2129,7 @@ def create_routine():
 
     read_roots = _ask_paths("read", None)
     if read_roots is None:
-        _routine_abandoned()
+        abandon()
         return
     if not read_roots:
         console.print("  (no read roots — the routine will have no file access)",
@@ -2152,7 +2142,7 @@ def create_routine():
     if (_ask("  allow writing? (y/n, default n)") or "n").lower().startswith("y"):
         write_roots = _ask_paths("write", None)
         if write_roots is None:
-            _routine_abandoned()
+            abandon()
             return
 
     # `0300` rather than `HHMM` in the example: the placeholder was typed back
@@ -2162,12 +2152,12 @@ def create_routine():
     trigger = _ask_until("  trigger (command, 0300, or weekly 0330)", "command",
                          trigger_problem)
     if trigger is None:
-        _routine_abandoned()
+        abandon()
         return
     on_failure = _ask_until("  on failure (retry/skip)", "retry",
                             on_failure_problem)
     if on_failure is None:
-        _routine_abandoned()
+        abandon()
         return
 
     # Optional model pin. Blank = the routine uses the vetted default (or the
@@ -2176,7 +2166,7 @@ def create_routine():
     model = ""
     mchoice = _ask("  model (blank = routine default)", "")
     if mchoice is None:
-        _routine_abandoned()
+        abandon()
         return
     if mchoice.strip():
         picked = select_model(mchoice.strip())
@@ -2186,7 +2176,7 @@ def create_routine():
         # blank* saved a routine somebody was in the middle of abandoning. The
         # blank answer is the one that means no pin, and it never reaches here.
         if picked is None:
-            _routine_abandoned()
+            abandon()
             return
         model = picked
         if ROUTINE_MODELS and model not in ROUTINE_MODELS:
@@ -2211,10 +2201,14 @@ def create_routine():
         # can create the file between the id check and this line. What has
         # changed is that landing here is now a surprise rather than the normal
         # way a typo ends.
-        _routine_abandoned(f"Not saved: {e}")
+        abandon(f"Not saved: {e}")
         return
     console.print(f"  Saved: {dest}", style="green")
-    console.print(f"  Run it with '/routine {rid}'", style="dim")
+    if return_to == "chat":
+        console.print(f"  Run it with '/routine {rid}'", style="dim")
+    else:
+        console.print(f"  Back in {return_to} — 'run {rid}' or 'show {rid}'",
+                      style="dim")
     console.print()
 
 

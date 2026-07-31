@@ -27,6 +27,60 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-31 — Command screens: config, wiki, routines (1.2)
+Bare `/config`, `/wiki` and `/routine` now open a command screen instead of a
+one-shot print or, for `/wiki`/`/routine`, the direct-run form. A screen is a
+small REPL of its own: every submitted line is either a recognised action or
+a visible `Not a <screen> command: …` refusal, never a chat message — free
+text cannot start a model turn from inside one. The existing quick forms
+(`/wiki diff ...`, `/wiki commit ...`, `/routine <name>`, `/routine new`)
+are unchanged and still run straight from chat.
+
+`screens.py` owns the three command tables (parsing, generated help,
+navigation, rendering); the table is the only source both help and dispatch
+read, so a command can't be typeable-but-undocumented or documented-but-dead.
+Switching screens (`config`/`wiki`/`routine`) replaces the current one rather
+than nesting, so there is no stack to unwind and no way to recurse back into
+a chat. `main.py`'s session loop grew a small return protocol
+(`run_session()` now returns `None` or an `_Open`) so a screen can hand back
+either "to the hub" or "open this persisted routine transcript", without
+`screens.py` ever calling `run_session()` itself. A screen entered from a
+private chat is handed the durable connection, never the private one — the
+private chat's own history never reaches it.
+
+The wiki screen adds one piece of state beyond what already existed: a
+transient, per-visit review, armed by a successful `diff` and re-checked on
+every way out (`q`, a screen switch, or EOF) against the same scope. Zero
+changes clears it silently; the same changes ask whether to leave them for
+later; changed files say so distinctly (`reviewed changes have changed since
+the diff`). Nothing is written or judged — git remains the truth, same
+`wikigit` calls the existing quick forms already used.
+
+The routines screen closes `D-10` (a routine that fails `validate()` used to
+read identically to a healthy one on the hub) — the hub itself is untouched;
+it gains one conditional line (`! N routines have problems — open a chat and
+type /routine`) when `hub._routine_problem_count()` finds anything, computed
+separately from the freshness light so a validation problem can never bend
+what that light means. `routines.py` gained `RunRecord`/`parse_log_line`,
+making a run's session id an explicit field `append_log` writes rather than
+prose `runner.py` spliced in by hand — old `(session N)` log lines still
+read, since the shape didn't change, only how it gets there. `db.py` gained
+`routine_session()`, a provider-checked lookup so the screen's `open <id>`
+refuses a stale or non-routine reference rather than opening whatever chat
+happens to hold that id.
+
+`commands.show_config` is gone — superseded by the config screen, and its
+field set never matched what the new screen needed. `create_routine()` and
+`_routine_abandoned()` take a `return_to` so the same creation flow, reused
+by the screen, says where it actually lands rather than always claiming
+"back in the chat."
+
+- Files: screens.py (new), main.py, commands.py, routines.py, runner.py,
+  db.py, hub.py, tests/test_screens.py (new), tests/test_routines.py,
+  tests/test_private.py, tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-30 — Two retired `:` spellings that reached a user, not a comment
 `D-1.1-09` swept comments and docstrings; these two are runtime strings and
 were out of that scope on purpose, flagged by the coder rather than absorbed.

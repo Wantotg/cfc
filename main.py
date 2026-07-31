@@ -63,6 +63,7 @@ from api import (stream_response, generate_title, is_transient_status,
                  EMPTY_COMPLETION_RETRIES)
 from backup import safe_backup
 import errorlog
+import screens
 from complete import install as install_completion, make_completer
 from export import export_session, safe_export
 from hub import list_sessions, pick_session
@@ -70,7 +71,7 @@ from commands import (
     show_tags, list_all_tags,
     list_prompts, load_prompt_file, list_personas, load_persona_file,
     list_models, select_model, known_models, model_by_number,
-    show_config, show_token_stats,
+    show_token_stats,
     context_bar, print_context_bar,
     search_messages,
     do_recall, do_remember, do_forget,
@@ -78,9 +79,9 @@ from commands import (
     do_attach, show_attachments, do_detach,
     show_tools_state, show_status, show_list,
     resolve_layer, resolve_attached, load_pool_file,
-    show_routines, create_routine, do_routine,
+    create_routine, do_routine,
     show_outbox, do_file, do_move, do_clear,
-    show_wiki_status, show_wiki_diff, do_wiki_commit,
+    show_wiki_diff, do_wiki_commit,
     connect_embedding, connect_status, empty_completion_decision,
     warn_unknown_model_ids,
     print_session_header, print_core_commands, print_help,
@@ -104,6 +105,20 @@ _DB_OFF = ("Database is off for this chat — /database on to enable "
 _LEAVE = object()
 
 
+# What run_session() hands back to repl(): either None (the plain "back to
+# the hub" it always meant) or an _Open naming a session to open next without
+# going through the picker — a routine transcript a screen requested. One
+# shape rather than a bare int, because the *next* run_session() call needs
+# to know whether to label that session as a routine transcript, and that
+# fact has to survive the hop between two separate calls, not just one.
+class _Open:
+    __slots__ = ("session_id", "routine_transcript")
+
+    def __init__(self, session_id, routine_transcript=False):
+        self.session_id = session_id
+        self.routine_transcript = routine_transcript
+
+
 def repl(session_id=None):
     """Outer driver: the hub, and the session you return to it from.
 
@@ -111,6 +126,13 @@ def repl(session_id=None):
     hub — the exact screen you started on. The program quits only from the hub,
     with `q`. A `session_id` from `main.py 5` still returns to the hub on `/q`,
     so the hub is the one way out.
+
+    A screen (config/wiki/routines, see screens.py) is entered from inside a
+    session and, like a session, has exactly one way out: back to the hub, or
+    — for the routines screen's `open <id>` — a persisted routine transcript.
+    `run_session()`'s return value carries that; this loop is what turns an
+    `_Open` into the next `run_session()` call, so a screen never has to call
+    `run_session()` itself.
     """
     conn = db()
     # Two completion front ends for two readers: prompt_toolkit on a real
@@ -119,8 +141,10 @@ def repl(session_id=None):
     install_completion()
     set_completer(make_completer())
 
+    transcript = False
     while True:
         if session_id is None:
+            transcript = False
             try:
                 result = pick_session(conn)
             except (EOFError, KeyboardInterrupt):
@@ -134,23 +158,39 @@ def repl(session_id=None):
                 # saves) lands there and is gone the moment we close it. Nothing
                 # touches ~/.cfc/chat.db. See run_session(private=True) for the
                 # two paths that escape the connection (auto-embed, auto-export).
+                #
+                # `app_conn=conn` is what lets a screen opened *from* this
+                # private chat reach durable, global state — the screen
+                # controller never sees the private connection at all.
                 priv = db(":memory:")
                 try:
-                    run_session(priv, new_session(priv), private=True)
+                    outcome = run_session(priv, new_session(priv),
+                                          private=True, app_conn=conn)
                 finally:
                     priv.close()
-                continue        # session_id is still None → back to the hub
-            session_id = result if result is not None \
-                else new_session(conn)
-        run_session(conn, session_id)
-        session_id = None   # back to the hub for the next round
+                if outcome is None:
+                    continue    # session_id is still None → back to the hub
+                session_id = outcome.session_id
+                transcript = outcome.routine_transcript
+                # Falls through to the ordinary run_session() call below,
+                # opening what the private chat's screen asked for.
+            else:
+                session_id = result if result is not None \
+                    else new_session(conn)
+
+        outcome = run_session(conn, session_id, routine_transcript=transcript)
+        if outcome is None:
+            session_id = None
+        else:
+            session_id, transcript = outcome.session_id, outcome.routine_transcript
 
     conn.close()
 
 
-def run_session(conn, session_id, private=False):
-    """One session's REPL loop. Returns when the user leaves the session
-    (`/q`, EOF, Ctrl-C); repl() reads that as 'back to the hub'.
+def run_session(conn, session_id, private=False, app_conn=None,
+                routine_transcript=False):
+    """One session's REPL loop. Returns None (repl() reads that as 'back to
+    the hub') or an `_Open` naming the session to open next.
 
     `private` is not a per-call-site switch — the isolation is structural, in
     the in-memory `conn` repl() hands us, so every DB write is already a no-op
@@ -158,7 +198,21 @@ def run_session(conn, session_id, private=False):
     auto-embed (reads the real db by hardcoded path) and auto-export (writes a
     file). Automatic persistence is off; an explicit `/export` is still honoured
     — the contract is 'nothing is written down unless you ask for it by name'.
+
+    `app_conn` is the durable, on-disk connection — always `conn` itself for
+    an ordinary session, but explicitly the real database when this call
+    *is* a private chat's throwaway `conn`. A command screen entered from a
+    private chat (bare `/config`, `/wiki`, `/routine`) is handed `app_conn`,
+    never `conn`, so it reads and writes global state and never the private
+    connection or its history.
+
+    `routine_transcript` labels this session, in its header only, as a run a
+    routine already made — the routines screen's `open <id>` opens one of
+    these as an ordinary chat, and the label is what stops the first line
+    typed there reading as an unrelated new conversation.
     """
+    app_conn = conn if app_conn is None else app_conn
+    outcome = None
     history = load_history(conn, session_id)
     # Built once per session: `interactive` reports whether stdin is a
     # terminal, which is what the empty-completion handler consults before it
@@ -207,6 +261,15 @@ def run_session(conn, session_id, private=False):
     print_session_header(conn, session_id, current_model, current_title,
                          system_prompt_name, persona_name, private=private,
                          trait_names=trait_names)
+    if routine_transcript:
+        # State it, don't warn it — same voice as the private-chat notice
+        # below, and for the same reason: the label is the only thing that
+        # stops a free-text message here reading as an ordinary new chat.
+        console.print(Text.from_markup(
+            "[bold]Routine transcript[/] — this is the session a routine "
+            "run wrote. Typing here sends an ordinary chat message; it "
+            "does not run the routine again.",
+            style="cyan"))
     if private:
         # State it, don't warn it — this is a fact about the session, in the
         # same voice as the header. It is the user's only signal that the usual
@@ -343,7 +406,7 @@ def run_session(conn, session_id, private=False):
     def h_new(cmd):
         nonlocal session_id, history, injected, current_title, current_model
         nonlocal system_prompt, system_prompt_name, persona, persona_name
-        nonlocal trait_names, turns_interrupted
+        nonlocal trait_names, turns_interrupted, outcome
         # `/new p` — a private chat from inside a session, joining `p` at the
         # hub. It **nests** rather than replacing this session: a private chat
         # is a side trip, and coming back to what you were doing is the point.
@@ -354,9 +417,19 @@ def run_session(conn, session_id, private=False):
         if cmd.arg(0).lower() in ("p", "private"):
             priv = db(":memory:")
             try:
-                run_session(priv, new_session(priv), private=True)
+                # app_conn, not conn: a screen entered from *this* nested
+                # private chat must reach the same durable connection this
+                # session would hand it, never the private one.
+                result = run_session(priv, new_session(priv), private=True,
+                                     app_conn=app_conn)
             finally:
                 priv.close()
+            if result is not None:
+                # The nested private chat's screen asked to open a session —
+                # bubble that up as this session's own exit rather than
+                # silently discarding it and reprinting our own header.
+                outcome = result
+                return _LEAVE
             # Say where you have landed. Returning from a private chat into an
             # ordinary one with no marker is how a message ends up in the
             # wrong place.
@@ -381,8 +454,23 @@ def run_session(conn, session_id, private=False):
         console.print(f"\nStarted session "
                       f"#{session_id}\n")
 
+    def _enter_screens(target):
+        """Leave the chat loop for the shared screen controller — the same
+        cleanup `/q` does, then one call to `screens.enter()`, never a
+        recursive `run_session()`. Its return becomes this session's own
+        exit: None means the hub, a session id means a routine transcript
+        the routines screen opened.
+        """
+        nonlocal outcome
+        if AUTO_EXPORT and history and not private:
+            safe_export(conn, session_id)
+        result = screens.enter(app_conn, mode=target)
+        if result is not None:
+            outcome = _Open(result, routine_transcript=True)
+        return _LEAVE
+
     def h_config(cmd):
-        show_config(current_model)
+        return _enter_screens("config")
 
     def h_export(cmd):
         # `/export`, `/export chat 5`, and `/export 5` — a bare integer is a
@@ -808,9 +896,11 @@ def run_session(conn, session_id, private=False):
 
     def h_routine(cmd):
         # 'new' is tested before the run form, or a routine would have to be
-        # called something other than "new" for either to work.
+        # called something other than "new" for either to work. Bare
+        # `/routine` now opens the routines screen; the direct quick forms
+        # (`/routine <name>`, `/routine new`) are unchanged.
         if not cmd.raw:
-            show_routines()
+            return _enter_screens("routine")
         elif cmd.raw == "new":
             create_routine()
         else:
@@ -826,9 +916,10 @@ def run_session(conn, session_id, private=False):
         do_clear(cmd.raw)
 
     def h_wiki(cmd):
+        # Bare `/wiki` now opens the wiki screen; `/wiki diff ...` and
+        # `/wiki commit ...` remain direct quick forms from the chat.
         if not cmd.args:
-            show_wiki_status()
-            return
+            return _enter_screens("wiki")
         action = cmd.arg(0)
         rest = cmd.tail(1)
         if action == "diff":
@@ -905,6 +996,9 @@ def run_session(conn, session_id, private=False):
             handler = HANDLERS.get(cmd.verb)
             if handler is not None:
                 if handler(cmd) is _LEAVE:
+                    # `outcome` may already carry an `_Open` — set by
+                    # `_enter_screens` or by `/new p` bubbling one up from a
+                    # nested private chat — or stay None, the plain "hub".
                     break
                 continue
             # An unrecognised verb is not a command; it goes to the model,
@@ -1065,6 +1159,8 @@ def run_session(conn, session_id, private=False):
 
         if not private:
             auto_embed()   # index this turn's messages (best-effort)
+
+    return outcome
 
 if __name__ == "__main__":
     # The headless flags branch before anything that assumes a terminal — no
