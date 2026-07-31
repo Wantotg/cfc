@@ -165,3 +165,45 @@ Three small fixes
 ```
 ₍^. .^₎⟆ 'more mistakes!'
 ```
+
+## v1.3 - The hidden turn **completed, 31/07**
+
+cfc can now put something in front of the model that you didn't type and that
+never becomes a line in the conversation. A chat can open with the model
+already speaking, you can ask it to keep going, you can direct it mid-scene
+without breaking the scene, and an active trait stops fading out of a long
+history. All five are one mechanism wearing five triggers, and a dim
+`cfc -> …` line says which one fired.
+
+**Added**
+- **First Message** — a persona can carry a prewritten opening, one `.md` per
+  persona, frozen onto the session the first time it opens
+- **`/continue`** — ask the model to keep going from its own last answer, with
+  no user turn of your own
+- **`((OOC))`** — a whole line in double parentheses is a direction, not
+  dialogue
+- **Trait refresh** — an active trait is re-stated to the model every few turns
+  instead of being left to fade
+- **A tone cue on every ordinary turn** — the model is told how your message
+  reads before it answers
+
+**Fixed**
+- `run` from the routines screen uses the chat's model, like `/routine` does (B-05)
+- a routine says when it starts, and that Ctrl-C cancels it; a cancelled run is
+  no longer logged as a failure or counted against a weekly slot (W-0.9.1-06)
+- the picker's `Msgs` column is `Messages`, and counts a First Message (W-0.9.1-02)
+- `/connect embed` is accepted alongside `embedder` and `embeddings` (W-0.9.1-08)
+- an unknown `/connect` target says "connection", not "connect target" (W-1.1.1-01)
+- every command screen says `help` exists on the way in (W-1.2.1-02)
+- the `/tools` golden fixture no longer bakes real tool roots into the baseline (D-11)
+
+> *Note: the turn that is so hidden, that this update announces a working feature that can't be found*
+```
+ __
+( o> 'the cat is preparing v1.3.1'
+///\
+\V_/_
+```
+
+
+## v1.3.1 - Quality-of-life patch
