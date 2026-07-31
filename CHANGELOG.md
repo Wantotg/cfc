@@ -39,7 +39,7 @@ decision 13's rule against re-teaching a retired word, in a suggested command
 line rather than in `config.example.py`.
 - Files: commands.py, screens.py, tests/test_screens.py
 - Status: shipped
-- Commit: pending
+- Commit: eafbbdd
 
 ## 2026-07-31 — Command screens: config, wiki, routines (1.2)
 Bare `/config`, `/wiki` and `/routine` now open a command screen instead of a
@@ -93,7 +93,7 @@ by the screen, says where it actually lands rather than always claiming
   db.py, hub.py, tests/test_screens.py (new), tests/test_routines.py,
   tests/test_private.py, tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 1a91f21
 
 ## 2026-07-30 — Two retired `:` spellings that reached a user, not a comment
 `D-1.1-09` swept comments and docstrings; these two are runtime strings and
@@ -112,7 +112,7 @@ the 379-line check is identical either side of it.
 
 - Files: main.py
 - Status: shipped
-- Commit: pending
+- Commit: 43c5843
 
 ## 2026-07-30 — v1.1.1: a status-coded hiccup no longer costs a model switch, and four playtest fixes
 The v1.1 playtest patch. Six fixes, no new roadmap capability.
@@ -173,7 +173,7 @@ assertions fail.
 
 - Files: commands.py, tests/test_mover.py
 - Status: shipped
-- Commit: pending
+- Commit: 53a7f1e
 
 ## 2026-07-30 — Name it, don't count it: /move, /clear notes, and title filing
 v1.1. Three focused commands close three pieces of workflow that had been
