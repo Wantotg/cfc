@@ -128,3 +128,30 @@ you can pick a model by the number the list already prints.
 ==_~_==
  /___\
 ```
+## v1.2 - Screens that aren't chat **completed, 31/07**
+The wiki and routines each get a command centre instead of a chat window doing
+double duty. `/wiki` reviews and acts on vault diffs, `/routine` manages
+routines with their run history, and `/config` gathers connection, model and
+path settings in one place — none of them ever hand a stray line to a model.
+
+**Added**
+- `/wiki` — a wiki management screen: inspect, review and act on diffs, generous
+  about phrasing so a typo doesn't read as a broken feature
+- `/routine` — a routine screen with an overview and run history; opening a run
+  as a chat picks up the conversation where it stopped
+- the routine view redesigned: `routine`/`model`/`trigger`/`write`/`loop`/`flag`/
+  `last run`, ordered so the `flag` column alone tells you whether to read
+  further
+- `/config` — connection, model picker and paths gathered on one screen
+
+**Fixed**
+- the wiki screen no longer prints a chat command it then refuses to run
+  (B-1.2-01)
+
+> *Note: New screens! Where you can make mistakes that don't mess up your chat!*
+```
+ \    /\ 'show me the screens!'
+  )  ( ')
+ (  /  )
+  \(__)| 
+```

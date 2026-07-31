@@ -167,6 +167,7 @@ must end a turn identically** — see invariant 6.
 | `schedule.py` | what is due, the tick lock, the `--run-due` entry point |
 | `mover.py` | filing a proposal out of the outbox; destination re-validation; the journal's git guard |
 | `wikigit.py` | the vault repo: status/diff/commit, scoped to a corpus. Owns no console |
+| `screens.py` | the command-screen controller: config, wiki, routines. `classify` never falls through to a model — see invariant 17 |
 | `errorlog.py` | `~/.cfc/errors.log`: provider errors + a line per launch. **Imports no cfc module, never raises, nothing private** |
 | `ui.py` | shared Console, palette, panels, `read_input`. **Imports no other cfc module** |
 | memory | `import_wiki` → `chunk` → `embed`/`backfill` → `search` → `recall` |
@@ -357,6 +358,25 @@ Settled. Argue with them only with a reason, and say that you are.
     `BACKLOG.md`. The colour is not lying about what it measures — *is a run
     owed* — and that is the trap: the panel is read as *is this still working*,
     and the two questions agree on every routine except a broken one.
+17. **Typing can only reach a model from a chat mode** (v1.2, config/wiki/routine
+    screens). `run_session`'s chat loop is the one place an unrecognised line is
+    allowed to fall through — decision 13 is about keeping that fallthrough
+    honest, not about removing it. Every other mode is command-driven and must
+    refuse instead: `screens.py`'s `classify` returns `"bad"` for anything it
+    doesn't recognise, `enter()` prints a friendly error and a pointer to `help`,
+    and the line never reaches `handler` at all. `tests/test_screens.py` pins
+    this directly — invalid input never reaches a save or a model.
+
+    **This is why `B-1.2-01` was a bug and not a feature working as designed.**
+    `commands.show_wiki_status` prints a chat command line (`/wiki diff [all]`)
+    because it was written for one reader — the chat, where typing that line is
+    exactly right. v1.2 gave the same function a second reader, the wiki screen,
+    where `wiki` isn't a verb at all and printing the line the screen can't take
+    reproduces this decision's failure shape one level up: the advice itself
+    became the thing that couldn't be typed where it was given. The fix was a
+    `lead` argument so the same string renders correctly for both readers,
+    **not** a second string — that would have been a producer/parser pair,
+    which the recurring-hazard table below already has enough of.
 
 ## Four rules that generated most of the above
 
