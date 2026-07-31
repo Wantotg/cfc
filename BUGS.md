@@ -240,3 +240,55 @@ A third option is that the advice simply stops naming a place (*"start it, or
 run connect embedding"*), which is true at all four renderings and costs the
 one thing `B-0.9.1-03` added it for. That is a judgement about which reader
 matters more, and it belongs to whoever owns decision 16, not to a triage pass.
+
+## B-05 · `run` from the routines screen uses a different model than `/routine`, silently
+
+**Found:** 2026-07-31, in the v1.2.1 triage, by reading — the report
+(`N-1.2.1-01`) saw the symptom and read it as a lost warning. Found by
+diagnosing that, so a plain-sequence id.
+
+**Symptom:** the same routine, run two ways, runs on two different models and
+nothing says so.
+
+- `/routine note writer` from a chat → `main.py:944` passes
+  `model=current_model`, so it runs on **the session's model**.
+- `run note writer` from the routines screen → `screens.py:576` calls
+  `_commands.do_routine(conn, name)` with no `model=`, so `model` is `None`,
+  `runner.effective_model` falls through to `default_routine_model()`, and it
+  runs on **`routine_default`**.
+
+Confirmed against the database rather than inferred: session 170, the
+playtest's own 13:34 run of `note writer` from the screen, is stored with
+`model = deepseek/deepseek-v4-pro-cheaper` while the session model was not
+that. The routine carries no `model:` pin, so `effective_model` had nothing
+else to resolve.
+
+**Why it is quiet.** `do_routine`'s warning fires on
+`not models.is_routine_vetted(eff)`, and `routine_default` is vetted by
+definition — so the screen path is *structurally incapable* of warning. The
+one signal that would tell you the model changed is suppressed by the same
+change that caused it.
+
+**Where to look:** `screens.py`'s `_routine_run`, and `enter(conn, mode)` above
+it. The session model cannot currently reach the handler: `enter` is called as
+`screens.enter(app_conn, mode=target)` (`main.py:501`) and never receives it,
+and every screen handler shares one signature, `handler(rest, conn, table)`.
+So this is not a forgotten argument — there is no slot to put it in. The fix is
+either a field on `table` or a parameter on `enter`, and that is a small design
+call rather than a patch.
+
+**Third instance of one shape, which is the reason to record it rather than
+fix it in passing.** `B-1.2-01` (the wiki screen printing a chat command),
+`B-04` (the connection advice naming a chat from a screen that can do it) and
+this are all v1.2 giving an existing function a second reader and the function
+behaving as though it still has one. The first two are about *wording*; this
+one changes **which model runs**, so it is the first of the three where the
+second reader gets different behaviour rather than a confusing sentence.
+
+**Not obviously wrong, which is the other reason it needs a call.** Running a
+routine on the vetted default is arguably the *better* default for a screen —
+it is the unattended-shaped path, and the screen has no chat to salvage. If
+that is the intent it should be said out loud: the screen's own
+`show <routine>` prints `model (default)`, which is true from the screen and
+false from a chat. What cannot stand is the two paths disagreeing with nothing
+naming the difference.
