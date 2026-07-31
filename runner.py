@@ -40,22 +40,20 @@ try:
 except ImportError:
     MODEL = None
 
-try:
-    from config import ROUTINE_MODELS
-except ImportError:
-    ROUTINE_MODELS = []
+import models
 
 
 def default_routine_model():
     """The model an unattended run uses when the caller passes none.
 
-    First vetted routine model, falling back to the global default when the
-    list is unset — so an old config still runs. This is the load-bearing half
-    of the routine-model guard: a scheduled --run-due passes model=None, and
-    without this it would inherit whatever `MODEL` happens to be — which is the
-    interactive chat default, and may be a model that stalls a routine.
+    The MODELS record marked `routine_default`, falling back to the global
+    default when nothing is marked — so an old config still runs. This is the
+    load-bearing half of the routine-model guard: a scheduled --run-due passes
+    model=None, and without this it would inherit whatever `MODEL` happens to
+    be — which is the interactive chat default, and may be a model that stalls
+    a routine.
     """
-    return ROUTINE_MODELS[0] if ROUTINE_MODELS else MODEL
+    return models.routine_default_id() or MODEL
 
 
 def effective_model(routine, caller_model=None):

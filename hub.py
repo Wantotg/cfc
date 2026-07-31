@@ -23,6 +23,7 @@ import datetime
 from rich.table import Table
 from rich.text import Text
 
+import models
 from db import PROVIDER_ROUTINE, PROVIDER_WIKI
 from ui import (connection_light, CONNECTION_STYLE, console,
                 context_style, format_ts)
@@ -142,12 +143,11 @@ def _context_cell(model, tok_in, tok_out):
     — a number with no denominator is still worth showing, and inventing a
     denominator would not be."""
     from rich.text import Text
-    from config import MODEL_LIMITS
 
     ctx = (tok_in or 0) + (tok_out or 0)
     if not ctx:
         return Text("—", style="dim")
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     if not limit:
         # No denominator, so no colour — an uncoloured raw count says "this is
         # a size, not a verdict". Abbreviated only once it's long enough for

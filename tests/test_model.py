@@ -27,8 +27,16 @@ sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
 import commands
+import models
 
 PASS, FAIL = [], []
+
+
+def _specs(ids):
+    """Plain ids -> listed ModelSpec records, the shape `models.MODELS` now
+    holds. Every test in this file cares about matching/selection, not about
+    tools/routine/limit fields, so those stay at their defaults."""
+    return [models._spec(m) for m in ids]
 
 POOL = [
     "zai-org/glm-5.2:thinking",
@@ -60,12 +68,10 @@ def scripted(answers):
 def run_select(query, pool, answers):
     """Drive select_model with a scripted input and the given config pool.
     Returns (result, output)."""
-    saved_models = commands.MODELS
-    saved_routine = commands.ROUTINE_MODELS
+    saved_models = models.MODELS
     saved_input = builtins.input
     saved_file = commands.console.file
-    commands.MODELS = list(pool)
-    commands.ROUTINE_MODELS = []
+    models.MODELS = _specs(pool)
     builtins.input = scripted(answers)
     out = io.StringIO()
     commands.console.file = out
@@ -73,8 +79,7 @@ def run_select(query, pool, answers):
         with redirect_stdout(out):
             result = commands.select_model(query)
     finally:
-        commands.MODELS = saved_models
-        commands.ROUTINE_MODELS = saved_routine
+        models.MODELS = saved_models
         builtins.input = saved_input
         commands.console.file = saved_file
     return result, out.getvalue()
@@ -209,9 +214,9 @@ def main():
 
     print("\n--- model_by_number: 1-based, over MODELS's displayed order "
           "(W-1.1-10) ---")
-    saved_models = commands.MODELS
+    saved_models = models.MODELS
     try:
-        commands.MODELS = list(POOL)
+        models.MODELS = _specs(POOL)
         ok("1 is the first row list_models would show",
            commands.model_by_number(1) == POOL[0], commands.model_by_number(1))
         ok("the last row is the last number",
@@ -222,63 +227,30 @@ def main():
            commands.model_by_number(-1) is None)
         ok("past the end is out of range, not an IndexError",
            commands.model_by_number(len(POOL) + 1) is None)
-        commands.MODELS = []
+        models.MODELS = []
         ok("no MODELS configured means every number is out of range",
            commands.model_by_number(1) is None)
+        models.MODELS = [models._spec("hidden", listed=False)]
+        ok("...and a record marked listed=False is skipped, same as absent",
+           commands.model_by_number(1) is None)
     finally:
-        commands.MODELS = saved_models
+        models.MODELS = saved_models
 
     print("\n--- select_model: no configured models, no fuss ---")
     res, out = run_select("anything/at-all", [], [])
     ok("an empty pool passes the query through untouched",
        res == "anything/at-all" and out.strip() == "", (res, out))
 
-    test_unknown_model_ids()
+    # The old cross-check between MODELS and MODEL_LIMITS/TOOLS_MODELS
+    # (`unknown_model_ids`/`warn_unknown_model_ids`) is gone along with the
+    # separate collections it compared — a typo in a field is now caught at
+    # load time as a loud `models.ModelConfigError` (see tests/test_models.py)
+    # rather than a silent runtime mismatch between three lists.
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
     return 1 if FAIL else 0
-
-
-def test_unknown_model_ids():
-    """MODEL_LIMITS / TOOLS_MODELS naming ids no model list contains.
-
-    The silent member of the model-config family. A bad id in MODELS fails
-    loudly at the first message; a typo in TOOLS_MODELS fails by doing nothing
-    at all — tools quietly never activate for a model you believe is covered.
-    """
-    print("\n--- config lists that name unknown ids ---")
-    orig = commands.MODELS, commands.ROUTINE_MODELS, \
-        commands.MODEL_LIMITS, commands.TOOLS_MODELS
-    try:
-        commands.MODELS = ["real-a", "real-b"]
-        commands.ROUTINE_MODELS = ["real-b"]
-
-        commands.MODEL_LIMITS = {"real-a": 1}
-        commands.TOOLS_MODELS = ["real-b"]
-        ok("a clean config reports nothing", commands.unknown_model_ids() == {},
-           commands.unknown_model_ids())
-
-        commands.TOOLS_MODELS = ["real-b", "reel-b"]
-        ok("a TOOLS_MODELS typo is caught",
-           commands.unknown_model_ids() == {"TOOLS_MODELS": ["reel-b"]},
-           commands.unknown_model_ids())
-
-        commands.MODEL_LIMITS = {"real-a": 1, "rael-a": 2}
-        ok("a MODEL_LIMITS typo is caught too",
-           commands.unknown_model_ids().get("MODEL_LIMITS") == ["rael-a"],
-           commands.unknown_model_ids())
-
-        # ROUTINE_MODELS counts as known: known_models() is MODELS plus any
-        # routine-only ids, and a routine-only model legitimately wants a limit.
-        commands.MODEL_LIMITS = {"real-b": 1}
-        commands.TOOLS_MODELS = []
-        ok("a routine-only model is not a typo",
-           commands.unknown_model_ids() == {}, commands.unknown_model_ids())
-    finally:
-        (commands.MODELS, commands.ROUTINE_MODELS,
-         commands.MODEL_LIMITS, commands.TOOLS_MODELS) = orig
 
 
 if __name__ == "__main__":

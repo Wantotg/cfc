@@ -86,15 +86,16 @@ FIXTURE_FILED = HERE / "_fixture_filed"
 FIXTURE_NOTES = FIXTURE_FILED / "notes"
 FIXTURE_NOTES_ARCHIVE = FIXTURE_FILED / "notes archive"
 
-# The same rule the prompts fixture follows, applied to config.py's model
-# lists: :config, :models and :tools print them verbatim, so editing your own
-# MODELS failed `check` on lines that describe your config and not the code.
+# The same rule the prompts fixture follows, applied to config.py's models:
+# :config, :models and :tools print them verbatim, so editing your own MODELS
+# failed `check` on lines that describe your config and not the code.
 #
 # Short ids on purpose — :models renders a rich table whose column width is
 # the longest id, so a real provider id makes the *layout* config-derived too.
 # 'glm-5.2' matches the fixture sessions' model, so it exercises the
-# '<-- current' row; keeping it out of TOOLS_MODELS is what keeps the :tools
-# "NOT in TOOLS_MODELS" branch covered.
+# '<-- current' row; keeping it out of FIXTURE_TOOLS_MODELS is what keeps
+# :tools' "doesn't support tools" branch covered. These three feed one
+# `models.MODELS` record list built in capture() — see the comment there.
 FIXTURE_MODEL = "glm-5.2"
 FIXTURE_MODELS = ["glm-5.2", "fixture/tool-model"]
 FIXTURE_TOOLS_MODELS = ["fixture/tool-model"]
@@ -552,14 +553,11 @@ def capture():
     # property of the source.
     #
     # FIXTURE_MODELS is deliberately unlike a real config: two short ids, one
-    # tools-capable and one not, which is what the `:tools` "NOT in
-    # TOOLS_MODELS" branch needs to stay covered.
+    # tools-capable and one not, which is what `:tools`' "doesn't support
+    # tools" branch needs to stay covered.
     for mod in list(sys.modules.values()):
         if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
             for attr, val in (("MODEL", FIXTURE_MODEL),
-                              ("MODELS", FIXTURE_MODELS),
-                              ("TOOLS_MODELS", FIXTURE_TOOLS_MODELS),
-                              ("ROUTINE_MODELS", FIXTURE_ROUTINE_MODELS),
                               ("API_BASE", FIXTURE_API_BASE),
                               ("API_KEY", FIXTURE_API_KEY),
                               ("NOTES_DIR", str(FIXTURE_NOTES)),
@@ -567,6 +565,16 @@ def capture():
                 if hasattr(mod, attr):
                     setattr(mod, attr, val if isinstance(val, str)
                             else list(val))
+
+    # 1.2.1: the four model collections (MODELS/TOOLS_MODELS/ROUTINE_MODELS/
+    # MODEL_LIMITS) became one — `models.MODELS`, a list of records. Patched
+    # directly at that one seam rather than through the generic attr loop
+    # above: the loop sets a *name* on every module that has one, and nothing
+    # downstream still has a bare `MODELS` list of strings to receive it.
+    import models as _models
+    _models.MODELS = [_models._spec(m, tools=(m in FIXTURE_TOOLS_MODELS),
+                                    routine=(m in FIXTURE_ROUTINE_MODELS))
+                      for m in FIXTURE_MODELS]
 
     # 1.2: the config screen prints whether a key is set (never the key
     # itself) and reads the routine store and wiki corpus live. Same rule as

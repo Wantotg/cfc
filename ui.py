@@ -159,11 +159,12 @@ def short_model(model):
     becomes `glm-5.2:thinking`.
 
     **Display only.** The full id is what goes on the wire, into the sessions
-    table, and into the `in` checks against `TOOLS_MODELS`, `MODEL_LIMITS` and
-    `ROUTINE_MODELS` — all of which are exact. Store or send the short form and
-    tool calling silently stops firing while the context bar goes uncoloured,
-    with no error raised anywhere. So there is exactly one of these, it is
-    called at the moment of printing, and nothing keeps its result.
+    table, and into `models.py`'s lookups (`supports_tools`, `context_limit`,
+    `is_routine_vetted`) — all keyed on the exact id. Store or send the short
+    form and tool calling silently stops firing while the context bar goes
+    uncoloured, with no error raised anywhere. So there is exactly one of
+    these, it is called at the moment of printing, and nothing keeps its
+    result.
     """
     m = (model or "").strip()
     return m.rsplit("/", 1)[-1] if "/" in m else m
@@ -216,6 +217,17 @@ def context_style(pct):
 # clause carries its own context and is true everywhere, at the cost of three
 # redundant words when you read it from inside a chat.
 #
+# **Every fixable row names both places it can be typed** (v1.2.1). The config
+# screen renders this same text (`_render_config`'s Embedding row), and by
+# decision 17 it is command-driven and refuses `/connect embedding` outright —
+# only its own verb, `connect embedding` with no slash, works there. Before
+# this, the one string this table exists to keep singular was naming a command
+# the reader could be looking straight at a screen that would refuse. The fix
+# is the same one this comment already argues for: not a second string per
+# reader (a `lead`-argument fork, like `B-1.2-01`'s), because this text is pure
+# advice rather than a line printed *as* the command — naming both is simply
+# true everywhere it renders, at the same three-redundant-words cost as above.
+#
 # **The colour says what cfc can do about it, not how bad it is** (v1.0,
 # `D-0.9.1-01`). Severity does not discriminate here: every non-green state
 # means memory is off, equally. Recoverability does, so that is what the dot
@@ -235,7 +247,8 @@ def context_style(pct):
 CONNECTION_STYLE = {
     "connected":   ("●", "green",   "embedder connected"),
     "no server":   ("●", "orange3", "LM Studio is up, embedder is not — "
-                                    "/connect embedding in a chat"),
+                                    "/connect embedding in a chat, or "
+                                    "connect embedding in config"),
     # Starting LM Studio itself is offered *first* because it is the path that
     # always works, and `/connect embedding` second because it also works —
     # driven 2026-07-27 from a cold machine, `lms server start` brought the app
@@ -243,9 +256,11 @@ CONNECTION_STYLE = {
     # impossible on three failures from an interactive shell; see the rejected
     # designs in `HANDOVER.md`, which keeps the mistake on purpose.
     "not running": ("●", "orange3", "LM Studio is not running — start it, or "
-                                    "/connect embedding in a chat"),
+                                    "/connect embedding in a chat, or "
+                                    "connect embedding in config"),
     "down":        ("●", "orange3", "embedder not answering — "
-                                    "/connect embedding in a chat"),
+                                    "/connect embedding in a chat, or "
+                                    "connect embedding in config"),
     # No `/connect` here, and that is the honest answer rather than an
     # omission: a hosted endpoint is not something cfc can start, so offering a
     # command that cannot help would be worse than saying so. It is the one red

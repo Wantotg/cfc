@@ -18,12 +18,17 @@ crashing the hub — this test is what stops that reaching a release.
 
 No network, no LM Studio, no API key.
 """
+import contextlib
+import io
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import commands
+import hub
 import preflight
+import screens
 import ui
 
 
@@ -104,6 +109,14 @@ def test_rendering_round_trip():
             # three words that supply it.
             assert "chat" in text, (
                 f"{state} names a command with no place to type it: {text}")
+            # ...and, since v1.2.1 (`B-04`), the config screen's own location
+            # too — `_render_config` renders this same text and refuses the
+            # chat form outright (decision 17: command screens are not chat
+            # loops). Both markers, not just "connect embedding" bare, because
+            # that phrase is already a substring of "/connect embedding" and
+            # would pass even with the config location missing entirely.
+            assert "in a chat" in text and "in config" in text, (
+                f"{state} does not name both locations: {text}")
     print(f"  ok  {len(preflight.STATES)} states render")
     # An unknown state degrades rather than raising. The hub is not worth
     # taking down over a light.
@@ -141,6 +154,67 @@ def test_colour_follows_what_cfc_can_do():
           green not in fixable | unfixable, True)
 
 
+def _rendered(fn, *a, **kw):
+    """Capture what `fn` prints through the shared `ui.console`, whichever
+    module it was imported into — hub, screens and commands all hold the
+    same object (`from ui import console`), so redirecting the one on `ui`
+    covers every caller."""
+    buf = io.StringIO()
+    saved = ui.console.file
+    ui.console.file = buf
+    try:
+        with contextlib.redirect_stdout(buf):
+            fn(*a, **kw)
+    finally:
+        ui.console.file = saved
+    return buf.getvalue()
+
+
+def test_advice_renders_identically_on_all_three_screens():
+    """`B-04`: the hub, the config screen and chat's `/connect` all render
+    `ui.CONNECTION_STYLE` verbatim — driven here rather than inferred from
+    the table, so a screen that started building its own copy (the failure
+    `B-04` names as the second obvious repair) would show up as a mismatch
+    here even though the shared table stayed correct.
+    """
+    print("the hub, config screen and chat show the same advice")
+    for state in (preflight.NO_SERVER, preflight.NOT_RUNNING, preflight.DOWN):
+        orig_state = preflight.connection_state
+        preflight.connection_state = lambda s=state: (s, "test detail")
+        try:
+            hub_out = _rendered(hub.print_connection, state=state)
+            config_out = _rendered(screens._render_config)
+            chat_out = _rendered(commands.connect_status)
+        finally:
+            preflight.connection_state = orig_state
+
+        _, _, text = ui.connection_light(state)
+        # Rich wraps long lines to the console width, so the raw phrase can
+        # land split across a newline in the captured output — collapse
+        # whitespace on both sides rather than pin an exact substring match.
+        flat_text = " ".join(text.split())
+        for label, out in (("hub", hub_out), ("config screen", config_out),
+                          ("chat", chat_out)):
+            flat_out = " ".join(out.split())
+            assert flat_text in flat_out, (
+                f"{label} did not render the shared text for {state}: {out!r}")
+        check(f"{state}: identical wording on all three screens", True, True)
+
+    print("the hosted row still offers no local fix anywhere")
+    orig_state = preflight.connection_state
+    preflight.connection_state = lambda: (preflight.HOSTED, "test detail")
+    try:
+        chat_out = _rendered(commands.connect_status)
+        config_out = _rendered(screens._render_config)
+    finally:
+        preflight.connection_state = orig_state
+    for label, out in (("chat", chat_out), ("config screen", config_out)):
+        assert "not cfc's to start" in out, f"{label}: {out!r}"
+        assert "/connect embedding" not in out, (
+            f"{label} offers a fix hosted can't use: {out!r}")
+    check("hosted keeps offering nothing to run, everywhere", True, True)
+
+
 def test_probe_timeouts_are_a_pair():
     print("connect and read stay two numbers")
     # Pinned as a pair, exactly as tests/test_embed.py pins embed.py's. The bug
@@ -174,6 +248,7 @@ if __name__ == "__main__":
     test_states()
     test_rendering_round_trip()
     test_colour_follows_what_cfc_can_do()
+    test_advice_renders_identically_on_all_three_screens()
     test_probe_timeouts_are_a_pair()
     test_terminal_report_direction()
     print("\nall connection tests passed")

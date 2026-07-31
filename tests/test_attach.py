@@ -59,8 +59,9 @@ def main():
     conn.commit()
 
     import commands
+    import models
     commands.ATTACH_ROOTS = (jail,)
-    commands.MODEL_LIMITS = {"m": 1000}          # tiny, to exercise the budget
+    models.MODELS = [models._spec("m", limit=1000)]  # tiny, to exercise the budget
     commands.ATTACH_MAX_CHARS = 10_000
 
     good = jail / "proj" / "notes.md"

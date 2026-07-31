@@ -37,10 +37,7 @@ try:
     from config import TOOLS_MAX_TURN_RESULT_CHARS
 except ImportError:
     TOOLS_MAX_TURN_RESULT_CHARS = 120_000
-try:
-    from config import MODEL_LIMITS
-except ImportError:
-    MODEL_LIMITS = {}
+import models
 from context import chat_context
 
 # The exact string a turn ends with when it runs out of calls. It is a
@@ -97,14 +94,14 @@ def est_tokens(messages):
 def _oversize_reason(messages, model):
     """Why this request is too big to send, or None.
 
-    A backstop, and an honest one: `MODEL_LIMITS` holds **vendor claims** (two
-    entries say 1,000,000), so on the models used here this will rarely fire
-    before the provider's real limit does. It costs nothing, and when it does
-    fire it turns an opaque provider 400 into a sentence naming the number.
-    The load-bearing bound is TURN_RESULT_CHARS above, which does not depend on
-    trusting a published context window.
+    A backstop, and an honest one: a MODELS record's `limit` holds a **vendor
+    claim** (several say 1,000,000), so on the models used here this will
+    rarely fire before the provider's real limit does. It costs nothing, and
+    when it does fire it turns an opaque provider 400 into a sentence naming
+    the number. The load-bearing bound is TURN_RESULT_CHARS above, which does
+    not depend on trusting a published context window.
     """
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     if not limit:
         return None
     est = est_tokens(messages)

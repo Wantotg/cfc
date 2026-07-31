@@ -29,18 +29,8 @@ from rich.text import Text
 import config as _config
 VAULT_ROOT = getattr(_config, "VAULT_ROOT", "")
 
-try:
-    from config import MODELS
-except ImportError:
-    MODELS = []
-try:
-    from config import ROUTINE_MODELS
-except ImportError:
-    ROUTINE_MODELS = []
-try:
-    from config import MODEL_LIMITS
-except ImportError:
-    MODEL_LIMITS = {}
+import models
+
 try:
     from config import AUTO_EMBED
 except ImportError:
@@ -68,10 +58,6 @@ try:
     from config import TOOLS_ENABLED
 except ImportError:
     TOOLS_ENABLED = False
-try:
-    from config import TOOLS_MODELS
-except ImportError:
-    TOOLS_MODELS = []
 try:
     from config import TOOLS_ROOTS
 except ImportError:
@@ -313,60 +299,20 @@ def load_pool_file(kind, name):
 
 def known_models():
     """The pool the selector matches a loose `/model` query against: every
-    model cfc knows from config, MODELS first, then any ROUTINE_MODELS not
-    already there. Order preserved, deduped. It is not a live catalogue — a
-    model you never listed can't be matched, only typed in full, which is why
-    `resolve_model` still passes an unrecognised full id straight through."""
-    seen = {}
-    for m in list(MODELS) + list(ROUTINE_MODELS):
-        seen.setdefault(m, None)
-    return list(seen)
+    model id `models.py` knows, in its order (see `models.known_ids`). It is
+    not a live catalogue — a model you never listed can't be matched, only
+    typed in full, which is why `resolve_model` still passes an unrecognised
+    full id straight through.
 
-
-def unknown_model_ids():
-    """Ids named in `MODEL_LIMITS`/`TOOLS_MODELS` that no model list contains.
-
-    The silent member of the model-config family, and the reason it earns a
-    check while `MODELS` itself doesn't: a bad id in `MODELS` fails loudly at
-    the first message with a provider 400. A typo in `TOOLS_MODELS` fails by
-    **doing nothing** — `use_tools` quietly stays False and tools never turn on
-    for a model you believe is covered, with no error to notice. `MODEL_LIMITS`
-    is the same shape one step milder: the context bar and `/status` just go
-    blank, which reads as "no data" rather than "you misspelled it".
-
-    Returns `{setting: [ids]}`, empty when everything checks out.
-
-    **This verifies a claim already made rather than adding one.** It compares
-    two config lists against a third; it does not ask the provider whether any
-    id is real. Pinging each id at startup was considered and rejected — API
-    calls on every launch, and a new claim to keep true.
+    There is no longer a separate check for a config list naming an id no
+    model list contains (the old `unknown_model_ids`/`warn_unknown_model_ids`)
+    — that class of typo needed catching because tool support and the context
+    limit lived in collections that could name an id `MODELS` didn't. Now
+    they're fields on the one record for that id, so there is nothing left to
+    cross-check; a malformed record is loud at launch instead
+    (`models.ModelConfigError`).
     """
-    known = set(known_models())
-    out = {}
-    for name, ids in (("MODEL_LIMITS", list(MODEL_LIMITS)),
-                      ("TOOLS_MODELS", list(TOOLS_MODELS))):
-        missing = [i for i in ids if i not in known]
-        if missing:
-            out[name] = missing
-    return out
-
-
-def warn_unknown_model_ids():
-    """Print `unknown_model_ids()` at startup, or stay silent. Returns a count.
-
-    Startup rather than on demand, because the failure it catches is one you
-    are never prompted to investigate — you type `/tools on`, it says tools are
-    on, and nothing happens for the rest of the session.
-    """
-    bad = unknown_model_ids()
-    for setting, ids in bad.items():
-        console.print(f"[config] {setting} names {len(ids)} model(s) not in "
-                      f"MODELS or ROUTINE_MODELS: {', '.join(ids)}",
-                      style="yellow")
-    if bad:
-        console.print("  a typo here fails silently — tools or the context "
-                      "bar just never activate for that model.", style="dim")
-    return sum(len(v) for v in bad.values())
+    return models.known_ids()
 
 
 def _norm(s):
@@ -499,6 +445,18 @@ def _model_labels(options):
     return options if len(set(short)) != len(short) else short
 
 
+def tools_unsupported_reason(model):
+    """Why `model` can't use tools, without assuming the reader knows
+    config.py's attribute names — plus what would work. One function so the
+    session header, `/status`, `/tools` and the one-time `/tools on` notice
+    say the same thing; they used to each spell out 'not in TOOLS_MODELS',
+    which named a setting that no longer exists as a separate list at all."""
+    capable = models.tool_capable_ids()
+    note = (f"switch to: {', '.join(_model_labels(capable))}" if capable
+           else "no configured model supports tools")
+    return f"{short_model(model)} doesn't support tools — {note}"
+
+
 def _confirm_model(model):
     """Enter (empty) or y confirms; anything else cancels."""
     ans = input(f"  did you mean {short_model(model)}? "
@@ -584,19 +542,21 @@ def select_model(query):
 
 
 def model_by_number(n):
-    """1-based lookup into `MODELS`, in the order `list_models` displays it —
-    the same order `/model <n>` indexes into. None for zero, negative, or past
-    the end, never an `IndexError`; None also when `MODELS` is empty, since
-    there is then no displayed order to index into."""
-    if not MODELS or n < 1 or n > len(MODELS):
+    """1-based lookup into the listed models, in the order `list_models`
+    displays them — the same order `/model <n>` indexes into. None for zero,
+    negative, or past the end, never an `IndexError`; None also when nothing
+    is listed, since there is then no displayed order to index into."""
+    listed = models.listed_ids()
+    if not listed or n < 1 or n > len(listed):
         return None
-    return MODELS[n - 1]
+    return listed[n - 1]
 
 
 def list_models(current_model):
     """Show configured models from config.py, numbered in display order so
     `/model <n>` can be typed straight off this list."""
-    if not MODELS:
+    listed = models.listed_ids()
+    if not listed:
         console.print("No MODELS list in config.py.")
         console.print("You can still switch with "
                       "/model <name>")
@@ -608,7 +568,7 @@ def list_models(current_model):
     table.add_column("#", justify="right", style="dim")
     table.add_column("Model", style="cyan")
     table.add_column("Status")
-    for i, m in enumerate(MODELS, 1):
+    for i, m in enumerate(listed, 1):
         if m == current_model:
             table.add_row(str(i), m, "<-- current")
         else:
@@ -651,7 +611,7 @@ def show_token_stats(conn, session_id, current_model,
         console.print()
         return
 
-    limit = MODEL_LIMITS.get(current_model)
+    limit = models.context_limit(current_model)
 
     if limit:
         pct = ctx / limit * 100
@@ -686,8 +646,8 @@ def show_token_stats(conn, session_id, current_model,
                           "degrade.")
     else:
         console.print(f"Context limit:      unknown")
-        console.print(f"  (add {current_model} to "
-                      f"MODEL_LIMITS in config.py)")
+        console.print(f"  (add a 'limit' to {current_model}'s "
+                      f"MODELS record in config.py)")
         console.print()
         console.print(f"Current context:    "
                       f"{ctx:>10,} tokens")
@@ -796,7 +756,7 @@ def print_session_header(conn, session_id, model, title,
         _header_row("Attached", f"{names}  (~{est:,} tokens)", "cyan")
 
     tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     if ctx and limit:
         pct = ctx / limit * 100
         _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
@@ -808,8 +768,8 @@ def print_session_header(conn, session_id, model, title,
 
     # Once, here — not on every turn. A warning printed every turn is a
     # warning nobody reads.
-    if TOOLS_ENABLED and model not in TOOLS_MODELS:
-        _header_row("Tools", f"{model} is not in TOOLS_MODELS — off", "yellow")
+    if TOOLS_ENABLED and not models.supports_tools(model):
+        _header_row("Tools", f"off — {tools_unsupported_reason(model)}", "yellow")
 
 
 def show_status(conn, session_id, model, title, private=False,
@@ -896,19 +856,19 @@ def show_status(conn, session_id, model, title, private=False,
                     f"{'s' if len(injected) != 1 else ''} in this conversation",
                     "blue")
 
-    supported = model in TOOLS_MODELS
+    supported = models.supports_tools(model)
     if TOOLS_ENABLED and tools_on and supported:
         _header_row("Tools", "active", "green")
     else:
         why = ("TOOLS_ENABLED is off" if not TOOLS_ENABLED
                else "off for this session" if not tools_on
-               else f"{short_model(model)} is not in TOOLS_MODELS")
+               else tools_unsupported_reason(model))
         _header_row("Tools", f"inactive — {why}", "dim")
     _header_row("Database", "on" if db_on else "off",
                 "green" if db_on else "dim")
 
     tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     if ctx and limit:
         pct = ctx / limit * 100
         _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
@@ -1110,7 +1070,7 @@ def print_help():
 def context_bar(conn, session_id, model):
     """Return a short context string for display, or empty."""
     _, _, ctx = get_context_info(conn, session_id, model)
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     if limit and ctx > 0:
         pct = ctx / limit * 100
         return f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)"
@@ -1121,7 +1081,7 @@ def print_context_bar(model, tok_in, tok_out):
     """Post-turn context-usage bar. Shared by the streaming and tool paths,
     so both end a turn the same way — a change to one can't drift from the
     other. Silent when the model has no known limit or no tokens came back."""
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     ctx = (tok_in or 0) + (tok_out or 0)
     if not (limit and ctx > 0):
         return
@@ -1636,7 +1596,7 @@ def do_attach(conn, session_id, history, raw_path, model):
         return
 
     est_tokens = len(text) // 4
-    limit = MODEL_LIMITS.get(model)
+    limit = models.context_limit(model)
     if limit:
         budget = int(limit * ATTACH_BUDGET_FRACTION)
         if est_tokens > budget:
@@ -1867,7 +1827,7 @@ def show_tools_state(current_model, session_on):
     Three switches have to line up (master, model, session), so the answer to
     "why isn't this working" should be one command, not three guesses.
     """
-    supported = current_model in TOOLS_MODELS
+    supported = models.supports_tools(current_model)
     active = TOOLS_ENABLED and supported and session_on
 
     console.print()
@@ -1878,9 +1838,11 @@ def show_tools_state(current_model, session_on):
     console.print(f"  session toggle (/tools on|off): "
                   f"{'on' if session_on else 'off'}")
     console.print(f"  model {current_model}: "
-                  f"{'supports tools' if supported else 'NOT in TOOLS_MODELS'}")
-    if not supported and TOOLS_MODELS:
-        console.print(f"    tools work with: {', '.join(TOOLS_MODELS)}")
+                  f"{'supports tools' if supported else 'does not support tools'}")
+    if not supported:
+        capable = models.tool_capable_ids()
+        console.print(f"    tool-capable models: "
+                      f"{', '.join(_model_labels(capable)) if capable else 'none configured'}")
     console.print(f"  read roots: {', '.join(str(r) for r in TOOLS_ROOTS)}")
     console.print(f"  write roots: "
                   f"{', '.join(str(r) for r in WRITE_ROOTS) or '(none — read-only)'}")
@@ -2179,8 +2141,8 @@ def create_routine(return_to="chat"):
             abandon()
             return
         model = picked
-        if ROUTINE_MODELS and model not in ROUTINE_MODELS:
-            console.print(f"  note: {model} isn't in ROUTINE_MODELS — it "
+        if models.routine_ids() and not models.is_routine_vetted(model):
+            console.print(f"  note: {model} isn't vetted for routines — it "
                           "may stall on empty completions when run "
                           "unattended.", style="yellow")
 
@@ -2230,14 +2192,14 @@ def do_routine(conn, arg, model=None):
     # A routine is unattended-shaped even on command: if it stalls on empty
     # completions there's no turn to salvage. Nudge — don't block — when the
     # effective model isn't one vetted for routines. Membership, not a
-    # thinking-model guess: ROUTINE_MODELS is the judgement. Empty list ⇒
-    # nothing to compare against, so no nag.
+    # thinking-model guess: `models.is_routine_vetted` is the judgement.
+    # Nothing vetted at all ⇒ nothing to compare against, so no nag.
     eff = effective_model(routine, model)
-    if eff and ROUTINE_MODELS and eff not in ROUTINE_MODELS:
+    if eff and models.routine_ids() and not models.is_routine_vetted(eff):
         pinned = " (pinned)" if routine.model else ""
         console.print(
-            f"{routine.id} will run on {eff}{pinned}, which isn't in "
-            f"ROUTINE_MODELS. It may stall on empty completions.", style="yellow")
+            f"{routine.id} will run on {eff}{pinned}, which isn't vetted "
+            f"for routines. It may stall on empty completions.", style="yellow")
         if input("Run anyway? (y/n) ").strip().lower() != "y":
             console.print("  cancelled", style="dim")
             console.print()

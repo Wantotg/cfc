@@ -6,7 +6,7 @@ test_turn_paths.py — the streaming turn and the tool turn end identically.
 
 **Standing decision 7, pinned for the first time** (v1.0, `W-02`). A chat turn
 takes one of two paths, chosen per turn by
-`TOOLS_ENABLED and tools_on and model in TOOLS_MODELS`: `api.stream_response`
+`TOOLS_ENABLED and tools_on and models.supports_tools(model)`: `api.stream_response`
 or `agent.agent_turn`. They must end a turn the same way, and they drifted once
 already — when tools became the default, the spinner and the token bar silently
 vanished and usage was discarded, which blanked `/status`. Nothing failed. The
@@ -48,6 +48,7 @@ import agent
 import commands
 import db as dbmod
 import main
+import models
 
 PASS, FAIL = [], []
 
@@ -129,14 +130,11 @@ def main_():
     main.safe_export = lambda *a, **k: None
 
     # The switch that chooses the path. `tools_on` defaults True in the
-    # session, so membership of TOOLS_MODELS is what actually decides here —
-    # which is the real dispatch, not a test-only flag.
+    # session, so `models.supports_tools(MODEL)` is what actually decides
+    # here — which is the real dispatch, not a test-only flag. The same
+    # record carries the known limit the context bar needs (below).
     main.TOOLS_ENABLED = True
-    main.TOOLS_MODELS = [MODEL]
-    # A known limit, so the bar renders rather than returning early. Without it
-    # `print_context_bar` is silent for both paths and "both printed nothing"
-    # would pass every assertion below while proving nothing.
-    commands.MODEL_LIMITS = {MODEL: 128_000}
+    models.MODELS = [models._spec(MODEL, tools=True, limit=128_000)]
 
     print("\n--- one turn down each path, same stub, same question ---")
     stream_sid = dbmod.new_session(conn, title="streaming", model=MODEL)

@@ -35,6 +35,7 @@ import httpx
 
 import db as dbmod
 import main
+import models
 
 PASS, FAIL = [], []
 
@@ -208,16 +209,171 @@ def main_():
 
     sid7 = dbmod.new_session(conn, title="t7", model="good-model")
     text7 = drive(conn, sid7, "/tools off\n/model 9\n/model\n/q\n")
-    ok("an out-of-range number leaves the model unchanged with a message",
-       "isn't a listed model number" in text7
+    ok("an out-of-range number explains digits pick a row and points at "
+       "/list models",
+       "doesn't pick a row" in text7 and "/list models" in text7
        and "Switched to model" not in text7, text7)
     ok("...and zero is treated the same way",
-       "isn't a listed model number" in
+       "doesn't pick a row" in
        drive(conn, dbmod.new_session(conn, title="t8", model="good-model"),
              "/tools off\n/model 0\n/q\n"))
     ok("...and the session stays on the model it started with",
        dbmod.get_session_model(conn, sid7) == "good-model",
        dbmod.get_session_model(conn, sid7))
+
+    print("\n--- B-1.2-04: a revert never lands on a model the provider "
+          "already rejected ---")
+    # The bug: 'flaky-a' 400s once (recorded as rejected; reverts cleanly to
+    # good-model, which was never rejected) and then SUCCEEDS on a second try
+    # — a real shape (a flaky endpoint, or a model the provider briefly
+    # doesn't serve). Switching from flaky-a to 'flaky-b', which 400s, arms a
+    # revert back to flaky-a — exactly the model already proven dead this
+    # session, regardless of its one later success. `revert_bad_model` must
+    # refuse instead of reporting that as a recovery.
+    def make_reject_a_once_then_b():
+        # A fresh counter per scenario run — `drive_ab_scenario` is called
+        # twice (normal chat, then private), and a shared counter would let
+        # the second run's flaky-a skip straight to "already succeeded once",
+        # never 400ing there at all and silently testing nothing.
+        calls = {"a": 0}
+
+        def stub(messages, model=None):
+            if model == "flaky-a":
+                calls["a"] += 1
+                if calls["a"] == 1:
+                    e = httpx.HTTPError("no such model: flaky-a")
+                    e.status_code = 400
+                    raise e
+                return ("recovered", {"prompt_tokens": 1, "completion_tokens": 1}, "")
+            if model == "flaky-b":
+                e = httpx.HTTPError("no such model: flaky-b")
+                e.status_code = 400
+                raise e
+            return ("an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
+        return stub
+
+    def drive_ab_scenario(conn_, model_start, title):
+        main.stream_response = make_reject_a_once_then_b()
+        sid_ = dbmod.new_session(conn_, title=title, model=model_start)
+        return sid_, drive(conn_, sid_,
+                          "/tools off\n"
+                          "/model flaky-a\nhello\n"        # 400 -> reverts
+                          "/model flaky-a\nhello\n"        # succeeds
+                          "/model flaky-b\nhello\n/q\n")    # 400 -> would
+                                                              # revert onto
+                                                              # flaky-a
+
+    sid9, text9 = drive_ab_scenario(conn, "good-model", "t9")
+    ok("the first flaky-a 400 reverts normally",
+       "provider rejected 'flaky-a' — switched back to good-model" in text9,
+       text9)
+    # The stub renders nothing on success (that's `stream_response`'s own
+    # job, bypassed by the stub) — a clean retry shows up as *no* error
+    # between the second switch and the next one, not as visible text.
+    retry_segment = text9.split("Switched to model: flaky-a")[2].split(
+        "Switched to model: flaky-b")[0]
+    ok("the second flaky-a turn succeeds — no error, no revert",
+       "[error]" not in retry_segment, retry_segment)
+    ok("flaky-b's 400 refuses to revert onto flaky-a despite its "
+       "later success",
+       "flaky-b was rejected too" in text9
+       and "flaky-a" in text9.split("flaky-b was rejected too")[1][:160],
+       text9)
+    ok("...names neither id as known-good",
+       "switched back to flaky-a" not in text9, text9)
+    ok("...and points at /model as the next step",
+       "pick a different model with" in text9 and "/model" in text9, text9)
+    ok("...and the session is left on flaky-b, not silently reverted",
+       dbmod.get_session_model(conn, sid9) == "flaky-b",
+       dbmod.get_session_model(conn, sid9))
+
+    print("\n--- B-1.2-04: same, on the tool-calling path ---")
+    saved_tools_enabled, saved_supports = main.TOOLS_ENABLED, models.supports_tools
+    main.TOOLS_ENABLED = True
+    models.supports_tools = lambda m: True
+    calls_tools = {"a": 0}
+
+    def reject_a_once_then_b_tools(prefix, history, model, conn, session_id,
+                                   ctx=None):
+        if model == "flaky-a":
+            calls_tools["a"] += 1
+            if calls_tools["a"] == 1:
+                e = httpx.HTTPError("no such model: flaky-a")
+                e.status_code = 400
+                raise e
+            return {"content": "recovered"}
+        if model == "flaky-b":
+            e = httpx.HTTPError("no such model: flaky-b")
+            e.status_code = 400
+            raise e
+        return {"content": "an answer"}
+    main.agent_turn = reject_a_once_then_b_tools
+
+    try:
+        sid10 = dbmod.new_session(conn, title="t10", model="good-model")
+        text10 = drive(conn, sid10,
+                       "/model flaky-a\nhello\n"
+                       "/model flaky-a\nhello\n"
+                       "/model flaky-b\nhello\n/q\n")
+        ok("tool path: the first flaky-a 400 reverts normally",
+           "provider rejected 'flaky-a' — switched back to good-model"
+           in text10, text10)
+        ok("tool path: the later success doesn't save flaky-a from a "
+           "refusal",
+           "flaky-b was rejected too" in text10
+           and "switched back to flaky-a" not in text10, text10)
+        ok("tool path: the session is left on flaky-b",
+           dbmod.get_session_model(conn, sid10) == "flaky-b",
+           dbmod.get_session_model(conn, sid10))
+    finally:
+        main.TOOLS_ENABLED = saved_tools_enabled
+        models.supports_tools = saved_supports
+
+    print("\n--- B-1.2-04: a private chat carries the same in-memory "
+          "refusal set ---")
+    # `run_session` builds `rejected_models` fresh per call, never off disk —
+    # a private chat's throwaway `conn` carries it exactly the same way. Same
+    # scenario, driven through a `:memory:` connection instead of the picker,
+    # which private chats don't use.
+    priv_conn = dbmod.db(":memory:")
+    sid_priv, text_priv = drive_ab_scenario(priv_conn, "good-model", "p")
+    priv_conn.close()
+    ok("a private chat refuses the same way as a normal one",
+       "flaky-b was rejected too" in text_priv
+       and "switched back to flaky-a" not in text_priv, text_priv)
+
+    print("\n--- B-1.2-04: a transient status does not poison the set ---")
+    # 'flaky-c' 503s (transient) rather than 400s — must NOT be recorded as
+    # rejected, so a later switch that lands back on it still reverts
+    # normally instead of refusing.
+    def transient_c_then_reject_d(messages, model=None):
+        if model == "flaky-c":
+            e = httpx.HTTPError("upstream 503")
+            e.status_code = 503
+            raise e
+        if model == "flaky-d":
+            e = httpx.HTTPError("no such model: flaky-d")
+            e.status_code = 400
+            raise e
+        return ("an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
+    main.stream_response = transient_c_then_reject_d
+
+    sid12 = dbmod.new_session(conn, title="t12", model="flaky-c")
+    # No switch yet, so nothing is armed — the transient prints raw and does
+    # NOT get added to rejected_models (status 503, not 400).
+    drive(conn, sid12, "/tools off\nhello\n/q\n")
+
+    sid13 = dbmod.new_session(conn, title="t13", model="good-model")
+    text13 = drive(conn, sid13,
+                   "/tools off\n/model flaky-c\nhello\n/model flaky-d\n"
+                   "hello\n/q\n")
+    ok("switching onto flaky-c and it 503ing again does not revert "
+       "(no armed switch reached a 400 yet)",
+       "upstream 503" in text13.split("flaky-d")[0], text13)
+    ok("flaky-d's 400 reverts cleanly onto flaky-c — the 503 never "
+       "poisoned it",
+       "provider rejected 'flaky-d' — switched back to flaky-c" in text13,
+       text13)
 
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

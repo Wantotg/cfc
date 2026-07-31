@@ -34,32 +34,40 @@ PROMPTS_DIR = "PLACEHOLDER"
 PERSONAS_DIR = "PLACEHOLDER"
 TRAITS_DIR = "PLACEHOLDER"
 
-# Models available on your plan (for /list models)
-# Replace these with the actual model names from your nano-gpt dashboard
+# Models available on your plan, and everything cfc needs to know about each
+# one — one place instead of four. Order is what /list models and /model <n>
+# show; nothing here has to be exhaustive, an unlisted id can still be typed
+# in full at /model, with a dim note that it isn't configured.
+#
+# Fields, all optional except id:
+#   listed           shown in /list models and /model <n> (default True — set
+#                     False for an id you want known but not on that list,
+#                     e.g. a routine-only variant you never switch to by hand)
+#   tools             emits OpenAI-style tool_calls — verify against your
+#                     provider before setting this, don't assume it
+#                     (default False)
+#   routine           vetted for unattended runs (/routine, --run-due). The
+#                     code does not guess this from "thinking" in the name —
+#                     that judgement is yours: some thinking models run
+#                     routines fine, others stall on empty completions
+#                     (default False)
+#   routine_default   the model a scheduled --run-due uses when a routine has
+#                     no model of its own; at most one record may set this.
+#                     Leave every record without it and routines fall back to
+#                     MODEL above
+#   limit             context window in tokens, for /status's usage bar
+#                     (default None — unknown, /status shows a raw count)
+#
+# A config.py still using the pre-1.2.1 shape (MODELS as a bare list of
+# strings, plus separate TOOLS_MODELS/ROUTINE_MODELS/MODEL_LIMITS) keeps
+# working — it's translated automatically, with one warning at launch.
 MODELS = [
-    "zai-org/glm-5.2:thinking",
-    "deepseek/deepseek-v4-pro:thinking",
-    "moonshotai/kimi-k2.6:thinking",
+    dict(id="zai-org/glm-5.2:thinking", tools=True, limit=1_000_000),
+    dict(id="deepseek/deepseek-v4-pro:thinking", tools=True, limit=1_000_000),
+    dict(id="deepseek/deepseek-v4-pro", routine=True, routine_default=True,
+        limit=1_000_000),
+    dict(id="moonshotai/kimi-k2.6:thinking", tools=True, limit=256_000),
 ]
-
-# Models vetted for routines (unattended runs). The FIRST entry is the default
-# a scheduled --run-due uses when no model is passed; an on-command /routine on
-# a model that isn't in this list nudges (y/n) before running. The code trusts
-# the list — it does NOT detect "thinking" models, because that judgement is
-# yours: some thinking models run routines fine, others stall on empty
-# completions. Leave unset/empty to fall back to MODEL and skip the nudge.
-ROUTINE_MODELS = [
-    "deepseek/deepseek-v4-pro",
-    "minimax/minimax-m3",
-]
-
-# Context window size in tokens for each model
-# Used by /status to show how full the context is
-MODEL_LIMITS = {
-    "zai-org/glm-5.2:thinking": 1000000,
-    "deepseek/deepseek-v4-pro:thinking": 1000000,
-    "moonshotai/kimi-k2.6:thinking": 256000,
-}
 
 # --- embeddings (RAG) ------------------------------------------------------
 # Where the RAG layer gets its vectors. Defaults to nano-gpt's hosted bge-m3,
@@ -119,17 +127,11 @@ ATTACH_DENY_EXTRA = ()         # e.g. ("*.private.md", "notes-personal.txt")
 
 # --- local file tools ------------------------------------------------------
 # Tools the model can request: list_dir, read_file, grep (read) and write_file
-# (write). Off by default — opt in per session with /tools on.
-#
-# TOOLS_MODELS was verified against the nano-gpt subscription, not assumed:
-# these three emit OpenAI-style tool_calls. GLM 5.2 is the intended primary
-# driver.
+# (write). Off by default — opt in per session with /tools on. Which models
+# may use them is `tools=True` on that id's MODELS record above, not a
+# setting here — GLM 5.2 and DeepSeek v4 Pro are the ones marked above,
+# verified against the nano-gpt subscription rather than assumed.
 TOOLS_ENABLED = False
-TOOLS_MODELS = [
-    "zai-org/glm-5.2:thinking",
-    "deepseek/deepseek-v4-pro:thinking",
-    "moonshotai/kimi-k2.6:thinking",
-]
 TOOLS_ROOTS = ATTACH_ROOTS        # read scope: same jail, same deny list
 
 # Write scope — where write_file may land a file. Deliberately NOT derived

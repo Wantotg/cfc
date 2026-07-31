@@ -567,9 +567,14 @@ def test_hub_help_is_derived():
     ok("a chat id is explained, since it isn't a key", "number" in out, out[:200])
 
     # The light's legend comes from the same mapping the light renders, so a
-    # new connection state cannot be missing from the help.
+    # new connection state cannot be missing from the help. Whitespace is
+    # collapsed on both sides before comparing: Rich wraps a long advice
+    # string (the v1.2.1 wording names both the chat and the config-screen
+    # command) to the console width, which can land a newline mid-phrase.
+    flat_out = " ".join(out.split())
     for _, _, text in CONNECTION_STYLE.values():
-        ok(f"the legend carries: {text[:28]}", text in out, text)
+        flat_text = " ".join(text.split())
+        ok(f"the legend carries: {text[:28]}", flat_text in flat_out, text)
 
 
 if __name__ == "__main__":

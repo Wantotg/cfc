@@ -695,23 +695,28 @@ def main():
 
             print("\n--- the guard: unattended runs default to a vetted model ---")
             # A scheduled run passes model=None; without a default it inherited
-            # MODEL, which may be the very model that stalls. First vetted model
-            # wins; empty list falls back to MODEL so an old config still runs.
-            saved_rm, saved_default = runner.ROUTINE_MODELS, runner.MODEL
+            # MODEL, which may be the very model that stalls. The record marked
+            # routine_default wins; nothing marked falls back to MODEL so an old
+            # config still runs.
+            import models
+            saved_models, saved_default = models.MODELS, runner.MODEL
             try:
-                runner.ROUTINE_MODELS = ["vetted-a", "vetted-b"]
-                ok("default routine model is the first vetted one",
+                models.MODELS = [models._spec("vetted-a", routine=True,
+                                              routine_default=True),
+                                models._spec("vetted-b", routine=True)]
+                ok("default routine model is the one marked routine_default",
                    runner.default_routine_model() == "vetted-a")
-                runner.ROUTINE_MODELS = []
+                models.MODELS = []
                 runner.MODEL = "fallback"
-                ok("...falling back to MODEL when the list is empty",
+                ok("...falling back to MODEL when nothing is marked",
                    runner.default_routine_model() == "fallback")
 
                 # effective_model resolves three sources in order: the routine's
                 # own pin wins over everything, then the caller's model, then the
                 # vetted default. This is the whole point of the model field —
                 # a routine can declare a model instead of always inheriting one.
-                runner.ROUTINE_MODELS = ["vetted-a"]
+                models.MODELS = [models._spec("vetted-a", routine=True,
+                                              routine_default=True)]
                 pinned = make(id="p", model="pinned-x")
                 bare = make(id="b")
                 ok("a routine's pinned model wins over the caller's",
@@ -723,7 +728,7 @@ def main():
                 ok("no pin and no caller falls to the vetted default (scheduled)",
                    runner.effective_model(bare, None) == "vetted-a")
             finally:
-                runner.ROUTINE_MODELS, runner.MODEL = saved_rm, saved_default
+                models.MODELS, runner.MODEL = saved_models, saved_default
 
             print("\n--- the second signal: 'ok' loop, unclear result ---")
             # One ok/failed bit can't say both "the loop ran" and "the model

@@ -268,9 +268,9 @@ class Routine:
         self.prompt = prompt
         # The model this routine runs on. Optional and kept as an opaque string
         # here on purpose: routines.py imports only context/paths/yaml, so it
-        # does not know config.MODELS and must not start — vetting the model
-        # against ROUTINE_MODELS is the runner's and the REPL's job, where
-        # config already lives. Empty means "use the caller's or the vetted
+        # does not know models.MODELS and must not start — vetting the model
+        # against it is the runner's and the REPL's job, where that module
+        # already lives. Empty means "use the caller's or the vetted
         # default" (see runner.effective_model). A routine's own pin is a
         # deliberate, persisted choice, so it wins over the ambient default.
         self.model = (model or "").strip()

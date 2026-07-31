@@ -27,6 +27,63 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-07-31 — Honest model recovery and repairable advice (1.2.1)
+Three changes, all about a model config or a recovery path saying more than it
+actually knows.
+
+**One model-config boundary replaces four collections.** `MODELS`,
+`TOOLS_MODELS`, `ROUTINE_MODELS` and `MODEL_LIMITS` used to be four separate
+lists nothing forced to agree — a typo in `TOOLS_MODELS` failed by doing
+nothing at all, which is what `commands.unknown_model_ids()` existed to catch.
+The new `models.py` reads one ordered `MODELS = [dict(id=..., tools=...,
+routine=..., routine_default=..., limit=...), ...]` list instead, validates
+every record at import (a malformed one raises `ModelConfigError` naming the
+id and field, never silently reads as unsupported), and answers every question
+a caller used to ask three collections: `listed_ids`, `known_ids`,
+`supports_tools`, `is_routine_vetted`, `routine_default_id`, `context_limit`.
+A config.py still in the old shape is translated automatically, with one
+warning naming `config.example.py`, printed after the splash the same way the
+old typo warning was. `commands.unknown_model_ids`/`warn_unknown_model_ids`
+are gone — there is nothing left to cross-check. `config.example.py` and
+Cas's `config.py` are both migrated; the real config's four previously-hidden
+non-thinking routine variants (`ROUTINE_MODELS` entries that were never in
+`MODELS`) now get their own listed records instead of being invisible to
+`/list models`, and `deepseek-v4-pro-cheaper` keeps `routine_default` — that
+was `ROUTINE_MODELS[0]`, unchanged.
+
+**Tool-capability wording stopped naming a config attribute that no longer
+exists as a separate list.** The session header, `/status`, `/tools` and the
+one-time `/tools on` notice all said "not in TOOLS_MODELS"; they now say a
+model doesn't support tools and name the tool-capable ones, through one shared
+`commands.tools_unsupported_reason`. An out-of-range `/model <n>` now explains
+that digits pick a row off `/list models` rather than setting a raw id.
+
+**The connection advice names both places it can be typed** (`B-04`). Every
+fixable `ui.CONNECTION_STYLE` row named only `/connect embedding in a chat` —
+true at the hub and in chat, wrong on the config screen, which is
+command-driven (decision 17) and refuses the chat form outright while its own
+`connect embedding` does the same thing. The string now names both; no
+`where=` parameter, no second copy — the shape `B-04` argued a producer/parser
+fork would be.
+
+**A model revert no longer lands on a model already proven dead**
+(`B-1.2-04`). `run_session` keeps a `rejected_models` set beside
+`revert_model`, adding the current model on an HTTP 400 (never a transient or
+a transport failure) before deciding how to recover. If the fallback
+`revert_bad_model()` would switch back to is itself in that set, it disarms
+instead of reverting, leaves the just-rejected model selected, and says
+plainly that neither id is known-good — rather than printing "switched back
+to X" over an X the same session already had refused. In-memory only, so it
+resets every session and a private chat's throwaway connection carries it the
+same way.
+- Files: models.py, commands.py, main.py, agent.py, hub.py, runner.py, ui.py,
+  routines.py, config.py, config.example.py, tests/test_models.py,
+  tests/test_model.py, tests/test_model_revert.py, tests/test_attach.py,
+  tests/test_turn_paths.py, tests/test_routines.py, tests/test_connection.py,
+  tests/test_hub.py, tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-07-31 — The wiki screen stops telling you to type `/wiki` (B-1.2-01)
 The wiki screen printed `/wiki diff [all] | /wiki commit [all] <message>` and
 then refused that exact line — commands.py's wiki output was written for a

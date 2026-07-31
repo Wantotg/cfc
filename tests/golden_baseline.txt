@@ -4,7 +4,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Persona         not set — available: delta, gamma
   Traits          none — available: epsilon, zeta
   Context         8 tokens
-  Tools           glm-5.2 is not in TOOLS_MODELS — off
+  Tools           off — glm-5.2 doesn't support tools — switch to: tool-model
 
   /help             every command
   /q                back to the session list
@@ -156,7 +156,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Traits          none
   Attached        nothing
   Tags            memory
-  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -175,7 +175,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Traits          epsilon, zeta
   Attached        nothing
   Tags            memory, wsl
-  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -225,7 +225,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Traits          none
   Attached        nothing
   Tags            memory
-  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -258,8 +258,8 @@ you>
 Tools: inactive this turn
   master switch (TOOLS_ENABLED): on
   session toggle (/tools on|off): on
-  model glm-5.2: NOT in TOOLS_MODELS
-    tools work with: fixture/tool-model
+  model glm-5.2: does not support tools
+    tool-capable models: tool-model
   read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
   write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
   approval: every call is gated (no auto-approve exists)
@@ -308,7 +308,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Traits          none
   Attached        nothing
   Tags            memory
-  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -321,7 +321,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Traits          none
   Attached        nothing
   Tags            memory
-  Tools           inactive — glm-5.2 is not in TOOLS_MODELS
+  Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out

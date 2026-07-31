@@ -17,15 +17,12 @@ except ImportError:
     pass
 
 from config import MODEL, AUTO_EXPORT
+import models
 
 try:
     from config import TOOLS_ENABLED
 except ImportError:
     TOOLS_ENABLED = False
-try:
-    from config import TOOLS_MODELS
-except ImportError:
-    TOOLS_MODELS = []
 try:
     # The default database state for a *private* chat. A normal chat always
     # starts with the db on (recall is a core feature); a private chat starts
@@ -77,13 +74,12 @@ from commands import (
     do_recall, do_remember, do_forget,
     do_updatedb, auto_embed,
     do_attach, show_attachments, do_detach,
-    show_tools_state, show_status, show_list,
+    show_tools_state, show_status, show_list, tools_unsupported_reason,
     resolve_layer, resolve_attached, load_pool_file,
     create_routine, do_routine,
     show_outbox, do_file, do_move, do_clear,
     show_wiki_diff, do_wiki_commit,
     connect_embedding, connect_status, empty_completion_decision,
-    warn_unknown_model_ids,
     print_session_header, print_core_commands, print_help,
 )
 
@@ -247,6 +243,16 @@ def run_session(conn, session_id, private=False, app_conn=None,
     # the same dispatch, and a private chat's throwaway db takes the revert the
     # same way, persisting nothing real either way.
     revert_model = None
+    # Every model id the provider has refused with a 400 in this chat
+    # (`B-1.2-04`). `revert_bad_model()` reads it before backing out to
+    # `revert_model` — the fallback earning its own place in this set is
+    # exactly what "switched back to X" used to claim as a recovery while
+    # the *previous* turn's error log said X had already been refused. A
+    # plain `set()`, never persisted: it lives exactly as long as
+    # `revert_model` does, for the same reason — this chat only, and a
+    # private chat's throwaway connection carries it the same way everything
+    # else in-memory here is carried.
+    rejected_models = set()
     system_prompt = get_system_prompt(conn, session_id)
     system_prompt_name = get_system_prompt_name(
         conn, session_id
@@ -322,13 +328,32 @@ def run_session(conn, session_id, private=False, app_conn=None,
     def revert_bad_model():
         """Back out to the model we were on before the just-armed switch, and
         say so, instead of leaving the session stranded on a dead id. Returns
-        True if it acted. Idempotent: disarms itself, so a later transient
-        error prints normally — the arming a caller must check first, since a
-        transient right after a switch is handled by `handle_turn_error`
-        without ever reaching here."""
+        True if it acted — including the refusal below, which counts as
+        "acted" for the caller's purposes (it must not also print the raw
+        provider error). Idempotent: disarms itself either way, so a later
+        transient error prints normally — the arming a caller must check
+        first, since a transient right after a switch is handled by
+        `handle_turn_error` without ever reaching here.
+
+        `B-1.2-04`: if the fallback itself is in `rejected_models` — this
+        chat already had it 400 the provider — reverting to it would trade
+        one dead id for another already proven dead, and say so as a
+        recovery. Disarm instead, leave `current_model` selected (it is
+        itself the id that was just rejected, by the caller's own 400), and
+        say plainly that neither is known-good. `/model` is the only way
+        out cfc can offer; it does not guess a third id.
+        """
         nonlocal current_model, revert_model
         if not revert_model:
             return False
+        if revert_model in rejected_models:
+            bad_prev, revert_model = revert_model, None
+            console.print(f"\n[error] {current_model} was rejected too — "
+                          f"both it and {bad_prev} have already been refused "
+                          f"by the provider this session. Neither is "
+                          f"known-good; pick a different model with "
+                          f"{PREFIX}model.\n")
+            return True
         bad, current_model, revert_model = current_model, revert_model, None
         set_session_model(conn, session_id, current_model)
         console.print(f"\n[error] provider rejected '{bad}' — switched back to "
@@ -359,9 +384,18 @@ def run_session(conn, session_id, private=False, app_conn=None,
         prints the ordinary provider error instead of the switched-back-to-Y
         line. Anything else — a rejection, or an error with no transient status
         — still reverts as before.
+
+        **`rejected_models` is recorded here, before any of that** (`B-1.2-04`):
+        exactly HTTP 400, never a transient or a transport failure with no
+        status at all — a 400 is the provider naming this id unsupported, and
+        anything else is not evidence the id itself is bad. Recording happens
+        whether or not a revert is armed, so the *first* turn on a model that
+        400s already poisons that id against ever being reverted onto later.
         """
         errorlog.log_error(e, session_id=session_id, model=current_model,
                            interrupted=turns_interrupted, private=private)
+        if getattr(e, "status_code", None) == 400:
+            rejected_models.add(current_model)
         if revert_model and is_transient_status(e):
             console.print(f"\n[error] {e}\n")
             return
@@ -614,8 +648,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
         if raw.isdigit():
             new_model = model_by_number(int(raw))
             if new_model is None:
-                console.print(f"  {raw} isn't a listed model number — "
-                              f"{PREFIX}list models to see them", style="dim")
+                console.print(f"  {raw} doesn't pick a row — digits select "
+                              f"off {PREFIX}list models' displayed order, "
+                              f"they're never a raw id. Run "
+                              f"{PREFIX}list models to see what's there.",
+                              style="dim")
                 return
         else:
             new_model = select_model(cmd.raw)
@@ -846,9 +883,9 @@ def run_session(conn, session_id, private=False, app_conn=None,
         if arg == "on":
             tools_on = True
             console.print("Tools on for this session.")
-            if current_model not in TOOLS_MODELS:
-                console.print(f"Note: {current_model} is not in "
-                              f"TOOLS_MODELS, so tools stay inactive.")
+            if not models.supports_tools(current_model):
+                console.print(f"Note: {tools_unsupported_reason(current_model)}, "
+                              f"so tools stay inactive.")
             elif not TOOLS_ENABLED:
                 console.print("Note: TOOLS_ENABLED is False in "
                               "config.py, so tools stay inactive.")
@@ -1023,7 +1060,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # Tools need all three switches on. Otherwise the original single
         # streamed call, unchanged.
         use_tools = (TOOLS_ENABLED and tools_on
-                     and current_model in TOOLS_MODELS)
+                     and models.supports_tools(current_model))
 
         if use_tools:
             # Only on the turn that actually offers tools, and only in the
@@ -1190,6 +1227,7 @@ if __name__ == "__main__":
     # past. Silent unless something is actually wrong. Here rather than in
     # repl() for the same reason as safe_backup: tests/golden.py drives repl()
     # directly and must not have config warnings appear in its baseline.
-    warn_unknown_model_ids()
+    for _msg in models.startup_warnings():
+        console.print(f"[config] {_msg}", style="yellow")
     sid = int(sys.argv[1]) if len(sys.argv) > 1 else None
     repl(sid)
