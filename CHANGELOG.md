@@ -27,6 +27,39 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — Main chat: the hub doorway and the turn pipeline (1.4, part 3)
+`m` at the hub now opens one durable Main chat: the first `m` validates the
+vault bundle (`mainchat.load_creation_bundle()`) and creates it via
+`db.get_or_create_main`; every later `m`, or typing its numeric id, reopens
+the same row through the identical fixed-profile path — the session's
+`provider` selects Main's behaviour, never the entry key. A bundle problem
+prints exactly what's wrong and leaves the hub as it was: no blank row, no
+ordinary-chat fallback. The empty-hub branch no longer auto-creates a chat
+before any input is possible, so a first-ever action can be `m`, `p` or `n`.
+
+Inside Main, `system prompt.md` and `persona.md` are read live and reassembled
+immediately before every request — never cached on the session row, per
+Concept.md's "no rewriting database metadata" — so a vault edit reaches the
+very next turn. A broken live file refuses the turn before anything is
+persisted. The frozen First Message (from `first message.md`, once, at
+creation) is untouched by later edits or removal of that file; a Main row
+missing it is corruption and refuses to open, recoverable only by deleting
+and recreating. `/add`, `/remove` and `/title` refuse to touch Main's
+identity; tags, attachments, export, search, `/model`, `/tools` and
+`/database` all still work, because none of them change what Main *is*.
+
+The hub renders Main's row distinctly (`hub._add_rows`, keyed on `provider`,
+not the title string, since a title is user-editable everywhere else and
+could coincidentally read "Main"). No new turn implementation, transcript
+format or deletion path — Main rides `assemble_system`/`governor` and the
+existing chat-shaped delete/index cleanup exactly as any other session does.
+- Files: main.py, hub.py, commands.py, tests/test_hub.py,
+  tests/test_mainchat_turns.py (new)
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — The selected model is process-wide, not per session (`W-1.3.1-03`, 1.4 part 2)
 `run_session` used to read a session's own stored `model` column at open, so
 leaving one chat for another (or back) could silently change what "the
@@ -53,7 +86,7 @@ Scars section already names.
 - Files: main.py, tests/golden.py, tests/test_model_revert.py,
   tests/test_turn_paths.py, tests/test_process_model.py (new)
 - Status: shipped
-- Commit: pending
+- Commit: b927d79
 
 ---
 

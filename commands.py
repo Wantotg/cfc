@@ -705,10 +705,66 @@ def _strip_md(name):
     return pool_stem(name)
 
 
+def _footer_rows(conn, session_id, model):
+    """Attached / Context / Tools — the tail the ordinary and Main headers
+    share. Pulled out once both needed it rather than duplicated, since it's
+    the part neither identity changes."""
+    items = list_attachments(conn, session_id)
+    if items:
+        est = sum(a.get("est_tokens", 0) for a in items)
+        names = ", ".join(a.get("name", "?") for a in items[:3])
+        if len(items) > 3:
+            names += f", +{len(items) - 3} more"
+        _header_row("Attached", f"{names}  (~{est:,} tokens)", "cyan")
+
+    tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
+    limit = models.context_limit(model)
+    if ctx and limit:
+        pct = ctx / limit * 100
+        _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
+                    context_style(pct))
+    elif ctx:
+        _header_row("Context", f"{ctx:,} tokens", "dim")
+    else:
+        _header_row("Context", "empty — no messages yet", "dim")
+
+    # Once, here — not on every turn. A warning printed every turn is a
+    # warning nobody reads.
+    if TOOLS_ENABLED and not models.supports_tools(model):
+        _header_row("Tools", f"off — {tools_unsupported_reason(model)}", "yellow")
+
+
+def _print_main_header(conn, session_id, model):
+    """Main's header. A fixed identity, not a user-editable title — no
+    session number either, the same reason `Private session` prints none:
+    there is exactly one Main, so an id would be furniture. System prompt and
+    persona are read live from the vault bundle every time this prints
+    (`mainchat.bundle_states()`), never from the session's own columns, which
+    Main never writes — see Concept.md's 'vault-owned live source'."""
+    import mainchat
+    heading = Text("\nMain chat", style="bold")
+    heading.append(f"  ·  {model}", style="dim")
+    console.print(heading)
+
+    states = mainchat.bundle_states()
+    for key, label, style in (("system_prompt", "System prompt", "magenta"),
+                              ("persona", "Persona", "green")):
+        is_ok, problem = states[key]
+        if is_ok:
+            _header_row(label, "live from the vault bundle", style)
+        else:
+            _header_row(label, f"broken — {problem}", "red")
+
+    _footer_rows(conn, session_id, model)
+
+
 def print_session_header(conn, session_id, model, title,
                          system_prompt_name, persona_name, private=False,
-                         trait_names=()):
+                         trait_names=(), is_main=False):
     """The chat screen's status block."""
+    if is_main:
+        _print_main_header(conn, session_id, model)
+        return
     if private:
         # No id and no title: a private session is ephemeral, so #1 is
         # meaningless and there is no title to show (title-gen is off for it).
@@ -748,34 +804,13 @@ def print_session_header(conn, session_id, model, title,
         available = ", ".join(_names_in(get_traits_dir())) or "none found"
         _header_row("Traits", f"none — available: {available}", "dim")
 
-    items = list_attachments(conn, session_id)
-    if items:
-        est = sum(a.get("est_tokens", 0) for a in items)
-        names = ", ".join(a.get("name", "?") for a in items[:3])
-        if len(items) > 3:
-            names += f", +{len(items) - 3} more"
-        _header_row("Attached", f"{names}  (~{est:,} tokens)", "cyan")
-
-    tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
-    limit = models.context_limit(model)
-    if ctx and limit:
-        pct = ctx / limit * 100
-        _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
-                    context_style(pct))
-    elif ctx:
-        _header_row("Context", f"{ctx:,} tokens", "dim")
-    else:
-        _header_row("Context", "empty — no messages yet", "dim")
-
-    # Once, here — not on every turn. A warning printed every turn is a
-    # warning nobody reads.
-    if TOOLS_ENABLED and not models.supports_tools(model):
-        _header_row("Tools", f"off — {tools_unsupported_reason(model)}", "yellow")
+    _footer_rows(conn, session_id, model)
 
 
 def show_status(conn, session_id, model, title, private=False,
                 system_prompt_name=None, persona_name=None, trait_names=(),
-                tools_on=True, db_on=True, injected=(), kind=None):
+                tools_on=True, db_on=True, injected=(), kind=None,
+                is_main=False):
     """`/status` — everything active in this session, on one screen.
 
     It absorbs eight bare commands (`/title`, `/tokens`, `/prompt`, `/persona`,
@@ -789,6 +824,24 @@ def show_status(conn, session_id, model, title, private=False,
     without opening the file, and folding it into a names-only screen would
     have quietly dropped that.
     """
+    if kind and is_main and kind in ("prompt", "persona"):
+        # Main's prompt/persona are live vault text, never a pool item — read
+        # straight off the same seam the header and the turn path use rather
+        # than the ordinary pool lookup below, which would find nothing
+        # (Main's session row never carries these names).
+        import mainchat
+        label = "System prompt" if kind == "prompt" else "Persona"
+        try:
+            system_prompt, persona = mainchat.load_live_profile()
+        except mainchat.MainChatProblem as e:
+            console.print(f"\n{label}: unavailable — {e}\n")
+            return
+        body = system_prompt if kind == "prompt" else persona
+        console.print(f"\n{label}: Main (live)\n")
+        console.print("---")
+        console.print(body)
+        console.print("---\n")
+        return
     if kind:
         p = pool(kind)
         if not p:
@@ -813,46 +866,72 @@ def show_status(conn, session_id, model, title, private=False,
             console.print("---\n")
         return
 
-    if private:
+    if is_main:
+        heading = Text("\nMain chat", style="bold")
+        heading.append(f"  ·  {short_model(model)}", style="dim")
+        console.print(heading)
+
+        import mainchat
+        states = mainchat.bundle_states()
+        for key, label, style in (("system_prompt", "System prompt", "magenta"),
+                                  ("persona", "Persona", "green")):
+            is_ok, problem = states[key]
+            _header_row(label, "ready" if is_ok else f"unavailable — {problem}",
+                       style if is_ok else "yellow")
+        # A Main session always has one — run_session refuses to open a row
+        # that doesn't (corruption, not an inactive state) — so this is
+        # simpler than the ordinary three-state row below: just when.
+        from db import get_first_message
+        from ui import format_ts
+        fm = get_first_message(conn, session_id)
+        _header_row("First Message",
+                    f"frozen {format_ts(fm['at'])}" if fm else "unavailable",
+                    "green" if fm else "red")
+        # No Traits row: traits are not part of Main's profile at all
+        # (Concept.md), not merely off — the ordinary row would claim a
+        # feature that doesn't apply here.
+    elif private:
         heading = Text("\nPrivate session", style="bold")
         heading.append(f"  ·  {short_model(model)}", style="dim")
+        console.print(heading)
     else:
         heading = Text(f"\nSession #{session_id}", style="bold")
         heading.append(f"  ·  {short_model(model)}  ·  ", style="dim")
         heading.append(title or "(untitled)")
-    console.print(heading)
+        console.print(heading)
 
-    _header_row("System prompt", _strip_md(system_prompt_name) or "not set",
-                "magenta" if system_prompt_name else "dim")
-    _header_row("Persona", _strip_md(persona_name) or "not set",
-                "green" if persona_name else "dim")
-    # Only when a persona is attached — the no-persona case is the ordinary
-    # majority and stays quiet rather than growing a fourth inactive row
-    # (W-09). Three visible states plus one failure state, all off the same
-    # seam `load_first_message` uses at session open, so `/status` cannot
-    # drift from what actually happens there.
-    if persona_name:
-        state, detail = first_message_status(persona_name)
-        if state == FM_OK:
-            _header_row("First Message", "ready", "green")
-        elif state == FM_NONE:
-            _header_row("First Message",
-                        f"none for {_strip_md(persona_name)}", "dim")
-        elif state == FM_NO_DIR:
-            _header_row("First Message", "not configured", "dim")
-        else:  # FM_BROKEN — visibly unavailable, never folded into "none"
-            _header_row("First Message", f"unavailable — {detail}", "yellow")
-    if trait_names:
-        # A trait whose file has gone is named here rather than warned about
-        # every turn — this screen is where "what is this session carrying"
-        # gets answered, so it is where the gap belongs.
-        shown = []
-        for n in trait_names:
-            body, _ = load_pool("trait", n)
-            shown.append(_strip_md(n) if body else f"{_strip_md(n)} (missing)")
-        _header_row("Traits", ", ".join(shown), "yellow")
-    else:
-        _header_row("Traits", "none", "dim")
+    if not is_main:
+        _header_row("System prompt", _strip_md(system_prompt_name) or "not set",
+                    "magenta" if system_prompt_name else "dim")
+        _header_row("Persona", _strip_md(persona_name) or "not set",
+                    "green" if persona_name else "dim")
+        # Only when a persona is attached — the no-persona case is the
+        # ordinary majority and stays quiet rather than growing a fourth
+        # inactive row (W-09). Three visible states plus one failure state,
+        # all off the same seam `load_first_message` uses at session open, so
+        # `/status` cannot drift from what actually happens there.
+        if persona_name:
+            state, detail = first_message_status(persona_name)
+            if state == FM_OK:
+                _header_row("First Message", "ready", "green")
+            elif state == FM_NONE:
+                _header_row("First Message",
+                            f"none for {_strip_md(persona_name)}", "dim")
+            elif state == FM_NO_DIR:
+                _header_row("First Message", "not configured", "dim")
+            else:  # FM_BROKEN — visibly unavailable, never folded into "none"
+                _header_row("First Message", f"unavailable — {detail}", "yellow")
+        if trait_names:
+            # A trait whose file has gone is named here rather than warned
+            # about every turn — this screen is where "what is this session
+            # carrying" gets answered, so it is where the gap belongs.
+            shown = []
+            for n in trait_names:
+                body, _ = load_pool("trait", n)
+                shown.append(_strip_md(n) if body else f"{_strip_md(n)} (missing)")
+            _header_row("Traits", ", ".join(shown), "yellow")
+        else:
+            _header_row("Traits", "none", "dim")
 
     items = list_attachments(conn, session_id)
     if items:

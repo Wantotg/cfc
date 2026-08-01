@@ -512,10 +512,12 @@ def test_first_message_counts():
     rows = {r[0]: r for r in conn.execute(hub._SELECT + hub._ORDER).fetchall()}
     ok("a session with no First Message: msg_count is the raw row count",
        rows[plain][3] == 2, rows[plain])
+    # -2, not -1: `s.provider` (1.4, for rendering Main distinctly) was added
+    # after has_first_message, which is no longer the last column.
     ok("has_first_message is false for it",
-       rows[plain][-1] == 0, rows[plain])
+       rows[plain][-2] == 0, rows[plain])
     ok("a session with a First Message: has_first_message is true",
-       rows[opened][-1] == 1, rows[opened])
+       rows[opened][-2] == 1, rows[opened])
 
     class _T:
         def add_row(self, *a):

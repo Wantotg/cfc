@@ -24,7 +24,7 @@ from rich.table import Table
 from rich.text import Text
 
 import models
-from db import PROVIDER_ROUTINE, PROVIDER_WIKI
+from db import PROVIDER_MAIN, PROVIDER_ROUTINE, PROVIDER_WIKI
 from ui import (connection_light, CONNECTION_STYLE, console,
                 context_style, format_ts)
 
@@ -134,7 +134,10 @@ _SELECT = (
     # The frozen opening is visible conversation but not a `messages` row
     # (Concept.md's First Message section) — counted here so the picker's
     # Messages column agrees with /status and the export's total_messages.
-    "(s.first_message_text IS NOT NULL) as has_first_message "
+    "(s.first_message_text IS NOT NULL) as has_first_message, "
+    # So the tables below can render Main distinctly by identity rather than
+    # by its (user-editable, in principle collidable) title — Concept.md.
+    "s.provider "
     "FROM sessions s"
 )
 _ORDER = " ORDER BY s.updated_at DESC"
@@ -175,13 +178,19 @@ def _add_rows(table, rows):
     command. One number everywhere costs a little more typing and removes the
     class."""
     for (sid, title, ts, msg_count, prompt_name, persona_name,
-         model, tok_in, tok_out, has_first_message) in rows:
+         model, tok_in, tok_out, has_first_message, provider) in rows:
+        # Rendered distinctly by identity, not by title text — a title is
+        # user-editable everywhere else and could in principle read "Main"
+        # by coincidence, which is exactly why Concept.md asks for this to
+        # key off `provider` rather than the string on screen.
+        title_cell = (Text(title, style="bold cyan")
+                     if provider == PROVIDER_MAIN else title)
         table.add_row(
             str(sid),
             format_ts(ts),
             str(msg_count + (1 if has_first_message else 0)),
             _context_cell(model, tok_in, tok_out),
-            title,
+            title_cell,
             _strip_md(prompt_name),
             _strip_md(persona_name),
         )
@@ -450,6 +459,8 @@ _SHOW_HELP = object()       # print the help and stay at the prompt
 
 HUB_KEYS = (
     (("n", "new"), None, "start a new chat"),
+    (("m", "main"), "main",
+     "open Main — one durable, vault-configured chat"),
     (("p", "private"), "private",
      "start a private chat — in memory, nothing written to disk"),
     (("h", "?", "help"), _SHOW_HELP, "this screen"),
@@ -543,30 +554,29 @@ def _print_routine_problem_nudge():
 
 def pick_session(conn):
     """Show recent chats and routine health, and let the user pick one or
-    start new."""
+    start new.
+
+    An empty hub gets the same prompt and choices as a populated one
+    (Concept.md) — it used to auto-create an ordinary chat before any input
+    was possible, which meant a first-ever action could never be `m` or `p`.
+    """
     rows = recent_chats(conn)
 
     routines = _routine_rows()
 
-    if not rows:
-        if routines:
-            _print_routines(routines)
-        _print_routine_problem_nudge()
-        print_connection()
-        console.print("\nNo sessions yet. Starting a new "
-                      "one.\n")
-        return None
-
-    table = _session_table("Recent chats")
-    _add_rows(table, rows)
-    console.print(table)
-    console.print()
+    if rows:
+        table = _session_table("Recent chats")
+        _add_rows(table, rows)
+        console.print(table)
+        console.print()
+    else:
+        console.print("\nNo sessions yet.\n")
     if routines:
         _print_routines(routines)
     _print_routine_problem_nudge()
     print_connection()
-    console.print("Type a chat ID to resume, 'n' for new "
-                  "session, 'p' for private, 'h' for help, 'q' to quit.")
+    console.print("Type a chat ID to resume, 'n' for new session, 'm' for "
+                  "Main, 'p' for private, 'h' for help, 'q' to quit.")
     console.print("'/list sessions' inside a session shows every session, "
                   "routine runs included.", style="dim")
 

@@ -48,7 +48,8 @@ from db import (
     db, new_session, save_message, load_history,
     get_context_info,
     get_session_title, set_session_title,
-    set_session_model,
+    set_session_model, get_session_provider,
+    PROVIDER_MAIN, get_or_create_main, main_session_id, MainCorruption,
     add_tag, remove_tag,
     get_system_prompt, get_system_prompt_name,
     set_system_prompt, clear_system_prompt,
@@ -58,6 +59,7 @@ from db import (
     count_chat_user_turns,
     delete_session,
 )
+import mainchat
 from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
 from api import (stream_response, generate_title, is_transient_status,
@@ -157,6 +159,37 @@ class _Open:
         self.routine_transcript = routine_transcript
 
 
+def _open_main(conn):
+    """`m` at the hub, resolved to a session id — or None on a bundle
+    problem, already reported, that leaves the hub exactly where it was: no
+    blank row, no fallback to an ordinary chat.
+
+    Reopening an existing Main needs no bundle check here — the creation
+    bundle (all three files) is only required to *create* the row.
+    `run_session` itself validates the two live files before every turn and
+    refuses to open a row missing its frozen First Message; this function's
+    job is narrower, matching what `db.get_or_create_main` needs to create
+    one the first time.
+    """
+    try:
+        existing = main_session_id(conn)
+    except MainCorruption as e:
+        console.print(f"[Main is corrupt: {e}]", style="red")
+        return None
+    if existing is not None:
+        return existing
+    try:
+        _system_prompt, _persona, first_message = \
+            mainchat.load_creation_bundle()
+    except mainchat.MainChatProblem as e:
+        console.print(f"[Main chat unavailable: {e}]", style="red")
+        return None
+    session_id, _created = get_or_create_main(
+        conn, mainchat.FIRST_MESSAGE_FILE, first_message,
+        model=current_process_model())
+    return session_id
+
+
 def repl(session_id=None):
     """Outer driver: the hub, and the session you return to it from.
 
@@ -190,7 +223,12 @@ def repl(session_id=None):
                 break
             if result == "quit":
                 break
-            if result == "private":
+            if result == "main":
+                new_id = _open_main(conn)
+                if new_id is None:
+                    continue    # a bundle problem was already printed
+                session_id = new_id
+            elif result == "private":
                 # A private chat runs against an isolated in-memory database:
                 # every conn-driven write (messages, titles, agent_turn's own
                 # saves) lands there and is gone the moment we close it. Nothing
@@ -250,6 +288,20 @@ def run_session(conn, session_id, private=False, app_conn=None,
     typed there reading as an unrelated new conversation.
     """
     app_conn = conn if app_conn is None else app_conn
+    # The row's provider kind selects Main behaviour, never the key that
+    # opened it (Concept.md) — checked here so a numeric resume of Main's id
+    # enters this exact path too, not only the hub's `m`.
+    is_main = get_session_provider(conn, session_id) == PROVIDER_MAIN
+    if is_main and get_first_message(conn, session_id) is None:
+        # A Main row without its frozen First Message is corruption, not an
+        # inactive state — refuse to open it rather than silently reloading
+        # from the current source file, which would make deletion and
+        # recreation indistinguishable from a quiet history rewrite.
+        console.print(
+            f"[Main chat is corrupt — session #{session_id} has no frozen "
+            f"First Message. {PREFIX}delete chat {session_id} and reopen "
+            f"'m' to recreate it.]", style="red")
+        return None
     outcome = None
     history = load_history(conn, session_id)
     # Built once per session: `interactive` reports whether stdin is a
@@ -346,7 +398,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
 
     print_session_header(conn, session_id, current_model, current_title,
                          system_prompt_name, persona_name, private=private,
-                         trait_names=trait_names)
+                         trait_names=trait_names, is_main=is_main)
     if first_message:
         # Shown on every reopen, whether it was already frozen or was just
         # acquired above — visible conversation, never a message row (see
@@ -521,6 +573,20 @@ def run_session(conn, session_id, private=False, app_conn=None,
         """
         nonlocal current_title, turns_interrupted, revert_model
 
+        # Main's system prompt/persona are read live, immediately before
+        # every request (Concept.md) — never the session's own (always-None)
+        # columns. A broken bundle refuses the whole turn here, before
+        # anything is persisted, so a half-profile request is never sent and
+        # a "chat" turn's user line never gets a durable row to have to undo.
+        turn_system_prompt, turn_persona = system_prompt, persona
+        if is_main:
+            try:
+                turn_system_prompt, turn_persona = mainchat.load_live_profile()
+            except mainchat.MainChatProblem as e:
+                console.print(f"\n[Main chat unavailable: {e} — turn "
+                              f"refused, nothing was sent.]\n", style="red")
+                return
+
         if kind == "chat":
             console.print(human_panel(user_text))
             save_message(conn, session_id, "user", user_text,
@@ -538,7 +604,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
 
         # One place builds the system layers, so a new one is added there and
         # not in each turn path. Same order as before it was a function.
-        prefix = assemble_system(system_prompt, persona,
+        prefix = assemble_system(turn_system_prompt, turn_persona,
                                  pool_bodies("trait", trait_names))
 
         # Tools need all three switches on. Otherwise the original single
@@ -739,7 +805,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
     def h_new(cmd):
         nonlocal session_id, history, injected, current_title, current_model
         nonlocal system_prompt, system_prompt_name, persona, persona_name
-        nonlocal trait_names, turns_interrupted, outcome
+        nonlocal trait_names, turns_interrupted, outcome, is_main
         # `/new p` — a private chat from inside a session, joining `p` at the
         # hub. It **nests** rather than replacing this session: a private chat
         # is a side trip, and coming back to what you were doing is the point.
@@ -773,7 +839,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
             print_session_header(conn, session_id, current_model,
                                  current_title, system_prompt_name,
                                  persona_name, private=private,
-                                 trait_names=trait_names)
+                                 trait_names=trait_names, is_main=is_main)
             return
         if AUTO_EXPORT and history and not private:
             safe_export(conn, session_id)
@@ -786,6 +852,9 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # a new process (W-1.3.1-03). Sync the fresh row to the process
         # selection so its own `model` column agrees with what it opens on.
         set_session_model(conn, session_id, current_model)
+        # /new always starts an ordinary chat, even when typed inside Main
+        # (Concept.md) — Main is reached only through 'm' or its own id.
+        is_main = False
         system_prompt = None
         system_prompt_name = None
         persona = None
@@ -838,6 +907,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
         new_title = cmd.tail(1)
         if not new_title:
             console.print(f"Title: {get_session_title(conn, target)}")
+            return
+        if get_session_provider(conn, target) == PROVIDER_MAIN:
+            # Checked against the target, not just this session — /title can
+            # name any session id, so 'this chat is Main' isn't enough.
+            console.print("Main can't be renamed — its title is fixed.")
             return
         set_session_title(conn, target, new_title)
         if target == session_id:
@@ -1059,6 +1133,14 @@ def run_session(conn, session_id, private=False, app_conn=None,
                 console.print("Usage: /add tag <session_id> <name>")
             return
 
+        if is_main:
+            # Main's profile layers are fixed — a vault bundle, not something
+            # /add can replace. Tags (handled above) aren't a profile layer
+            # and stay allowed.
+            console.print("Main's system prompt and persona come from the "
+                          "vault bundle and can't be changed with /add.")
+            return
+
         # Explicit kind: '/add trait relax' searches that pool only.
         p = pool_of(head)
         if p and len(cmd.args) > 1:
@@ -1147,6 +1229,13 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # which is exactly the line between /remove and /delete.
         if head in ("excerpts", "excerpt"):
             do_forget(history, injected)
+            return
+
+        if is_main:
+            # Same fixed-profile refusal as /add. #n, tags and excerpts
+            # (all handled above) aren't profile layers and stay allowed.
+            console.print("Main's system prompt and persona come from the "
+                          "vault bundle and can't be changed with /remove.")
             return
 
         # A bare kind peels whatever that pool is carrying: '/remove persona'.
@@ -1242,7 +1331,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
                     system_prompt_name=system_prompt_name,
                     persona_name=persona_name, trait_names=trait_names,
                     tools_on=tools_on, db_on=db_on, injected=injected,
-                    kind=cmd.arg(0) or None)
+                    kind=cmd.arg(0) or None, is_main=is_main)
 
     def h_list(cmd):
         show_list(conn, cmd.raw, current_model)
