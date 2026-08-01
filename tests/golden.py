@@ -640,6 +640,16 @@ def capture():
                     setattr(mod, attr, val if isinstance(val, str)
                             else list(val))
 
+    # 1.4 (W-1.3.1-03): the process-wide selected model is a name the generic
+    # loop above can't reach — `main._process_model` was already computed
+    # from the *real* config.MODEL at `import main` time, above, before this
+    # loop ever ran, so patching `main.MODEL` after the fact does nothing to
+    # it. Same bug class HANDOVER's Scars section already names ("the golden
+    # baseline was pinning config.py"): anything a baseline pins that lives
+    # in config rather than in source has to be forced to the fixture value
+    # here, explicitly, exactly like DB_PATH and the model lists above.
+    chat.set_process_model(FIXTURE_MODEL)
+
     # 1.2.1: the four model collections (MODELS/TOOLS_MODELS/ROUTINE_MODELS/
     # MODEL_LIMITS) became one — `models.MODELS`, a list of records. Patched
     # directly at that one seam rather than through the generic attr loop

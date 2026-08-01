@@ -136,6 +136,12 @@ def main_():
     # record carries the known limit the context bar needs (below).
     main.TOOLS_ENABLED = True
     models.MODELS = [models._spec(MODEL, tools=True, limit=128_000)]
+    # The process-wide selection (W-1.3.1-03), not each session's own stored
+    # `model` — run_session no longer reads that at open. Every scenario in
+    # this file drives the same MODEL throughout and never types /model, so
+    # setting it once here is the whole of what `new_session(..., model=MODEL)`
+    # used to buy on its own.
+    main.set_process_model(MODEL)
 
     print("\n--- one turn down each path, same stub, same question ---")
     stream_sid = dbmod.new_session(conn, title="streaming", model=MODEL)

@@ -27,6 +27,36 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — The selected model is process-wide, not per session (`W-1.3.1-03`, 1.4 part 2)
+`run_session` used to read a session's own stored `model` column at open, so
+leaving one chat for another (or back) could silently change what "the
+selected model" meant. `/model` now sets one selection — `main._process_model`
+— that starts at configured `MODEL` and every entry into `run_session` reads:
+a fresh chat, a reopened one (its own stored value is no longer consulted),
+`/new` (deliberately doesn't reset it), a private side trip in either
+direction, and a return from a command screen. A session's `model` column is
+still written on every switch and on every open — it records what the process
+was using while that session was active, so nothing reading it back
+(header, export) contradicts itself — but it no longer chooses what a reopen
+starts on. Routine model precedence (own pin, caller model, routine default)
+is untouched — routines run headless through `runner.py`, never through this.
+
+Required alongside Main chat rather than after it: Main cannot honestly claim
+a single "process model" while the same value still meant something different
+every time the conversation on screen changed.
+
+`tests/golden.py`'s `capture()` needed one more explicit reset
+(`chat.set_process_model(FIXTURE_MODEL)`) — the generic per-module attribute
+loop patches `main.MODEL` but not the value computed from it at import time,
+which is the exact "golden baseline pinning config.py" bug class HANDOVER's
+Scars section already names.
+- Files: main.py, tests/golden.py, tests/test_model_revert.py,
+  tests/test_turn_paths.py, tests/test_process_model.py (new)
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — Main chat: the profile bundle loader and database identity (1.4, part 1)
 Foundation for the durable Main chat: a new `mainchat.py` owns the vault
 bundle's fixed filenames, path resolution and validation (creation needs all
@@ -38,7 +68,7 @@ or a session — that's the next commit.
 - Files: mainchat.py, db.py, config.example.py, tests/test_mainchat.py,
   tests/test_main_identity.py
 - Status: shipped
-- Commit: pending
+- Commit: d705440
 
 ---
 

@@ -48,7 +48,7 @@ from db import (
     db, new_session, save_message, load_history,
     get_context_info,
     get_session_title, set_session_title,
-    get_session_model, set_session_model,
+    set_session_model,
     add_tag, remove_tag,
     get_system_prompt, get_system_prompt_name,
     set_system_prompt, clear_system_prompt,
@@ -88,6 +88,44 @@ from commands import (
 )
 
 # --- Main REPL ---
+
+# --- process-wide model selection (W-1.3.1-03) -----------------------------
+#
+# One selected model for cfc's whole run, not one per session. Before this,
+# `run_session` read `get_session_model` at open and wrote it on every
+# switch, so "the selected model" meant something different every time you
+# changed which conversation you were looking at — leaving a chat for
+# another and back could silently swap the model under you. Main cannot
+# honestly claim a single process-level model while that is still true, so
+# this had to land with it.
+#
+# `_process_model` starts at configured `MODEL` (a fresh launch always does)
+# and only `/model` changes it. Every entry into `run_session` — a fresh
+# chat, a reopened one, a private side trip, a return from a command screen —
+# reads this instead of the session's own stored column. The column is not
+# retired: `set_session_model` still writes it, so a session's persisted
+# `model` records what the process was using while it was active and never
+# contradicts its own header — message rows remain the exact record of which
+# model produced each answer either way. Only the *read* at session-open is
+# gone, which is the whole of what "reopening no longer chooses the model"
+# means.
+#
+# A plain module global rather than a value threaded through every call site:
+# it genuinely is process-wide state, the same shape `config.MODEL` and
+# `ui._prompt_session` already are, and threading it through `repl()` /
+# `run_session()` / every nested private call and screen return would be a
+# parameter that has to agree everywhere instead of one place that can't
+# disagree with itself.
+_process_model = MODEL
+
+
+def current_process_model():
+    return _process_model
+
+
+def set_process_model(model):
+    global _process_model
+    _process_model = model
 
 
 def _one_line(text, width=60):
@@ -234,7 +272,12 @@ def run_session(conn, session_id, private=False, app_conn=None,
     # never persists regardless of this flag.
     db_on = True if not private else DATABASE_ACTIVE
     current_title = get_session_title(conn, session_id)
-    current_model = get_session_model(conn, session_id)
+    # The process's selected model, not this session's stored one — see the
+    # `_process_model` note above. Synced onto the row immediately so the
+    # session's own `model` column (and anything reading it — the header,
+    # export) never contradicts what actually just opened it.
+    current_model = current_process_model()
+    set_session_model(conn, session_id, current_model)
     # Auto-revert arming. Non-None ⇒ the current model was set by a switch and
     # has not yet completed a turn, so a turn that errors on it needs a
     # decision: a status-coded transient (429/502/503/504) says the provider
@@ -399,6 +442,10 @@ def run_session(conn, session_id, private=False, app_conn=None,
                           f"{PREFIX}model.\n")
             return True
         bad, current_model, revert_model = current_model, revert_model, None
+        # The switch that got armed was process-wide, so the revert is too —
+        # otherwise every other open chat would keep offering the model this
+        # one just proved dead.
+        set_process_model(current_model)
         set_session_model(conn, session_id, current_model)
         console.print(f"\n[error] provider rejected '{bad}' — switched back to "
                       f"{current_model}\n")
@@ -716,6 +763,10 @@ def run_session(conn, session_id, private=False, app_conn=None,
                 # silently discarding it and reprinting our own header.
                 outcome = result
                 return _LEAVE
+            # The nested chat may have switched model — process-wide, so it
+            # carries back into this session too (W-1.3.1-03).
+            current_model = current_process_model()
+            set_session_model(conn, session_id, current_model)
             # Say where you have landed. Returning from a private chat into an
             # ordinary one with no marker is how a message ends up in the
             # wrong place.
@@ -731,7 +782,10 @@ def run_session(conn, session_id, private=False, app_conn=None,
         injected = []
         turns_interrupted = 0
         current_title = "(untitled)"
-        current_model = MODEL
+        # Model deliberately NOT reset — /new starts a new conversation, not
+        # a new process (W-1.3.1-03). Sync the fresh row to the process
+        # selection so its own `model` column agrees with what it opens on.
+        set_session_model(conn, session_id, current_model)
         system_prompt = None
         system_prompt_name = None
         persona = None
@@ -912,6 +966,12 @@ def run_session(conn, session_id, private=False, app_conn=None,
             console.print("model unchanged", style="dim")
             return
         prev_model = current_model
+        # The selection is process-wide (W-1.3.1-03): every other open chat,
+        # and every chat opened after this one, starts on it too. The
+        # session's own column still gets written — it records what the
+        # process was using while this session was active, not a preference
+        # a reopen would read back.
+        set_process_model(new_model)
         set_session_model(conn, session_id, new_model)
         current_model = new_model
         console.print(f"Switched to model: "

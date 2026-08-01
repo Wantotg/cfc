@@ -47,7 +47,14 @@ def ok(name, cond, detail=""):
         print(f"       {str(detail)[:200]}")
 
 
-def drive(conn, sid, keys):
+def drive(conn, sid, keys, model=None):
+    """Run one session. `model` sets the process-wide selection
+    (W-1.3.1-03) before driving — a reopened session no longer reads its own
+    stored `model` column, so every scenario in this file that used to rely
+    on `new_session(..., model=X)` to choose its starting model now has to
+    say so here instead."""
+    if model is not None:
+        main.set_process_model(model)
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
@@ -100,7 +107,8 @@ def main_():
         return ("an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
     main.stream_response = raise_for_bad
 
-    text = drive(conn, sid, "/tools off\n/model shanhaig\nhello\n/model\n/q\n")
+    text = drive(conn, sid, "/tools off\n/model shanhaig\nhello\n/model\n/q\n",
+                model="good-model")
     ok("the error names the rejected model and the revert target",
        "provider rejected 'shanhaig'" in text
        and "switched back to good-model" in text, text)
@@ -116,7 +124,7 @@ def main_():
     # previous model to fall back to and a transient prints raw.
     main.stream_response = lambda messages, model=None: (
         (_ for _ in ()).throw(httpx.HTTPError("upstream 503")))
-    text2 = drive(conn, sid2, "/tools off\nhello\n/q\n")
+    text2 = drive(conn, sid2, "/tools off\nhello\n/q\n", model="good-model")
     ok("an unswitched session's error is shown raw", "upstream 503" in text2, text2)
     ok("...and does not trigger a revert",
        "switched back" not in text2, text2)
@@ -133,7 +141,8 @@ def main_():
     main.known_models = lambda: ["good-model", "broken-but-listed"]
     main.stream_response = lambda messages, model=None: (
         (_ for _ in ()).throw(httpx.HTTPError("no such model: broken-but-listed")))
-    text4 = drive(conn, sid4, "/tools off\n/model broken-but-listed\nhello\n/q\n")
+    text4 = drive(conn, sid4, "/tools off\n/model broken-but-listed\nhello\n/q\n",
+                 model="good-model")
     ok("a listed-but-dead model is reverted",
        "provider rejected 'broken-but-listed'" in text4
        and "switched back to good-model" in text4, text4)
@@ -155,7 +164,8 @@ def main_():
 
     # Switch to an unlisted-but-VALID model: turn 1 succeeds (disarms), turn 2
     # errors and must print raw rather than reverting a model that just worked.
-    text3 = drive(conn, sid3, "/tools off\n/model custom-x\nhello\nhello\n/q\n")
+    text3 = drive(conn, sid3, "/tools off\n/model custom-x\nhello\nhello\n/q\n",
+                 model="good-model")
     ok("a working unlisted model is not reverted on a later error",
        "switched back" not in text3 and "upstream 500" in text3, text3)
     ok("...and stays selected", dbmod.get_session_model(conn, sid3) == "custom-x",
@@ -175,7 +185,8 @@ def main_():
         raise httpx.HTTPError("no such model: flaky-model")
     main.stream_response = transient_then_rejected
 
-    text5 = drive(conn, sid5, "/tools off\n/model flaky-model\nhello\nhello\n/q\n")
+    text5 = drive(conn, sid5, "/tools off\n/model flaky-model\nhello\nhello\n/q\n",
+                 model="good-model")
     ok("the transient prints as an ordinary error", "upstream 503" in text5,
        text5)
     ok("...and the revert stays armed, so the SECOND error still reverts",
@@ -198,7 +209,8 @@ def main_():
     sid6 = dbmod.new_session(conn, title="t6", model="good-model")
     main.stream_response = lambda messages, model=None: (
         "an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
-    text6 = drive(conn, sid6, "/tools off\n/model 2\n/model\n/q\n")
+    text6 = drive(conn, sid6, "/tools off\n/model 2\n/model\n/q\n",
+                 model="good-model")
     ok("a valid number switches to the full configured id",
        "Switched to model: custom-y" in text6, text6)
     ok("...with no numbered picker in between",
@@ -208,7 +220,8 @@ def main_():
        dbmod.get_session_model(conn, sid6))
 
     sid7 = dbmod.new_session(conn, title="t7", model="good-model")
-    text7 = drive(conn, sid7, "/tools off\n/model 9\n/model\n/q\n")
+    text7 = drive(conn, sid7, "/tools off\n/model 9\n/model\n/q\n",
+                  model="good-model")
     ok("an out-of-range number explains digits pick a row and points at "
        "/list models",
        "doesn't pick a row" in text7 and "/list models" in text7
@@ -216,7 +229,7 @@ def main_():
     ok("...and zero is treated the same way",
        "doesn't pick a row" in
        drive(conn, dbmod.new_session(conn, title="t8", model="good-model"),
-             "/tools off\n/model 0\n/q\n"))
+             "/tools off\n/model 0\n/q\n", model="good-model"))
     ok("...and the session stays on the model it started with",
        dbmod.get_session_model(conn, sid7) == "good-model",
        dbmod.get_session_model(conn, sid7))
@@ -259,9 +272,10 @@ def main_():
                           "/tools off\n"
                           "/model flaky-a\nhello\n"        # 400 -> reverts
                           "/model flaky-a\nhello\n"        # succeeds
-                          "/model flaky-b\nhello\n/q\n")    # 400 -> would
+                          "/model flaky-b\nhello\n/q\n",    # 400 -> would
                                                               # revert onto
                                                               # flaky-a
+                          model=model_start)
 
     sid9, text9 = drive_ab_scenario(conn, "good-model", "t9")
     ok("the first flaky-a 400 reverts normally",
@@ -315,7 +329,8 @@ def main_():
         text10 = drive(conn, sid10,
                        "/model flaky-a\nhello\n"
                        "/model flaky-a\nhello\n"
-                       "/model flaky-b\nhello\n/q\n")
+                       "/model flaky-b\nhello\n/q\n",
+                       model="good-model")
         ok("tool path: the first flaky-a 400 reverts normally",
            "provider rejected 'flaky-a' — switched back to good-model"
            in text10, text10)
@@ -362,12 +377,12 @@ def main_():
     sid12 = dbmod.new_session(conn, title="t12", model="flaky-c")
     # No switch yet, so nothing is armed — the transient prints raw and does
     # NOT get added to rejected_models (status 503, not 400).
-    drive(conn, sid12, "/tools off\nhello\n/q\n")
+    drive(conn, sid12, "/tools off\nhello\n/q\n", model="flaky-c")
 
     sid13 = dbmod.new_session(conn, title="t13", model="good-model")
     text13 = drive(conn, sid13,
                    "/tools off\n/model flaky-c\nhello\n/model flaky-d\n"
-                   "hello\n/q\n")
+                   "hello\n/q\n", model="good-model")
     ok("switching onto flaky-c and it 503ing again does not revert "
        "(no armed switch reached a 400 yet)",
        "upstream 503" in text13.split("flaky-d")[0], text13)
