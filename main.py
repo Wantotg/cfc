@@ -1122,6 +1122,16 @@ def run_session(conn, session_id, private=False, app_conn=None,
         if opened:
             render_answer(opened)
 
+    def _refuse_main_profile(verb):
+        """Main's profile layers come from the vault bundle, not from a pool.
+
+        One string, three call sites, because the two verbs refuse for the
+        same reason and a second copy is a sentence free to go wrong on its
+        own — see the /wiki-status precedent in decision 17.
+        """
+        console.print("Main's system prompt and persona come from the "
+                      f"vault bundle and can't be changed with {verb}.")
+
     def h_add(cmd):
         if not cmd.args:
             console.print("Usage: /add <name> | /add <prompt|persona|trait> "
@@ -1144,16 +1154,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
                 console.print("Usage: /add tag <session_id> <name>")
             return
 
-        if is_main:
-            # Main's profile layers are fixed — a vault bundle, not something
-            # /add can replace. Tags (handled above) aren't a profile layer
-            # and stay allowed.
-            console.print("Main's system prompt and persona come from the "
-                          "vault bundle and can't be changed with /add.")
-            return
-
         # Explicit kind: '/add trait relax' searches that pool only.
         p = pool_of(head)
+        if is_main and p:
+            _refuse_main_profile("/add")
+            return
         if p and len(cmd.args) > 1:
             found = resolve_layer(cmd.tail(1), _active(), kinds=[p.kind])
             if found:
@@ -1178,13 +1183,24 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # of them is more specific than the pool miss — outside the jail, no
         # such file, a directory, wrong extension, not UTF-8, too big. There is
         # no silent branch for the miss message to be covering.
+        #
+        # Main's fixed profile is a refusal *here*, at the layer, and not a
+        # guard over the whole verb: a file attachment is an ordinary session
+        # facility that Main keeps. The pool search still runs first for Main
+        # too, so `/add relax.md` still means the trait — it just ends in the
+        # refusal instead of an attach, rather than in "no such file".
         maybe_path = looks_like_path(cmd.raw)
-        found = resolve_layer(cmd.raw, _active(), quiet=maybe_path)
-        if found:
+        found = resolve_layer(cmd.raw, _active(),
+                              quiet=maybe_path or is_main)
+        if found and is_main:
+            _refuse_main_profile("/add")
+        elif found:
             _attach_layer(*found)
         elif maybe_path:
             do_attach(conn, session_id, history, cmd.raw,
                       model=current_model)
+        elif is_main:
+            _refuse_main_profile("/add")
 
     def _detach_layer(kind, name):
         nonlocal system_prompt, system_prompt_name, persona, persona_name
@@ -1243,10 +1259,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
             return
 
         if is_main:
-            # Same fixed-profile refusal as /add. #n, tags and excerpts
-            # (all handled above) aren't profile layers and stay allowed.
-            console.print("Main's system prompt and persona come from the "
-                          "vault bundle and can't be changed with /remove.")
+            # Same fixed-profile refusal as /add, and it can cover the whole
+            # rest of the verb here: everything below only ever detaches a
+            # pool layer. #n, tags and excerpts — all handled above — aren't
+            # profile layers and stay allowed.
+            _refuse_main_profile("/remove")
             return
 
         # A bare kind peels whatever that pool is carrying: '/remove persona'.

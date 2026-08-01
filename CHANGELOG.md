@@ -27,6 +27,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — `/add <path>` works again in Main chat (`B-1.4-01`, 1.4 triage)
+Main's fixed profile was enforced by a guard over the whole of `/add`, placed
+above the branch that attaches a file — so `/add <path>` in Main never reached
+`do_attach` and answered with the profile refusal instead. The refusal now sits
+at the *layer*: an explicit `/add prompt|persona|trait …` refuses, a bare name
+that resolves to a pool item refuses, and everything else takes the ordinary
+path. The pool search still runs first for Main, so `/add relax.md` still means
+the trait rather than a file that isn't there — it ends in the refusal, not in
+"no such file". `/remove`'s guard is unchanged and still covers its whole tail,
+because everything below it only ever detaches a pool layer; `#n`, tags and
+excerpts were already handled above it. The refusal string is now one function
+with the verb as its argument, since it had reached three call sites.
+
+Blocked the tag: the version's own work order claims attachments remain
+available on Main, and `tests/test_mainchat_turns.py` asserted that facility
+using a tag, which is the one part of `/add` that was never behind the guard.
+It now drives a real file attachment through Main end to end.
+- Files: main.py, tests/test_mainchat_turns.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — Actionable advice for an unreachable hosted embedder (`W-0.9.1-05`, 1.4 part 5)
 `hosted`'s diagnosis stayed distinct — cfc still has no local service to
 start for a remote endpoint, so `preflight.ensure()` still returns early
@@ -45,7 +68,7 @@ Studio at all — now gated on the state actually being local.
 - Files: preflight.py, ui.py, commands.py, tests/test_connection.py,
   tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 283a6fa
 
 ---
 

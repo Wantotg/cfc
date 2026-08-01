@@ -32,6 +32,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+import commands
 import db as dbmod
 import hub
 import mainchat
@@ -179,6 +180,34 @@ def main_():
         out7, _ = drive(conn, sid, "\n/add tag important\n/status\n/q\n")
         ok("tagging still works", "Tagged session" in out7, out7)
         ok("...and shows in /status", "important" in out7, out7)
+
+        # `/add <path>` is an ordinary facility, not a profile layer, and the
+        # fixed-profile refusal used to sit above the path branch and swallow
+        # it (1.4-01). Driven end to end — attach, then detach by #n — because
+        # the bug was reachable only by typing a real path at a real Main.
+        jail = Path(tempfile.mkdtemp())
+        (jail / "note.md").write_text("attachable body", encoding="utf-8")
+        saved_roots = commands.ATTACH_ROOTS
+        commands.ATTACH_ROOTS = (jail,)
+        try:
+            out7b, _ = drive(conn, sid,
+                             f"\n/add {jail / 'note.md'}\n/status\n/q\n")
+        finally:
+            commands.ATTACH_ROOTS = saved_roots
+        ok("/add <path> attaches on Main", "Attached note.md" in flat(out7b),
+           out7b)
+        ok("...and is not refused as a profile change",
+           "can't be changed with /add" not in flat(out7b), out7b)
+        ok("...and shows in /status", "note.md" in flat(out7b), out7b)
+        out7c, _ = drive(conn, sid, "\n/remove #1\ny\n/status\n/q\n")
+        ok("/remove #n detaches it again",
+           "note.md" not in flat(out7c).split("Attached")[-1][:80], out7c)
+
+        # A pool name still refuses, path-shaped or not: the refusal moved to
+        # the layer, it did not go away.
+        out7d, _ = drive(conn, sid, "\n/add nosuchlayer\n/q\n")
+        ok("a bare name still refuses",
+           "can't be changed with /add" in flat(out7d), out7d)
 
         print("\n--- a broken live persona refuses the turn before "
               "persistence ---")
