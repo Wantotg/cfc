@@ -27,6 +27,28 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — Actionable advice for an unreachable hosted embedder (`W-0.9.1-05`, 1.4 part 5)
+`hosted`'s diagnosis stayed distinct — cfc still has no local service to
+start for a remote endpoint, so `preflight.ensure()` still returns early
+rather than reaching the `lms` fixer — but its message was the diagnosis and
+nothing else: "not something cfc can start; memory will be degraded." now
+says to check the connection, `EMBED_BASE`/`EMBED_KEY` in `config.py`, and
+the provider's status, then retry `/connect embedding`. `ui.CONNECTION_STYLE`
+carries the same actionable text to the hub light, `/connect` and the config
+screen — one shared mapping, so wording can't fork per renderer — and stays
+the one red state, since `ensure()` genuinely never runs its local fixer on
+it; only the wording changed, not the recoverability split decision 16 pins
+the colour to. `commands.connect_embedding()`'s own fallback line ("start LM
+Studio yourself") used to fire whenever `find_lms()` came back empty, which
+is also true on a machine using a hosted embedder that never installed LM
+Studio at all — now gated on the state actually being local.
+- Files: preflight.py, ui.py, commands.py, tests/test_connection.py,
+  tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — `/model` says when the switch turns tools off (`W-1.3.1-01`, 1.4 part 4)
 The header and `/tools` already knew a model couldn't use tools; `/model` —
 the one command that actually changes the active model — was the one switch
@@ -39,7 +61,7 @@ off deployment-wide, keeps its own message and prints nothing extra here.
 Doesn't touch the switch/revert policy at all.
 - Files: main.py, tests/test_model_tools_notice.py (new)
 - Status: shipped
-- Commit: pending
+- Commit: c88e0dd
 
 ---
 

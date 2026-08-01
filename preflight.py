@@ -370,7 +370,15 @@ def ensure(say=_say, fix=True):
         return True
     if state == HOSTED:
         say("fail", f"hosted embedder unreachable — {detail}")
-        say("info", "not something cfc can start; memory will be degraded.")
+        # W-0.9.1-05: actionable, not just a diagnosis. cfc has no local
+        # service to start for a hosted endpoint — that stays true, and is
+        # why this returns early rather than falling through to the fixer
+        # below — but "not cfc's to start" was the whole message, and it
+        # left the human with nothing to actually do.
+        say("info", "check your connection, EMBED_BASE/EMBED_KEY in "
+                    "config.py, and the provider's status, then run "
+                    "/connect embedding in a chat (or connect embedding in "
+                    "config) to retry.")
         return False
     if not fix:
         say("fail", f"embedder not answering — {detail}")

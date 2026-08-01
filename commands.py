@@ -3211,7 +3211,15 @@ def connect_embedding():
     # The honest failure. `ensure` has already said what broke and what it
     # tried; adding a second opinion here would be the drift this feature is
     # against. All that is owed is the thing a human can do next.
-    if not preflight.find_lms():
+    #
+    # **Only for a local embedder** (`W-0.9.1-05`). This used to fire off
+    # `find_lms()` alone, which is also None on a machine using a *hosted*
+    # embedder that never installed LM Studio at all — "start LM Studio
+    # yourself" is not a next step for `hosted`, it's a non sequitur, and
+    # `ensure()`'s own `hosted` message already said the real one (check
+    # connectivity, `EMBED_BASE`/`EMBED_KEY`, the provider's status).
+    state, _detail = preflight.connection_state()
+    if state != preflight.HOSTED and not preflight.find_lms():
         console.print("  start LM Studio yourself, then run /connect embedding "
                       "again.", style="dim")
     return False

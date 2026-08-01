@@ -273,7 +273,8 @@ you> Usage: /continue   (no arguments)
 you> Unknown connection 'nonsense'. Available connections: embedding
 you>   embedder: http://localhost:1233/v1
   ✗ hosted embedder unreachable — golden harness stub
-    not something cfc can start; memory will be degraded.
+    check your connection, EMBED_BASE/EMBED_KEY in config.py, and the provider's status, then run
+/connect embedding in a chat (or connect embedding in config) to retry.
 you> Usage: /delete chat [<id>]   (deletes this conversation and its messages)
   /remove is the reversible one — prompts, personas, traits, attachments, excerpts.
 you> Don't know how to delete 'wombat'. Deletable: chat.
@@ -375,7 +376,8 @@ cooking for cats: config
 
 Chat default      glm-5.2
 Chat API          https://api.example.invalid/v1 · key set
-Embedding         ● hosted embedder unreachable — not cfc's to start
+Embedding         ● hosted embedder unreachable — check your connection, EMBED_BASE/EMBED_KEY and
+the provider's status, then /connect embedding in a chat, or connect embedding in config, to retry
 Wiki import       no update flagged
 Database          <ROOT>/tests/_fixture.db
 Vault             <ROOT>/tests/_fixture_vault
@@ -390,7 +392,8 @@ cooking for cats: config
 
 Chat default      glm-5.2
 Chat API          https://api.example.invalid/v1 · key set
-Embedding         ● hosted embedder unreachable — not cfc's to start
+Embedding         ● hosted embedder unreachable — check your connection, EMBED_BASE/EMBED_KEY and
+the provider's status, then /connect embedding in a chat, or connect embedding in config, to retry
 Wiki import       no update flagged
 Database          <ROOT>/tests/_fixture.db
 Vault             <ROOT>/tests/_fixture_vault

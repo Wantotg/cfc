@@ -261,13 +261,21 @@ CONNECTION_STYLE = {
     "down":        ("●", "orange3", "embedder not answering — "
                                     "/connect embedding in a chat, or "
                                     "connect embedding in config"),
-    # No `/connect` here, and that is the honest answer rather than an
-    # omission: a hosted endpoint is not something cfc can start, so offering a
-    # command that cannot help would be worse than saying so. It is the one red
-    # for the same reason — red is where cfc runs out, not where things are
-    # worst.
-    "hosted":      ("●", "red",     "hosted embedder unreachable — "
-                                    "not cfc's to start"),
+    # `/connect embedding` is named here too (`W-0.9.1-05`) — not because cfc
+    # gained a local fixer for a hosted endpoint, but because "not cfc's to
+    # start" on its own left nothing to actually do. The advice is the human
+    # half cfc can't check for them (connectivity, `EMBED_BASE`/`EMBED_KEY`,
+    # the provider's own status page) followed by the same retry every other
+    # row offers. It stays the one red: `preflight.ensure` still returns
+    # early on `hosted` rather than reaching the fixer below, so the colour
+    # and the behaviour agree exactly as before — red is where cfc's own
+    # attempt runs out, never where things are worst — and this never
+    # suggests starting a hosted service, which nothing here can do.
+    "hosted":      ("●", "red",     "hosted embedder unreachable — check "
+                                    "your connection, EMBED_BASE/EMBED_KEY "
+                                    "and the provider's status, then "
+                                    "/connect embedding in a chat, or "
+                                    "connect embedding in config, to retry"),
 }
 
 

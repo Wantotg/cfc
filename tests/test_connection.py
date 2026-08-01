@@ -87,18 +87,14 @@ def test_rendering_round_trip():
         mark, style, text = ui.connection_light(state)
         assert mark and style and text, f"{state} renders empty"
         # The light exists to say what to do *next*, so every non-connected
-        # state owes an action. A colour alone is a puzzle.
-        # `hosted` is the one state that owes an instruction rather than a
-        # command: a remote endpoint is someone else's to start, and naming a
-        # command that cannot help would be worse than saying so. Every other
-        # non-connected state names `/connect embedding` — including
-        # `not running`, where cfc genuinely can wake LM Studio: driven from a
-        # cold machine 2026-07-27, `lms server start` brought the app up and
-        # the probe came back green. This comment said "unresolved" until v1.0,
-        # which is the same stale claim `B-02` found in README.md.
-        if state == preflight.HOSTED:
-            assert "not cfc's to start" in text, text
-        elif state != preflight.CONNECTED:
+        # state owes an action. A colour alone is a puzzle. Every one of them
+        # — `hosted` included, since `W-0.9.1-05` — now names `/connect
+        # embedding` as a *retry*, driven cold from a machine that never
+        # installed LM Studio at all: checking your own half (connectivity,
+        # `EMBED_BASE`/`EMBED_KEY`, the provider's status) and then re-asking
+        # the same probe is a real next step even though cfc has nothing
+        # local to start.
+        if state != preflight.CONNECTED:
             assert "/connect" in text, f"{state} does not name the fix: {text}"
             # ...**and says where it can be typed** (`B-0.9.1-03`). Two of the
             # three renderings are at the hub, which accepts n/p/h/q and a chat
@@ -117,6 +113,11 @@ def test_rendering_round_trip():
             # would pass even with the config location missing entirely.
             assert "in a chat" in text and "in config" in text, (
                 f"{state} does not name both locations: {text}")
+        # `hosted` is still the one state that owes no *local* fix — it must
+        # never suggest starting a service cfc has no business starting.
+        if state == preflight.HOSTED:
+            assert "LM Studio" not in text, text
+            assert "EMBED_BASE" in text or "EMBED_KEY" in text, text
     print(f"  ok  {len(preflight.STATES)} states render")
     # An unknown state degrades rather than raising. The hub is not worth
     # taking down over a light.
@@ -128,25 +129,44 @@ def test_colour_follows_what_cfc_can_do():
     """The dot carries recoverability, not severity (`D-0.9.1-01`).
 
     Severity cannot discriminate here — every non-green state means memory is
-    off, equally — so the colour says whether `/connect embedding` will try:
-    one colour for the states `preflight.ensure` runs its fixer on, a different
-    one for `hosted`, which it returns early from.
-
-    **Pinned against the advice, not against colour names.** Which states offer
-    the command is derivable from the mapping itself, so re-styling stays free
-    and un-pairing the colour from the behaviour fails here. Asserting
-    `orange3` and `red` as literals would pass a table that had drifted away
-    from what `ensure` actually does, which is the only thing the colour claims.
+    off, equally — so the colour says whether `preflight.ensure` actually
+    *attempts* a local fix for this state (starting LM Studio, loading the
+    model) versus only advising and returning early. `hosted` names
+    `/connect embedding` too now (`W-0.9.1-05`, a retry, not a fix), which
+    retires the old text-based split — "does the advice mention /connect" no
+    longer distinguishes the two groups, so this drives the real thing that
+    does: whether `find_lms()` gets called at all. Verified by disabling it
+    (HANDOVER's "verify a guard by disabling it") and watching which states
+    reach for it.
     """
     print("the colour says what cfc can do about it")
     fixable, unfixable = set(), set()
-    for state in preflight.STATES:
-        if state == preflight.CONNECTED:
-            continue
-        _, style, text = ui.connection_light(state)
-        (fixable if "/connect" in text else unfixable).add(style)
-    check("every state cfc can try shares one colour", len(fixable), 1)
-    check("the state it cannot shares none of it", fixable & unfixable, set())
+    fixable_states, unfixable_states = set(), set()
+    orig_find_lms, orig_state = preflight.find_lms, preflight.connection_state
+    tried = []
+    preflight.find_lms = lambda: (tried.append(1) or None)
+    try:
+        for state in preflight.STATES:
+            if state == preflight.CONNECTED:
+                continue
+            tried.clear()
+            preflight.connection_state = lambda s=state: (s, "test detail")
+            preflight.ensure(say=lambda level, msg: None)
+            _, style, _ = ui.connection_light(state)
+            if tried:
+                fixable.add(style)
+                fixable_states.add(state)
+            else:
+                unfixable.add(style)
+                unfixable_states.add(state)
+    finally:
+        preflight.find_lms = orig_find_lms
+        preflight.connection_state = orig_state
+    check("every state cfc actively tries shares one colour", len(fixable), 1)
+    check("the state it only advises on shares none of that colour",
+          fixable & unfixable, set())
+    check("hosted is the one that never reaches the local fixer",
+          preflight.HOSTED in unfixable_states, True)
     # Green is working, and it is nobody else's colour. Without this the rule
     # above is satisfied by painting the whole light one colour.
     green = ui.connection_light(preflight.CONNECTED)[1]
@@ -178,7 +198,12 @@ def test_advice_renders_identically_on_all_three_screens():
     here even though the shared table stayed correct.
     """
     print("the hub, config screen and chat show the same advice")
-    for state in (preflight.NO_SERVER, preflight.NOT_RUNNING, preflight.DOWN):
+    # `hosted` is in this same loop now (`W-0.9.1-05`) — its advice is
+    # actionable like the other three, so there is no separate "offers
+    # nothing" case left to test differently; only the wording differs, and
+    # that is `test_rendering_round_trip`'s job.
+    for state in (preflight.NO_SERVER, preflight.NOT_RUNNING, preflight.DOWN,
+                 preflight.HOSTED):
         orig_state = preflight.connection_state
         preflight.connection_state = lambda s=state: (s, "test detail")
         try:
@@ -200,19 +225,36 @@ def test_advice_renders_identically_on_all_three_screens():
                 f"{label} did not render the shared text for {state}: {out!r}")
         check(f"{state}: identical wording on all three screens", True, True)
 
-    print("the hosted row still offers no local fix anywhere")
-    orig_state = preflight.connection_state
-    preflight.connection_state = lambda: (preflight.HOSTED, "test detail")
+
+def test_connect_embedding_hosted_fallback():
+    """`commands.connect_embedding()`'s own fallback line — `not preflight.
+    find_lms()` used to fire regardless of state, so a machine using a
+    hosted embedder (and therefore never installing LM Studio, so `find_lms`
+    is also None there) got told to "start LM Studio yourself" for a
+    connection that was never local at all (`W-0.9.1-05`). It must fire for
+    an ordinary local failure and stay silent for `hosted`, whose own
+    `ensure()` message already carried the real next step.
+    """
+    print("connect_embedding's fallback line only fires for a local failure")
+    orig_ensure, orig_find_lms, orig_state = (
+        preflight.ensure, preflight.find_lms, preflight.connection_state)
+    preflight.ensure = lambda say: (say("fail", "embedder not answering"),
+                                    False)[1]
+    preflight.find_lms = lambda: None
     try:
-        chat_out = _rendered(commands.connect_status)
-        config_out = _rendered(screens._render_config)
+        preflight.connection_state = lambda: (preflight.DOWN, "test detail")
+        local_out = _rendered(commands.connect_embedding)
+        check("a local failure still gets the LM Studio fallback",
+              "start LM Studio yourself" in local_out, True)
+
+        preflight.connection_state = lambda: (preflight.HOSTED, "test detail")
+        hosted_out = _rendered(commands.connect_embedding)
+        check("hosted gets no such fallback",
+              "start LM Studio yourself" not in hosted_out, True)
     finally:
+        preflight.ensure = orig_ensure
+        preflight.find_lms = orig_find_lms
         preflight.connection_state = orig_state
-    for label, out in (("chat", chat_out), ("config screen", config_out)):
-        assert "not cfc's to start" in out, f"{label}: {out!r}"
-        assert "/connect embedding" not in out, (
-            f"{label} offers a fix hosted can't use: {out!r}")
-    check("hosted keeps offering nothing to run, everywhere", True, True)
 
 
 def test_probe_timeouts_are_a_pair():
@@ -249,6 +291,7 @@ if __name__ == "__main__":
     test_rendering_round_trip()
     test_colour_follows_what_cfc_can_do()
     test_advice_renders_identically_on_all_three_screens()
+    test_connect_embedding_hosted_fallback()
     test_probe_timeouts_are_a_pair()
     test_terminal_report_direction()
     print("\nall connection tests passed")
