@@ -46,7 +46,7 @@ using a tag, which is the one part of `/add` that was never behind the guard.
 It now drives a real file attachment through Main end to end.
 - Files: main.py, tests/test_mainchat_turns.py
 - Status: shipped
-- Commit: pending
+- Commit: c3650df
 
 ---
 

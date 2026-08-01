@@ -14,6 +14,33 @@ nothing behind here.** This file holds open entries only. The reasoning is in
 
 ---
 
+## D-1.4-02 · The routines screen labels a routine by its id; everything else uses its name
+
+**Found:** 2026-08-01, v1.4 playtest. The routines screen's `Routine` column
+shows `short-term-memory` where the file, the hub's Routines panel and `show`'s
+own heading all say `short term memory`.
+
+**Not a mismatch and not a leftover, which is the half worth knowing.** The
+routine file really does say `id: short term memory`; `Routine.__init__`
+slugifies the id at construction (`routines.py:266`) because these files are
+hand-authored in Obsidian, where spaces are what you naturally type, and a
+strict slug check would have failed every hand-made routine. The slug is then
+the handle everywhere it has to be one — the log filename, the session lookup,
+`/routine <id>`. The file is never rewritten; only `to_markdown()` emits the
+slug, so a routine cfc itself saves normalises and one you wrote by hand does
+not. `screens._routine_row` is simply the only surface that prints the handle
+instead of the display name.
+
+**Owed:** show the name in that column, since `load_routine` resolves by id,
+name *or* the slug of what was typed — so the name is a usable handle too, and
+nothing on the screen depends on the id being visible. Two things move with it,
+which is why this is an entry rather than a one-word edit: `_render_routines`
+prints its problem lines as `! {r.id}: {why}` *below* the table, so a name in
+the column and an id underneath would label one routine two ways on one screen;
+and the narrow renderer uses the same row dict. Consider printing the id beside
+the name where they differ rather than replacing it — `show` already does
+exactly that, name in bold with `id` as its first field.
+
 ## D-13 · A failed title call is silent and the next turn inherits the titling
 
 **Found:** 2026-07-31, in the v1.3.1 diagnosis. `generate_title()` swallows
