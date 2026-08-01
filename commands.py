@@ -810,7 +810,7 @@ def print_session_header(conn, session_id, model, title,
 def show_status(conn, session_id, model, title, private=False,
                 system_prompt_name=None, persona_name=None, trait_names=(),
                 tools_on=True, db_on=True, injected=(), kind=None,
-                is_main=False):
+                is_main=False, active_preset=None):
     """`/status` — everything active in this session, on one screen.
 
     It absorbs eight bare commands (`/title`, `/tokens`, `/prompt`, `/persona`,
@@ -960,6 +960,12 @@ def show_status(conn, session_id, model, title, private=False,
                else "off for this session" if not tools_on
                else tools_unsupported_reason(model))
         _header_row("Tools", f"inactive — {why}", "dim")
+    if active_preset:
+        params = models.preset_params(active_preset) or {}
+        body = ", ".join(f"{k}={v}" for k, v in params.items())
+        _header_row("Preset", f"{active_preset} ({body})", "cyan")
+    else:
+        _header_row("Preset", "provider default", "dim")
     _header_row("Database", "on" if db_on else "off",
                 "green" if db_on else "dim")
 
@@ -995,6 +1001,87 @@ def show_status(conn, session_id, model, title, private=False,
                     f"routines; archive when you're finished "
                     f"({PREFIX}clear notes)")
     console.print()
+
+
+# --- chat lifecycle: chosen-id creation and delete, shared by the hub and by
+# `/new <id>` / `/delete chat` inside a chat (Concept.md's "Chosen durable
+# chat ids" and "Delete from the hub, including Main"). One database
+# operation and one confirmation each, so the two surfaces cannot describe
+# the same action differently.
+
+def create_chat_with_id(conn, raw_id):
+    """Validate `raw_id` as a positive integer and create an ordinary
+    durable chat there. The database operation `c` at the hub and `/new
+    <id>` share — everything either surface needs to say is said here once.
+
+    Returns the new session id, or None after printing why: not a positive
+    whole number, or the id is already occupied by any session kind.
+    """
+    from db import create_chat, ChatIdTaken
+    try:
+        chat_id = int(raw_id)
+    except (TypeError, ValueError):
+        console.print(f"'{raw_id}' isn't a whole number.")
+        return None
+    if chat_id <= 0:
+        console.print("Chat ids are positive numbers.")
+        return None
+    try:
+        create_chat(conn, chat_id)
+    except ChatIdTaken:
+        console.print(f"#{chat_id} is already taken — pick another id.")
+        return None
+    console.print(f"Created chat #{chat_id}.")
+    return chat_id
+
+
+def _confirm_delete(target):
+    """Print what deleting `target` (a `db.resolve_delete_target` dict)
+    really does, then require its own identity typed back before acting.
+
+    Not a bare y/n: this removes the live chat and its memory index copy
+    with no in-app undo, and Concept.md asks for an *exact* confirmation —
+    the target's id, or 'main' — rather than one keystroke that could be a
+    reflex.
+    """
+    label = "main" if target["is_main"] else str(target["id"])
+    kind = "Main" if target["is_main"] else "chat"
+    console.print(f"#{target['id']} '{target['title']}' — {kind}, "
+                  f"{target['message_count']} messages.")
+    console.print("This deletes the live chat and its memory index copy. "
+                  "No in-app undo — prior exports and rolling database "
+                  "backups are the only copies that remain.", style="dim")
+    if target["is_main"]:
+        console.print("Reopening 'm' afterwards creates a fresh Main from "
+                      "the current vault bundle — it does not restore this "
+                      "transcript or its First Message.", style="dim")
+    confirm = input(f"Type '{label}' to confirm deletion, anything else "
+                    f"cancels: ").strip().lower()
+    return confirm == label
+
+
+def delete_chat(conn, token):
+    """Resolve and delete one chat or Main by identity, with the
+    confirmation above. The database operation and wording the hub's `d` and
+    `/delete chat` share.
+
+    Returns the deleted id on success, None on a resolution refusal or a
+    cancelled confirmation — the caller decides what None means for its own
+    flow (the hub redraws either way; a chat session leaves only when it
+    deleted itself).
+    """
+    from db import resolve_delete_target, DeleteTargetError, delete_session
+    try:
+        target = resolve_delete_target(conn, token)
+    except DeleteTargetError as e:
+        console.print(str(e), style="red")
+        return None
+    if not _confirm_delete(target):
+        console.print("Cancelled.")
+        return None
+    delete_session(conn, target["id"])
+    console.print(f"Session #{target['id']} deleted.")
+    return target["id"]
 
 
 # What `/list` can list, in the order the bare form prints them. Two of these
@@ -1041,21 +1128,28 @@ def show_list(conn, what, current_model):
         console.print(f"  {' · '.join(LISTABLE)}")
 
 
-# (command, what it does). The nine that earn a place on the screen you look at
-# most; everything else is one `/help` away.
+# (command, what it does). What earns a place on the screen you look at most;
+# everything else is one `/help` away. v1.5 (W-1.3.1-05) refreshed this around
+# the journey it now supports — /swipe, /undo and /preset joined the list
+# rather than a fourth verb quietly having no way to be discovered short of
+# reading `/help`'s full twenty-eight.
 _CORE_COMMANDS = [
     (f"{PREFIX}help", "every command"),
     (f"{PREFIX}q", "back to the session list"),
-    (f"{PREFIX}new", f"start a new session  ({PREFIX}new p for a private one)"),
+    (f"{PREFIX}new", f"start a new session  ({PREFIX}new p for a private one, "
+     f"{PREFIX}new <id> for a chosen one)"),
     (f"{PREFIX}status", "everything active in this session"),
     (f"{PREFIX}list <kind>", "what exists  (prompts, traits, models, chats…)"),
     (f"{PREFIX}add <name|path>", "attach a prompt, persona, trait or file"),
     (f"{PREFIX}remove <name>", "take one off again"),
     (f"{PREFIX}remember q", "pull matching excerpts into this conversation"),
+    (f"{PREFIX}swipe", "try a different answer to your last message"),
+    (f"{PREFIX}undo", "retract your last message and its answer"),
+    (f"{PREFIX}preset <name>", "a named sampling preset for this chat"),
     ("Alt+Enter", "insert a newline  (Enter sends)"),
 ]
 
-# The whole surface: twenty-four verbs, grouped by what they are for. The
+# The whole surface: twenty-eight verbs, grouped by what they are for. The
 # grammar line above them is what makes this a list you can hold in your head
 # rather than a table you re-read — every command is verb, then kind, then
 # target, then free text.
@@ -1085,6 +1179,7 @@ _ALL_COMMANDS = [
     ("destroy", [
         (f"{PREFIX}delete chat", "delete this conversation (with confirm)"),
         (f"{PREFIX}delete chat 5", "delete conversation #5"),
+        (f"{PREFIX}delete chat main", "delete Main (confirm 'main')"),
     ]),
     ("data", [
         (f"{PREFIX}export", "export this session to Obsidian"),
@@ -1097,14 +1192,23 @@ _ALL_COMMANDS = [
     ]),
     ("session", [
         (f"{PREFIX}new", f"start a new session  ({PREFIX}new p for a private one)"),
+        (f"{PREFIX}new 501", "start a new session at chosen id #501"),
         (f"{PREFIX}q", "back to the session list"),
         (f"{PREFIX}title 5 Name", "rename session #5"),
+    ]),
+    ("last-turn repair", [
+        (f"{PREFIX}swipe", "re-answer your last message under the current "
+         "model/preset"),
+        (f"{PREFIX}undo", "remove your last message and its answer"),
     ]),
     ("settings", [
         (f"{PREFIX}model name or number",
          f"switch model  ({PREFIX}list models to see them)"),
         (f"{PREFIX}tools on|off", "toggle tools for this session"),
         (f"{PREFIX}database on|off", "toggle recall & remember this session"),
+        (f"{PREFIX}preset", "show the active preset and what's compatible"),
+        (f"{PREFIX}preset name", "select a named sampling preset"),
+        (f"{PREFIX}preset default", "clear back to provider default"),
         (f"{PREFIX}connect", "where the embedder stands"),
         (f"{PREFIX}connect embedding", "start LM Studio and its server if needed"),
     ]),

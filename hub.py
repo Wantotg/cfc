@@ -456,6 +456,8 @@ def print_connection(state=None):
 # A chat id is deliberately not in here. It is not a key, it is data off the
 # screen in front of you, and the help says so in its own line.
 _SHOW_HELP = object()       # print the help and stay at the prompt
+_CREATE = object()          # prompt for a chosen id, then redraw
+_DELETE = object()          # prompt for a delete target, then redraw
 
 HUB_KEYS = (
     (("n", "new"), None, "start a new chat"),
@@ -463,6 +465,8 @@ HUB_KEYS = (
      "open Main — one durable, vault-configured chat"),
     (("p", "private"), "private",
      "start a private chat — in memory, nothing written to disk"),
+    (("c", "create"), _CREATE, "create a chat at a chosen id"),
+    (("d", "delete"), _DELETE, "delete a chat by id, or Main"),
     (("h", "?", "help"), _SHOW_HELP, "this screen"),
     (("q", "quit"), "quit", "leave cooking for cats"),
 )
@@ -552,6 +556,38 @@ def _print_routine_problem_nudge():
                       f"— open a chat and type /routine", style="red")
 
 
+def _hub_create(conn):
+    """`c` at the hub: prompt for a chosen id and create it there. Returns
+    the new id, or None on a blank/invalid id or a collision — the refusal
+    is printed by `commands.create_chat_with_id`, which owns the one create
+    operation this and `/new <id>` share."""
+    raw = input("New chat id (a positive number): ").strip()
+    if not raw:
+        console.print("Cancelled.")
+        return None
+    from commands import create_chat_with_id
+    return create_chat_with_id(conn, raw)
+
+
+def _hub_delete(conn):
+    """`d` at the hub: prompt for a target and delete it through the same
+    resolver, confirmation and operation `/delete chat` uses from inside a
+    chat (`commands.delete_chat`)."""
+    raw = input("Delete which chat? (numeric id or 'main'): ").strip()
+    if not raw:
+        console.print("Cancelled.")
+        return
+    if raw.lower() == "main":
+        token = "main"
+    elif raw.lstrip("-").isdigit():
+        token = int(raw)
+    else:
+        console.print(f"'{raw}' isn't a chat id or 'main'.")
+        return
+    from commands import delete_chat
+    delete_chat(conn, token)
+
+
 def pick_session(conn):
     """Show recent chats and routine health, and let the user pick one or
     start new.
@@ -559,52 +595,73 @@ def pick_session(conn):
     An empty hub gets the same prompt and choices as a populated one
     (Concept.md) — it used to auto-create an ordinary chat before any input
     was possible, which meant a first-ever action could never be `m` or `p`.
+
+    The outer loop redraws the whole hub — table, routines, connection light
+    — after `c`, `d`, or a cancellation inside either: the visible table is
+    the proof of which id now exists, and a stale pre-operation table left
+    above the next prompt would be lying about it (Concept.md). Ordinary
+    invalid input (a typo, an unlisted id) only re-prompts; it did not redraw
+    before this and still doesn't.
     """
-    rows = recent_chats(conn)
-
-    routines = _routine_rows()
-
-    if rows:
-        table = _session_table("Recent chats")
-        _add_rows(table, rows)
-        console.print(table)
-        console.print()
-    else:
-        console.print("\nNo sessions yet.\n")
-    if routines:
-        _print_routines(routines)
-    _print_routine_problem_nudge()
-    print_connection()
-    console.print("Type a chat ID to resume, 'n' for new session, 'm' for "
-                  "Main, 'p' for private, 'h' for help, 'q' to quit.")
-    console.print("'/list sessions' inside a session shows every session, "
-                  "routine runs included.", style="dim")
-
-    # The ids actually on screen. An id that exists but isn't listed is
-    # refused rather than opened: the picker's rows are filtered to chats
-    # (`recent_chats`), so accepting any id would let a wiki page or a routine
-    # transcript be resumed as a conversation — and the number would have come
-    # from somewhere other than what the user was looking at.
-    listed = {row[0] for row in rows}
-
     while True:
-        choice = input("\n> ").strip().lower()
-        # The dispatch *is* `HUB_KEYS`. A key that works and isn't on the help
-        # screen is now impossible rather than merely unlikely.
-        if choice in _HUB_DISPATCH:
-            value = _HUB_DISPATCH[choice]
-            if value is _SHOW_HELP:
-                print_hub_help()
+        rows = recent_chats(conn)
+        routines = _routine_rows()
+
+        if rows:
+            table = _session_table("Recent chats")
+            _add_rows(table, rows)
+            console.print(table)
+            console.print()
+        else:
+            console.print("\nNo sessions yet.\n")
+        if routines:
+            _print_routines(routines)
+        _print_routine_problem_nudge()
+        print_connection()
+        console.print("Type a chat ID to resume, 'n' for new session, 'm' "
+                      "for Main, 'p' for private, 'c' to create a chosen "
+                      "id, 'd' to delete, 'h' for help, 'q' to quit.")
+        console.print("'/list sessions' inside a session shows every "
+                      "session, routine runs included.", style="dim")
+
+        # The ids actually on screen. An id that exists but isn't listed is
+        # refused rather than opened: the picker's rows are filtered to
+        # chats (`recent_chats`), so accepting any id would let a wiki page
+        # or a routine transcript be resumed as a conversation — and the
+        # number would have come from somewhere other than what the user was
+        # looking at.
+        listed = {row[0] for row in rows}
+
+        redraw = False
+        while not redraw:
+            choice = input("\n> ").strip().lower()
+            # The dispatch *is* `HUB_KEYS`. A key that works and isn't on the
+            # help screen is now impossible rather than merely unlikely.
+            if choice in _HUB_DISPATCH:
+                value = _HUB_DISPATCH[choice]
+                if value is _SHOW_HELP:
+                    print_hub_help()
+                    continue
+                if value is _CREATE:
+                    new_id = _hub_create(conn)
+                    if new_id is not None:
+                        return new_id
+                    redraw = True
+                    break
+                if value is _DELETE:
+                    _hub_delete(conn)
+                    redraw = True
+                    break
+                return value
+            try:
+                idx = int(choice)
+            except ValueError:
+                console.print("Type a chat ID, or one of: "
+                              + ", ".join(k[0] for k, _, _ in HUB_KEYS)
+                              + "  ('h' explains them).")
                 continue
-            return value
-        try:
-            idx = int(choice)
-        except ValueError:
-            console.print("Type a chat ID, or one of: "
-                          + ", ".join(k[0] for k, _, _ in HUB_KEYS)
-                          + "  ('h' explains them).")
-            continue
-        if idx in listed:
-            return idx
-        console.print("That isn't one of the IDs listed. "
-                      "'/list sessions' inside a session shows every one.")
+            if idx in listed:
+                return idx
+            console.print("That isn't one of the IDs listed. "
+                          "'/list sessions' inside a session shows every "
+                          "one.")

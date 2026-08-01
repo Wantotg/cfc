@@ -108,6 +108,13 @@ FIXTURE_MODEL = "glm-5.2"
 FIXTURE_MODELS = ["glm-5.2", "fixture/tool-model"]
 FIXTURE_TOOLS_MODELS = ["fixture/tool-model"]
 FIXTURE_ROUTINE_MODELS = ["fixture/tool-model"]
+# v1.5: same rule extended to PARAMETER_PRESETS — /preset and /status print
+# it verbatim, so a real config's presets would make the baseline a property
+# of *this machine's* config again. 'steady' is declared compatible with the
+# fixture session's own model (glm-5.2), so /preset's bare form has a real
+# compatible name to list rather than always the empty case.
+FIXTURE_PRESETS = {"steady": {"temperature": 0.3}}
+FIXTURE_PRESET_PARAMS = {"glm-5.2": ("temperature",)}
 FIXTURE_API_BASE = "https://api.example.invalid/v1"
 # Truthy and fixed, never printed itself — the config screen renders only
 # whether a key is set, so a real key and an unset one must not disagree
@@ -175,6 +182,17 @@ SCRIPT = [
     # model, not just a status dump.
     f"{PREFIX}tools",
     f"{PREFIX}database",
+    # v1.5: /preset's no-API-call paths — bare (shows the active value and
+    # what's compatible with FIXTURE_MODEL), an unknown name, clearing an
+    # already-default selection, selecting the one fixture-compatible
+    # preset, then /status showing it active before it's cleared again for
+    # the rest of the script.
+    f"{PREFIX}preset",
+    f"{PREFIX}preset nonsense",
+    f"{PREFIX}preset default",
+    f"{PREFIX}preset steady",
+    f"{PREFIX}status",
+    f"{PREFIX}preset default",
     # Only the usage error is safe here: session 1 already has an assistant
     # turn from build_fixture(), so a bare /continue would make a real API
     # call — the refusal path (nothing to continue from) is covered instead
@@ -656,9 +674,12 @@ def capture():
     # above: the loop sets a *name* on every module that has one, and nothing
     # downstream still has a bare `MODELS` list of strings to receive it.
     import models as _models
-    _models.MODELS = [_models._spec(m, tools=(m in FIXTURE_TOOLS_MODELS),
-                                    routine=(m in FIXTURE_ROUTINE_MODELS))
+    _models.MODELS = [_models._spec(
+        m, tools=(m in FIXTURE_TOOLS_MODELS),
+        routine=(m in FIXTURE_ROUTINE_MODELS),
+        preset_params=FIXTURE_PRESET_PARAMS.get(m))
                       for m in FIXTURE_MODELS]
+    _models.PARAMETER_PRESETS = dict(FIXTURE_PRESETS)
 
     # 1.2: the config screen prints whether a key is set (never the key
     # itself) and reads the routine store and wiki corpus live. Same rule as

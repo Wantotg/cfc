@@ -103,7 +103,8 @@ VERBS = (
     "export",                                         # data
     "recall", "remember", "update",                   # memory
     "new", "q", "title", "continue",                  # session
-    "model", "tools", "database", "connect",          # settings
+    "swipe", "undo",                                  # last-turn repair
+    "model", "tools", "database", "connect", "preset", # settings
     "wiki", "routine", "file", "move", "clear",       # feature areas
 )
 

@@ -378,6 +378,250 @@ def main():
        c.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2)
     c.close()
 
+    print("\n--- create_chat: a chosen positive id, never a competing "
+          "auto-increment ---")
+    c = dbmod.db(":memory:")
+    new_id = dbmod.create_chat(c, 501)
+    ok("returns the chosen id", new_id == 501, new_id)
+    row = c.execute("SELECT title, provider FROM sessions WHERE id=501"
+                    ).fetchone()
+    ok("created as an ordinary chat", row == ("(untitled)", dbmod.PROVIDER_CHAT),
+       row)
+
+    for bad in (0, -3, "5", 5.0, True):
+        try:
+            dbmod.create_chat(c, bad)
+            ok(f"chat_id={bad!r} refused", False, "did not raise")
+        except ValueError:
+            ok(f"chat_id={bad!r} refused", True)
+
+    for label, kind_provider in (
+        ("another chat", dbmod.PROVIDER_CHAT),
+        ("a wiki row", dbmod.PROVIDER_WIKI),
+        ("a routine row", dbmod.PROVIDER_ROUTINE),
+    ):
+        occupied = dbmod.new_session(c, title="occupant", provider=kind_provider)
+        try:
+            dbmod.create_chat(c, occupied)
+            ok(f"collision with {label} refused", False, "did not raise")
+        except dbmod.ChatIdTaken as e:
+            ok(f"collision with {label} refused", e.args[0] == occupied)
+        # never opened, renamed or replaced the occupant
+        ok(f"...and the occupant is untouched",
+           c.execute("SELECT title, provider FROM sessions WHERE id=?",
+                    (occupied,)).fetchone() == ("occupant", kind_provider))
+    c.close()
+
+    print("\n--- resolve_delete_target: identity, never an editable title ---")
+    c = dbmod.db(":memory:")
+    chat_id = dbmod.new_session(c, title="ordinary")
+    target = dbmod.resolve_delete_target(c, chat_id)
+    ok("resolves an ordinary chat", target == {
+        "id": chat_id, "title": "ordinary", "is_main": False,
+        "message_count": 0}, target)
+
+    main_id, _ = dbmod.get_or_create_main(c, "muse.md", "hi")
+    target = dbmod.resolve_delete_target(c, "MAIN")
+    ok("resolves Main case-insensitively by identity",
+       target["id"] == main_id and target["is_main"] is True, target)
+
+    # A hand-edited title reading "main" must not resolve as Main by text —
+    # only 'main' the literal token does, and only through provider identity.
+    fake_id = dbmod.new_session(c, title="main")
+    target = dbmod.resolve_delete_target(c, fake_id)
+    ok("a chat titled 'main' is not Main",
+       target["is_main"] is False and target["id"] == fake_id, target)
+
+    try:
+        dbmod.resolve_delete_target(c, 999999)
+        ok("a missing id refuses", False, "did not raise")
+    except dbmod.DeleteTargetError:
+        ok("a missing id refuses", True)
+
+    wiki_id = dbmod.new_session(c, title="a wiki page",
+                                provider=dbmod.PROVIDER_WIKI)
+    try:
+        dbmod.resolve_delete_target(c, wiki_id)
+        ok("a wiki row refuses as not-a-chat", False, "did not raise")
+    except dbmod.DeleteTargetError as e:
+        ok("a wiki row refuses as not-a-chat", True, str(e))
+
+    routine_id = dbmod.new_session(c, title="a routine run",
+                                   provider=dbmod.PROVIDER_ROUTINE)
+    try:
+        dbmod.resolve_delete_target(c, routine_id)
+        ok("a routine row refuses as not-a-chat", False, "did not raise")
+    except dbmod.DeleteTargetError:
+        ok("a routine row refuses as not-a-chat", True)
+    c.close()
+
+    print("\n--- classify_latest_turn: the four repair-boundary states ---")
+    c = dbmod.db(":memory:")
+    sid = dbmod.new_session(c, title="repair")
+    state, uid, aids = dbmod.classify_latest_turn(c, sid)
+    ok("no user row -> nothing_sent",
+       (state, uid, aids) == (dbmod.TURN_NOTHING_SENT, None, []),
+       (state, uid, aids))
+
+    dbmod.save_message(c, sid, "user", "hello", kind="chat")
+    u1 = c.execute("SELECT id FROM messages WHERE session_id=? AND role='user' "
+                   "ORDER BY id DESC LIMIT 1", (sid,)).fetchone()[0]
+    state, uid, aids = dbmod.classify_latest_turn(c, sid)
+    ok("a user row with nothing after -> unanswered",
+       (state, uid, aids) == (dbmod.TURN_UNANSWERED, u1, []), (state, uid, aids))
+
+    # An empty retry artefact (agent._finish("") on an empty-completion 400)
+    # is a kind='chat', role='assistant' row with no content — still
+    # unanswered, not completed.
+    dbmod.save_message(c, sid, "assistant", "", kind="chat")
+    state, uid, aids = dbmod.classify_latest_turn(c, sid)
+    ok("an empty answer row is still unanswered", state == dbmod.TURN_UNANSWERED,
+       (state, aids))
+    empty_id = c.execute("SELECT id FROM messages WHERE session_id=? "
+                         "ORDER BY id DESC LIMIT 1", (sid,)).fetchone()[0]
+    ok("...and is itself part of the answer side", aids == [empty_id], aids)
+
+    # A tool call + result in between, then a real final answer -> completed.
+    dbmod.save_message(c, sid, "assistant", "", kind="tool_call",
+                       meta={"tool_calls": [{"id": "t1", "function":
+                             {"name": "read_file", "arguments": "{}"}}]})
+    dbmod.save_message(c, sid, "tool", "the file", kind="tool_result",
+                       meta={"tool": "read_file", "tool_call_id": "t1"})
+    dbmod.save_message(c, sid, "assistant", "here you go", kind="chat")
+    state, uid, aids = dbmod.classify_latest_turn(c, sid)
+    ok("tool calls + one real answer -> completed",
+       state == dbmod.TURN_COMPLETED and uid == u1, (state, uid))
+    ok("...and the answer side carries all four later rows",
+       len(aids) == 4, aids)
+
+    # Attachments and recall markers interleaved afterward are context, not
+    # sends, and must never appear in the answer side.
+    dbmod.save_message(c, sid, "user", "a file", kind="attachment")
+    dbmod.save_message(c, sid, "user",
+                       '[:remember "x" → 1 excerpts injected (ephemeral)]',
+                       kind="recall_marker")
+    state, uid, aids2 = dbmod.classify_latest_turn(c, sid)
+    ok("attachments/recall markers never enter the answer side",
+       aids2 == aids, (aids, aids2))
+
+    # A later /continue or OOC answer (another assistant kind='chat' row, no
+    # new user row) makes the turn ambiguous.
+    dbmod.save_message(c, sid, "assistant", "continued", kind="chat")
+    state, uid, aids3 = dbmod.classify_latest_turn(c, sid)
+    ok("two final answers -> ambiguous", state == dbmod.TURN_AMBIGUOUS,
+       (state, aids3))
+    c.close()
+
+    print("\n--- turn_tool_names reads persisted tool_call meta ---")
+    c = dbmod.db(":memory:")
+    sid = dbmod.new_session(c, title="tools")
+    dbmod.save_message(c, sid, "user", "write it", kind="chat")
+    dbmod.save_message(c, sid, "assistant", "", kind="tool_call",
+                       meta={"tool_calls": [
+                           {"id": "a", "function": {"name": "read_file"}},
+                           {"id": "b", "function": {"name": "write_file"}},
+                       ]})
+    _, _, aids = dbmod.classify_latest_turn(c, sid)
+    names = dbmod.turn_tool_names(c, aids)
+    ok("both call names come back, in order",
+       names == ["read_file", "write_file"], names)
+    ok("an empty id list is a no-op", dbmod.turn_tool_names(c, []) == [])
+    c.close()
+
+    print("\n--- prune_turn: keep_user (/swipe) vs full prune (/undo), "
+          "with chunks and vectors ---")
+    import sqlite_vec
+    import chunk as chunkmod
+
+    def seeded_turn(path):
+        dbmod.DB_PATH = path
+        c = dbmod.db()
+        chunkmod.ensure_table(c, rebuild=False)
+        c.enable_load_extension(True)
+        sqlite_vec.load(c)
+        c.enable_load_extension(False)
+        c.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0("
+                  "chunk_id integer primary key, embedding float[4])")
+        sid = dbmod.new_session(c, title="prune-me")
+        dbmod.save_message(c, sid, "user", "hello", kind="chat")
+        uid = c.execute("SELECT id FROM messages WHERE session_id=? "
+                        "ORDER BY id DESC LIMIT 1", (sid,)).fetchone()[0]
+        dbmod.save_message(c, sid, "assistant", "hi there", kind="chat")
+        aid = c.execute("SELECT id FROM messages WHERE session_id=? "
+                        "ORDER BY id DESC LIMIT 1", (sid,)).fetchone()[0]
+        for mid, text in ((uid, "hello"), (aid, "hi there")):
+            cur = c.execute(
+                "INSERT INTO chunks (message_id,session_id,kind,ordinal,"
+                "text,token_est,source) VALUES (?,?,'message',0,?,3,'chat')",
+                (mid, sid, text))
+            cid = cur.lastrowid
+            c.execute("INSERT INTO vec_chunks (chunk_id,embedding) VALUES (?,?)",
+                      (cid, sqlite_vec.serialize_float32([0.1, 0.2, 0.3, 0.4])))
+        c.commit()
+        return c, sid, uid, aid
+
+    c, sid, uid, aid = seeded_turn(tmp / "prune_swipe.db")
+    dbmod.prune_turn(c, uid, [aid], keep_user=True)
+    ok("swipe: the user row survives",
+       c.execute("SELECT COUNT(*) FROM messages WHERE id=?",
+                (uid,)).fetchone()[0] == 1)
+    ok("swipe: the answer row is gone",
+       c.execute("SELECT COUNT(*) FROM messages WHERE id=?",
+                (aid,)).fetchone()[0] == 0)
+    ok("swipe: its chunk is gone too",
+       c.execute("SELECT COUNT(*) FROM chunks WHERE message_id=?",
+                (aid,)).fetchone()[0] == 0)
+    ok("swipe: and its vector",
+       c.execute("SELECT COUNT(*) FROM vec_chunks").fetchone()[0] == 1)
+    c.close()
+
+    c, sid, uid, aid = seeded_turn(tmp / "prune_undo.db")
+    dbmod.prune_turn(c, uid, [aid], keep_user=False)
+    ok("undo: both rows are gone",
+       c.execute("SELECT COUNT(*) FROM messages WHERE session_id=?",
+                (sid,)).fetchone()[0] == 0)
+    ok("undo: no chunks remain for this session",
+       c.execute("SELECT COUNT(*) FROM chunks WHERE session_id=?",
+                (sid,)).fetchone()[0] == 0)
+    ok("undo: no vectors remain",
+       c.execute("SELECT COUNT(*) FROM vec_chunks").fetchone()[0] == 0)
+    c.close()
+
+    print("\n--- a forced vector-delete failure rolls back the whole "
+          "operation (delete_session and prune_turn alike) ---")
+    c, sid, uid, aid = seeded_turn(tmp / "prune_fail.db")
+    real_drop = dbmod.drop_chunks
+
+    def boom(conn, chunk_ids):
+        raise RuntimeError("sqlite-vec unavailable")
+
+    dbmod.drop_chunks = boom
+    try:
+        try:
+            dbmod.prune_turn(c, uid, [aid], keep_user=False)
+            ok("prune_turn propagates the failure", False, "did not raise")
+        except RuntimeError:
+            ok("prune_turn propagates the failure", True)
+        ok("...and nothing was deleted — both rows survive",
+           c.execute("SELECT COUNT(*) FROM messages WHERE session_id=?",
+                    (sid,)).fetchone()[0] == 2)
+        ok("...its chunks survive too",
+           c.execute("SELECT COUNT(*) FROM chunks WHERE session_id=?",
+                    (sid,)).fetchone()[0] == 2)
+
+        try:
+            dbmod.delete_session(c, sid)
+            ok("delete_session propagates the same failure", False,
+               "did not raise")
+        except RuntimeError:
+            ok("delete_session propagates the same failure", True)
+        ok("...and the session is still there, untouched",
+           c.execute("SELECT COUNT(*) FROM sessions WHERE id=?",
+                    (sid,)).fetchone()[0] == 1)
+    finally:
+        dbmod.drop_chunks = real_drop
+    c.close()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

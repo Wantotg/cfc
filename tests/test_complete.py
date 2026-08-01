@@ -275,6 +275,25 @@ def main():
     ok("a line that isn't a completable command is inert",
        completions("/help") == [], completions("/help"))
 
+    print("\n--- '/preset' completion ---")
+    import models
+    saved_presets = models.PARAMETER_PRESETS
+    models.PARAMETER_PRESETS = {"creative": {"temperature": 1.1},
+                                "precise": {"temperature": 0.2}}
+    try:
+        got = completions(f"{PREFIX}preset ")
+        ok("a bare Tab offers every configured preset, plus 'default'",
+           set(got) == {"creative", "precise", "default"}, got)
+        got = completions(f"{PREFIX}preset cre")
+        ok("a prefix completes the matching preset", got == ["creative"], got)
+        got = completions(f"{PREFIX}preset def")
+        ok("'default' completes too, even though it isn't configured",
+           got == ["default"], got)
+        got = completions(f"{PREFIX}preset zzz")
+        ok("no match is silence, not an error", got == [], got)
+    finally:
+        models.PARAMETER_PRESETS = saved_presets
+
     print("\n--- the readline half still exists for the input() path ---")
     src = (ROOT / "complete.py").read_text()
     ok("install() is still defined", "def install(" in src)

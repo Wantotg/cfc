@@ -38,6 +38,7 @@ from rich.text import Text
 from parse import parse, parse_ooc, looks_like_path, VERBS, PREFIX
 from assemble import assemble_system
 import governor
+import tools
 from pools import (bodies as pool_bodies, pool as pool_of, stem,
                    load_first_message, FirstMessageError)
 
@@ -57,7 +58,8 @@ from db import (
     get_traits, set_traits,
     get_first_message, set_first_message, has_chat_messages,
     count_chat_user_turns, count_chat_answers,
-    delete_session,
+    classify_latest_turn, prune_turn, turn_tool_names,
+    TURN_NOTHING_SENT, TURN_AMBIGUOUS,
 )
 import mainchat
 from agent import agent_turn, render_answer, tools_guidance
@@ -87,6 +89,7 @@ from commands import (
     show_wiki_diff, do_wiki_commit,
     connect_embedding, connect_status, empty_completion_decision,
     print_session_header, print_core_commands, print_help,
+    create_chat_with_id, delete_chat,
 )
 
 # --- Main REPL ---
@@ -317,6 +320,13 @@ def run_session(conn, session_id, private=False, app_conn=None,
     # provider, so including it would dilute the one signal this exists for.
     turns_interrupted = 0
     tools_on = True        # session toggle; the master switch still gates it
+    # The active named sampling preset (v1.5), or None for provider default.
+    # Session-local like `tools_on`: survives turns and swipes in this open
+    # chat, never written to the transcript, session row or an export, and
+    # resets on reopen (Concept.md's "Named Parameter presets"). A name, not
+    # the dict — `models.preset_params` is read fresh at each turn so a
+    # config change between turns can't leave a stale dict in memory.
+    active_preset = None
     # Whether /recall, /remember or /updatedb may reach the wiki this session. A
     # normal chat: on. A private chat: DATABASE_ACTIVE (default off), so memory
     # is sealed unless you type /database on. This is the *read* axis and is
@@ -625,13 +635,18 @@ def run_session(conn, session_id, private=False, app_conn=None,
         (standing decision 7, now extended to include the governor's
         envelope).
 
-        `kind` is `"chat"`, `"continue"` or `"ooc"`. `user_text` is the typed
-        line for `"chat"` and the OOC body for `"ooc"`; `"continue"` needs
-        neither. Only `"chat"` prints the human panel, saves a user row,
-        advances the trait cadence and generates a title — `/continue` and
-        OOC add no user row and run no automatic tone/trait selection
-        (governor.ordinary_instruction is never called for them), matching
-        Concept.md's persistence and "governor piles on" rules.
+        `kind` is `"chat"`, `"continue"`, `"ooc"` or `"swipe"`. `user_text` is
+        the typed line for `"chat"` and the OOC body for `"ooc"`;
+        `"continue"` and `"swipe"` need neither. Only `"chat"` prints the
+        human panel and saves a user row — `/continue`, OOC and `/swipe` add
+        no user row of their own (`/swipe`'s repair boundary already kept the
+        one the send wrote) and run no automatic tone/trait selection
+        (governor.ordinary_instruction is never called for them)... except
+        `"swipe"`, which **does** run it, on the same durable turn count the
+        kept row already advanced — a regeneration of that turn, not a
+        directed one, so it earns the ordinary tone/trait cadence exactly as
+        the original send did. It shares `"chat"`'s title-eligibility count
+        without titling: `_finish_turn` only titles `kind == "chat"`.
         """
         nonlocal current_title, turns_interrupted, revert_model
 
@@ -653,11 +668,12 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # decide title eligibility. `/continue` and OOC never title, so they
         # never need it.
         turn_count = None
-        if kind == "chat":
-            console.print(human_panel(user_text))
-            save_message(conn, session_id, "user", user_text,
-                        model=current_model)
-            history.append({"role": "user", "content": user_text})
+        if kind in ("chat", "swipe"):
+            if kind == "chat":
+                console.print(human_panel(user_text))
+                save_message(conn, session_id, "user", user_text,
+                            model=current_model)
+                history.append({"role": "user", "content": user_text})
             turn_count = count_chat_user_turns(conn, session_id)
             trait_bodies = {n: load_pool_file("trait", n)[0]
                            for n in trait_names}
@@ -690,6 +706,14 @@ def run_session(conn, session_id, private=False, app_conn=None,
         if labels:
             console.print(f"cfc -> {' · '.join(labels)}", style="dim")
 
+        # The active preset's validated dict, read fresh every turn — never
+        # a mutable global, never reaching title/recall/routine calls, which
+        # don't go through `_run_turn` at all. `None` means "no active
+        # preset", and both provider paths below leave their payload
+        # byte-for-byte unchanged when it is.
+        turn_params = models.preset_params(active_preset) if active_preset \
+            else None
+
         if use_tools:
             # Re-roll an empty tool turn instead of painting a blank panel.
             # The decision is `commands.empty_completion_decision`, the same
@@ -699,12 +723,18 @@ def run_session(conn, session_id, private=False, app_conn=None,
             # said *what* happened by the time we get here (`agent._say_empty`).
             empty_attempts = 0
             final = None
+            # Conditional for the same reason as `stream_response`'s call
+            # below: a caller (or test stub) written against the pre-1.5
+            # `agent_turn(..., instruction=)` shape still works when no
+            # preset is active.
+            agent_kwargs = {"params": turn_params} if turn_params else {}
             while True:
                 try:
                     final = agent_turn(prefix, history, current_model,
                                        conn, session_id, ctx=chat_ctx,
                                        first_message=first_message,
-                                       instruction=instruction)
+                                       instruction=instruction,
+                                       **agent_kwargs)
                 except KeyboardInterrupt:
                     console.print("\n[tool turn cancelled]\n")
                     turns_interrupted += 1
@@ -744,8 +774,14 @@ def run_session(conn, session_id, private=False, app_conn=None,
         empty_attempts = 0
         while True:
             try:
+                # Conditional, not `params=turn_params` unconditionally: a
+                # caller (or test stub) written against the pre-1.5
+                # `stream_response(messages, model=)` shape still works when
+                # no preset is active, which is every turn except one with a
+                # selected preset.
+                stream_kwargs = {"params": turn_params} if turn_params else {}
                 assistant, usage, reasoning = stream_response(
-                    api_messages, model=current_model
+                    api_messages, model=current_model, **stream_kwargs
                 )
             except KeyboardInterrupt:
                 console.print("\n[streaming cancelled]\n")
@@ -811,6 +847,55 @@ def run_session(conn, session_id, private=False, app_conn=None,
             return
         _run_turn("continue")
 
+    def _repair_turn(verb, keep_user):
+        """The shared body of /swipe and /undo (Concept.md's "One latest
+        ordinary turn"): classify the latest ordinary turn, refuse the two
+        states neither command may touch, prune, and reload live history.
+
+        `keep_user=True` is /swipe — the user row survives so the send can be
+        re-answered; `keep_user=False` is /undo — both go. Returns the
+        pruned user row id on success, None on a refusal (already printed).
+        """
+        nonlocal history
+        state, user_id, answer_ids = classify_latest_turn(conn, session_id)
+        if state == TURN_NOTHING_SENT:
+            console.print(f"Nothing to {verb} — no ordinary message sent "
+                          f"yet in this chat.", style="dim")
+            return None
+        if state == TURN_AMBIGUOUS:
+            console.print(f"Can't {verb} — a later /continue or "
+                          f"out-of-character reply has already built on "
+                          f"this send.", style="dim")
+            return None
+        if any(tools.is_mutating(n)
+               for n in turn_tool_names(conn, answer_ids)):
+            console.print(f"Can't {verb} — this turn asked to write a "
+                          f"file. Regenerating or discarding the record "
+                          f"can't undo a real write, so it's refused rather "
+                          f"than made to look like it never happened.",
+                          style="dim")
+            return None
+        prune_turn(conn, user_id, answer_ids, keep_user=keep_user)
+        history = load_history(conn, session_id)
+        return user_id
+
+    def h_undo(cmd):
+        if cmd.raw:
+            console.print("Usage: /undo   (no arguments)")
+            return
+        if _repair_turn("undo", keep_user=False) is not None:
+            console.print("Removed the last message and its answer.",
+                          style="dim")
+            console.print()
+
+    def h_swipe(cmd):
+        if cmd.raw:
+            console.print("Usage: /swipe   (no arguments)")
+            return
+        if _repair_turn("swipe", keep_user=True) is None:
+            return
+        _run_turn("swipe")
+
     # --- Command handlers ---
     #
     # One nested function per verb, reached through HANDLERS below. Each takes
@@ -845,6 +930,34 @@ def run_session(conn, session_id, private=False, app_conn=None,
 
     def h_help(cmd):
         print_help()
+
+    def _enter_fresh_chat(new_id):
+        """Land on a freshly created ordinary chat — bare `/new`'s
+        auto-id row or `/new <id>`'s chosen one. One reset shared by both,
+        so a chosen id opens exactly the same way an auto-id one always has.
+        """
+        nonlocal session_id, history, injected, turns_interrupted
+        nonlocal current_title, is_main, system_prompt, system_prompt_name
+        nonlocal persona, persona_name, trait_names
+        session_id = new_id
+        history = []
+        injected = []
+        turns_interrupted = 0
+        current_title = "(untitled)"
+        # Model deliberately NOT reset — /new starts a new conversation, not
+        # a new process (W-1.3.1-03). Sync the fresh row to the process
+        # selection so its own `model` column agrees with what it opens on.
+        set_session_model(conn, session_id, current_model)
+        # /new always starts an ordinary chat, even when typed inside Main
+        # (Concept.md) — Main is reached only through 'm' or its own id.
+        is_main = False
+        system_prompt = None
+        system_prompt_name = None
+        persona = None
+        persona_name = None
+        trait_names = []
+        console.print(f"\nStarted session "
+                      f"#{session_id}\n")
 
     def h_new(cmd):
         nonlocal session_id, history, injected, current_title, current_model
@@ -885,27 +998,28 @@ def run_session(conn, session_id, private=False, app_conn=None,
                                  persona_name, private=private,
                                  trait_names=trait_names, is_main=is_main)
             return
+        if cmd.args:
+            # A chosen id — `/new <id>` — the second creation path Concept.md
+            # asks for. A private chat has no durable identity to create one
+            # at, so it refuses and points at the hub's `c` rather than
+            # silently starting an ordinary in-memory chat under a different
+            # verb shape.
+            if private:
+                console.print(f"{PREFIX}new <id> isn't available in a "
+                              f"private chat — it has no durable identity "
+                              f"to create one at. Use 'c' at the hub for a "
+                              f"chosen-id chat.")
+                return
+            new_id = create_chat_with_id(conn, cmd.arg(0))
+            if new_id is None:
+                return
+            if AUTO_EXPORT and history and not private:
+                safe_export(conn, session_id)
+            _enter_fresh_chat(new_id)
+            return
         if AUTO_EXPORT and history and not private:
             safe_export(conn, session_id)
-        session_id = new_session(conn)
-        history = []
-        injected = []
-        turns_interrupted = 0
-        current_title = "(untitled)"
-        # Model deliberately NOT reset — /new starts a new conversation, not
-        # a new process (W-1.3.1-03). Sync the fresh row to the process
-        # selection so its own `model` column agrees with what it opens on.
-        set_session_model(conn, session_id, current_model)
-        # /new always starts an ordinary chat, even when typed inside Main
-        # (Concept.md) — Main is reached only through 'm' or its own id.
-        is_main = False
-        system_prompt = None
-        system_prompt_name = None
-        persona = None
-        persona_name = None
-        trait_names = []
-        console.print(f"\nStarted session "
-                      f"#{session_id}\n")
+        _enter_fresh_chat(new_session(conn))
 
     def _enter_screens(target):
         """Leave the chat loop for the shared screen controller — the same
@@ -971,10 +1085,14 @@ def run_session(conn, session_id, private=False, app_conn=None,
         this conversation" and "drop the injected excerpts", and a confirm
         prompt is the worst possible place to discover which one you typed.
         Detaching lives under `/remove`, where nothing is destroyed.
+
+        The resolver, confirmation and delete operation
+        (`commands.delete_chat`) are the same ones the hub's `d` uses — one
+        database operation, one wording, for both surfaces.
         """
         if not cmd.args:
-            console.print("Usage: /delete chat [<id>]   "
-                          "(deletes this conversation and its messages)")
+            console.print("Usage: /delete chat [<id>|main]   "
+                          "(deletes a conversation and its messages)")
             console.print("  /remove is the reversible one — prompts, "
                           "personas, traits, attachments, excerpts.",
                           style="dim")
@@ -983,25 +1101,19 @@ def run_session(conn, session_id, private=False, app_conn=None,
             console.print(f"Don't know how to delete '{cmd.arg(0)}'. "
                           f"Deletable: chat.")
             return
-        target = _session_arg(cmd, 1)
-        if target is None:
-            return
-        title = get_session_title(conn, target)
-        msg_count = conn.execute(
-            "SELECT COUNT(*) FROM messages "
-            "WHERE session_id=?", (target,)
-        ).fetchone()[0]
-        confirm = input(
-            f"Delete session #{target} '{title}' "
-            f"with {msg_count} messages? (y/n) "
-        ).strip().lower()
-        if confirm == "y":
-            delete_session(conn, target)
-            console.print(f"Session #{target} deleted.")
-            if target == session_id:
-                return _LEAVE
+        raw = cmd.arg(1)
+        if not raw:
+            token = session_id
+        elif raw.lower() == "main":
+            token = "main"
+        elif raw.lstrip("-").isdigit():
+            token = int(raw)
         else:
-            console.print("Cancelled.")
+            console.print("Usage: /delete chat [<id>|main]")
+            return
+        deleted_id = delete_chat(conn, token)
+        if deleted_id is not None and deleted_id == session_id:
+            return _LEAVE
 
     def h_search(cmd):
         if not cmd.raw:
@@ -1057,7 +1169,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
                     cmd.raw, model=current_model)
 
     def h_model(cmd):
-        nonlocal current_model, revert_model
+        nonlocal current_model, revert_model, active_preset
         if not cmd.raw:
             console.print(f"Current model: "
                           f"{current_model}")
@@ -1122,6 +1234,61 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # after a switch leaves the new model selected and armed, and only a
         # rejection or an untyped error still backs out to prev_model.
         revert_model = prev_model if new_model != prev_model else None
+        # A model switch keeps the active preset only when the new model
+        # declares every key it uses; otherwise it clears and says why
+        # (Concept.md's "Named Parameter presets") — an unknown/unconfigured
+        # model declares nothing, so it always clears.
+        if active_preset and not models.preset_compatible(new_model,
+                                                          active_preset):
+            console.print(f"Note: preset '{active_preset}' isn't declared "
+                          f"compatible with {new_model} — cleared.")
+            active_preset = None
+
+    def _format_preset(name):
+        params = models.preset_params(name)
+        body = ", ".join(f"{k}={v}" for k, v in params.items())
+        return f"{name} ({body})"
+
+    def h_preset(cmd):
+        """`/preset`, `/preset <name>`, `/preset default` — the validated
+        sampling-preset boundary (`models.py`), inspectable session state
+        like `/tools`. Never reads a MODELS record or PARAMETER_PRESETS
+        directly — `models.preset_names`/`preset_params`/`preset_compatible`
+        are the one boundary, so this handler can't drift from what
+        actually gets sent (`api.py` §5)."""
+        nonlocal active_preset
+        if not cmd.raw:
+            if active_preset:
+                console.print(f"Active preset: "
+                              f"{_format_preset(active_preset)}")
+            else:
+                console.print("Active preset: provider default")
+            compat = models.compatible_presets(current_model)
+            if compat:
+                console.print(f"Compatible with {current_model}: "
+                              f"{', '.join(compat)}", style="dim")
+            else:
+                console.print(f"No presets are declared compatible with "
+                              f"{current_model}.", style="dim")
+            return
+        name = cmd.raw.strip()
+        if name.lower() == "default":
+            if active_preset is None:
+                console.print("Already on provider default.", style="dim")
+                return
+            active_preset = None
+            console.print("Preset cleared — provider default.")
+            return
+        if name not in models.preset_names():
+            console.print(f"No preset named '{name}'. "
+                          f"{PREFIX}preset lists what's configured.")
+            return
+        if not models.preset_compatible(current_model, name):
+            console.print(f"'{name}' isn't declared compatible with "
+                          f"{current_model} — nothing changed.")
+            return
+        active_preset = name
+        console.print(f"Preset: {_format_preset(name)}")
 
     # --- Tags ---
 
@@ -1403,7 +1570,8 @@ def run_session(conn, session_id, private=False, app_conn=None,
                     system_prompt_name=system_prompt_name,
                     persona_name=persona_name, trait_names=trait_names,
                     tools_on=tools_on, db_on=db_on, injected=injected,
-                    kind=cmd.arg(0) or None, is_main=is_main)
+                    kind=cmd.arg(0) or None, is_main=is_main,
+                    active_preset=active_preset)
 
     def h_list(cmd):
         show_list(conn, cmd.raw, current_model)
@@ -1477,11 +1645,15 @@ def run_session(conn, session_id, private=False, app_conn=None,
         "q": h_quit,
         "title": h_title,
         "continue": h_continue,
+        # last-turn repair
+        "swipe": h_swipe,
+        "undo": h_undo,
         # settings
         "model": h_model,
         "tools": h_tools,
         "database": h_database,
         "connect": h_connect,
+        "preset": h_preset,
         # feature areas
         "wiki": h_wiki,
         "routine": h_routine,

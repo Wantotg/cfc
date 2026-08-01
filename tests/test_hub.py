@@ -481,6 +481,7 @@ def main():
     test_format_date_localises()
     test_hub_help_is_derived()
     test_first_message_counts()
+    test_hub_lifecycle()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
@@ -625,6 +626,117 @@ def test_hub_help_is_derived():
     for _, _, text in CONNECTION_STYLE.values():
         flat_text = " ".join(text.split())
         ok(f"the legend carries: {text[:28]}", flat_text in flat_out, text)
+
+
+def test_hub_lifecycle():
+    """`c`/`d` at the hub: create at a chosen id, delete by identity,
+    redrawing after either — driven end to end through `hub.pick_session`,
+    the real `db.py` schema, and the shared `commands.create_chat_with_id` /
+    `commands.delete_chat` operations (Concept.md's chat lifecycle).
+
+    A raw hand-built fixture (see `build()` above) has no `session_tags`
+    table and can't run `delete_session`, so this uses a real `db.db(":memory:")`
+    connection instead — the schema `c`/`d` actually run against.
+    """
+    import builtins
+    import contextlib
+    import io
+
+    import db as dbmod
+    import hub as hubmod
+
+    def pick(*typed):
+        feed = iter(typed)
+        real_input = builtins.input
+        builtins.input = lambda *a, **k: next(feed)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return hubmod.pick_session(conn)
+        finally:
+            builtins.input = real_input
+
+    conn = dbmod.db(":memory:")
+    dbmod.new_session(conn, title="an ordinary chat")
+
+    print("\n--- 'c' creates at a chosen id, then the id opens ---")
+    ok("'c' with a fresh id creates and enters it",
+       pick("c", "777") == 777)
+    ok("the row is really there, as an ordinary chat",
+       conn.execute("SELECT provider FROM sessions WHERE id=777"
+                    ).fetchone() == (dbmod.PROVIDER_CHAT,))
+
+    print("\n--- collision refuses and redraws rather than opening it ---")
+    # After the refusal there is nothing left to do but redraw, so the script
+    # continues into a fresh prompt — proven by the next keystroke ('q')
+    # being read by the *redrawn* hub rather than being swallowed.
+    ok("creating at an occupied id refuses, and the hub comes back",
+       pick("c", "777", "q") == "quit")
+
+    print("\n--- 'd' deletes by id, with exact confirmation ---")
+    target_id = dbmod.new_session(conn, title="to be deleted")
+    ok("a wrong confirmation cancels and redraws",
+       pick("d", str(target_id), "nope", "q") == "quit")
+    ok("...and the session survived the cancelled attempt",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?",
+                    (target_id,)).fetchone() is not None)
+    ok("the exact id confirms deletion, then redraws",
+       pick("d", str(target_id), str(target_id), "q") == "quit")
+    ok("...and it is really gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?",
+                    (target_id,)).fetchone() is None)
+
+    print("\n--- 'd' refuses a wiki/routine row as not-a-chat ---")
+    wiki_id = dbmod.new_session(conn, title="a wiki page",
+                               provider=dbmod.PROVIDER_WIKI)
+    ok("a wiki row's id refuses, and the hub redraws",
+       pick("d", str(wiki_id), "q") == "quit")
+    ok("...and it is untouched",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?",
+                    (wiki_id,)).fetchone() is not None)
+
+    print("\n--- 'd main' resolves Main by identity, not an edited title ---")
+    main_id, _ = dbmod.get_or_create_main(conn, "muse.md", "hi")
+    dbmod.set_session_title(conn, main_id, "not actually Main")
+    ok("'main' still resolves the real Main row despite the edited title",
+       pick("d", "main", "main", "q") == "quit")
+    ok("...and Main is really gone",
+       dbmod.main_session_id(conn) is None)
+
+    print("\n--- deleting a chat with chunks and vectors is index-clean ---")
+    import sqlite_vec
+    import chunk as chunkmod
+    chunkmod.ensure_table(conn, rebuild=False)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0("
+                "chunk_id integer primary key, embedding float[4])")
+    indexed_id = dbmod.new_session(conn, title="indexed chat")
+    dbmod.save_message(conn, indexed_id, "user", "hello", kind="chat")
+    mid = conn.execute("SELECT id FROM messages WHERE session_id=?",
+                       (indexed_id,)).fetchone()[0]
+    cur = conn.execute(
+        "INSERT INTO chunks (message_id,session_id,kind,ordinal,text,"
+        "token_est,source) VALUES (?,?,'message',0,'hello',1,'chat')",
+        (mid, indexed_id))
+    cid = cur.lastrowid
+    conn.execute("INSERT INTO vec_chunks (chunk_id,embedding) VALUES (?,?)",
+                (cid, sqlite_vec.serialize_float32([0.1, 0.2, 0.3, 0.4])))
+    conn.commit()
+    ok("delete through 'd' removes the chat",
+       pick("d", str(indexed_id), str(indexed_id), "q") == "quit")
+    ok("...and its chunk",
+       conn.execute("SELECT COUNT(*) FROM chunks WHERE message_id=?",
+                    (mid,)).fetchone()[0] == 0)
+    ok("...and its vector",
+       conn.execute("SELECT COUNT(*) FROM vec_chunks WHERE chunk_id=?",
+                    (cid,)).fetchone()[0] == 0)
+
+    print("\n--- cancelling create with a blank id redraws too ---")
+    ok("an empty id at 'c' cancels, and the hub comes back",
+       pick("c", "", "q") == "quit")
+
+    conn.close()
 
 
 if __name__ == "__main__":

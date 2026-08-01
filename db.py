@@ -212,6 +212,203 @@ def new_session(conn, title="(untitled)", model=None,
     return cur.lastrowid
 
 
+class ChatIdTaken(Exception):
+    """The chosen id for `create_chat` already names a session — of any
+    kind, not just a visible chat. Every session kind shares one primary-key
+    namespace (Concept.md's "Chosen durable chat ids"), so a hidden wiki page
+    or routine transcript collides exactly like another chat would. Raised
+    rather than silently falling back to `new_session`'s auto-increment,
+    which would open, rename or replace the occupant instead of refusing."""
+
+
+def create_chat(conn, chat_id, title="(untitled)", model=None):
+    """Create an ordinary durable chat at a caller-chosen positive id.
+
+    The existing auto-id path (`new_session`) is untouched — this is the
+    second, narrower creation path chosen-id `/new <id>` and the hub's `c`
+    share. The occupancy check and the insert are not two separate races to
+    worry about: SQLite's own PRIMARY KEY constraint is the actual guard, so
+    a collision from a concurrent insert between the SELECT and the INSERT
+    still raises IntegrityError and is reported the same way as an ordinary
+    pre-existing row.
+    """
+    if isinstance(chat_id, bool) or not isinstance(chat_id, int) or chat_id <= 0:
+        raise ValueError(f"chat_id must be a positive int, got {chat_id!r}")
+    if conn.execute(
+        "SELECT 1 FROM sessions WHERE id=?", (chat_id,)
+    ).fetchone():
+        raise ChatIdTaken(chat_id)
+    model = model or MODEL
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "INSERT INTO sessions(id, title, model, provider, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            (chat_id, title, model, PROVIDER_CHAT, now, now),
+        )
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise ChatIdTaken(chat_id)
+    conn.commit()
+    return chat_id
+
+
+class DeleteTargetError(Exception):
+    """Why a delete target could not be resolved — a missing id, or a row
+    that exists but isn't a chat or Main (a wiki page or routine transcript,
+    refused even though its id is real)."""
+
+
+def resolve_delete_target(conn, token):
+    """An ordinary chat or Main, resolved by identity and never by an
+    editable title (Concept.md's "Delete from the hub, including Main").
+
+    `token` is a positive int chat id, or the literal string 'main'
+    (case-insensitive) — the two shapes `/delete chat [<id>|main]` and the
+    hub's `d` both accept. Returns a dict: id, title, is_main, message_count.
+    Raises DeleteTargetError, with a reason fit to show directly, when
+    nothing resolves or the row is real but not a chat.
+    """
+    if isinstance(token, str) and token.strip().lower() == "main":
+        sid = main_session_id(conn)
+        if sid is None:
+            raise DeleteTargetError(
+                "Main hasn't been created yet — nothing to delete.")
+    else:
+        sid = token
+        if not conn.execute(
+            "SELECT 1 FROM sessions WHERE id=?", (sid,)
+        ).fetchone():
+            raise DeleteTargetError(f"No session #{sid}.")
+    provider = get_session_provider(conn, sid)
+    if provider not in (PROVIDER_CHAT, PROVIDER_MAIN):
+        raise DeleteTargetError(
+            f"#{sid} isn't a chat (it's a {provider or 'unknown'} session) "
+            f"— nothing was deleted.")
+    return {
+        "id": sid,
+        "title": get_session_title(conn, sid),
+        "is_main": provider == PROVIDER_MAIN,
+        "message_count": conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE session_id=?",
+            (sid,)).fetchone()[0],
+    }
+
+
+# --- the last-turn repair boundary (Concept.md's "One latest ordinary turn") -
+#
+# /swipe and /undo act on the latest durable kind='chat', role='user' row and
+# everything caused by it — tool calls, their results, empty retry artefacts,
+# and at most one non-empty final answer. Attachments and recall markers are
+# context, not sends, and classify_latest_turn never includes them in the
+# answer-side ids it returns; the two repair commands must not remove them.
+
+TURN_NOTHING_SENT = "nothing_sent"   # no ordinary user row exists
+TURN_UNANSWERED = "unanswered"       # no non-empty final answer yet
+TURN_COMPLETED = "completed"         # exactly one non-empty final answer
+TURN_AMBIGUOUS = "ambiguous"         # more than one — a later /continue/OOC
+                                     # has already built on this send
+
+# What "answer side" means for the walk below: tool calls, their results, and
+# ordinary chat rows (empty retry artefacts and the final answer). Attachments
+# and recall markers are excluded on purpose — they are context, not sends.
+_ANSWER_KINDS = ("tool_call", "tool_result", "chat")
+
+
+def classify_latest_turn(conn, session_id):
+    """Classify the latest ordinary chat turn and return its row ids.
+
+    Returns `(state, user_row_id, answer_row_ids)`:
+
+    - `state` is one of the four TURN_* constants above;
+    - `user_row_id` is the latest `kind='chat', role='user'` message id, or
+      `None` when `state` is TURN_NOTHING_SENT;
+    - `answer_row_ids` is every row after that user row classified as
+      answer-side (see `_ANSWER_KINDS`), in id order — never attachments or
+      recall markers.
+
+    Uses stored rows and ids only — never rendered text, a message count, or
+    a second interpretation of tool-call JSON (Concept.md).
+    """
+    row = conn.execute(
+        "SELECT id FROM messages WHERE session_id=? AND kind='chat' "
+        "AND role='user' ORDER BY id DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    if not row:
+        return TURN_NOTHING_SENT, None, []
+    user_id = row[0]
+
+    placeholders = ",".join("?" * len(_ANSWER_KINDS))
+    rows = conn.execute(
+        f"SELECT id, role, kind, content FROM messages "
+        f"WHERE session_id=? AND id>? AND kind IN ({placeholders}) "
+        f"ORDER BY id",
+        (session_id, user_id, *_ANSWER_KINDS),
+    ).fetchall()
+    answer_ids = [r[0] for r in rows]
+    final_answers = [r[0] for r in rows
+                     if r[2] == "chat" and r[1] == "assistant"
+                     and (r[3] or "").strip()]
+    if not final_answers:
+        return TURN_UNANSWERED, user_id, answer_ids
+    if len(final_answers) == 1:
+        return TURN_COMPLETED, user_id, answer_ids
+    return TURN_AMBIGUOUS, user_id, answer_ids
+
+
+def turn_tool_names(conn, answer_row_ids):
+    """The function names of every tool call requested by these answer-side
+    rows, in id order. What /swipe and /undo ask, through `tools.is_mutating`,
+    to decide whether a classified turn touched a mutating tool — reads the
+    persisted `tool_call` meta, never rendered text or a command-local name
+    list."""
+    if not answer_row_ids:
+        return []
+    placeholders = ",".join("?" * len(answer_row_ids))
+    rows = conn.execute(
+        f"SELECT meta FROM messages WHERE id IN ({placeholders}) "
+        f"AND kind='tool_call'",
+        answer_row_ids,
+    ).fetchall()
+    names = []
+    for (meta,) in rows:
+        if not meta:
+            continue
+        try:
+            info = json.loads(meta)
+        except json.JSONDecodeError:
+            continue
+        for call in info.get("tool_calls") or []:
+            name = call.get("function", {}).get("name")
+            if name:
+                names.append(name)
+    return names
+
+
+def prune_turn(conn, user_row_id, answer_row_ids, keep_user):
+    """Delete a classified turn's answer side, atomically with its index
+    rows. `keep_user=True` is /swipe (the user row survives so the same send
+    can be re-answered); `keep_user=False` is /undo (both go).
+
+    Shares `_atomic_delete` with `delete_session` — index rows go first, in
+    the same transaction as the message rows they point at (decision 14), and
+    a vector-delete failure rolls back the whole prune rather than leaving
+    some answer-side rows gone with their old chunks still searchable.
+    """
+    ids = list(answer_row_ids)
+    if not keep_user:
+        ids.append(user_row_id)
+
+    def _work(conn):
+        drop_chunks_for_messages(conn, ids)
+        if ids:
+            conn.executemany(
+                "DELETE FROM messages WHERE id=?", [(i,) for i in ids])
+
+    _atomic_delete(conn, _work)
+
+
 class MainCorruption(Exception):
     """More than one Main row exists. `idx_sessions_main_singleton` should
     make this unreachable outside a hand-edited database; when it happens
@@ -846,6 +1043,21 @@ def count_chat_answers(conn, session_id):
     return row[0] if row else 0
 
 
+def _atomic_delete(conn, do_work):
+    """Run `do_work(conn)` and commit, or roll back on any exception and
+    re-raise. The one place that owns "index rows before message/session
+    rows, and a vector-delete failure rolls back the whole operation" —
+    shared by `delete_session` and `prune_turn` so a vector/index failure
+    can't leave either one half-completed.
+    """
+    try:
+        do_work(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def delete_session(conn, session_id):
     """Delete a session, its messages, and everything indexing them.
 
@@ -854,26 +1066,28 @@ def delete_session(conn, session_id):
     message was already deleted separately has no other way back to this
     session, and leaving it is how the orphans in the first place happened.
     """
-    if _has_table(conn, "chunks"):
-        mids = [r[0] for r in conn.execute(
-            "SELECT id FROM messages WHERE session_id=?", (session_id,))]
-        ids = []
-        for mid in mids:
+    def _work(conn):
+        if _has_table(conn, "chunks"):
+            mids = [r[0] for r in conn.execute(
+                "SELECT id FROM messages WHERE session_id=?", (session_id,))]
+            ids = []
+            for mid in mids:
+                ids += [r[0] for r in conn.execute(
+                    "SELECT id FROM chunks WHERE message_id=?", (mid,))]
             ids += [r[0] for r in conn.execute(
-                "SELECT id FROM chunks WHERE message_id=?", (mid,))]
-        ids += [r[0] for r in conn.execute(
-            "SELECT id FROM chunks WHERE session_id=?", (session_id,))]
-        drop_chunks(conn, sorted(set(ids)))
+                "SELECT id FROM chunks WHERE session_id=?", (session_id,))]
+            drop_chunks(conn, sorted(set(ids)))
 
-    conn.execute(
-        "DELETE FROM session_tags WHERE session_id=?",
-        (session_id,),
-    )
-    conn.execute(
-        "DELETE FROM messages WHERE session_id=?",
-        (session_id,),
-    )
-    conn.execute(
-        "DELETE FROM sessions WHERE id=?", (session_id,)
-    )
-    conn.commit()
+        conn.execute(
+            "DELETE FROM session_tags WHERE session_id=?",
+            (session_id,),
+        )
+        conn.execute(
+            "DELETE FROM messages WHERE session_id=?",
+            (session_id,),
+        )
+        conn.execute(
+            "DELETE FROM sessions WHERE id=?", (session_id,)
+        )
+
+    _atomic_delete(conn, _work)

@@ -154,7 +154,7 @@ def main():
        "handlers receive the parse, they don't edit it")
 
     print("\n--- the surface: two lists that have to agree ---")
-    ok("twenty-five verbs", len(VERBS) == 25, len(VERBS))
+    ok("twenty-eight verbs", len(VERBS) == 28, len(VERBS))
     ok("no verb is listed twice", len(set(VERBS)) == len(VERBS))
     ok("no alias collides with a live verb",
        not (set(ALIASES) & set(VERBS)), set(ALIASES) & set(VERBS))

@@ -204,6 +204,132 @@ def main():
     ok("...has no context limit", models.context_limit("ghost") is None)
     ok("...by_id returns None", models.by_id("ghost") is None)
 
+    print("\n--- MODELS[id].preset_params: which sampling keys are "
+          "declared, never guessed ---")
+    spec = models._spec("x", preset_params=("temperature", "top_p"))
+    ok("valid two-key declaration", spec.preset_params == ("temperature", "top_p"))
+    spec = models._spec("x", preset_params=("temperature",))
+    ok("valid one-key declaration", spec.preset_params == ("temperature",))
+    spec = models._spec("x")
+    ok("unset preset_params declares nothing", spec.preset_params == ())
+    spec = models._spec("x", preset_params=None)
+    ok("explicit None declares nothing too", spec.preset_params == ())
+
+    msg = raises(lambda: models._spec("x", preset_params=("wobble",)))
+    ok("an unknown preset_params key is refused",
+       msg and "'x'" in msg and "wobble" in msg, msg)
+    msg = raises(lambda: models._spec(
+        "x", preset_params=("temperature", "temperature")))
+    ok("a duplicate preset_params key is refused",
+       msg and "temperature" in msg, msg)
+    msg = raises(lambda: models._spec("x", preset_params="temperature"))
+    ok("a bare string (not a list/tuple) is refused",
+       msg and "preset_params" in msg, msg)
+
+    print("\n--- legacy translation declares no preset support ---")
+    legacy2 = models.load(LEGACY_CFG, warn=_silent_warn)
+    ok("every legacy-translated record declares nothing",
+       all(m.preset_params == () for m in legacy2), legacy2)
+
+    print("\n--- PARAMETER_PRESETS: validated at load, same discipline as "
+          "MODELS ---")
+    cfg = SimpleNamespace(PARAMETER_PRESETS={
+        "creative": dict(temperature=1.1, top_p=0.95),
+        "precise": dict(temperature=0.2),
+    })
+    presets = models.load_presets(cfg)
+    ok("both presets load, one and two keys",
+       presets == {"creative": {"temperature": 1.1, "top_p": 0.95},
+                  "precise": {"temperature": 0.2}}, presets)
+
+    ok("no PARAMETER_PRESETS attribute is empty, not an error",
+       models.load_presets(SimpleNamespace()) == {})
+    ok("PARAMETER_PRESETS = {} is empty too",
+       models.load_presets(SimpleNamespace(PARAMETER_PRESETS={})) == {})
+
+    def preset_raises(presets_dict):
+        return raises(lambda: models.load_presets(
+            SimpleNamespace(PARAMETER_PRESETS=presets_dict)))
+
+    msg = preset_raises({"loud": dict(temperature=2.5)})
+    ok("temperature above 2 is refused", msg and "loud" in msg, msg)
+    msg = preset_raises({"loud": dict(temperature=-0.1)})
+    ok("temperature below 0 is refused", msg and "loud" in msg, msg)
+    msg = preset_raises({"loud": dict(top_p=1.5)})
+    ok("top_p above 1 is refused", msg and "loud" in msg, msg)
+    msg = preset_raises({"loud": dict(top_p=-0.5)})
+    ok("top_p below 0 is refused", msg and "loud" in msg, msg)
+    ok("temperature at the boundary (0 and 2) is fine",
+       models.load_presets(SimpleNamespace(PARAMETER_PRESETS={
+           "lo": dict(temperature=0), "hi": dict(temperature=2)})) ==
+       {"lo": {"temperature": 0.0}, "hi": {"temperature": 2.0}})
+    ok("top_p at the boundary (0 and 1) is fine",
+       models.load_presets(SimpleNamespace(PARAMETER_PRESETS={
+           "lo": dict(top_p=0), "hi": dict(top_p=1)})) ==
+       {"lo": {"top_p": 0.0}, "hi": {"top_p": 1.0}})
+
+    msg = preset_raises({"loud": dict(temperature=True)})
+    ok("a boolean value is refused, not read as 0/1", msg and "loud" in msg, msg)
+    msg = preset_raises({"loud": dict(temperature=float("nan"))})
+    ok("NaN is refused", msg and "loud" in msg, msg)
+    msg = preset_raises({"loud": dict(temperature=float("inf"))})
+    ok("infinity is refused", msg and "loud" in msg, msg)
+    msg = preset_raises({"loud": dict(wobble=0.5)})
+    ok("an unknown key is refused", msg and "wobble" in msg, msg)
+    msg = preset_raises({"loud": dict()})
+    ok("an empty params dict is refused", msg and "loud" in msg, msg)
+    msg = preset_raises({"": dict(temperature=0.5)})
+    ok("a blank name is refused", msg is not None, msg)
+    msg = preset_raises({"default": dict(temperature=0.5)})
+    ok("a preset literally named 'default' is refused — that word means "
+       "'clear' at /preset default", msg and "default" in msg, msg)
+    msg = preset_raises({"Default": dict(temperature=0.5)})
+    ok("...case-insensitively", msg and "default" in msg, msg)
+    msg = raises(lambda: models.load_presets(
+        SimpleNamespace(PARAMETER_PRESETS="not-a-dict")))
+    ok("PARAMETER_PRESETS itself must be a dict", msg is not None, msg)
+
+    print("\n--- compatibility filtering: callers never inspect records "
+          "directly ---")
+    models.MODELS = [
+        models._spec("both", preset_params=("temperature", "top_p")),
+        models._spec("temp-only", preset_params=("temperature",)),
+        models._spec("none-declared"),
+    ]
+    models.PARAMETER_PRESETS = {
+        "creative": {"temperature": 1.1, "top_p": 0.95},
+        "precise": {"temperature": 0.2},
+    }
+    ok("preset_names lists every configured preset",
+       set(models.preset_names()) == {"creative", "precise"})
+    ok("preset_params returns the validated dict",
+       models.preset_params("precise") == {"temperature": 0.2})
+    ok("an unknown preset name returns None",
+       models.preset_params("ghost-preset") is None)
+    ok("a model declaring both keys is compatible with both presets",
+       set(models.compatible_presets("both")) == {"creative", "precise"})
+    ok("a model declaring only temperature is compatible with the "
+       "single-key preset only",
+       models.compatible_presets("temp-only") == ["precise"])
+    ok("a model declaring nothing is compatible with nothing",
+       models.compatible_presets("none-declared") == [])
+    ok("an unknown model is compatible with nothing",
+       models.compatible_presets("totally-unheard-of") == [])
+    ok("preset_compatible agrees with compatible_presets",
+       models.preset_compatible("both", "creative") is True
+       and models.preset_compatible("none-declared", "creative") is False)
+
+    print("\n--- a model switch clears an incompatible preset (main.py's "
+          "own rule, pinned here at the boundary it reads) ---")
+    # main.py's h_model clears `active_preset` when the new model doesn't
+    # declare every key the active preset uses — this is the exact check it
+    # runs, proven against the compatibility helper it calls.
+    active = "creative"
+    ok("switching onto a fully-compatible model preserves it",
+       models.preset_compatible("both", active) is True)
+    ok("switching onto a partially-compatible model clears it",
+       models.preset_compatible("temp-only", active) is False)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

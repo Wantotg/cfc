@@ -50,6 +50,7 @@ TRIGGER = f"{PREFIX}add "
 ROUTINE_TRIGGER = f"{PREFIX}routine "
 LIST_TRIGGER = f"{PREFIX}list "
 REMOVE_TRIGGER = f"{PREFIX}remove "
+PRESET_TRIGGER = f"{PREFIX}preset "
 
 # Stay silent until at least this many characters of a name have been typed.
 # Tab on an empty or barely-started fragment would otherwise dump a whole
@@ -308,6 +309,19 @@ def _pool_candidates(fragment):
     return out
 
 
+def _preset_candidates(fragment):
+    """(text, display, meta) for every configured preset name, plus
+    'default'. Broken/unconfigured `models` import is silence, not a crash —
+    same discipline as `_pool_candidates` and `_routine_candidates`."""
+    try:
+        from models import preset_names
+    except ImportError:
+        return []
+    frag = fragment.strip().lower()
+    names = list(preset_names()) + ["default"]
+    return [(n, n, "") for n in names if n.lower().startswith(frag)]
+
+
 def _dispatch(line):
     """(fragment, [(text, display, meta), …]) for a line, or None if inert.
 
@@ -337,6 +351,9 @@ def _dispatch(line):
         from commands import LISTABLE
         return fragment, [(k, k, "") for k in LISTABLE
                           if k.startswith(fragment)]
+    if line.startswith(PRESET_TRIGGER):
+        fragment = line[len(PRESET_TRIGGER):].lstrip()
+        return fragment, _preset_candidates(fragment)
     return None
 
 

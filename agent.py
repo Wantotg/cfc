@@ -359,8 +359,15 @@ def _say_empty():
 
 def agent_turn(prefix, history, model, conn, session_id, ctx=None,
                max_calls=None, touched=None, first_message=None,
-               instruction=None):
+               instruction=None, params=None):
     """Run a turn that may use tools. Returns the final assistant message.
+
+    `params` is the optional validated preset dictionary (v1.5,
+    `models.preset_params`), passed through unchanged to every `call_api`
+    call inside the loop below — so a multi-step tool turn samples under the
+    same preset on every round trip, not just the first. `None` (the
+    default) is what every caller except the interactive ordinary turn
+    passes — routines, and any future internal use, are unaffected.
 
     Takes the system `prefix` and `history` separately, and appends every
     message it produces to `history` — which is the list the REPL replays from
@@ -453,7 +460,13 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
         with console.status("Thinking...", spinner="dots",
                             spinner_style=SPINNER_COLOR):
             try:
-                resp = call_api(messages, model=model, tools=offer)
+                # Passed only when set: a stub or a caller with the pre-1.5
+                # `call_api(messages, model=, tools=)` shape keeps working
+                # unchanged when no preset is active, which is every call
+                # except the interactive ordinary turn's.
+                call_kwargs = {"params": params} if params else {}
+                resp = call_api(messages, model=model, tools=offer,
+                                **call_kwargs)
             except httpx.HTTPError as e:
                 # An empty-completion 400 is the benign thinking-model hiccup,
                 # not a real failure — map it back onto the empty-completion path

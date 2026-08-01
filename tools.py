@@ -47,6 +47,14 @@ GREP_MAX_MATCHES = 100
 # auto-approved, and the only members of this set are ones that create files.
 WRITE_TOOLS = {"write_file"}
 
+
+def is_mutating(name):
+    """Whether this tool name mutates the filesystem — the one classification
+    the codebase owns for it. /swipe and /undo's turn repair (main.py) ask
+    this rather than keeping a second, command-local name list, so a future
+    mutating tool joins the same refusal by joining WRITE_TOOLS alone."""
+    return name in WRITE_TOOLS
+
 # A runaway model writing a 50MB file into the vault is not a security problem
 # but it is a mess to clean up. Content over this is refused, not truncated —
 # a silently half-written note is worse than a failed call.

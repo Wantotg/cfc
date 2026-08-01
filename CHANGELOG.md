@@ -27,6 +27,46 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — v1.5 — Conversation control (`W-1.3-02`, `W-1.3-03`, `W-1.4-03`, `W-1.3.1-05`)
+`/swipe` re-answers the latest ordinary chat turn — same user row, current
+model/tools/preset — and `/undo` retracts it entirely. Both classify the
+turn from stored rows and ids only (`db.classify_latest_turn`), refuse a
+turn with no user row or one a later `/continue`/OOC already answered
+twice, and refuse — never silently drop — a turn that requested a mutating
+tool (`tools.is_mutating`), since deleting the record can't undo a real
+write. Pruning is index-first and atomic (`db.prune_turn`, sharing
+`db._atomic_delete` with a refactored `delete_session`), and streaming and
+tool turns end through the one shared path (`main._run_turn`'s new `"swipe"`
+kind), so neither can drift from the other.
+
+Chat ids are now choosable: `c` at the hub and `/new <id>` create an
+ordinary chat at a caller-picked positive id, refusing any occupied
+`sessions.id` — every session kind shares the namespace, so a hidden wiki
+or routine row collides too. `d` at the hub joins `/delete chat [<id>|main]`
+on one resolver (`db.resolve_delete_target`, identity-based — Main is never
+matched by its editable title) and one confirmation that requires typing
+the target back, not a bare y/n.
+
+Named sampling presets (`temperature`, `top_p`) are configured in
+`PARAMETER_PRESETS` and declared per model via `MODELS[id].preset_params` —
+a verified fact like `tools`, never guessed, validated at startup
+(`models.py`). `/preset [name|default]` selects one for the open chat;
+selection is session-local, shown in `/status`, and cleared with a reason on
+a model switch that doesn't declare every key it uses. The selected dict
+reaches every call in `agent.agent_turn`'s tool loop and `api.stream_response`
+alike, and nothing else — title generation, recall synthesis and routines
+are structurally unreachable from it.
+
+- Files: db.py, hub.py, main.py, commands.py, tools.py, models.py, api.py,
+  agent.py, parse.py, complete.py, config.example.py, tests/test_schema.py,
+  tests/test_hub.py, tests/test_models.py, tests/test_complete.py,
+  tests/test_turn_repair.py, tests/golden.py, tests/test_mainchat_turns.py,
+  tests/test_parse.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — A chat whose first turn never answered can still be titled (`B-07`, `B-08`, 1.4.1 triage)
 Both findings are v1.4.1's own, both were found by reading rather than
 reported, and neither blocked the tag — Cas's call to fix them here rather

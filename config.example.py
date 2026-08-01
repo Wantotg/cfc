@@ -88,6 +88,12 @@ MAIN_CHAT_DIR = "PLACEHOLDER"
 #                     MODEL above
 #   limit             context window in tokens, for /status's usage bar
 #                     (default None — unknown, /status shows a raw count)
+#   preset_params     which PARAMETER_PRESETS keys (below) are verified to
+#                     work against this exact model and endpoint — like
+#                     `tools`, a recorded fact, never guessed. Leave unset
+#                     and every preset stays incompatible with this id, so
+#                     nothing about sampling is ever sent to an endpoint you
+#                     haven't checked it against (default: none declared)
 #
 # A config.py still using the pre-1.2.1 shape (MODELS as a bare list of
 # strings, plus separate TOOLS_MODELS/ROUTINE_MODELS/MODEL_LIMITS) keeps
@@ -99,6 +105,22 @@ MODELS = [
         limit=1_000_000),
     dict(id="moonshotai/kimi-k2.6:thinking", tools=True, limit=256_000),
 ]
+
+# Named sampling profiles (v1.5): a name mapped to temperature (0-2) and/or
+# top_p (0-1) — the two controls the current NanoGPT Chat Completions contract
+# documents with stable ranges. `/preset <name>` selects one for the open
+# chat; `/preset default` clears back to the provider's own default. Nothing
+# here reaches a request on its own — a preset only applies to a model whose
+# MODELS record declares the matching `preset_params` above, once you've
+# verified it actually takes them. A preset can't be named 'default'; that
+# word is reserved for clearing.
+#
+# Empty ships clean: presets are opt-in, and declaring one without also
+# marking a model's `preset_params` leaves it configured but never sent.
+PARAMETER_PRESETS = {
+    # "creative": dict(temperature=1.1, top_p=0.95),
+    # "precise": dict(temperature=0.2),
+}
 
 # --- embeddings (RAG) ------------------------------------------------------
 # Where the RAG layer gets its vectors. Defaults to nano-gpt's hosted bge-m3,

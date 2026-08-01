@@ -18,6 +18,7 @@
 # nothing downstream reads config.MODELS, config.TOOLS_MODELS,
 # config.ROUTINE_MODELS or config.MODEL_LIMITS directly; every caller
 # (commands.py, main.py, agent.py, hub.py, runner.py) reads this module.
+import math
 from collections import namedtuple
 
 # listed          shown in `/list models`, indexable by `/model <n>`
@@ -26,8 +27,17 @@ from collections import namedtuple
 # routine_default the one record `default_routine_model()` returns when a
 #                 routine has no model of its own; at most one may be True
 # limit           context window in tokens, or None if unknown
+# preset_params   the PARAMETER_PRESETS keys verified for this id — never
+#                 guessed, same discipline as `tools` (default: none declared)
 ModelSpec = namedtuple("ModelSpec",
-                       "id listed tools routine routine_default limit")
+                       "id listed tools routine routine_default limit "
+                       "preset_params")
+
+# The v1.5 sampling-parameter vocabulary. Bounded on purpose — Concept.md's
+# "Named Parameter presets" is named profiles from a small checked set, not an
+# unvalidated API console. (lo, hi) is the documented range for the current
+# NanoGPT Chat Completions contract; both bounds are inclusive.
+PRESET_PARAM_RANGES = {"temperature": (0, 2), "top_p": (0, 1)}
 
 
 class ModelConfigError(Exception):
@@ -36,8 +46,32 @@ class ModelConfigError(Exception):
     never silently read as unsupported or without a limit."""
 
 
+def _validate_preset_params(id, keys):
+    """A MODELS record's declared preset support: a list/tuple of names from
+    PRESET_PARAM_RANGES, each at most once. `None` (the field's absence) is
+    "declares nothing" — the legacy-translation default, so old config keeps
+    loading with presets simply unavailable rather than guessed at."""
+    if keys is None:
+        return ()
+    if not isinstance(keys, (list, tuple)):
+        raise ModelConfigError(
+            f"MODELS[{id!r}].preset_params must be a list/tuple of names, "
+            f"got {keys!r}")
+    seen = []
+    for k in keys:
+        if k not in PRESET_PARAM_RANGES:
+            raise ModelConfigError(
+                f"MODELS[{id!r}].preset_params names {k!r} — only "
+                f"{tuple(PRESET_PARAM_RANGES)} exist in v1.5")
+        if k in seen:
+            raise ModelConfigError(
+                f"MODELS[{id!r}].preset_params lists {k!r} twice")
+        seen.append(k)
+    return tuple(seen)
+
+
 def _spec(id, listed=True, tools=False, routine=False, routine_default=False,
-          limit=None):
+          limit=None, preset_params=None):
     if not isinstance(id, str) or not id.strip():
         raise ModelConfigError(f"a MODELS record has no usable 'id': {id!r}")
     for field, val in (("listed", listed), ("tools", tools),
@@ -54,7 +88,9 @@ def _spec(id, listed=True, tools=False, routine=False, routine_default=False,
         raise ModelConfigError(
             f"MODELS[{id!r}].limit must be a positive int or None, "
             f"got {limit!r}")
-    return ModelSpec(id, listed, tools, routine, routine_default, limit)
+    preset_params = _validate_preset_params(id, preset_params)
+    return ModelSpec(id, listed, tools, routine, routine_default, limit,
+                     preset_params)
 
 
 def _from_records(raw):
@@ -134,8 +170,71 @@ def load(cfg=None, warn=None):
     return _from_legacy(cfg, warn)
 
 
+def _validate_presets(cfg):
+    """`config.PARAMETER_PRESETS`, validated: name -> {temperature, top_p}.
+
+    Every failure here is loud at import time, same discipline as `_spec` —
+    a malformed preset must never quietly become "unsupported" or, worse,
+    reach a provider request. Booleans are rejected before the general
+    numeric check because `isinstance(True, int)` is true in Python and
+    would otherwise pass a stray `top_p=True` as 1.0.
+    """
+    raw = getattr(cfg, "PARAMETER_PRESETS", None) or {}
+    if not isinstance(raw, dict):
+        raise ModelConfigError(
+            f"PARAMETER_PRESETS must be a dict, got {raw!r}")
+    out = {}
+    for name, params in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ModelConfigError(
+                f"PARAMETER_PRESETS has an unusable name: {name!r}")
+        name = name.strip()
+        if name.lower() == "default":
+            raise ModelConfigError(
+                "PARAMETER_PRESETS can't define a preset named 'default' "
+                "— that word means 'clear the preset' at /preset default")
+        if not isinstance(params, dict) or not params:
+            raise ModelConfigError(
+                f"PARAMETER_PRESETS[{name!r}] must be a non-empty dict, "
+                f"got {params!r}")
+        clean = {}
+        for k, v in params.items():
+            if k not in PRESET_PARAM_RANGES:
+                raise ModelConfigError(
+                    f"PARAMETER_PRESETS[{name!r}] names {k!r} — only "
+                    f"{tuple(PRESET_PARAM_RANGES)} exist in v1.5")
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ModelConfigError(
+                    f"PARAMETER_PRESETS[{name!r}][{k!r}] must be a number, "
+                    f"got {v!r}")
+            if not math.isfinite(v):
+                raise ModelConfigError(
+                    f"PARAMETER_PRESETS[{name!r}][{k!r}] must be finite, "
+                    f"got {v!r}")
+            lo, hi = PRESET_PARAM_RANGES[k]
+            if not (lo <= v <= hi):
+                raise ModelConfigError(
+                    f"PARAMETER_PRESETS[{name!r}][{k!r}]={v!r} is outside "
+                    f"{k}'s documented range {lo}-{hi}")
+            clean[k] = float(v)
+        if name in out:
+            raise ModelConfigError(f"PARAMETER_PRESETS lists {name!r} twice")
+        out[name] = clean
+    return out
+
+
+def load_presets(cfg=None):
+    """Pure-ish entry point for `PARAMETER_PRESETS`, mirroring `load()` above
+    so a test can compare fixtures through the exact function the module
+    uses at import."""
+    if cfg is None:
+        import config as cfg
+    return _validate_presets(cfg)
+
+
 _startup_warnings = []
 MODELS = load(warn=_startup_warnings.append)
+PARAMETER_PRESETS = load_presets()
 
 
 def startup_warnings():
@@ -171,6 +270,35 @@ def supports_tools(model_id):
 
 def tool_capable_ids():
     return [m.id for m in MODELS if m.tools]
+
+
+def preset_names():
+    """Every configured preset name, in `config.PARAMETER_PRESETS`'s order —
+    what `/preset` lists and what completion offers."""
+    return list(PARAMETER_PRESETS)
+
+
+def preset_params(name):
+    """The validated {temperature, top_p, ...} dict for this preset name, or
+    None. Callers must not read `PARAMETER_PRESETS` or a `ModelSpec`'s
+    `preset_params` field directly — this and `compatible_presets` are the
+    one boundary (Concept.md: "callers must not inspect record fields or
+    configuration directly")."""
+    return PARAMETER_PRESETS.get(name)
+
+
+def compatible_presets(model_id):
+    """Configured preset names whose keys are all declared by this model —
+    an unknown/unconfigured model declares nothing, so nothing is
+    compatible with it."""
+    spec = by_id(model_id)
+    declared = set(spec.preset_params) if spec else set()
+    return [name for name, params in PARAMETER_PRESETS.items()
+            if set(params) <= declared]
+
+
+def preset_compatible(model_id, name):
+    return name in compatible_presets(model_id)
 
 
 def is_routine_vetted(model_id):

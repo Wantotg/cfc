@@ -110,12 +110,19 @@ def wire_messages(messages):
     return out
 
 
-def call_api(messages, model=None, tools=None, read_timeout=None):
+def call_api(messages, model=None, tools=None, read_timeout=None, params=None):
     """Non-streaming API call. Used for title generation and the agent loop.
 
     Streaming is off whenever tools are in play: tool-call deltas arrive
     fragmented across chunks and the `arguments` string has to be reassembled
     by index. Not worth it — these responses are fast.
+
+    `params` is the validated preset dictionary (v1.5, `models.preset_params`)
+    — at most `{"temperature": ..., "top_p": ...}` — merged into the payload
+    only when given. Every existing caller (title generation, recall,
+    routines) omits it, so their payload is unchanged; only `agent_turn`'s
+    interactive tool loop passes one through, and only when a preset is
+    active.
     """
     model = model or MODEL
     payload = {
@@ -125,6 +132,8 @@ def call_api(messages, model=None, tools=None, read_timeout=None):
     }
     if tools:
         payload["tools"] = tools
+    if params:
+        payload.update(params)
     if read_timeout is None:
         read_timeout = API_READ_TIMEOUT
     with httpx.Client(timeout=_timeout(read_timeout)) as client:
@@ -207,14 +216,19 @@ def _thinking_panel(reasoning):
     return ai_reasoning_panel(body)
 
 
-def stream_response(messages, model=None):
+def stream_response(messages, model=None, params=None):
     """Stream API response, rendered live as Markdown.
 
     Returns (full_text, usage_dict, reasoning). usage may be None if the
     provider doesn't support include_usage. reasoning is the concatenated
     `delta.reasoning` stream (thinking models); "" when the provider sends
     none. It's returned, not just shown, so the caller can tell a genuinely
-    empty completion from a reasoning-only one (see main.py's retry path)."""
+    empty completion from a reasoning-only one (see main.py's retry path).
+
+    `params` is the same optional preset dictionary `call_api` takes — see
+    its docstring. Merged into the payload only when given, so a turn with no
+    active preset sends exactly the request it always has.
+    """
     model = model or MODEL
     full_text = ""
     reasoning = ""
@@ -227,6 +241,8 @@ def stream_response(messages, model=None):
     }
     if STREAM_USAGE:
         payload["stream_options"] = {"include_usage": True}
+    if params:
+        payload.update(params)
 
     # Read stays at 300 here and is a different quantity from the one above:
     # httpx resets the read clock on every chunk, so this is the gap *between*

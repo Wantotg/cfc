@@ -8,12 +8,15 @@ Session #1  ·  glm-5.2  ·  Golden session one
 
   /help             every command
   /q                back to the session list
-  /new              start a new session  (/new p for a private one)
+  /new              start a new session  (/new p for a private one, /new <id> for a chosen one)
   /status           everything active in this session
   /list <kind>      what exists  (prompts, traits, models, chats…)
   /add <name|path>  attach a prompt, persona, trait or file
   /remove <name>    take one off again
   /remember q       pull matching excerpts into this conversation
+  /swipe            try a different answer to your last message
+  /undo             retract your last message and its answer
+  /preset <name>    a named sampling preset for this chat
   Alt+Enter         insert a newline  (Enter sends)
 
 --- Previous messages in this session ---
@@ -54,6 +57,7 @@ chats · sessions · outbox
   destroy
     /delete chat            delete this conversation (with confirm)
     /delete chat 5          delete conversation #5
+    /delete chat main       delete Main (confirm 'main')
 
   data
     /export                 export this session to Obsidian
@@ -66,13 +70,21 @@ chats · sessions · outbox
 
   session
     /new                    start a new session  (/new p for a private one)
+    /new 501                start a new session at chosen id #501
     /q                      back to the session list
     /title 5 Name           rename session #5
+
+  last-turn repair
+    /swipe                  re-answer your last message under the current model/preset
+    /undo                   remove your last message and its answer
 
   settings
     /model name or number   switch model  (/list models to see them)
     /tools on|off           toggle tools for this session
     /database on|off        toggle recall & remember this session
+    /preset                 show the active preset and what's compatible
+    /preset name            select a named sampling preset
+    /preset default         clear back to provider default
     /connect                where the embedder stands
     /connect embedding      start LM Studio and its server if needed
 
@@ -157,6 +169,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Attached        nothing
   Tags            memory
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
+  Preset          provider default
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -177,6 +190,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Attached        nothing
   Tags            memory, wsl
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
+  Preset          provider default
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -227,6 +241,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Attached        nothing
   Tags            memory
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
+  Preset          provider default
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -269,13 +284,33 @@ Tools: inactive this turn
   available: list_dir, read_file, grep (read), write_file (write)
 
 you> Database is on for this session.
+you> Active preset: provider default
+Compatible with glm-5.2: steady
+you> No preset named 'nonsense'. /preset lists what's configured.
+you> Already on provider default.
+you> Preset: steady (temperature=0.3)
+you>
+Session #1  ·  glm-5.2  ·  Golden session one
+  System prompt   alpha
+  Persona         not set
+  Traits          none
+  Attached        nothing
+  Tags            memory
+  Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
+  Preset          steady (temperature=0.3)
+  Database        on
+  Context         8 tokens
+  Last turn       0 in · 8 out
+  Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
+
+you> Preset cleared — provider default.
 you> Usage: /continue   (no arguments)
 you> Unknown connection 'nonsense'. Available connections: embedding
 you>   embedder: http://localhost:1233/v1
   ✗ hosted embedder unreachable — golden harness stub
     check your connection, EMBED_BASE/EMBED_KEY in config.py, and the provider's status, then run
 /connect embedding in a chat (or connect embedding in config) to retry.
-you> Usage: /delete chat [<id>]   (deletes this conversation and its messages)
+you> Usage: /delete chat [<id>|main]   (deletes a conversation and its messages)
   /remove is the reversible one — prompts, personas, traits, attachments, excerpts.
 you> Don't know how to delete 'wombat'. Deletable: chat.
 you>
@@ -316,6 +351,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Attached        nothing
   Tags            memory
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
+  Preset          provider default
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out
@@ -329,6 +365,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Attached        nothing
   Tags            memory
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
+  Preset          provider default
   Database        on
   Context         8 tokens
   Last turn       0 in · 8 out

@@ -263,7 +263,10 @@ def main_():
             "A brand new opening.", encoding="utf-8")
         (bundle_dir / mainchat.PERSONA_FILE).write_text(
             "A restored voice.", encoding="utf-8")
-        out12, _ = drive(conn, sid, f"\n/delete chat {sid}\ny\n")
+        # Confirmation is keyed to the target's *identity* (is_main), not how
+        # it was looked up — deleting Main by its raw numeric id still asks
+        # for 'main' back, the same as `/delete chat main` would.
+        out12, _ = drive(conn, sid, f"\n/delete chat {sid}\nmain\n")
         ok("delete succeeds through the ordinary chat path",
            "deleted" in out12, out12)
         ok("Main is gone", dbmod.main_session_id(conn) is None)
