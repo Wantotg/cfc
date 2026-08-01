@@ -27,6 +27,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — `ui.console` stops rewriting `:key:`-shaped text as an emoji (`B-06`, 1.4.1 part 3)
+`markup=False` was only half the switch: rich's emoji substitution
+(`emoji=True`, on by default) is a separate setting from markup, and it was
+still live on the one shared console — silently rewriting any `:name:` that
+matched rich's emoji table, in a model answer, an attachment, a recall
+excerpt, anywhere printed. `ui.console` is now `Console(markup=False,
+emoji=False)`, matched to the same discipline as markup: chat content is
+never reinterpreted. `tests/test_ui.py` pins both a run of known shortcodes
+(`:key:`, `:new:`, …) surviving literally, including inside a code-shaped
+string, and the existing markup-literal guarantee alongside it.
+
+- Files: ui.py, tests/test_ui.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — One honest finisher ends every successful turn, and a failed title call is a real failure (`B-1.3.1-02`, `D-13`, 1.4.1 part 2)
 `api.generate_title` no longer swallows every exception into the `"(untitled)"`
 sentinel — the same string `main.py` shows before any title has ever been
@@ -51,7 +68,7 @@ like auto-embed already is.
 
 - Files: api.py, main.py, tests/test_titles.py, tests/test_turn_paths.py, tests/test_private.py
 - Status: shipped
-- Commit: pending
+- Commit: 0cc952e
 
 ---
 

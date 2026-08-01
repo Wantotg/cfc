@@ -17,9 +17,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-# markup=False so existing [...] strings print literally.
+# markup=False so existing [...] strings print literally. emoji=False for the
+# same reason, one setting later: chat content must never be reinterpreted,
+# and rich's emoji substitution (":key:" -> "🔑") is a separate switch from
+# markup, on by default, that was still silently rewriting text through this
+# console (`B-06`).
 # highlight=True (default) gives subtle coloring of numbers/paths.
-console = Console(markup=False)
+console = Console(markup=False, emoji=False)
 
 
 # ── palette ──────────────────────────────────────────────────────────
