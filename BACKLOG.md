@@ -3,9 +3,6 @@
 Things found in passing and deliberately not fixed, so they don't get lost.
 Nothing here is urgent — this is a hobby project and it all still works.
 
-Add to this rather than fixing on the spot when something turns up mid-task.
-`HANDOVER.md` is why the code is shaped as it is; this is what's still owed.
-
 Each entry carries its tracker id in the heading — the id the playtest report
 gave it, unchanged thereafter.
 
@@ -14,16 +11,6 @@ gave it, unchanged thereafter.
 **It moves to [`legacy/BACKLOG.md`](legacy/BACKLOG.md), whole, and leaves
 nothing behind here.** This file holds open entries only. The reasoning is in
 `HANDOVER.md`, *Which file owns what*.
-
-**Closed at the split, so it is in the archive and not below:** *Retire the
-`:`-command `startswith` chain for an exact-match table* — closed on
-inspection, not by work. v0.8's `parse.py` already did it: `main.py` contains
-zero `startswith(":` and asserts `set(HANDLERS) == set(VERBS)`.
-
-**Partly carried over:** *Model selection is too generous* has shipped in
-pieces (routine model selection, auto-revert, the near-miss picker). What is
-left of it is the `[esc]` entry below, rewritten to be about the open half only.
-The full entry with all its history is in the archive.
 
 ---
 

@@ -21,7 +21,7 @@ claude_export/
 
 # Claude Code local files
 .claude/
-# Personal working notes — has names, filepaths, private context.
+
 # Anchored with a leading slash: the same names live in templates/, which ships.
 /AGENTS.md
 /CLAUDE.md
@@ -32,6 +32,7 @@ claude_export/
 /DEBUGGER.md
 /MANAGER.md
 /REVIEWER.md
+/MANAGERS_HANDBOOK.md
 
 # Update loop handovers.
 /Start.md

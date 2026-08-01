@@ -1,24 +1,17 @@
 # HANDOVER.md
 
-You have the repo. Read it. This file is only for what reading it won't tell
-you: which decisions are settled, which good-looking ideas were tried and
-rejected, where the constants came from, and which bugs were quiet enough that
-nothing failed while they were live.
+You have the repo. Read it. This file is only for what reading it won't tell you: which decisions are settled, which good-looking ideas were tried and rejected, where the constants came from, and which bugs were quiet enough that nothing failed while they were live.
 
 **If this file and the code disagree, the code is right and this file is stale.**
 Say so rather than working around it.
 
-Its predecessor, `legacy/HANDOVER.md`, is frozen at v0.8 and no longer updated.
-It was written for a model working *without* the source, so it re-describes
-things you can just go and look at — but it holds the long-form reasoning behind
-most of what is summarised here. Go there when a one-liner below isn't enough.
+Its predecessor, `legacy/HANDOVER.md`, is frozen at v0.8 and no longer updated. It was written for a model working *without* the source, so it re-describes
+things you can just go and look at — but it holds the long-form reasoning behind most of what is summarised here. Go there when a one-liner below isn't enough.
 
 ## Which file owns what
 
 **Every fact has one home; everywhere else names its `TRACKER.md` id and stops.**
-A finding written up in `BUGS.md`, again in a roadmap version and again in a
-session brief has to be *maintained* in three places — one change costs three
-edits and the three drift, which is this project's own recurring hazard rebuilt
+A finding written up in `BUGS.md`, again in a roadmap version and again in a session brief has to be *maintained* in three places — one change costs three edits and the three drift, which is this project's own recurring hazard rebuilt
 in prose.
 
 | | owns | must not carry |
@@ -34,52 +27,22 @@ in prose.
 | `TRACKER.md` | gitignored. One line per open issue and the version it's assigned to | any explanation at all |
 
 **The test between here and `CHANGELOG.md`: will it still be true in three
-versions?** If yes it belongs here. If it is about one change it belongs there —
-a changelog entry may state a decision and its reason in a sentence, but it does
-not argue it.
+versions?** If yes it belongs here. If it is about one change it belongs there — a changelog entry may state a decision and its reason in a sentence, but it does not argue it.
 
 ### Three rules for writing any of them
 
-**Say it once, then stop.** A paragraph that would not change what a reader does
-is deleted. *"Wrote the decision down so it is visible"* is eight words; the same
-point ran to fifty-six in a v1.0 changelog entry, and the surviving eight
-belonged in this file anyway.
+**Say it once, then stop.** A paragraph that would not change what a reader does is deleted. *"Wrote the decision down so it is visible"* is eight words; the same point ran to fifty-six in a v1.0 changelog entry, and the surviving eight belonged in this file anyway.
 
 **Name the failure, not the person.** These files record decisions, false
-assumptions and what they cost — that is why they are worth reading. They are
-not a narrative about how the mistakes came to be made. Retelling one past the
-point it teaches something spends tokens, distracts the reader and the model,
-and buries the finding it is wrapped around.
+assumptions and what they cost — that is why they are worth reading. They are not a narrative about how the mistakes came to be made. Retelling one past the point it teaches something spends tokens, distracts the reader and the model, and buries the finding it is wrapped around.
 
-**Records are frozen; rules are maintained.** A version note, a changelog entry,
-a `legacy/` file and a scar below record what was true when they were written,
-and restyling them to a convention invented afterwards destroys the one property
-they have. That covers the reasoning, not just the prose: *"we used to do it the
-other way, and here is what it cost"* is the half most projects delete and the
-half worth keeping. A **rule** is a live instruction with no such claim — edit it
-freely, and this section was rewritten under exactly that licence
-(2026-07-29). Correcting something factually wrong is allowed in either; say
-which one you are doing.
+**Records are frozen; rules are maintained.** A version note, a changelog entry, a `legacy/` file and a scar below record what was true when they were written, and restyling them to a convention invented afterwards destroys the one property they have. That covers the reasoning, not just the prose: *"we used to do it the other way, and here is what it cost"* is the half most projects delete and the half worth keeping. A **rule** is a live instruction with no such claim — edit it freely, and this section was rewritten under exactly that licence (2026-07-29). Correcting something factually wrong is allowed in either; say which one you are doing.
 
 ### Two files with a rule of their own
 
-**`TRACKER.md`'s ids are permanent and its closed rows stay.** An id comes from
-the playtest report and is never reallocated — `B-0.9.1-01` is finding 01 of the
-v0.9.1 pass, forever, so the report, the tracker row, the `BUGS.md` entry and the
-changelog line name the same thing with nothing to reconcile. Closed rows keep
-their reason and stay, *nothing owed* included: without that, the same note comes
-back next playtest looking new. A session transcript is not a record. The reports
-it consumes are in `<vault>/00 inbox`, one file per playtest.
+**`TRACKER.md`'s ids are permanent and its closed rows stay.** An id comes from the playtest report and is never reallocated — `B-0.9.1-01` is finding 01 of the v0.9.1 pass, forever, so the report, the tracker row, the `BUGS.md` entry and the changelog line name the same thing with nothing to reconcile. Closed rows keeptheir reason and stay, *nothing owed* included: without that, the same note comes back next playtest looking new. A session transcript is not a record. The reports it consumes are in `<vault>/00 inbox`, one file per playtest.
 
-**`legacy/` takes a closed entry whole and leaves no stub.** Struck-through stubs
-are why `BUGS.md` and `BACKLOG.md` once reached 283 and 897 lines with eight live
-entries between them. Two things make the deletion safe: `CHANGELOG.md` is the
-index, so *was this fixed, and why that way* never needs the archive; and the
-archive keeps the **original report**, which the changelog never carried and
-whose wrong premise is sometimes the finding (`MAX_DISTANCE`, below). It is
-tracked in git rather than gitignored — a gitignored archive is invisible to
-clones, outside every backup, and destroyed by a fresh checkout, which is the
-same argument that killed `inbox/` at the repo root.
+**`legacy/` takes a closed entry whole and leaves no stub.** Struck-through stubs are why `BUGS.md` and `BACKLOG.md` once reached 283 and 897 lines with eight liveentries between them. Two things make the deletion safe: `CHANGELOG.md` is the index, so *was this fixed, and why that way* never needs the archive; and the archive keeps the **original report**, which the changelog never carried and whose wrong premise is sometimes the finding (`MAX_DISTANCE`, below). It is tracked in git rather than gitignored — a gitignored archive is invisible to clones, outside every backup, and destroyed by a fresh checkout, which is the same argument that killed `inbox/` at the repo root.
 
 ## Versions and releases
 
@@ -89,49 +52,29 @@ this scheme — it's pushed, so it stays; don't mint new two-digit ones.)
 
 **The order is fixed, the playtest is inside it, and the tag is always last.**
 
-1. **Build, commit and push** — in the session, by the model. The version's body
-   also moves from the private roadmap to the public one here.
-2. **Cas playtests the pushed version.** Nothing is tagged; `main` carries the
-   version and does not yet claim it works.
-3. **Triage.** Every finding gets a place. Whatever blocks the tag is fixed,
-   committed and pushed.
+1. **Build, commit and push** — in the session, by the model. The version's body also moves from the private roadmap to the public one here.
+2. **Cas playtests the pushed version.** Nothing is tagged; `main` carries theversion and does not yet claim it works.
+3. **Triage.** Every finding gets a place. Whatever blocks the tag is fixed,committed and pushed.
 4. **Cas writes the version note**, straight into `ROADMAP.md`, from use.
 5. **Cas pulls and tags** — `git push --tags`; tags do not ride a normal push.
 
 **What blocks the tag: a finding that falsifies a claim in that version's
 `ROADMAP_PRIVATE.md` proposal.** Not *did this version cause it* — that is
-arguable forever and gets argued under pressure to ship. *Does this version's
-claim depend on it* is answerable by reading the entry, which is finite and was
-written before testing started. Everything else is assigned and does not block.
+arguable forever and gets argued under pressure to ship. *Does this version's claim depend on it* is answerable by reading the entry, which is finite and was written before testing started. Everything else is assigned and does not block.
 
 **Why the private file and not `ROADMAP.md`, since v1.1 (`Q-02`).** `W-06`
-moved the public entry to a stub written the day a version ships, filled from
-use *after* the playtest — so a playtest starting under that shape has nothing
-public to test against yet. The private proposal is still finite and still
-written before testing starts; it just isn't the file that ends up carrying the
-claim. This is `Q-02`, settled 2026-07-30: the debugger session tested v1.1
-against the private proposal without the rule saying so, which worked and is
+moved the public entry to a stub written the day a version ships, filled from use *after* the playtest — so a playtest starting under that shape has nothing public to test against yet. The private proposal is still finite and still written before testing starts; it just isn't the file that ends up carrying the claim. This is `Q-02`, settled 2026-07-30: the debugger session tested v1.1 against the private proposal without the rule saying so, which worked and is
 now the rule.
 
-**Do not grow the entry during the playtest.** A finding that makes you want to
-add a claim is a finding for the *next* version. The entry is the finish line,
-and a finish line that can be moved is not one.
+**Do not grow the entry during the playtest.** A finding that makes you want to add a claim is a finding for the *next* version. The entry is the finish line, and a finish line that can be moved is not one.
 
 Three things the order protects:
 
-- **The note lives in a file in the repo**, so tagging first gives you a tag
-  whose own note isn't in it — permanently, since a pushed tag must never move.
-- **A tag is a public claim that a version is done.** While the playtest came
-  after the tag, three of the four releases before v0.9.1 were patch releases
-  named for what a testing pass caught — which had quietly made PATCH mean *this
-  version was never tested*.
-- **The note gets written from use.** v0.9's note — *"ready to playtest to test
-  weird things"* — is a note about intent, because at the time that is all it
-  could be.
+- **The note lives in a file in the repo**, so tagging first gives you a tag whose own note isn't in it — permanently, since a pushed tag must never move.
+- **A tag is a public claim that a version is done.** While the playtest came after the tag, three of the four releases before v0.9.1 were patch releases named for what a testing pass caught — which had quietly made PATCH mean *this version was never tested*.
+- **The note gets written from use.** v0.9's note — *"ready to playtest to test  weird things"* — is a note about intent, because at the time that is all it  could be.
 
-**Push in-session, never tag in-session.** The tag is Cas's call. **A pushed tag
-is immutable** — a mistake found after tagging is fixed in the next ordinary
-commit, never by re-tagging.
+**Push in-session, never tag in-session.** The tag is Cas's call. **A pushed tagis immutable** — a mistake found after tagging is fixed in the next ordinary commit, never by re-tagging.
 
 **Don't reformat working code you weren't asked to touch.**
 
@@ -231,9 +174,7 @@ Settled. Argue with them only with a reason, and say that you are.
    checking for in any prompt flow added later; nothing enforces it but
    `_routine_abandoned`.
 9. **Wiki recall keys off the frontmatter id, never the filename.** Renaming a
-   page keeps its recall identity. Recall stays wiki-only; the chat log is indexed
-   (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and
-   must never break a turn.
+   page keeps its recall identity. Recall stays wiki-only; the chat log is indexed (`source='chat'`) but excluded until hybrid lands. Auto-embed is best-effort and must never break a turn.
 10. **A private chat's isolation is the connection, not a flag.** It runs against
     `db(":memory:")`, so every `conn`-driven write — including the ones
     `agent_turn` makes on its own — is already a no-op against disk.
@@ -286,8 +227,7 @@ Settled. Argue with them only with a reason, and say that you are.
     fact about where the commands are documented rather than a copy of them.
 14. **A delete reaches the index that points at what was deleted.**
     `chunks`/`vec_chunks` have no foreign keys, so the cascade is in code: index
-    rows first, vectors before chunks, a vector-delete failure raising rather than
-    half-completing.
+    rows first, vectors before chunks, a vector-delete failure raising rather than half-completing.
 15. **"Chat" means both chats.** cfc has normal sessions and **private** ones
     (`p` at the hub), and every feature is specified and built for both.
 
@@ -441,12 +381,8 @@ they lose. Reopening one needs a new argument, not a fresh eye.
   so a 03:00 job runs only if a terminal happens to be open. `run-due.sh` still
   works under cron on native Linux; the supported path is Task Scheduler.
 - **`inbox/` and `outbox/` at the repo root.** Existed briefly. It isn't code, so
-  it'd have to be gitignored — and a gitignored folder in the repo is invisible to
-  clones, outside the vault's backup, and destroyed by a fresh checkout. The vault
-  pair is backed up and editable from Obsidian.
-- **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates
-  against its own `MOVE_ROOTS` precisely because it is not the model. The
-  separation is the design; the two tuples are independent.
+  it'd have to be gitignored — and a gitignored folder in the repo is invisible to clones, outside the vault's backup, and destroyed by a fresh checkout. The vault pair is backed up and editable from Obsidian.
+- **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates against its own `MOVE_ROOTS` precisely because it is not the model. The separation is the design; the two tuples are independent.
 - **~~Starting LM Studio from WSL~~ — not a rejected design; it works.** Written
   up as impossible on three failures in one afternoon, then done first time from
   a cold machine (`legacy/BUGS.md`). Kept here as the standing caution: **this
@@ -498,11 +434,7 @@ cover the question. One failure is invisible, the other self-corrects. The old
 `TOOLS_MAX_TURN_RESULT_CHARS`) had to land together. The call ceiling is generous
 *because* the output ceiling makes generosity affordable: roam widely, read
 narrowly. Raising the ceiling alone — which is what the symptom asks for — makes
-the context problem strictly worse. They **exit differently, and that asymmetry is
-load-bearing**: calls exhausted inserts `agent.LIMIT_MESSAGE` (a stub *we* wrote,
-compared by identity in `runner`, so it must interpolate nothing) and fails a
-routine; output exhausted takes the tools off the request for one more call so the
-model answers in prose about a real partial job, and does not fail the run.
+the context problem strictly worse. They **exit differently, and that asymmetry is load-bearing**: calls exhausted inserts `agent.LIMIT_MESSAGE` (a stub *we* wrote, compared by identity in `runner`, so it must interpolate nothing) and fails a routine; output exhausted takes the tools off the request for one more call so the model answers in prose about a real partial job, and does not fail the run.
 
 **A routine's ceiling is its own** (`ROUTINE_MAX_CALLS_PER_TURN` > the chat one).
 The number was never about cost — it bounds how long a runaway loop runs before a
@@ -529,8 +461,7 @@ healthy 0.157s never is.
 
 Measured 2026-07-27 on Cas's machine: a live local embedder answers a real
 `/embeddings` POST in **0.157s**, `lms server status` and `lms ps` ~0.33s,
-`tasklist.exe` ~0.15s, and a dead local port on WSL **hangs rather than
-refusing**, so it costs exactly the connect timeout. That is what buys the
+`tasklist.exe` ~0.15s, and a dead local port on WSL **hangs rather than refusing**, so it costs exactly the connect timeout. That is what buys the
 traffic light its lack of a cache: 0.16s healthy and 0.5s broken is cheap enough
 to ask on every hub render, and an answer you can always re-ask never has to be
 aged.
@@ -546,8 +477,7 @@ pairs**, not as values — retuning stays free, merging does not.
 whole completion is done — a thinking model inside a tool loop is legitimately
 silent for minutes. `stream_response` reads for 300s, but httpx resets that clock
 per chunk, so it bounds the *gap between deltas*. Title generation gets 60s
-because it swallows every exception, and a hung title on the long timeout would be
-ten minutes of silence followed by `(untitled)`.
+because it swallows every exception, and a hung title on the long timeout would be ten minutes of silence followed by `(untitled)`.
 
 **`_SUGGEST_CUTOFF = 0.6` was measured on a MODELS list, and that is half of
 what it measures.** The model near-miss picker's difflib cutoff, looser than
@@ -563,11 +493,7 @@ runs first, because a short query against a long id scores below any usable
 cutoff (`minimax3` vs `minimaxminimaxm3`) while the word `minimax` is a plain
 substring of every minimax id.
 
-**Context colours are opinionated; the percentages aren't.** `ui.context_style` is
-the single mapping read by the bar, the hub column and the post-turn nudge — they
-were three literals away from disagreeing. 15/35 rather than 60/80, because a 1M
-window is a vendor claim, not a promise that the last 900k tokens get the same
-attention as the first.
+**Context colours are opinionated; the percentages aren't.** `ui.context_style` is the single mapping read by the bar, the hub column and the post-turn nudge — they were three literals away from disagreeing. 15/35 rather than 60/80, because a 1M window is a vendor claim, not a promise that the last 900k tokens get the same attention as the first.
 
 **Splash resampling is box-average, not nearest, and that is specific to this
 art** — a one-pixel rim light on black, which nearest-neighbour halving breaks
@@ -578,8 +504,7 @@ source of truth that gets resampled.
 
 ## The recurring hazard: written in one place, parsed in another
 
-Not one bug — a shape this codebase keeps producing. Every instance fails the same
-way: a regex quietly stops matching, nothing raises, and the feature returns
+Not one bug — a shape this codebase keeps producing. Every instance fails the same way: a regex quietly stops matching, nothing raises, and the feature returns
 "there is nothing here."
 
 | written by | parsed by | what breaks on drift |
@@ -601,8 +526,7 @@ failure of the two.
 
 Same class, provider-side: `agent._is_empty_completion_400` and
 `runner.looks_unclear()` match on wording nobody controls. Both are deliberately
-**fail-safe in direction** — a reword degrades to the older, louder failure, never
-to a new silent pass.
+**fail-safe in direction** — a reword degrades to the older, louder failure, never to a new silent pass.
 
 Two rules: **keep producer and parser in the same module** where the dependency
 graph allows, and **pin them by round-trip, never against a literal.** A test
@@ -629,21 +553,16 @@ Bugs that were live and quiet. Each one is a class, not an incident.
 **A deleted conversation stayed in the retrieval index.** Three bugs in one:
 still-searchable content, orphaned rows, and — because SQLite reuses rowids — a
 stale chunk *joining cleanly* to an unrelated live message, so `search` cited it
-under a conversation the text never came from. 207 stale chunks and 195 vectors on
-the live db. The repair rule is exact rather than heuristic, which is what made it
-safe to run: a chunk is stale if its message is gone *or* if
-`chunks.session_id != messages.session_id`, and the second cannot arise in normal
+under a conversation the text never came from. 207 stale chunks and 195 vectors on the live db. The repair rule is exact rather than heuristic, which is what made it safe to run: a chunk is stale if its message is gone *or* if `chunks.session_id != messages.session_id`, and the second cannot arise in normal
 operation.
 
 **One Ctrl-C bricked a session in place.** The orphaned-tool-call fix existed at
-replay time only, so reopening the session repaired it — which is exactly what made
-the failure look intermittent and provider-shaped rather than local and
+replay time only, so reopening the session repaired it — which is exactly what made the failure look intermittent and provider-shaped rather than local and
 deterministic.
 
 **A routine that did nothing logged `ok`.** Three separate doors into the same
 failure: an empty completion summarised to `""`; `LIMIT_MESSAGE` was *non-empty*,
-so a halfway-stopped run rendered a respectable log line; and a model can finish a
-clean loop while its own answer says it couldn't do the task ("those files are
+so a halfway-stopped run rendered a respectable log line; and a model can finish a clean loop while its own answer says it couldn't do the task ("those files are
 outside my allowed roots"). That last one had a nightly job doing nothing for weeks.
 Hence `review` as a **second, orthogonal flag** — kept out of `status` so
 `on_failure` doesn't retry a working routine at full API cost.
@@ -653,29 +572,21 @@ one model that empties 3/3 re-rolls. `--run-due` passes `model=None`, so before
 `ROUTINE_MODELS` existed the unattended path silently ran on whatever chat was
 using.
 
-**`trigger: 0300` was read as 192.** YAML 1.1 types a leading-zero digit string as
-octal, so the obvious way to write 03:00 arrived as an integer and validation
-rejected a trigger nobody wrote. Bites `0000`–`0777` only — i.e. exactly the hours
-these jobs run. **Any other digit-string field is exposed to the same trap.**
+**`trigger: 0300` was read as 192.** YAML 1.1 types a leading-zero digit string as octal, so the obvious way to write 03:00 arrived as an integer and validation
+rejected a trigger nobody wrote. Bites `0000`–`0777` only — i.e. exactly the hours these jobs run. **Any other digit-string field is exposed to the same trap.**
 
 **Tab completion had silently stopped existing.** `complete.py` wired into
 readline; input moved to prompt_toolkit, which never consults it. Nothing raised,
 `install()` kept returning True, no test covered it. It didn't break — it stopped
 happening.
 
-**The golden baseline was pinning `config.py`.** Adding a model to your own config
-failed `check` on lines that say nothing about the code; so did rotating the API
-key. Anything a baseline pins that lives in config rather than in source is this
-bug. They're forced to fixture values in `capture()` now.
+**The golden baseline was pinning `config.py`.** Adding a model to your own config failed `check` on lines that say nothing about the code; so did rotating the APIkey. Anything a baseline pins that lives in config rather than in source is this bug. They're forced to fixture values in `capture()` now.
 
 **The chunker sliced mid-word at both edges** — 22 of 26 chunks opened on a
-fragment, embedding leading garbage as content. It sat in `BACKLOG.md` for six days
-precisely because nothing failed; a bad slice is embedded, stored, and thereafter
-visible only as slightly worse ranking.
+fragment, embedding leading garbage as content. It sat in `BACKLOG.md` for six days precisely because nothing failed; a bad slice is embedded, stored, and thereafter visible only as slightly worse ranking.
 
 **The collision walk compared a stored filename against a resolved stem**, so it
-silently never advanced and `/add relax` filled the system prompt forever. Found by
-driving it, not by reading it.
+silently never advanced and `/add relax` filled the system prompt forever. Found by driving it, not by reading it.
 
 **`is_litter` matched one marker against a whole concatenated string** instead of
 per line, so concatenated markers got embedded as content. Shipped that way once.
@@ -688,8 +599,7 @@ day it landed: it survived a testing pass because **a wrong-looking line still
 tells you the true thing.** Styled output is `style=`, never brackets.
 
 **A prose sweep nearly renamed the persisted `[:remember …]` marker** during the
-`:`→`/` flip, which would have stopped every existing marker row from parsing. When
-you sweep for a prefix, storage formats are not prose.
+`:`→`/` flip, which would have stopped every existing marker row from parsing. When you sweep for a prefix, storage formats are not prose.
 
 ---
 
@@ -767,10 +677,7 @@ command.
 
 - WSL2/Ubuntu on Windows. Vault on `/mnt/c`, reached Linux→Windows (fast); never
   `\\wsl.localhost` (slow, flakier).
-- **`<vault>/00 inbox` is where Cas leaves briefs. `<vault>/99 outbox` is the only
-  writable path in the system** — and one directory inside it, the routine log dir,
-  is closed to `write_file` separately, because containment alone admits it and a
-  model can decide to tidy its own audit trail without being asked.
+- **`<vault>/00 inbox` is where Cas leaves briefs. `<vault>/99 outbox` is the only writable path in the system** — and one directory inside it, the routine log dir,  is closed to `write_file` separately, because containment alone admits it and a model can decide to tidy its own audit trail without being asked.
 - The vault is a git repo (`<vault>/.git` → `~/vaults/wiki.git` via a `gitdir:`
   pointer). **It has a remote as of 2026-07-27** — `origin` is a *private*
   GitHub repo (`cfc-vault-cas`), `main` tracks `origin/main`, and the ext4-only
@@ -790,11 +697,9 @@ command.
   went false — and the false reason was the half saying nothing could be done,
   at the moment something could. A warning that talks you out of the fix is
   worse than no warning.
-- Embeddings come from a **separate endpoint** to chat: self-hosted `bge-m3` on LM
-  Studio. `networkingMode=mirrored` means localhost reaches the Windows host; the
+- Embeddings come from a **separate endpoint** to chat: self-hosted `bge-m3` on LM Studio. `networkingMode=mirrored` means localhost reaches the Windows host; the
   old NAT gateway IP no longer resolves at all, and don't put one back — a stale
-  one now fails closed instead of drifting. "Serve on local network" must stay on,
-  and the model id is `text-embedding-baai-bge-m3-568m`, not plain `bge-m3`.
+  one now fails closed instead of drifting. "Serve on local network" must stay on, and the model id is `text-embedding-baai-bge-m3-568m`, not plain `bge-m3`.
 
   **Why separate, since the code only shows that it is:** the corpus is
   personal, embedding it is cheap and constant, and posting every note you write
@@ -804,26 +709,16 @@ command.
   be running, which is why `preflight.py` and the connection light exist. The
   coupling runs one way only: swapping the *embedding* model invalidates
   `MAX_DISTANCE` and the whole index; swapping the chat model costs nothing.
-- **LM Studio running is not the same as its server running.** The tray app can sit
-  there for weeks with the server off; that's the state `preflight.py` exists for.
+- **LM Studio running is not the same as its server running.** The tray app can sit there for weeks with the server off; that's the state `preflight.py` exists for.
 - Windows Task Scheduler fires `run-due.sh` on a fixed tick. The wrapper redirects
-  its own stdout to `~/.cfc/schedule.log` before anything that can fail, because the
-  recommended hidden task discards stdout — hiding the window is only safe because
-  the output went somewhere.
+  its own stdout to `~/.cfc/schedule.log` before anything that can fail, because the recommended hidden task discards stdout — hiding the window is only safe because the output went somewhere.
 
 ## Testing
 
-`tests/golden.py` is a **characterization harness**, not unit tests: it pins the
-REPL's exact stdout for every no-API command, so a refactor meant to change nothing
-is proven to. `record` re-baselines — inspect the diff first, it exists to catch
-the changes you *didn't* intend. `SCRUB` normalises timestamps, paths and the key
-digest on both sides at compare time, so adding a rule fixes a baseline without
+`tests/golden.py` is a **characterization harness**, not unit tests: it pins the REPL's exact stdout for every no-API command, so a refactor meant to change nothing is proven to. `record` re-baselines — inspect the diff first, it exists to catch the changes you *didn't* intend. `SCRUB` normalises timestamps, paths and the key digest on both sides at compare time, so adding a rule fixes a baseline without
 re-recording.
 
-Thirty-odd unit suites beside it; none needs an API key. **What is
-hand-verified, stated rather than implied** (`W-02`) — a version claiming things
-are verified by something that doesn't get tired owes the reader the other half
-of the sentence:
+Thirty-odd unit suites beside it; none needs an API key. **What is hand-verified, stated rather than implied** (`W-02`) — a version claiming things are verified by something that doesn't get tired owes the reader the other half of the sentence:
 
 | | |
 |---|---|
@@ -832,19 +727,11 @@ of the sentence:
 | the two answer **panels** | **not comparable, and the reason is structural.** The tool path renders through `agent.render_answer`; the streaming path renders inside `api.stream_response`, delta by delta, because it paints as it arrives. Stubbing the provider — the right place — takes the streaming render with it |
 | how the splash **looks** | **not automatable.** The compositor and the import graph are pinned (`test_splash.py`); a one-pixel rim light on black is not |
 
-**A list of what isn't tested goes stale in the safe-looking direction.** The
-picker sat on that table as hand-verified for two releases after `test_hub.py`
-already drove it — adding a test is the moment nobody thinks to edit the docs,
-and the result is a version planning work that is already done.
+**A list of what isn't tested goes stale in the safe-looking direction.** The picker sat on that table as hand-verified for two releases after `test_hub.py` already drove it — adding a test is the moment nobody thinks to edit the docs, and the result is a version planning work that is already done.
 
-Three habits worth keeping, all learned here: **verify a guard by disabling it**
-and watching the assertions fail (seven of them for the journal's git guard);
-**patch the seam, not `config`** — `test_routines` patches
-`routines.routine_dir` because patching config misses anything that read the
-value at import; and **compare two implementations to each other rather than
-to a literal** where there are two — `test_turn_paths.py` asserts the tool path
-ends exactly as the streaming path does, which cannot pass while they disagree
-and needs no edit when they agree differently.
+Three habits worth keeping, all learned here: **verify a guard by disabling it** and watching the assertions fail (seven of them for the journal's git guard);
+**patch the seam, not `config`** — `test_routines` patches `routines.routine_dir` because patching config misses anything that read the
+value at import; and **compare two implementations to each other rather than to a literal** where there are two — `test_turn_paths.py` asserts the tool path ends exactly as the streaming path does, which cannot pass while they disagree and needs no edit when they agree differently.
 
 ## Open threads
 
@@ -880,14 +767,9 @@ a changelog entry, not a paragraph here.
   chunk/vector schema as in flux. Intended shape: SQLite stays the source of
   truth, sqlite-vec is an index over it.
 
-**One closed thread is kept, because what closed it is reusable.** Zero recall
-hits are three distinguishable outcomes (`W-01`, v1.0) — embedder never answered
-(`embed.EmbedUnavailable`), nothing indexed (`search.why_empty`), or searched and
-missed. The routine half was never built and never can be as things stand: **no
-routine can reach recall.** The four tools are `list_dir`, `read_file`, `grep`
-and `write_file`, and `commands.py` is the only module importing `search` or
-`recall`, so there is no call site a routine's zero-hit policy could live at. The
-transferable half is that the draft scoping it assumed otherwise: **a policy for
-a caller that doesn't exist is a spec nobody can execute**, and it reads exactly
-like ordinary owed work until someone greps for the import. Successor in
+**One closed thread is kept, because what closed it is reusable.** Zero recall hits are three distinguishable outcomes (`W-01`, v1.0) — embedder never answered
+(`embed.EmbedUnavailable`), nothing indexed (`search.why_empty`), or searched and missed.
+The routine half was never built and never can be as things stand: **no
+routine can reach recall.** 
+The four tools are `list_dir`, `read_file`, `grep` and `write_file`, and `commands.py` is the only module importing `search` or `recall`, so there is no call site a routine's zero-hit policy could live at. The transferable half is that the draft scoping it assumed otherwise: **a policy for a caller that doesn't exist is a spec nobody can execute**, and it reads exactly like ordinary owed work until someone greps for the import. Successor in
 `ROADMAP_BEYOND.md`, number unclaimed.
