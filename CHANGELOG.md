@@ -27,6 +27,33 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — A checked inventory of every system-layer injection seam (`W-1.4-05`, 1.4.1 part 1)
+`SYSTEM_INJECTIONS.md` names every seam that puts words in front of the model
+the model didn't say and the user didn't type: assembled prompt/persona/traits
+and tool guidance, First Message and the governor's direction, the tool turn's
+advisory rider and its synthetic stand-ins (`LIMIT_MESSAGE` and friends), a
+routine's own opening turn and assembled system context, recall's grounded
+synthesis, title generation, `/remember`'s excerpt block, an attachment's
+envelope, and the two indirect transforms (`runner.fill_placeholders`,
+`api.wire_messages`).
+
+It's checked rather than trusted: `tests/test_system_injections.py` derives
+the same inventory from source — an AST walk finds every top-level function
+that literally builds a `{"role": ...}` message dict with a hardcoded role
+other than `"tool"` (the API's own role, `agent._answer`'s alone to build) —
+and fails if a live producer has no anchor, or a documented anchor no longer
+resolves. One function, `main._run_turn`, is excluded by name: it replays the
+user's own typed text and the model's own returned answer, not new content —
+everything else in the document is discovered, not hand-listed. Proved by
+disabling it both ways while developing: an anchor removed, and a stale one
+added, each fails a distinct assertion.
+
+- Files: SYSTEM_INJECTIONS.md, tests/test_system_injections.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — `/add <path>` works again in Main chat (`B-1.4-01`, 1.4 triage)
 Main's fixed profile was enforced by a guard over the whole of `/add`, placed
 above the branch that attaches a file — so `/add <path>` in Main never reached
