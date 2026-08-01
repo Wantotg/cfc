@@ -155,6 +155,38 @@ one happened rather than let an empty `BUGS.md` imply the stronger one.
 
 
 
+## B-06 · `ui.console` still rewrites `:word:` in chat content as an emoji
+
+**Found:** 2026-08-01, while answering the v1.4 pass's emoji question — found by
+reading, so a plain-sequence id.
+
+`ui.console` is `Console(markup=False)` because chat content must never be
+reinterpreted as markup. rich's **emoji substitution is a separate switch**
+(`emoji=True`, on by default) and is still running, so any `:name:` matching
+rich's emoji table is silently replaced in everything printed through that
+console — model answers, attachments, recall excerpts, tool results:
+
+```
+"run :new:"   → "run 🆕"
+":key: :lock: :books: :100:"   → "🔑 🔒 📚 💯"
+"a plain :nonsense: word"      → unchanged
+```
+
+**Same class as the four `console.print` calls that printed their own markup
+tags** — one setting away from the decision it was supposed to implement — but
+inverted: that one showed you the mechanism, this one hides it. A model
+explaining `:key:` in a config format, or printing a doctest, has the text
+rewritten between the provider and the screen, and nothing says so.
+
+**Where to look:** `ui.py:22`. `emoji=False` looks free — the only shortcode
+literal anywhere in the source is `":memory:"` (`db.py:49`, `main.py:241`,
+`main.py:817`), which rich does not substitute because it has no such emoji
+name, and that is luck rather than design. Check the templates and any
+routine prompt text before assuming nothing wanted the substitution.
+
+**Not a v1.4 defect and not a tag blocker** — it has been live since `ui.py`
+was written and touches nothing v1.4 claims.
+
 ## B-1.3.1-02 · Typing while cfc is silently busy after a turn sends an unintended message
 
 **Found:** 2026-07-31, in the v1.3.1 playtest. After a turn paints the blank
