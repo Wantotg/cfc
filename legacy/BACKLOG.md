@@ -22,6 +22,115 @@ not the file.
 
 # Closed since the split
 
+## ~~D-1.4-02 · The routines screen labels a routine by its id; everything else uses its name~~ — CLOSED (v1.4.1, 2026-08-01)
+
+**Closed 2026-08-01**, v1.4.1 — the routines screen and its validation lines
+now show `Routine.name`, using the same row data at both widths.
+`tests/test_screens.py`, `CHANGELOG.md`, a59d97e.
+
+The entry as it stood:
+
+---
+
+## D-1.4-02 · The routines screen labels a routine by its id; everything else uses its name
+
+**Found:** 2026-08-01, v1.4 playtest. The routines screen's `Routine` column
+shows `short-term-memory` where the file, the hub's Routines panel and `show`'s
+own heading all say `short term memory`.
+
+**Not a mismatch and not a leftover, which is the half worth knowing.** The
+routine file really does say `id: short term memory`; `Routine.__init__`
+slugifies the id at construction (`routines.py:266`) because these files are
+hand-authored in Obsidian, where spaces are what you naturally type, and a
+strict slug check would have failed every hand-made routine. The slug is then
+the handle everywhere it has to be one — the log filename, the session lookup,
+`/routine <id>`. The file is never rewritten; only `to_markdown()` emits the
+slug, so a routine cfc itself saves normalises and one you wrote by hand does
+not. `screens._routine_row` is simply the only surface that prints the handle
+instead of the display name.
+
+**Owed:** show the name in that column, since `load_routine` resolves by id,
+name *or* the slug of what was typed — so the name is a usable handle too, and
+nothing on the screen depends on the id being visible. Two things move with it,
+which is why this is an entry rather than a one-word edit: `_render_routines`
+prints its problem lines as `! {r.id}: {why}` *below* the table, so a name in
+the column and an id underneath would label one routine two ways on one screen;
+and the narrow renderer uses the same row dict. Consider printing the id beside
+the name where they differ rather than replacing it — `show` already does
+exactly that, name in bold with `id` as its first field.
+
+## ~~D-13 · A failed title call is silent and the next turn inherits the titling~~ — CLOSED (v1.4.1, 2026-08-01)
+
+**Closed 2026-08-01**, v1.4.1 — title failures now raise, log one `title`
+record and print one visible warning; a later turn cannot inherit the work.
+`tests/test_titles.py`, `tests/test_turn_paths.py`, `CHANGELOG.md`, 0cc952e.
+
+The entry as it stood:
+
+---
+
+## D-13 · A failed title call is silent and the next turn inherits the titling
+
+**Found:** 2026-07-31, in the v1.3.1 diagnosis. `generate_title()` swallows
+every exception and falls back to `(untitled)`. A failed title request is not
+shown in the console or written to `errors.log`, and the guard retries on the
+next message, so the next turn can receive the stale title job. The user-visible
+freeze and accidental input are `B-1.3.1-02`; this is the separate observability
+debt in the title path.
+
+**Owed:** make a failed title call visible and keep it from silently handing the
+work to whatever message comes next. It is not a v1.3.1 defect claim and is not
+a tag blocker.
+
+## ~~D-11 · `/tools` puts two more config values in the golden baseline. 1.0, 29-07-2026~~ — CLOSED (v1.3, 2026-07-31)
+
+**Closed 2026-07-31**, v1.3 — the golden fixture now uses a temporary write root
+outside the checkout, with the path scrubbed in the baseline.
+`tests/test_golden_fixture.py`, `CHANGELOG.md`.
+
+The entry as it stood:
+
+---
+
+## D-11 · `/tools` puts two more config values in the golden baseline. 1.0, 29-07-2026
+
+**Found:** 2026-07-29, immediately after fixing `D-01` — the re-recorded
+baseline still carried two lines of Cas's config:
+
+```
+  read roots: <ROOT>, /mnt/c/Users/disse/cooking for cats
+  write roots: /mnt/c/Users/disse/cooking for cats/99 outbox
+```
+
+**Same class as `D-01` and as the `config.py` scar it descends from:** *anything
+a baseline pins that lives in config rather than in source is this bug.* Edit
+your own `TOOLS_ROOTS` and `check` fails on lines that say nothing about the
+code, which trains the habit of skipping a hunk in a `record` diff — and that is
+the habit that one day carries a real regression past you.
+
+**The obvious fix was tried and is wrong, which is why this is an entry rather
+than a commit.** Repointing `WRITE_ROOTS` at a fixture under `tests/` raises
+`ScopeError`: standing decision 4 refuses a write root that overlaps the cfc
+source tree. The guard is right and the fix was wrong. Note the asymmetry with
+`D-01`, because it is the thing to understand before trying again — `mover`
+validates against its own `MOVE_ROOTS`, deliberately not `WRITE_ROOTS`, so a
+fixture *inside* the repo is fine for the outbox and cannot be for this.
+
+**So a fixture write root has to live outside the working tree**, which means a
+temp directory in `golden.py`'s lifecycle. That is not hard, but it is a new
+kind of thing for that file — every other fixture it owns is a path under
+`tests/` it creates and deletes — and `SCRUB` already collapses `/tmp/...` to
+`<TMP>`, so the determinism is free once the directory exists.
+
+**Do not fix it by scrubbing.** `/tools` is in `SCRIPT` because its output is a
+statement about the permission model rather than a status dump, and
+read-roots-are-not-write-roots is the load-bearing half of that. A `SCRUB` rule
+would keep the baseline stable while making the line say nothing, which is the
+worse of the two failures: `D-01`'s cost was a diff you learn to skip, and this
+would be a line you can no longer read.
+
+**Not urgent.** It fails loudly, in the good direction, exactly like `D-01`.
+
 ## ~~D-1.1-05 · `TRANSIENT_STATUS_CODES` omits 504~~ — CLOSED (2026-07-30)
 
 **Closed 2026-07-30**, v1.1.1 — 504 added to the frozenset alongside 429/502/503;

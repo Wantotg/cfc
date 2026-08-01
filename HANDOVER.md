@@ -56,7 +56,9 @@ this scheme — it's pushed, so it stays; don't mint new two-digit ones.)
 2. **Cas playtests the pushed version.** Nothing is tagged; `main` carries theversion and does not yet claim it works.
 3. **Triage.** Every finding gets a place. Whatever blocks the tag is fixed,committed and pushed.
 4. **Cas writes the version note**, straight into `ROADMAP.md`, from use.
-5. **Cas pulls and tags** — `git push --tags`; tags do not ride a normal push.
+5. **The manager finishes the sync after Cas confirms backup and authorises it**
+   — commit and push the tracked documentation, create the agreed annotated
+   tag, then `git push --tags`; tags do not ride a normal push.
 
 **What blocks the tag: a finding that falsifies a claim in that version's
 `ROADMAP_PRIVATE.md` proposal.** Not *did this version cause it* — that is
@@ -74,7 +76,10 @@ Three things the order protects:
 - **A tag is a public claim that a version is done.** While the playtest came after the tag, three of the four releases before v0.9.1 were patch releases named for what a testing pass caught — which had quietly made PATCH mean *this version was never tested*.
 - **The note gets written from use.** v0.9's note — *"ready to playtest to test  weird things"* — is a note about intent, because at the time that is all it  could be.
 
-**Push in-session, never tag in-session.** The tag is Cas's call. **A pushed tagis immutable** — a mistake found after tagging is fixed in the next ordinary commit, never by re-tagging.
+**Push in-session, tag only after explicit confirmation.** The release decision
+is Cas's call; once he confirms the agreed sync, the manager performs it.
+**A pushed tag is immutable** — a mistake found after tagging is fixed in the
+next ordinary commit, never by re-tagging.
 
 **Don't reformat working code you weren't asked to touch.**
 

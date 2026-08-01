@@ -64,7 +64,7 @@ genuine provider body on a guess is the worse trade.
 
 - Files: main.py, db.py, tests/test_turn_paths.py
 - Status: shipped
-- Commit: pending
+- Commit: 196ed88
 
 ---
 
@@ -813,6 +813,7 @@ at the bottom.
 - Status: shipped
 - Commit: 99c3510
 
+
 ## 2026-07-29 — The pre-1.0 changelog is frozen
 Post-1.0 doc rewrite, step 2. Every entry up to and including the v1.0 tag moves
 whole to `legacy/CHANGELOG.md`; the live file keeps the header and starts at
@@ -870,4 +871,3 @@ demonstrated on itself.
 - Files: HANDOVER.md, CHANGELOG.md
 - Status: shipped
 - Commit: 99c3510
-

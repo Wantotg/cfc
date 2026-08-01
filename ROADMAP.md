@@ -257,3 +257,31 @@ selected model is process-wide, so changing chats no longer changes what
       \ _/ ___ (  \ \
        (__/  (__ /  \|
 ```
+
+## v1.4.1 — Main chat follow-through — 2026-08-01
+
+A turn now ends honestly: cfc says it is still working instead of looking
+ready, and everything it does after an answer happens before it offers you
+the next line. A failed title is a real failure with a place to read about
+it, terminal text is finally literal, and there is one checked document
+saying every way cfc puts words in front of the model.
+
+**Added**
+- `SYSTEM_INJECTIONS.md` — every system-layer injection seam, checked against
+  the source by a test rather than maintained by hand (W-1.4-05)
+- `finishing turn` — a visible busy state covering titling and indexing
+
+**Fixed**
+- typing during the silent post-turn window no longer sends a line you never
+  wrote (B-1.3.1-02)
+- a failed title call is visible, logged, and never handed to a later turn
+  (D-13)
+- a chat whose first turn hit a provider error can still be titled (B-07)
+- `:key:`-shaped text in a chat is no longer rewritten as an emoji (B-06)
+- the routines screen names a routine, not its slug id (D-1.4-02)
+- the test suite no longer writes fabricated errors into `errors.log` (B-08)
+
+> *Note: mainly chatting, and hunting for silent failures and invisble errors *
+```
+=^._.^= ∫ 'make them visible, make them scream!'
+```
