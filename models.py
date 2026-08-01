@@ -27,8 +27,11 @@ from collections import namedtuple
 # routine_default the one record `default_routine_model()` returns when a
 #                 routine has no model of its own; at most one may be True
 # limit           context window in tokens, or None if unknown
-# preset_params   the PARAMETER_PRESETS keys verified for this id — never
-#                 guessed, same discipline as `tools` (default: none declared)
+# preset_params   the PRESET_PARAM_RANGES keys — "temperature"/"top_p" — this
+#                 id is verified to accept. Parameter names, not preset names;
+#                 a preset is compatible when every key it sets is declared
+#                 here. Never guessed, same discipline as `tools`
+#                 (default: none declared)
 ModelSpec = namedtuple("ModelSpec",
                        "id listed tools routine routine_default limit "
                        "preset_params")

@@ -27,6 +27,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — `preset_params` is a list of parameter names, and said otherwise (`B-1.5-02`)
+`config.example.py` and `models.py`'s field table both described
+`preset_params` as "the `PARAMETER_PRESETS` keys verified for this id" — it
+holds `"temperature"`/`"top_p"`, the parameter names, never a preset name.
+A reader following the shipped instruction writes `preset_params=["creative"]`
+and cfc refuses to launch: `models.load()` runs at import, nothing catches
+`ModelConfigError`, so the only documented way into v1.5's presets is a
+traceback. Loud rather than silent, which is the one thing that went right.
+
+Blocked the tag. `Concept.md`'s *Named Parameter presets* gives
+`config.example.py` the job of teaching the new record, and the private
+roadmap's preset entry turns on the declaration being writable at all; the
+feature was reachable only by ignoring its own documentation. Both comments
+now say *parameter names, not preset names*, and the config file carries a
+two-line worked pair — a model declaring `temperature`, a preset setting it —
+driven through `models.compatible_presets` before being written down, along
+with what stops working when the preset grows a second parameter.
+
+Nothing checks prose, and no test could have caught this: the shipped
+`MODELS` records declare no `preset_params` at all, so the file's *code* was
+always valid. Second time `config.example.py` has shipped wrong instructions
+(`B-0.9.1-02`, twelve retired `:` commands) — standing decision 13's note
+that it is the only shipped file that instructs a human, and that nothing
+verifies it, now has a second instance under it.
+
+- Files: config.example.py, models.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-01 — v1.5 — Conversation control (`W-1.3-02`, `W-1.3-03`, `W-1.4-03`, `W-1.3.1-05`)
 `/swipe` re-answers the latest ordinary chat turn — same user row, current
 model/tools/preset — and `/undo` retracts it entirely. Both classify the

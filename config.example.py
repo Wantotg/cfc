@@ -88,12 +88,16 @@ MAIN_CHAT_DIR = "PLACEHOLDER"
 #                     MODEL above
 #   limit             context window in tokens, for /status's usage bar
 #                     (default None — unknown, /status shows a raw count)
-#   preset_params     which PARAMETER_PRESETS keys (below) are verified to
-#                     work against this exact model and endpoint — like
-#                     `tools`, a recorded fact, never guessed. Leave unset
-#                     and every preset stays incompatible with this id, so
-#                     nothing about sampling is ever sent to an endpoint you
-#                     haven't checked it against (default: none declared)
+#   preset_params     which sampling parameters this model accepts: a list of
+#                     "temperature" and/or "top_p", and nothing else. Set it
+#                     once you have checked they actually work on this id —
+#                     like `tools`, a fact you verified, not a guess. Leave it
+#                     unset and no preset can be used with this model
+#                     (default: none declared)
+#
+#                     Parameter names, not preset names. A preset from
+#                     PARAMETER_PRESETS below can be selected for this model
+#                     when every parameter it sets is listed here.
 #
 # A config.py still using the pre-1.2.1 shape (MODELS as a bare list of
 # strings, plus separate TOOLS_MODELS/ROUTINE_MODELS/MODEL_LIMITS) keeps
@@ -106,17 +110,24 @@ MODELS = [
     dict(id="moonshotai/kimi-k2.6:thinking", tools=True, limit=256_000),
 ]
 
-# Named sampling profiles (v1.5): a name mapped to temperature (0-2) and/or
-# top_p (0-1) — the two controls the current NanoGPT Chat Completions contract
-# documents with stable ranges. `/preset <name>` selects one for the open
-# chat; `/preset default` clears back to the provider's own default. Nothing
-# here reaches a request on its own — a preset only applies to a model whose
-# MODELS record declares the matching `preset_params` above, once you've
-# verified it actually takes them. A preset can't be named 'default'; that
-# word is reserved for clearing.
+# Named sampling profiles (v1.5). A name, mapped to temperature (0-2) and/or
+# top_p (0-1) — the only two parameters cfc sends. In a chat, `/preset creative`
+# selects one and `/preset default` clears it. 'default' is reserved for that,
+# so you can't name a preset it.
 #
-# Empty ships clean: presets are opt-in, and declaring one without also
-# marking a model's `preset_params` leaves it configured but never sent.
+# Turning one on takes both halves — the preset here, and the model above
+# saying it accepts those parameters:
+#
+#   MODELS = [dict(id="some/model", preset_params=["temperature"])]
+#   PARAMETER_PRESETS = {"precise": dict(temperature=0.2)}
+#
+# `precise` sets temperature, `some/model` accepts temperature, so `/preset
+# precise` works there. Add top_p to the preset and it stops working until
+# top_p is in preset_params too. Only declare a parameter you have actually
+# seen the model take — cfc trusts you and sends what you configured.
+#
+# Leave this empty and nothing changes: presets are opt-in, and a preset with
+# no model declaring its parameters is configured but never sent.
 PARAMETER_PRESETS = {
     # "creative": dict(temperature=1.1, top_p=0.95),
     # "precise": dict(temperature=0.2),
