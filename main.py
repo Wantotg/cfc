@@ -56,7 +56,7 @@ from db import (
     get_persona, get_persona_name, set_persona, clear_persona,
     get_traits, set_traits,
     get_first_message, set_first_message, has_chat_messages,
-    count_chat_user_turns,
+    count_chat_user_turns, count_chat_answers,
     delete_session,
 )
 import mainchat
@@ -572,12 +572,26 @@ def run_session(conn, session_id, private=False, app_conn=None,
         unintended message. Nothing here claims "your turn" until there is
         truly nothing left to do.
 
-        Eligibility to title is the durable `turn_count` already read for the
-        governor, not `current_title == "(untitled)"` — that string is
-        display state, and using it as the gate is what let a failed title
-        request hand the job to whatever message came next (`D-13`). Only the
-        first successful ordinary chat answer (`turn_count == 1`) may title,
-        reopen or earlier failed attempt or not.
+        Eligibility to title is durable counts, not
+        `current_title == "(untitled)"` — that string is display state, and
+        using it as the gate is what let a failed title request hand the job
+        to whatever message came next (`D-13`). It is the *first ordinary
+        chat turn that produced an answer* that titles, which needs both
+        counts and not either alone (`B-07`):
+
+        - `turn_count == 1` is the ordinary case, and it is also the only
+          clause that survives a session opening with `/continue` or an OOC
+          direction off a First Message — those answer without a user row, so
+          the first thing the person actually types is still turn one while
+          `count_chat_answers` has already moved.
+        - `count_chat_answers(...) == 1` — this answer being the session's
+          first — is what a failed *turn* costs otherwise. The user row is
+          written before the request goes out, so a 503 on turn one advances
+          `turn_count` and nothing ever titles that chat again. That was live
+          in v1.4.1.
+
+        Neither clause can re-open titling after a title *failure*: turn one
+        succeeded, so both counts have moved past by the next turn.
         """
         nonlocal current_title
         print_context_bar(current_model, tok_in, tok_out)
@@ -588,7 +602,8 @@ def run_session(conn, session_id, private=False, app_conn=None,
             console.print()
             return
         console.print("finishing turn", style="dim")
-        if kind == "chat" and turn_count == 1:
+        if kind == "chat" and (turn_count == 1
+                               or count_chat_answers(conn, session_id) == 1):
             try:
                 new_title = generate_title(user_text)
             except TitleGenerationError as e:

@@ -826,6 +826,26 @@ def count_chat_user_turns(conn, session_id):
     return row[0] if row else 0
 
 
+def count_chat_answers(conn, session_id):
+    """Durable answers in this session — the other half of the title gate
+    (`main._finish_turn`, `B-07`).
+
+    The user count above cannot answer *did an earlier turn actually produce
+    an answer*: a turn whose provider call fails has already written its user
+    row, so a 503 on turn one advances that clock without anything being said
+    back. This counts what came back instead. `/continue` and OOC answers are
+    indistinguishable from an ordinary one here — they are the same
+    `kind='chat', role='assistant'` row — which is why the gate reads both
+    counts rather than replacing one with the other.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM messages "
+        "WHERE session_id=? AND kind='chat' AND role='assistant'",
+        (session_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
 def delete_session(conn, session_id):
     """Delete a session, its messages, and everything indexing them.
 

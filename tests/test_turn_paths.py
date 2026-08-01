@@ -47,7 +47,9 @@ sys.dont_write_bytecode = True
 import agent
 import commands
 import db as dbmod
+import errorlog
 import governor
+import httpx
 import main
 import models
 
@@ -117,6 +119,16 @@ def main_():
     assert "tmp" in str(tmp), "refusing to touch a real db"
     dbmod.DB_PATH = tmp / "chat.db"
     conn = dbmod.db()
+
+    # Same guard, one file over (`D-08`, `B-07`'s companion). This file drives
+    # *real* turns through `main._run_turn`, and two of the paths below reach
+    # `errorlog.log_error` on their own — a failed title and a provider error.
+    # Without this redirect they append to `~/.cfc/errors.log`, and four
+    # fabricated `title` records reached the live log that way during v1.4.1.
+    # That log is the evidence base for `B-01`'s absence watch, so a test that
+    # writes to it is manufacturing the thing being watched for.
+    errorlog.LOG_PATH = tmp / "errors.log"
+    assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the real log"
 
     # Only the provider is faked. `stream_response` is the streaming path's
     # wire call; `agent.call_api` is the tool path's, so the real agent_turn
@@ -426,6 +438,39 @@ def main_():
     ok("...and the title is still exactly what it was",
        dbmod.get_session_title(conn, fail_sid) == "(untitled)")
 
+    print("  (a first turn that never answered still titles later — B-07)")
+    # The reported shape: a provider error on turn one. The user row is
+    # written before the request goes out, so `turn_count` has already moved
+    # by the time an answer finally lands — and gating on that alone left the
+    # chat permanently untitled. Driven as two real turns, the first through
+    # the same `except httpx.HTTPError` a 503 takes.
+    def refuses(messages, model=None):
+        raise httpx.ConnectError("provider is having a day")
+
+    late_sid = dbmod.new_session(conn, title="(untitled)")
+    main.stream_response = refuses
+    out, calls = drive_finish(late_sid, "/tools off\nheya\n/q\n",
+                              title_result="Should Not Land Yet")
+    ok("a failed first turn never reaches the finisher",
+       "finishing turn" not in out and calls == [], (out[-200:], calls))
+    ok("...but its user row is durable, so the turn count has moved",
+       dbmod.count_chat_user_turns(conn, late_sid) == 1)
+
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+    out, calls = drive_finish(late_sid, "/tools off\nsecond try\n/q\n",
+                              title_result="Late Title")
+    ok("the first turn that actually answers titles the chat",
+       any(c[0] == "title" for c in calls), calls)
+    ok("...and it lands", dbmod.get_session_title(conn, late_sid) == "Late Title")
+    # The other half of the same gate: having titled once, it must not title
+    # again — the clause added for this bug must not reopen `D-13`'s retry.
+    out, calls = drive_finish(late_sid, "/tools off\nthird\n/q\n",
+                              title_result="Should Never Land")
+    ok("...once, and no later turn tries again",
+       not any(c[0] == "title" for c in calls), calls)
+    ok("...leaving the title exactly as it was",
+       dbmod.get_session_title(conn, late_sid) == "Late Title")
+
     print("  (/continue and OOC: the finisher runs, titling never does)")
     cont_sid = dbmod.new_session(conn, title="(untitled)")
     drive_finish(cont_sid, "/tools off\nfirst\n/q\n", title_result="T1")
@@ -446,6 +491,14 @@ def main_():
        not any(c[0] == "title" for c in calls), calls)
     ok("...and still runs auto-embed",
        any(c[0] == "embed" for c in calls), calls)
+    # And this is why the gate keeps `turn_count == 1` rather than reducing to
+    # "the session's first answer": that answer has already been given, by a
+    # direction the person never typed as a message.
+    out, calls = drive_finish(ooc_sid, "/tools off\nnow a real one\n/q\n",
+                              title_result="After OOC")
+    ok("...leaving the first typed turn after it still able to title",
+       any(c[0] == "title" for c in calls)
+       and dbmod.get_session_title(conn, ooc_sid) == "After OOC", calls)
 
     print("  (empty and cancelled turns never reach the finisher)")
     main.stream_response = lambda messages, model=None: ("", {}, "")

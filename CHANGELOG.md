@@ -27,6 +27,47 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — A chat whose first turn never answered can still be titled (`B-07`, `B-08`, 1.4.1 triage)
+Both findings are v1.4.1's own, both were found by reading rather than
+reported, and neither blocked the tag — Cas's call to fix them here rather
+than carry them.
+
+**`B-07`.** `_finish_turn`'s title gate was `turn_count == 1` alone. The user
+row is written *before* the request goes out, so a provider error on the first
+turn advanced that count without anything being said back, and the chat could
+never be titled afterwards — session 185 of the playtest, a 503 eighteen
+seconds in, is `(untitled)` permanently. The rule it was implementing is *the
+first ordinary chat turn that produced an answer*, which needs a second
+durable count: `db.count_chat_answers`. The gate now reads
+`turn_count == 1 or count_chat_answers(...) == 1`, and both clauses are
+load-bearing in opposite directions — the first is the only one that survives
+a session opening with `/continue` or an OOC direction off a First Message
+(they answer without a user row), the second is what a failed turn costs
+otherwise. Neither can reopen `D-13`'s retry: when a title *request* fails,
+turn one still answered, so both counts have moved by the next turn. Each
+clause was verified by deleting the other and watching the matching
+assertions fail.
+
+**`B-08`.** `tests/test_turn_paths.py` drives real turns through
+`main._run_turn`, and two of its paths reach `errorlog.log_error` on their own
+— a failed title and a provider error. Nothing redirected `errorlog.LOG_PATH`,
+so four fabricated `· title / boom` records reached the live
+`~/.cfc/errors.log` while v1.4.1 was being built. That log is the evidence base
+for `B-01`'s absence watch, so a test writing to it manufactures the thing
+being watched for. This is `D-08` reopened, one file over: the redirect and its
+`assert "tmp" in ...` guard now match `test_model_revert.py`'s, verified by
+removing it and watching the records land. The four records were deleted from
+the live log by hand. One older artefact is deliberately left in place and
+named here instead: a real nano-gpt 503 at 09:23:59 on 2026-08-01 attributed
+to `model stub-model`, which the current suite cannot reproduce — deleting a
+genuine provider body on a guess is the worse trade.
+
+- Files: main.py, db.py, tests/test_turn_paths.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — The routines screen shows a routine's name, not its slug id (`D-1.4-02`, 1.4.1 part 4)
 `screens._routine_row` and the validation lines beneath its table now read
 `Routine.name` instead of `Routine.id` — a hand-authored `id: short term
@@ -42,7 +83,7 @@ the row and its validation line beneath the table name the same thing.
 
 - Files: screens.py, tests/test_screens.py
 - Status: shipped
-- Commit: pending
+- Commit: a59d97e
 
 ---
 
