@@ -54,7 +54,7 @@ verifies it, now has a second instance under it.
 
 - Files: config.example.py, models.py
 - Status: shipped
-- Commit: pending
+- Commit: f37fe95
 
 ## 2026-08-01 — v1.5 — Conversation control (`W-1.3-02`, `W-1.3-03`, `W-1.4-03`, `W-1.3.1-05`)
 `/swipe` re-answers the latest ordinary chat turn — same user row, current
@@ -92,7 +92,7 @@ are structurally unreachable from it.
   tests/test_turn_repair.py, tests/golden.py, tests/test_mainchat_turns.py,
   tests/test_parse.py
 - Status: shipped
-- Commit: pending
+- Commit: 979370b
 
 ---
 

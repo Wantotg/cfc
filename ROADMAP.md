@@ -258,7 +258,7 @@ selected model is process-wide, so changing chats no longer changes what
        (__/  (__ /  \|
 ```
 
-## v1.4.1 — Main chat follow-through — 2026-08-01
+## v1.4.1 — Main chat follow-through **completed, 01/08**
 
 A turn now ends honestly: cfc says it is still working instead of looking
 ready, and everything it does after an answer happens before it offers you
@@ -281,7 +281,37 @@ saying every way cfc puts words in front of the model.
 - the routines screen names a routine, not its slug id (D-1.4-02)
 - the test suite no longer writes fabricated errors into `errors.log` (B-08)
 
-> *Note: mainly chatting, and hunting for silent failures and invisble errors *
+> *Note: mainly chatting, and hunting for silent failures and invisible errors *
 ```
 =^._.^= ∫ 'make them visible, make them scream!'
+```
+
+## v1.5 — Conversation control **completed, 01/08**
+
+An answer you didn't like is no longer something you have to live with. You can
+ask for a different one, take your own message back and try a different turn,
+or change how adventurous the model is before you do either. Chats also stop
+choosing their own numbers: you pick the id, and you can delete one from the
+hub instead of from inside it.
+
+**Added**
+- `/swipe` — a different answer to the message you already sent, same
+  everything else
+- `/undo` — take back your last message and the answer it caused
+- `/preset <name>` — named sampling profiles (temperature, top_p), configured
+  per model and only ever sent to one that accepts them
+- `c` at the hub and `/new <id>` — create a chat at an id you choose; a taken
+  id refuses and never replaces (W-1.3-03)
+- `d` at the hub and `/delete chat [<id>|main]` — delete a chat from either
+  side, on one confirmation and one index-clean deletion (W-1.3-02, W-1.4-03)
+- the chat-start tips rewritten around the commands that now exist
+  (W-1.3.1-05)
+
+**Fixed**
+- `config.example.py` said `preset_params` takes preset names; it takes
+  parameter names, and following it stopped cfc launching (B-1.5-02)
+
+> *Note: the most useful new features so far: turn the tide against the 503's*
+```
+(ง •̀_•́)ง 'take that!'
 ```
