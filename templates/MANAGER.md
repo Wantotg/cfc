@@ -1,8 +1,8 @@
 # MANAGER.md
 
 **Step 6 of the loop, and its close.** Reads `Tag.md`. Changes how the project
-records itself. `CLAUDE.md` has who you're working with; `HANDOVER.md` has how
-the repo works.
+records itself. The session's front-door instructions have who you're working
+with; `HANDOVER.md` has how the repo works.
 
 ## What this session is for
 

@@ -227,3 +227,33 @@ vault, and two commands that were called hand-verified stopped being.
 ```
 𐔌˙. 'visible.'
 ```
+
+## v1.4 — The third chat **completed, 01/08**
+
+cfc now has a durable Main chat for the vault: one fixed profile, one frozen
+opening, and live persona and system-prompt files read again on each turn. The
+selected model is process-wide, so changing chats no longer changes what
+"selected" means.
+
+**Added**
+- **`m` — Main chat**, one durable vault-manager session with ordinary chat
+  history and the existing chat commands around it
+- a process-wide model selection carried through chats, private sessions and
+  command screens (W-1.3.1-03)
+
+**Fixed**
+- `/model` immediately explains when the new model cannot use tools
+  (W-1.3.1-01)
+- unreachable hosted embedders now give actionable connection advice
+  (W-0.9.1-05)
+- `/add <path>` attaches files in Main chat instead of applying Main's fixed
+  profile refusal (B-1.4-01)
+
+> *Note: a third way to chat with your AI, it writes to your chat db (not private) and is more rigid than regular chat. A work in progress.*
+```
+    /\_/\     'a turd chat?'
+ _\/ o o \/_______
+  /\__^__/\     _ \
+      \ _/ ___ (  \ \
+       (__/  (__ /  \|
+```

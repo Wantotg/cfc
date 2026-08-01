@@ -1,7 +1,8 @@
 # DESIGNER.md
 
-**Step 2 of the loop.** Reads `Idea.md`. Writes `Concept.md`. `CLAUDE.md` has
-who you're working with; `HANDOVER.md` has how the repo works.
+**Step 2 of the loop.** Reads `Idea.md`. Writes `Concept.md`. The session's
+front-door instructions have who you're working with; `HANDOVER.md` has how the
+repo works.
 
 ## What this session is for
 

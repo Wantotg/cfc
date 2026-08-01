@@ -1,8 +1,8 @@
 # BRAINSTORMER.md
 
 **Step 1 of the loop.** Reads `Start.md` — the feature and some context.
-Writes `Idea.md`. `CLAUDE.md` has who you're working with; `HANDOVER.md` has how
-the repo works.
+Writes `Idea.md`. The session's front-door instructions have who you're working
+with; `HANDOVER.md` has how the repo works.
 
 ## What this session is for
 

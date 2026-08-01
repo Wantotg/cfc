@@ -1,8 +1,8 @@
 # DEBUGGER.md
 
 **Step 5 of the loop.** Reads `Update.md` and the test report. Writes
-`Tag.md`. `CLAUDE.md` has who you're working with; `HANDOVER.md` has how the
-repo works.
+`Tag.md`. The session's front-door instructions have who you're working with;
+`HANDOVER.md` has how the repo works.
 
 ## What this session is for
 

@@ -1,8 +1,8 @@
 # DRAFTER.md
 
 **Step 3 of the loop.** Reads `Concept.md` and `TRACKER.md`. Writes
-`Work Order.md`. `CLAUDE.md` has who you're working with; `HANDOVER.md` has how
-the repo works.
+`Work Order.md`. The session's front-door instructions have who you're working
+with; `HANDOVER.md` has how the repo works.
 
 ## What this session is for
 

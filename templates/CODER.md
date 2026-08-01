@@ -1,7 +1,8 @@
 # CODER.md
 
 **Step 4 of the loop.** Reads `Work Order.md`. Writes the code, and `Update.md`.
-`CLAUDE.md` has who you're working with; `HANDOVER.md` has how the repo works.
+The session's front-door instructions have who you're working with;
+`HANDOVER.md` has how the repo works.
 
 ## What this session is for
 
