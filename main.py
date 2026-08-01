@@ -1050,6 +1050,17 @@ def run_session(conn, session_id, private=False, app_conn=None,
         current_model = new_model
         console.print(f"Switched to model: "
                       f"{new_model}")
+        # `W-1.3.1-01`: say the consequence immediately, through the same
+        # seam the header and `/tools` already read — before this, `/model`
+        # was the one switch that hid it, and the first sign of a tools-off
+        # model was a *later* turn quietly not offering them. Only worth
+        # saying when tools were otherwise going to run this turn; a session
+        # with tools off already, or TOOLS_ENABLED off globally, has nothing
+        # new to report and those two cases keep their own messages elsewhere
+        # (`/tools on`, the header).
+        if TOOLS_ENABLED and tools_on and not models.supports_tools(new_model):
+            console.print(f"Note: {tools_unsupported_reason(new_model)}, "
+                          f"so tools stay inactive.")
         # Arm auto-revert on **every** switch: the first turn that errors on
         # the new model backs out to prev_model, and a turn that works disarms.
         #

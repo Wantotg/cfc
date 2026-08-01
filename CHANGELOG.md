@@ -27,6 +27,22 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — `/model` says when the switch turns tools off (`W-1.3.1-01`, 1.4 part 4)
+The header and `/tools` already knew a model couldn't use tools; `/model` —
+the one command that actually changes the active model — was the one switch
+that hid the consequence, so the first sign used to be a later turn quietly
+not offering them. `/model` now prints `Note: <tools_unsupported_reason(...)>`
+immediately after a successful switch, through the exact seam the header and
+`/tools on` already read — no second capability list. Only when there was
+something new to say: a session with tools already off, or `TOOLS_ENABLED`
+off deployment-wide, keeps its own message and prints nothing extra here.
+Doesn't touch the switch/revert policy at all.
+- Files: main.py, tests/test_model_tools_notice.py (new)
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — Main chat: the hub doorway and the turn pipeline (1.4, part 3)
 `m` at the hub now opens one durable Main chat: the first `m` validates the
 vault bundle (`mainchat.load_creation_bundle()`) and creates it via
@@ -56,7 +72,7 @@ existing chat-shaped delete/index cleanup exactly as any other session does.
 - Files: main.py, hub.py, commands.py, tests/test_hub.py,
   tests/test_mainchat_turns.py (new)
 - Status: shipped
-- Commit: pending
+- Commit: 3b534d2
 
 ---
 
