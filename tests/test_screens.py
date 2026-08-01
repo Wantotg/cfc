@@ -737,9 +737,20 @@ def test_routines_narrow_and_wide():
         r = routines.Routine(id="longid", name="Long", prompt="task.md",
                              model=long_model, read_roots=[str(store.pdir)])
         routines.save_routine(r)
-        # A routine that fails validate() with a long, specific reason.
-        broken = routines.Routine(id="broken", name="Broken", prompt="x.md")
-        (store.rdir / "broken.md").write_text(
+        # D-1.4-02: a routine whose name and slug differ. The file is
+        # hand-authored id: short term memory, which Routine.__init__
+        # slugifies to short-term-memory — the row must still show the name.
+        named = routines.Routine(id="short term memory",
+                                 name="Short Term Memory", prompt="task.md",
+                                 read_roots=[str(store.pdir)])
+        routines.save_routine(named)
+        ok("the slug and the name really do differ",
+           named.id != named.name, (named.id, named.name))
+        # A routine that fails validate(), whose name and slug also differ —
+        # the case that shows whether the validation line agrees with the row.
+        broken = routines.Routine(id="broken routine", name="Broken Routine",
+                                  prompt="x.md")
+        (store.rdir / "broken-routine.md").write_text(
             broken.to_markdown().replace("prompt: x.md", "prompt: gone.md"),
             encoding="utf-8")
 
@@ -756,6 +767,15 @@ def test_routines_narrow_and_wide():
                 out = buf.getvalue()
                 ok(f"width {width}: the full model id survives",
                    long_model in out, out)
+                ok(f"width {width}: the row shows the routine's name, "
+                   "not its slug id", "Short Term Memory" in out, out)
+                ok(f"width {width}: ...and never the bare slug",
+                   "short-term-memory" not in out, out)
+                ok(f"width {width}: the validation line below the table "
+                   "names the same display name as the row",
+                   "! Broken Routine:" in out, out)
+                ok(f"width {width}: ...never the slug id",
+                   "broken-routine:" not in out, out)
         finally:
             screens.console.width = saved_w
 

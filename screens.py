@@ -426,7 +426,7 @@ def _routines_narrow():
 
 def _routine_row(r, problems, status, ts, review):
     return {
-        "name": f"! {r.id}" if problems else r.id,
+        "name": f"! {r.name}" if problems else r.name,
         "model": r.model or "(default)",
         "trigger": str(r.trigger),
         "write": "yes" if r.write_roots else "no",
@@ -489,7 +489,7 @@ def _render_routines(conn):
 
     for r in good:
         for why in problems_by_id[r.id]:
-            console.print(f"  ! {r.id}: {why}", style="red")
+            console.print(f"  ! {r.name}: {why}", style="red")
     # Malformed files are listed, not swallowed — the file most likely to be
     # the one you came here about.
     for name, why in bad:

@@ -27,6 +27,25 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — The routines screen shows a routine's name, not its slug id (`D-1.4-02`, 1.4.1 part 4)
+`screens._routine_row` and the validation lines beneath its table now read
+`Routine.name` instead of `Routine.id` — a hand-authored `id: short term
+memory` slugifies to `short-term-memory` at construction, and that was the
+only surface still printing the slug where the hub and `show` already print
+the name. The `!` invalid marker is unchanged, both width layouts consume the
+same row dict so neither drifted from the other, and nothing about id
+resolution moved: the slug stays the handle everywhere it already was — the
+log filename, the session lookup, `show <routine>`'s own explicit id line —
+and a malformed file is still named by its filename. `tests/test_screens.py`
+now drives a routine whose name and slug differ, at both widths, and checks
+the row and its validation line beneath the table name the same thing.
+
+- Files: screens.py, tests/test_screens.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — `ui.console` stops rewriting `:key:`-shaped text as an emoji (`B-06`, 1.4.1 part 3)
 `markup=False` was only half the switch: rich's emoji substitution
 (`emoji=True`, on by default) is a separate setting from markup, and it was
@@ -40,7 +59,7 @@ string, and the existing markup-literal guarantee alongside it.
 
 - Files: ui.py, tests/test_ui.py
 - Status: shipped
-- Commit: pending
+- Commit: 9251de8
 
 ---
 
