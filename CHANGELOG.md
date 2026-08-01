@@ -27,6 +27,34 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — One honest finisher ends every successful turn, and a failed title call is a real failure (`B-1.3.1-02`, `D-13`, 1.4.1 part 2)
+`api.generate_title` no longer swallows every exception into the `"(untitled)"`
+sentinel — the same string `main.py` shows before any title has ever been
+attempted, which made a failed request indistinguishable from one never
+tried. It now raises `TitleGenerationError`, preserving the transport error,
+or naming an empty or malformed response, and the caller decides what to
+show.
+
+The caller is new too: `main._run_turn`'s streaming and tool paths now hand
+their successful answer to one shared `_finish_turn`, which owns the context
+bar, a visible `finishing turn` marker, the eligible title attempt, automatic
+embedding, and only then the blank line that used to print *before* that
+work — which is the bug. cfc looked ready for the next line while it was
+still silently titling and indexing, and anything typed in that window could
+be echoed straight into the chat as a message nobody wrote. Eligibility to
+title is now the durable `count_chat_user_turns()` value already read for the
+governor (`turn_count == 1`), not the `"(untitled)"` string, so a reopen or an
+earlier failed attempt never hands the job to a later turn — closing `D-13`'s
+second half along with the display fix. A title failure logs once, through
+`errorlog.log_error(..., where="title")`, gated out of a private chat exactly
+like auto-embed already is.
+
+- Files: api.py, main.py, tests/test_titles.py, tests/test_turn_paths.py, tests/test_private.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-01 — A checked inventory of every system-layer injection seam (`W-1.4-05`, 1.4.1 part 1)
 `SYSTEM_INJECTIONS.md` names every seam that puts words in front of the model
 the model didn't say and the user didn't type: assembled prompt/persona/traits
@@ -50,7 +78,7 @@ added, each fails a distinct assertion.
 
 - Files: SYSTEM_INJECTIONS.md, tests/test_system_injections.py
 - Status: shipped
-- Commit: pending
+- Commit: a6e8e38
 
 ---
 

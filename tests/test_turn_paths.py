@@ -331,6 +331,143 @@ def main_():
        "Empty OOC direction" in out, out)
     ok("...and really makes no call", stream_calls == [])
 
+    print("\n--- v1.4.1: one shared finisher — busy marker, order, titling "
+          "(B-1.3.1-02, D-13) ---")
+    # `main.stream_response`/`agent.call_api` were left as capturing stubs by
+    # the governor section above; put back a plain answering one so what's
+    # under test here is `_finish_turn`, not the request capture.
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+    agent.call_api = lambda messages, model=None, tools=None: {
+        "choices": [{"message": {"role": "assistant", "content": ANSWER}}],
+        "usage": dict(USAGE),
+    }
+
+    def drive_finish(sid, keys, title_result=None, title_error=None):
+        """Like `drive`, but spies on `generate_title`/`auto_embed` and
+        records the accumulated stdout at the moment each fires — proof
+        that the busy marker was already on screen and the *next* prompt
+        boundary was not, when the finisher's post-turn work ran."""
+        calls = []
+        real_title, real_embed = main.generate_title, main.auto_embed
+
+        def title_spy(user_text):
+            calls.append(("title", out.getvalue()))
+            if title_error is not None:
+                raise title_error
+            return title_result if title_result is not None else "A Title"
+
+        def embed_spy():
+            calls.append(("embed", out.getvalue()))
+
+        out = io.StringIO()
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO(keys)
+        main.generate_title = title_spy
+        main.auto_embed = embed_spy
+        try:
+            with contextlib.redirect_stdout(out):
+                main.console.file = out
+                commands.console.file = out
+                agent.console.file = out
+                main.run_session(conn, sid, private=False)
+        finally:
+            sys.stdin = real_stdin
+            main.generate_title = real_title
+            main.auto_embed = real_embed
+            main.console.file = sys.stdout
+            commands.console.file = sys.stdout
+            agent.console.file = sys.stdout
+        return out.getvalue(), calls
+
+    print("  (first-turn success: ordering and the one busy marker)")
+    fin_sid = dbmod.new_session(conn, title="(untitled)")
+    out, calls = drive_finish(fin_sid, "/tools off\nhello\n/q\n",
+                              title_result="First Turn Title")
+    ok("'finishing turn' prints exactly once",
+       out.count("finishing turn") == 1, out)
+    ok("the title spy fires", any(c[0] == "title" for c in calls), calls)
+    ok("the embed spy fires", any(c[0] == "embed" for c in calls), calls)
+    title_snap = next(c[1] for c in calls if c[0] == "title")
+    embed_snap = next(c[1] for c in calls if c[0] == "embed")
+    ok("the busy marker is already on screen when titling starts",
+       "finishing turn" in title_snap, title_snap[-200:])
+    ok("titling happens before embedding",
+       len(title_snap) <= len(embed_snap))
+    # Three input() calls in the script ("/tools off", "hello", "/q") each
+    # print "you> "; the finisher's work happens between the second and
+    # third, so neither spy should see the third prompt yet.
+    ok("neither spy sees the next prompt boundary",
+       title_snap.count("you> ") == 2 and embed_snap.count("you> ") == 2,
+       (title_snap.count("you> "), embed_snap.count("you> ")))
+    ok("...and the boundary prints only once the finisher is done",
+       out.count("you> ") == 3, out)
+    ok("a successful title is persisted",
+       dbmod.get_session_title(conn, fin_sid) == "First Turn Title")
+
+    print("  (failure once, no retry on a later turn — D-13)")
+    fail_sid = dbmod.new_session(conn, title="(untitled)")
+    out, calls = drive_finish(
+        fail_sid, "/tools off\nhi\n/q\n",
+        title_error=main.TitleGenerationError("boom"))
+    ok("a title failure prints exactly one concise yellow line",
+       out.count("[title unavailable]") == 1, out)
+    ok("...alongside the same one busy marker",
+       out.count("finishing turn") == 1, out)
+    ok("the session stays displayed as untitled after a failed attempt",
+       dbmod.get_session_title(conn, fail_sid) == "(untitled)")
+    # A second run_session against the same id is a reopen. turn_count is now
+    # 2, so eligibility must not retry — even though this spy would succeed.
+    out2, calls2 = drive_finish(fail_sid, "/tools off\nagain\n/q\n",
+                                title_result="Should Never Land")
+    ok("no later turn (after reopen) retries a failed title",
+       not any(c[0] == "title" for c in calls2), calls2)
+    ok("...though auto-embed still runs for that turn",
+       any(c[0] == "embed" for c in calls2), calls2)
+    ok("...and the title is still exactly what it was",
+       dbmod.get_session_title(conn, fail_sid) == "(untitled)")
+
+    print("  (/continue and OOC: the finisher runs, titling never does)")
+    cont_sid = dbmod.new_session(conn, title="(untitled)")
+    drive_finish(cont_sid, "/tools off\nfirst\n/q\n", title_result="T1")
+    out, calls = drive_finish(cont_sid, "/tools off\n/continue\n/q\n",
+                              title_result="Should Not Land")
+    ok("/continue reaches the shared finisher",
+       out.count("finishing turn") == 1, out)
+    ok("...but never titles", not any(c[0] == "title" for c in calls), calls)
+    ok("...and still runs auto-embed",
+       any(c[0] == "embed" for c in calls), calls)
+
+    ooc_sid = dbmod.new_session(conn, title="(untitled)")
+    out, calls = drive_finish(ooc_sid, "/tools off\n((be nicer))\n/q\n",
+                              title_result="Should Not Land")
+    ok("an OOC turn reaches the shared finisher too",
+       out.count("finishing turn") == 1, out)
+    ok("...but never titles, even on the session's first turn",
+       not any(c[0] == "title" for c in calls), calls)
+    ok("...and still runs auto-embed",
+       any(c[0] == "embed" for c in calls), calls)
+
+    print("  (empty and cancelled turns never reach the finisher)")
+    main.stream_response = lambda messages, model=None: ("", {}, "")
+    empty_sid = dbmod.new_session(conn, title="(untitled)")
+    out, calls = drive_finish(empty_sid, "/tools off\nhello\n/q\n",
+                              title_result="Should Not Land")
+    ok("an empty completion never shows the busy marker",
+       "finishing turn" not in out, out)
+    ok("...and never calls title or embed", calls == [], calls)
+
+    def raises_interrupt(messages, model=None):
+        raise KeyboardInterrupt
+
+    main.stream_response = raises_interrupt
+    cancel_sid = dbmod.new_session(conn, title="(untitled)")
+    out, calls = drive_finish(cancel_sid, "/tools off\nhello\n/q\n",
+                              title_result="Should Not Land")
+    ok("a cancelled turn never shows the busy marker",
+       "finishing turn" not in out, out)
+    ok("...and never calls title or embed", calls == [], calls)
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

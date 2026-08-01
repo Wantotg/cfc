@@ -308,8 +308,26 @@ def stream_response(messages, model=None):
     return full_text, usage, reasoning
 
 
+class TitleGenerationError(Exception):
+    """`generate_title` couldn't produce a usable title.
+
+    Replaces the old `"(untitled)"` sentinel return, which made a real
+    failure indistinguishable from the display text a caller chooses to show
+    for one (`D-13`). The message preserves whatever detail is available: the
+    transport/provider error verbatim on a failed call, or a description of
+    the response shape on a blank or malformed one — the two failure classes
+    the caller's proof (`tests/test_titles.py`) drives separately.
+    """
+
+
 def generate_title(first_user_message):
-    """Ask the AI for a short title based on the first message."""
+    """Ask the AI for a short title based on the first message.
+
+    Raises `TitleGenerationError` on any failure — transport, empty, or a
+    response that normalises to nothing usable — rather than returning a
+    sentinel string. There is no retry and no fallback title here; a caller
+    that wants `(untitled)` as display text supplies it itself.
+    """
     title_request = [
         {
             "role": "system",
@@ -324,11 +342,18 @@ def generate_title(first_user_message):
     ]
     try:
         resp = call_api(title_request, read_timeout=_TITLE_READ_TIMEOUT)
+    except Exception as e:
+        raise TitleGenerationError(str(e)) from e
+    try:
         title = resp["choices"][0]["message"]["content"].strip()
-        title = title.strip("\"'").replace("\n", " ").strip()
-        title = title.rstrip(".?!")
-        if len(title) > 60:
-            title = title[:57] + "..."
-        return title if title else "(untitled)"
-    except Exception:
-        return "(untitled)"
+    except (KeyError, IndexError, TypeError, AttributeError) as e:
+        raise TitleGenerationError(
+            f"malformed title response: {e}: {resp!r}"[:800]) from e
+    title = title.strip("\"'").replace("\n", " ").strip()
+    title = title.rstrip(".?!")
+    if not title:
+        raise TitleGenerationError(
+            f"empty title after normalising response: {resp!r}"[:800])
+    if len(title) > 60:
+        title = title[:57] + "..."
+    return title

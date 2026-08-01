@@ -63,7 +63,7 @@ import mainchat
 from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
 from api import (stream_response, generate_title, is_transient_status,
-                 EMPTY_COMPLETION_RETRIES)
+                 EMPTY_COMPLETION_RETRIES, TitleGenerationError)
 from backup import safe_backup
 import errorlog
 import screens
@@ -557,6 +557,53 @@ def run_session(conn, session_id, private=False, app_conn=None,
         return any(m.get("role") == "assistant"
                   and (m.get("content") or "").strip() for m in history)
 
+    def _finish_turn(kind, user_text, turn_count, tok_in, tok_out):
+        """The one honest ending for a successful turn — streaming and tool
+        paths alike (standing decision 7, extended by this function). Called
+        once an answer is on screen and persisted; it owns everything after
+        that: the context bar, a visible busy marker, the eligible title
+        attempt, automatic embedding, and only then the blank line that
+        precedes the next `read_input()`.
+
+        That ordering is the fix (`B-1.3.1-02`): the blank line used to print
+        *before* the title/embed work, so the terminal looked ready for the
+        next line while cfc was still silently busy, and anything typed in
+        that window could be echoed straight into the next turn as an
+        unintended message. Nothing here claims "your turn" until there is
+        truly nothing left to do.
+
+        Eligibility to title is the durable `turn_count` already read for the
+        governor, not `current_title == "(untitled)"` — that string is
+        display state, and using it as the gate is what let a failed title
+        request hand the job to whatever message came next (`D-13`). Only the
+        first successful ordinary chat answer (`turn_count == 1`) may title,
+        reopen or earlier failed attempt or not.
+        """
+        nonlocal current_title
+        print_context_bar(current_model, tok_in, tok_out)
+        if private:
+            # Decision 10: title, auto-embed and the error log all escape the
+            # connection by path, so none of them run for a private chat —
+            # there is nothing for a busy marker to cover.
+            console.print()
+            return
+        console.print("finishing turn", style="dim")
+        if kind == "chat" and turn_count == 1:
+            try:
+                new_title = generate_title(user_text)
+            except TitleGenerationError as e:
+                errorlog.log_error(e, session_id=session_id,
+                                   model=current_model,
+                                   interrupted=turns_interrupted,
+                                   private=private, where="title")
+                console.print("[title unavailable]", style="yellow")
+            else:
+                set_session_title(conn, session_id, new_title)
+                current_title = new_title
+                console.print(f"[title: {new_title}]")
+        auto_embed()   # index this turn's messages (best-effort)
+        console.print()
+
     def _run_turn(kind, user_text=None):
         """One directed or ordinary chat turn — the one place both API paths
         are assembled from, which is what keeps them from drifting apart
@@ -587,6 +634,10 @@ def run_session(conn, session_id, private=False, app_conn=None,
                               f"refused, nothing was sent.]\n", style="red")
                 return
 
+        # Set only for "chat" — the durable count `_finish_turn` uses to
+        # decide title eligibility. `/continue` and OOC never title, so they
+        # never need it.
+        turn_count = None
         if kind == "chat":
             console.print(human_panel(user_text))
             save_message(conn, session_id, "user", user_text,
@@ -665,16 +716,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
             # final turn's usage, so read it back from the row it just wrote.
             t_in, t_out, _ = get_context_info(
                 conn, session_id, current_model)
-            print_context_bar(current_model, t_in, t_out)
-            console.print()
-            if kind == "chat" and current_title == "(untitled)" and not private:
-                new_title = generate_title(user_text)
-                if new_title != "(untitled)":
-                    set_session_title(conn, session_id, new_title)
-                    current_title = new_title
-                    console.print(f"[title: {new_title}]\n")
-            if not private:
-                auto_embed()   # index this turn's messages (best-effort)
+            _finish_turn(kind, user_text, turn_count, t_in, t_out)
             return
 
         api_messages = governor.compile_messages(
@@ -738,24 +780,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
             model=current_model,
         )
 
-        # Show context usage after response
-        print_context_bar(current_model, tok_in, tok_out)
-        console.print()  # Blank line before next prompt
-
         history.append(
             {"role": "assistant", "content": assistant}
         )
 
-        if kind == "chat" and current_title == "(untitled)" and not private:
-            new_title = generate_title(user_text)
-            if new_title != "(untitled)":
-                set_session_title(conn, session_id,
-                                  new_title)
-                current_title = new_title
-                console.print(f"[title: {new_title}]\n")
-
-        if not private:
-            auto_embed()   # index this turn's messages (best-effort)
+        _finish_turn(kind, user_text, turn_count, tok_in, tok_out)
 
     def h_continue(cmd):
         if cmd.raw:

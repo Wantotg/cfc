@@ -258,6 +258,42 @@ def main_():
     ok("...and logging never raises, whatever the path is",
        _never_raises(errorlog))
 
+    print("\n--- v1.4.1: a title failure is a fifth escape path; it is shut "
+          "too ---")
+    # B-1.3.1-02 / D-13: main._finish_turn logs a title-specific failure with
+    # `where="title"`, going through the same `errorlog.log_error` — so it
+    # inherits property 3 (nothing from a private chat reaches it) for free
+    # *if* the call site passes `private` through. That "if" is exactly the
+    # kind of thing a caller forgets, so it gets its own control/private pair
+    # rather than being assumed from the provider-error pair above.
+    TITLE_SECRET = "zx-title-payload-must-not-land"
+
+    def boom_title(*a, **k):
+        raise main.TitleGenerationError(f"HTTP 400: {TITLE_SECRET}")
+
+    main.generate_title = boom_title
+    main.stream_response = lambda messages, model=None: (
+        "an answer", {"prompt_tokens": 3, "completion_tokens": 2}, "")
+
+    before_title_log = errorlog.LOG_PATH.read_text()
+    title_ctl_sid = dbmod.new_session(real, title="(untitled)")
+    drive(real, title_ctl_sid, private=False, keys=script)
+    after_ctl_log = errorlog.LOG_PATH.read_text()
+    new_ctl = after_ctl_log[len(before_title_log):]
+    ok("a normal chat's failed title reaches the error log",
+       "title" in new_ctl and TITLE_SECRET in new_ctl, new_ctl[:300])
+
+    priv9 = dbmod.db(":memory:")
+    p9 = dbmod.new_session(priv9, title="(untitled)")
+    drive(priv9, p9, private=True, keys=script)
+    priv9.close()
+    after_priv_log = errorlog.LOG_PATH.read_text()
+    ok("a private chat's failed title never reaches the error log",
+       after_priv_log == after_ctl_log,
+       after_priv_log[len(after_ctl_log):][:300])
+
+    main.generate_title = lambda *a, **k: "(untitled)"   # guarded out again
+
     print("\n--- /clear notes: an explicit vault op, same in a private chat ---")
     # decision 15's exception is privacy itself — a feature that only works by
     # writing something down or phoning something home stays unbuilt for a
