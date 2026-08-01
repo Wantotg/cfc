@@ -49,6 +49,22 @@ TRAITS_DIR = "PLACEHOLDER"
 # exactly as before — a companion is optional per persona, not required.
 FIRST_MESSAGES_DIR = "PLACEHOLDER"
 
+# Main chat's one profile bundle: 'm' at the hub opens a single durable
+# session whose system prompt and persona are read live from here, and whose
+# opening line is frozen once, at creation, from this folder's first
+# message.md. Unlike the pools above this is not a folder of many named
+# files — it is one folder holding exactly three fixed names:
+#
+#   <MAIN_CHAT_DIR>/system prompt.md
+#   <MAIN_CHAT_DIR>/persona.md
+#   <MAIN_CHAT_DIR>/first message.md
+#
+# All three are required, UTF-8, and non-empty after whitespace is trimmed —
+# 'm' refuses and says exactly which is wrong rather than opening an
+# unconfigured chat that merely looks like Main. Leave unset and 'm' refuses
+# every time, naming MAIN_CHAT_DIR itself as the problem.
+MAIN_CHAT_DIR = "PLACEHOLDER"
+
 # Models available on your plan, and everything cfc needs to know about each
 # one — one place instead of four. Order is what /list models and /model <n>
 # show; nothing here has to be exhaustive, an unlisted id can still be typed

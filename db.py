@@ -99,6 +99,15 @@ def db(path=None):
             )
         except sqlite3.OperationalError:
             pass
+    # The one-row rule for Main lives in SQLite itself, not only in
+    # get_or_create_main's own check: a partial UNIQUE index on the singleton
+    # value means a second 'main' row can never be inserted, race or no race.
+    # Every other provider is unrestricted, so this can't be a plain UNIQUE
+    # column constraint.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_main_singleton "
+        "ON sessions(provider) WHERE provider='main'"
+    )
     _migrate_messages(conn)
     _migrate_routine_sessions(conn)
     return conn
@@ -111,6 +120,13 @@ def db(path=None):
 PROVIDER_CHAT = "nano-gpt"
 PROVIDER_WIKI = "wiki"
 PROVIDER_ROUTINE = "routine"
+PROVIDER_MAIN = "main"
+
+# Main's fixed, non-editable title (Concept.md: "the session header says Main
+# chat rather than relying on a user-editable title to carry the
+# distinction" — the title is the other half of that: it is set once, at
+# creation, and /title refuses to touch it).
+MAIN_TITLE = "Main"
 
 # The title runner.py generates: "routine: <name> — <YYYY-MM-DD HH:MM>".
 # Used *once*, to backfill runs that predate the marker. Deliberately narrow —
@@ -194,6 +210,78 @@ def new_session(conn, title="(untitled)", model=None,
     )
     conn.commit()
     return cur.lastrowid
+
+
+class MainCorruption(Exception):
+    """More than one Main row exists. `idx_sessions_main_singleton` should
+    make this unreachable outside a hand-edited database; when it happens
+    anyway, lookup reports it rather than picking the newest row and making
+    every other one a convincing impostor."""
+
+
+def _main_rows(conn):
+    return [r[0] for r in conn.execute(
+        "SELECT id FROM sessions WHERE provider=? ORDER BY id",
+        (PROVIDER_MAIN,)).fetchall()]
+
+
+def main_session_id(conn):
+    """The existing Main row's id, or None. The read-only half of
+    get_or_create_main, for a caller that needs to know whether Main already
+    exists before deciding whether to run the (more expensive) creation-
+    bundle check at all. Raises MainCorruption on more than one row, exactly
+    as get_or_create_main does."""
+    ids = _main_rows(conn)
+    if len(ids) > 1:
+        raise MainCorruption(f"{len(ids)} Main rows exist: {ids}")
+    return ids[0] if ids else None
+
+
+def get_or_create_main(conn, first_message_name, first_message_text,
+                       model=None):
+    """Get-or-create for the one durable Main session identity.
+
+    Returns (session_id, created) — `created` is True only the call that
+    actually inserts the row; every later call, from any caller, reopens the
+    same one. `first_message_name`/`first_message_text` are the caller's
+    already-validated creation bundle (mainchat.load_creation_bundle()) —
+    this function is DB-only and does no file I/O, so a caller that hasn't
+    validated the bundle yet must do that first and never reach here on
+    failure.
+
+    The check and the insert run against one connection's transaction, and
+    `idx_sessions_main_singleton` (a partial UNIQUE index on provider='main',
+    created in db()) is the actual guard: if another caller's insert lands
+    between this function's SELECT and its own INSERT, the INSERT fails with
+    IntegrityError rather than producing a second row. That failure is read
+    back as "someone else just created it" — not corruption, which is what
+    *more than one row already existing* means, and is checked separately,
+    both before attempting the insert and again if the insert is refused.
+    """
+    model = model or MODEL
+    ids = _main_rows(conn)
+    if len(ids) > 1:
+        raise MainCorruption(f"{len(ids)} Main rows exist: {ids}")
+    if ids:
+        return ids[0], False
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        cur = conn.execute(
+            "INSERT INTO sessions(title, model, provider, created_at, "
+            "updated_at, first_message_name, first_message_text, "
+            "first_message_at) VALUES (?,?,?,?,?,?,?,?)",
+            (MAIN_TITLE, model, PROVIDER_MAIN, now, now,
+             first_message_name, first_message_text, now),
+        )
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        ids = _main_rows(conn)
+        if len(ids) == 1:
+            return ids[0], False
+        raise MainCorruption(
+            f"{len(ids)} Main rows exist after a create race: {ids}")
+    conn.commit()
+    return cur.lastrowid, True
 
 
 def routine_session(conn, session_id):
@@ -451,6 +539,18 @@ def get_session_title(conn, session_id):
         "SELECT title FROM sessions WHERE id=?", (session_id,)
     ).fetchone()
     return row[0] if row else "(untitled)"
+
+
+def get_session_provider(conn, session_id):
+    """The session-kind discriminator (see the PROVIDER_* constants above),
+    or None if the session doesn't exist. What lets a numeric resume tell a
+    Main row apart from an ordinary chat by identity rather than by title —
+    a user-editable field must never be what selects fixed-profile
+    behaviour."""
+    row = conn.execute(
+        "SELECT provider FROM sessions WHERE id=?", (session_id,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def set_session_title(conn, session_id, title):

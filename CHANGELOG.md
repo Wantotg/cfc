@@ -27,6 +27,21 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-01 — Main chat: the profile bundle loader and database identity (1.4, part 1)
+Foundation for the durable Main chat: a new `mainchat.py` owns the vault
+bundle's fixed filenames, path resolution and validation (creation needs all
+three files; reopening/a turn needs only the two live ones, never rereading
+`first message.md`), and `db.py` gains `PROVIDER_MAIN`, a get-or-create
+operation, and a partial `UNIQUE` index that makes a second Main row
+unrepresentable rather than merely unlikely. Not yet reachable from the hub
+or a session — that's the next commit.
+- Files: mainchat.py, db.py, config.example.py, tests/test_mainchat.py,
+  tests/test_main_identity.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-07-31 — First Message visibility, export confidence, an honest path name (1.3.1)
 A light patch carrying one v1.3 finding and closing two open tracker rows: a
 First Message now has somewhere to be seen, the export destination has a name
