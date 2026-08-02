@@ -286,6 +286,42 @@ saying every way cfc puts words in front of the model.
 =^._.^= ∫ 'make them visible, make them scream!'
 ```
 
+## v1.5.1 — Say the true thing *completed, 02/08*
+
+A patch about honesty rather than features. The hub stops answering a question
+you didn't ask with a colour, a routine run stops borrowing a chat's identity,
+a run's elapsed time stops counting the hours your machine was asleep, and the
+two words that overclaimed — the product's name and "private" — now say what
+they mean.
+
+**Fixed**
+- the hub's Routines panel splits into `Last run`, `Result` and `Schedule`, so a
+  routine that spent its retry budget on failures can no longer read green in
+  the column you check first (W-0.9.2-02)
+- a run's logged elapsed time measures the time it was actually running, so a
+  machine suspend no longer turns a three-second call into 10,148 seconds
+  (W-0.9.2-01)
+- a routine run has its own reference, `<routine>/<run number>` — `history`, a
+  finished `/routine`, the routines screen's help and `open` all use it, and no
+  routine surface calls a transcript a chat session (W-0.9.1-07)
+- the application calls itself Cooking for Cats where it speaks to you, and
+  `cfc` only where it's an identifier — a test derives the list and fails on a
+  new one (W-0.9.1-03)
+- a private chat's own notice says what "private" covers and what it doesn't:
+  nothing written locally, and your messages still reach the chat provider
+  (W-0.9.1-04)
+
+> *Note: some fixes and changes to make things easier to understand*
+```
+ /\___/\
+꒰ ˶• ༝ - ˶꒱ 'MOAR FIXES!'
+./づᡕᠵ᠊ᡃ࡚ࠢ࠘ ⸝່ࠡࠣ᠊߯᠆ࠣ࠘ᡁࠣ࠘᠊᠊°.~♡︎
+```
+
+> *Note: the most useful new features so far: turn the tide against the 503's*
+```
+(ง •̀_•́)ง 'take that!'
+```
 ## v1.5 — Conversation control *completed, 01/08*
 
 An answer you didn't like is no longer something you have to live with. You can
@@ -334,41 +370,4 @@ Adding more information only helps if it agrees on what is true, and if it point
    ____/ o o \
  /~____  =ø= /
 (______)__m_m)
-```
-
-## v1.5.1 — Say the true thing *completed, 02/08*
-
-A patch about honesty rather than features. The hub stops answering a question
-you didn't ask with a colour, a routine run stops borrowing a chat's identity,
-a run's elapsed time stops counting the hours your machine was asleep, and the
-two words that overclaimed — the product's name and "private" — now say what
-they mean.
-
-**Fixed**
-- the hub's Routines panel splits into `Last run`, `Result` and `Schedule`, so a
-  routine that spent its retry budget on failures can no longer read green in
-  the column you check first (W-0.9.2-02)
-- a run's logged elapsed time measures the time it was actually running, so a
-  machine suspend no longer turns a three-second call into 10,148 seconds
-  (W-0.9.2-01)
-- a routine run has its own reference, `<routine>/<run number>` — `history`, a
-  finished `/routine`, the routines screen's help and `open` all use it, and no
-  routine surface calls a transcript a chat session (W-0.9.1-07)
-- the application calls itself Cooking for Cats where it speaks to you, and
-  `cfc` only where it's an identifier — a test derives the list and fails on a
-  new one (W-0.9.1-03)
-- a private chat's own notice says what "private" covers and what it doesn't:
-  nothing written locally, and your messages still reach the chat provider
-  (W-0.9.1-04)
-
-> *Note: some fixes and changes to make things easier to understand*
-```
- /\___/\
-꒰ ˶• ༝ - ˶꒱ 'MOAR FIXES!'
-./づᡕᠵ᠊ᡃ࡚ࠢ࠘ ⸝່ࠡࠣ᠊߯᠆ࠣ࠘ᡁࠣ࠘᠊᠊°.~♡︎
-```
-
-> *Note: the most useful new features so far: turn the tide against the 503's*
-```
-(ง •̀_•́)ง 'take that!'
 ```
