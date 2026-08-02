@@ -371,3 +371,34 @@ Adding more information only helps if it agrees on what is true, and if it point
  /~____  =ø= /
 (______)__m_m)
 ```
+
+## v1.6 — What the model sees — 2026-08-02
+
+The vault can be partitioned into named scopes, and a hidden one is hidden the
+same way everywhere a model could reach it — file tools, recall, and the
+commands that read the wiki corpus. Files with a frontmatter title now show
+that title next to the filename in every picker cfc owns, and `{{user}}` /
+`{{AI}}` in cfc's own shared markdown are replaced with names you configure.
+
+**Added**
+- Named vault scopes: `VAULT_SCOPES` in `config.py` marks vault folders exposed
+  or hidden. No setting keeps today's fully-open behaviour.
+- A hidden folder is refused to file tools, omitted from listings and tree
+  grep, refused to `/add`, never offered by tab completion, and refused to
+  `/recall`, `/remember`, and the wiki re-import half of `/update db`.
+- `/config` counts declared scopes; its `scopes` action shows each name, state,
+  and resolved path, including valid scopes when the declaration has a problem.
+- Frontmatter titles appear beside filenames in cfc's attach, status, outbox,
+  filing, move, and wiki changed-file pickers. The path remains what is typed,
+  inserted, and stored.
+- `USER_DISPLAY_NAME` and `AI_DISPLAY_NAME` fill `{{user}}` and `{{AI}}` in
+  prompts, personas, traits, First Messages, and routine task prompts.
+
+**Fixed**
+- A routine's failed transcript marker no longer leaves a stale transaction
+  for the next save to commit (`D-16`).
+
+> *Note: more freedom and more restriction and all still contained to the vault, for now*
+```
+≽ ^⎚ ˕ ⎚^ ≼ 'All in all, it's just another brick in the wall'
+```

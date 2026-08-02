@@ -14,6 +14,32 @@ nothing behind here.** This file holds open entries only. The reasoning is in
 
 ---
 
+## D-1.6-03 · `/update db`'s hidden-wiki notice doesn't say what still ran
+
+**Found:** 2026-08-02, v1.6 playtest. With `WIKI_DIR` inside a hidden scope,
+`/update db` printed the skip notice and then went on to index 39 chunks. Cas
+read the two lines as contradicting each other and expected the command to
+stop at the notice.
+
+The behaviour is the specified one and the chunks were clean — checked
+read-only against the live db, where the newest `source='wiki'` chunk is id
+4547 and everything above it is `source='chat'`. `Concept.md` scopes it
+exactly: *"`/update db` does not re-import a hidden `WIKI_DIR`"*, and nothing
+more. The chat half of the index never reads the vault, so a vault scope has
+no opinion about it, and stopping the whole command would make a scope quietly
+turn off an unrelated feature.
+
+**What is actually wrong is the sentence.** `[… — wiki re-import skipped]`
+names the half that did not run and leaves the reader to infer the half that
+did, one line before a spinner and a chunk count arrive to contradict the
+inference. The two are only reconcilable by someone who knows the corpus split
+already.
+
+**Owed:** say both halves in the one notice — the wiki re-import is skipped,
+the chat index still updates. One string, at the same call site; no behaviour
+change. `/recall` and `/remember` need nothing: they refuse outright, so their
+notice is the whole answer.
+
 ## D-14 · `ui.vault_relative`'s docstring names the retired export key
 
 **Found:** 2026-07-31, during the v1.3.1 config-key rename. The docstring says
@@ -23,20 +49,6 @@ is stale after `CHAT_EXPORT_DIR` replaced the old export-destination name.
 
 **Owed:** correct the docstring when that file is next touched. No code change
 is needed for the current release.
-
-## D-16 · `runner._mark_transcript` swallows a failed marker write without rolling the connection back
-
-**Found:** 2026-08-02, while reviewing v1.5.2's routine failure paths.
-`runner._mark_transcript` correctly treats a failed transcript marker as
-best-effort because the authoritative run log already exists, but it swallows
-the failure without rolling back. A failed `save_message` therefore leaves
-`conn.in_transaction` true; the next save commits that stale transaction along
-with its own work. It is a dangling transaction rather than a retained writer,
-but the two best-effort paths in the same function should not clean up
-differently.
-
-**Owed:** roll back the connection before swallowing a failed marker write, and
-test that the connection is clean afterward.
 
 ## D-17 · `errorlog` records the turn's module, never its kind
 

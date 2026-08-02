@@ -25,6 +25,44 @@ than lossy, and why it is tracked in git: `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## B-1.6-01 · `diff <anything>` silently diffs the wiki instead of refusing
+
+**Found:** 2026-08-02, v1.6 playtest, in the wiki screen. `diff al;;` printed
+`wiki db: nothing changed`. Cas expected an error naming the words the command
+takes. Not v1.6's doing — the behaviour has been there since the per-corpus
+`/wiki` grammar landed (`69dbc49`), and it reaches the chat verb equally
+(`/wiki diff al;;`).
+
+**Where it is:** `commands._parse_wiki_args` consumes a leading scope word
+*only when it is exactly one of the keywords*, then a granularity word on the
+same rule, and returns whatever is left as the third element. That rule is
+right, and it is right for the reason its docstring gives: `commit`'s
+remainder is the commit message, so an unrecognised leading word there is
+ordinary text. But `show_wiki_diff` (`commands.py:3118`) unpacks the remainder
+into `_` and drops it, so for `diff` an unrecognised word is not text — it is
+nothing at all, and the call proceeds against the default scope. Same for
+`show_wiki_status`, which takes no arguments and never looks.
+
+So a typo, a misremembered word, or a word from an older grammar all produce a
+confident, correct-looking answer *about a different corpus than the one
+asked for*. The report's own parenthesis — *"I never misspelled it before"* —
+is the failure: nothing distinguishes this from having typed the command
+right.
+
+**The class:** standing decision 17 one level down. The screen refuses an
+unrecognised *command*, and `classify` is pinned for it; an unrecognised
+*argument* falls through to a default instead. And it is `HANDOVER.md`'s
+*prefer the failure that is visible* pointing the wrong way — this guard
+fails silent, where the same function's `commit` half is free to fail loud
+because a leftover there means something.
+
+**Owed:** `diff` and `status` refuse a non-empty remainder, naming the scope
+words. `commit` is untouched — its remainder is the message, and taking that
+away would break the one caller that needs it. Pin it as a round trip through
+`_parse_wiki_args` rather than against the literal message, and cover both
+readers: the chat verb and `screens._wiki_diff`, which parses the same
+arguments a second time to arm its review.
+
 ## B-01 · A provider 400 on tool turns, cause not yet established
 
 **Found:** 2026-07-23, reported by Cas. Two candidate causes were fixed in v0.5

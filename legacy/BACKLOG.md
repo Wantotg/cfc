@@ -22,6 +22,31 @@ not the file.
 
 # Closed since the split
 
+## ~~D-16 · `runner._mark_transcript` swallows a failed marker write without rolling the connection back~~ — CLOSED (v1.6, 2026-08-02)
+
+**Closed 2026-08-02**, v1.6 — `_mark_transcript` now rolls the connection back
+before swallowing a failed best-effort marker write. The fix was verified by
+disabling the rollback and watching a partial marker INSERT ride along on the
+next save and survive. `TRACKER.md`, `CHANGELOG.md`.
+
+The entry as it stood:
+
+---
+
+## D-16 · `runner._mark_transcript` swallows a failed marker write without rolling the connection back
+
+**Found:** 2026-08-02, while reviewing v1.5.2's routine failure paths.
+`runner._mark_transcript` correctly treats a failed transcript marker as
+best-effort because the authoritative run log already exists, but it swallows
+the failure without rolling back. A failed `save_message` therefore leaves
+`conn.in_transaction` true; the next save commits that stale transaction along
+with its own work. It is a dangling transaction rather than a retained writer,
+but the two best-effort paths in the same function should not clean up
+differently.
+
+**Owed:** roll back the connection before swallowing a failed marker write, and
+test that the connection is clean afterward.
+
 ## ~~D-1.5.1-01c · The routines screen cannot say which routine is due~~ — CLOSED (v1.5.2, 2026-08-02)
 
 **Closed 2026-08-02**, v1.5.2 — the routines screen now renders the scheduler's
