@@ -693,7 +693,21 @@ def main():
     ok("...and nothing is left NULL",
        conn2.execute("SELECT COUNT(*) FROM messages WHERE kind IS NULL"
                     ).fetchone()[0] == 0)
+    # B-09. The two assertions above passed while the backfill was never
+    # committed: they read the write back on the connection that made it,
+    # which sees its own open transaction. Both halves are needed — the
+    # connection must not still be holding a writer, and the value must
+    # survive a reconnect — because either alone is what let this through.
+    ok("the connection that ran the backfill committed it — no writer "
+       "retained", conn2.in_transaction is False)
     conn2.close()
+    conn2b = dbmod.db()
+    ok("...and the backfill is durable across a reconnect",
+       conn2b.execute("SELECT kind FROM messages WHERE content=?",
+                      ("predates the default",)).fetchone()[0] == "chat")
+    ok("...leaving the now-current database opening quiet again",
+       conn2b.in_transaction is False)
+    conn2b.close()
 
     print("\n--- the mechanism the guard defends against, shown directly ---")
     # Disabling the guard, in miniature: an UPDATE with a WHERE clause that
@@ -727,7 +741,19 @@ def main():
            "SELECT provider FROM sessions WHERE title=?",
            ("routine: Heartbeat — 2026-07-20 19:13",)).fetchone()[0]
        == dbmod.PROVIDER_ROUTINE)
+    # Same blind spot as the NULL-kind fixture above (B-09): reading the
+    # backfill back on the connection that wrote it proves nothing about
+    # whether it committed.
+    ok("...committed, not left open on the writing connection",
+       conn3.in_transaction is False)
     conn3.close()
+    conn3b = dbmod.db()
+    ok("...and durable across a reconnect",
+       conn3b.execute(
+           "SELECT provider FROM sessions WHERE title=?",
+           ("routine: Heartbeat — 2026-07-20 19:13",)).fetchone()[0]
+       == dbmod.PROVIDER_ROUTINE)
+    conn3b.close()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

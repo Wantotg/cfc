@@ -201,27 +201,33 @@ def _migrate_messages(conn):
     database is the overwhelmingly common connect, and on that path this
     function must do no writing at all (B-1.5.1-01a).
     """
+    # One flag for all three writes below, not one per kind of write. The
+    # guards decide *whether* to write; this decides whether to commit, and
+    # the two questions have the same answer for every write in this function
+    # — so a flag that tracks only some of them leaves the others open in a
+    # transaction that never ends, which is the very failure the guards were
+    # added to remove (B-09).
+    wrote = False
     cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
-    added = False
     for col, ddl in (
         ("kind", "ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'chat'"),
         ("meta", "ALTER TABLE messages ADD COLUMN meta TEXT"),
     ):
         if col not in cols:
             conn.execute(ddl)
-            added = True
+            wrote = True
 
     # Older rows may predate the DEFAULT and hold NULL.
     if conn.execute(
         "SELECT 1 FROM messages WHERE kind IS NULL LIMIT 1"
     ).fetchone():
         conn.execute("UPDATE messages SET kind='chat' WHERE kind IS NULL")
+        wrote = True
 
     rows = conn.execute(
         "SELECT id, content FROM messages "
         "WHERE kind='chat' AND content LIKE '[:remember %'"
     ).fetchall()
-    wrote_marker = False
     for mid, content in rows:
         m = _MARKER_RE.match(content or "")
         if not m:
@@ -232,8 +238,8 @@ def _migrate_messages(conn):
             "UPDATE messages SET kind='recall_marker', meta=? WHERE id=?",
             (meta, mid),
         )
-        wrote_marker = True
-    if added or wrote_marker:
+        wrote = True
+    if wrote:
         conn.commit()
 
 

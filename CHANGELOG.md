@@ -27,6 +27,25 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — The NULL-kind backfill commits the write it makes (`B-09`)
+The guards added earlier today stopped `_migrate_messages` writing when it
+had nothing to write, but the commit stayed gated on `added or wrote_marker`
+— which does not include the NULL-kind backfill. A database whose `kind`
+column already exists while some rows still hold NULL therefore ran the
+`UPDATE` and never committed it: the write rolled back on close, every
+subsequent `db()` re-ran it, and the connection was returned holding an open
+write transaction for its whole life. That is B-1.5.1-01a's retained writer,
+surviving inside its own fix, on the one fixture the fix's test claimed to
+cover. One `wrote` flag now tracks all three writes. The test failed to catch
+it because it read the backfilled value back on the connection that made it,
+which sees its own uncommitted transaction — so the new assertions check
+`conn.in_transaction` and re-read after a reconnect, and the same pair was
+added to the legacy-routine-session fixture, which had the identical blind
+spot without the identical bug.
+- Files: db.py, tests/test_schema.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — The routines screen shows each routine's scheduler state (`D-1.5.1-01c`)
 `/config` could report a due routine and point at the routines screen, but
 that screen only ever showed last-run status and review state — it couldn't
@@ -41,7 +60,7 @@ this screen has no colour of its own to keep in step with it, and `show
 <routine>` remains the one place for `Assessment.reason`'s full sentence.
 - Files: screens.py, tests/test_screens.py
 - Status: shipped
-- Commit: pending
+- Commit: 49e8df2
 
 ## 2026-08-02 — Headless scheduling gets bounded lock patience and per-routine containment (`B-1.5.1-01a`, `B-1.5.1-01b`)
 `db.db()` now takes an explicit `timeout=` (SQLite's busy-wait), defaulting
@@ -64,7 +83,7 @@ whole-tick lock, the existing retry policy, and the final non-zero CLI exit
 on any failure are all unchanged.
 - Files: db.py, schedule.py, tests/test_schedule.py
 - Status: shipped
-- Commit: pending
+- Commit: 4e747bb
 
 ## 2026-08-02 — The routine run log is authoritative across every runner exit (`B-1.5.1-01b`)
 `runner.run_routine` used to leave session creation and task persistence
@@ -84,7 +103,7 @@ leaving an `ok` record for a transcript that never made it to disk.
 `errors.log` stays narrowed to provider HTTP errors, unchanged.
 - Files: runner.py, tests/test_routines.py
 - Status: shipped
-- Commit: pending
+- Commit: 076c806
 
 ## 2026-08-02 — A current-schema database open no longer retains a writer (`B-1.5.1-01a`)
 `db.py`'s two migrations ran an `UPDATE`/`ALTER TABLE` on every connect
@@ -101,7 +120,7 @@ legacy database still gets both columns and both backfills unchanged; a
 current populated one now opens with `conn.in_transaction` false throughout.
 - Files: db.py, tests/test_schema.py
 - Status: shipped
-- Commit: pending
+- Commit: eb8db69
 
 ## 2026-08-02 — Runtime prose says Cooking for Cats; a private chat's own claims are honest (`W-0.9.1-03`, `W-0.9.1-04`)
 `ui.DISPLAY_NAME` is the one source every human-facing "cfc" now reads
