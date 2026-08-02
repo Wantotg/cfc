@@ -317,11 +317,6 @@ they mean.
 ꒰ ˶• ༝ - ˶꒱ 'MOAR FIXES!'
 ./づᡕᠵ᠊ᡃ࡚ࠢ࠘ ⸝່ࠡࠣ᠊߯᠆ࠣ࠘ᡁࠣ࠘᠊᠊°.~♡︎
 ```
-
-> *Note: the most useful new features so far: turn the tide against the 503's*
-```
-(ง •̀_•́)ง 'take that!'
-```
 ## v1.5 — Conversation control *completed, 01/08*
 
 An answer you didn't like is no longer something you have to live with. You can
@@ -347,7 +342,12 @@ hub instead of from inside it.
 - `config.example.py` said `preset_params` takes preset names; it takes
   parameter names, and following it stopped cfc launching (B-1.5-02)
 
-## v1.5.2 — Fail out loud — 2026-08-02
+> *Note: the most useful new features so far: turn the tide against the 503's*
+```
+(ง •̀_•́)ง 'take that!'
+```
+
+## v1.5.2 — Fail out loud *completed, 02/08*
 Adding more information only helps if it agrees on what is true, and if it points out where something might me wrong.
 
 **Added**
@@ -372,7 +372,7 @@ Adding more information only helps if it agrees on what is true, and if it point
 (______)__m_m)
 ```
 
-## v1.6 — What the model sees — 2026-08-02
+## v1.6 — What the model sees *completed, 02/08*
 
 The vault can be partitioned into named scopes, and a hidden one is hidden the
 same way everywhere a model could reach it — file tools, recall, and the
