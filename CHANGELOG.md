@@ -27,6 +27,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — A current-schema database open no longer retains a writer (`B-1.5.1-01a`)
+`db.py`'s two migrations ran an `UPDATE`/`ALTER TABLE` on every connect
+regardless of whether anything needed changing — and SQLite takes the write
+lock the moment an `UPDATE` opens, whether or not its `WHERE` matches a row.
+On a populated, current-schema database (the overwhelmingly common connect)
+that meant every `db()` call briefly contended for a lock it had no use for,
+which is what let a scheduled tick opening the database while a chat held it
+exhaust its five-second wait and die with no routine run at all. Session
+columns are now added only when `PRAGMA table_info` says they're missing; the
+NULL-kind backfill and the legacy-routine-session backfill are each preceded
+by a `SELECT` probe and only run (and commit) when there is real work. A
+legacy database still gets both columns and both backfills unchanged; a
+current populated one now opens with `conn.in_transaction` false throughout.
+- Files: db.py, tests/test_schema.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — Runtime prose says Cooking for Cats; a private chat's own claims are honest (`W-0.9.1-03`, `W-0.9.1-04`)
 `ui.DISPLAY_NAME` is the one source every human-facing "cfc" now reads
 from — the hub's quit line, the config/wiki/routines screen titles, the

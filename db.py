@@ -89,16 +89,19 @@ def db(path=None):
             FOREIGN KEY (tag_id) REFERENCES tags(id)
         );
     """)
+    # Checked before writing, not caught after — an ALTER TABLE that already
+    # applies still takes a write lock while SQLite discovers the column is
+    # there, and a current, fully-migrated database is the overwhelmingly
+    # common connect. See B-1.5.1-01a.
+    session_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
     for col in ["system_prompt", "system_prompt_name",
                 "persona", "persona_name", "traits",
                 "first_message_name", "first_message_text",
                 "first_message_at"]:
-        try:
+        if col not in session_cols:
             conn.execute(
                 f"ALTER TABLE sessions ADD COLUMN {col} TEXT"
             )
-        except sqlite3.OperationalError:
-            pass
     # The one-row rule for Main lives in SQLite itself, not only in
     # get_or_create_main's own check: a partial UNIQUE index on the singleton
     # value means a second 'main' row can never be inserted, race or no race.
@@ -149,13 +152,22 @@ def _migrate_routine_sessions(conn):
     before this marker existed. That is the intended behaviour, not a
     coincidence of the rule — a routine's transcript is chat-shaped, and recall
     filters to the wiki anyway.
+
+    A plain `UPDATE` takes SQLite's write lock the moment it opens a write
+    cursor, whether or not its `WHERE` matches anything — so this checks with
+    a `SELECT` first, on every connect, and only issues the `UPDATE` (and
+    commits) when a legacy row is actually there to backfill (B-1.5.1-01a).
     """
-    n = conn.execute(
+    if not conn.execute(
+        "SELECT 1 FROM sessions WHERE provider=? AND title LIKE ? LIMIT 1",
+        (PROVIDER_CHAT, _ROUTINE_TITLE_LIKE),
+    ).fetchone():
+        return
+    conn.execute(
         "UPDATE sessions SET provider=? WHERE provider=? AND title LIKE ?",
         (PROVIDER_ROUTINE, PROVIDER_CHAT, _ROUTINE_TITLE_LIKE),
-    ).rowcount
-    if n:
-        conn.commit()
+    )
+    conn.commit()
 
 
 def _migrate_messages(conn):
@@ -165,23 +177,35 @@ def _migrate_messages(conn):
     pre-existing message becomes kind='chat' for free. Only the :remember
     markers need reclassifying, and that runs once: the WHERE clause finds
     nothing on later starts.
+
+    Every write here is guarded by a check first — column existence via
+    `PRAGMA table_info`, the NULL backfill via a `SELECT` probe — because a
+    plain `ALTER TABLE` or `UPDATE` takes SQLite's write lock as soon as it
+    opens, whether or not it ends up changing anything. A current, populated
+    database is the overwhelmingly common connect, and on that path this
+    function must do no writing at all (B-1.5.1-01a).
     """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
     added = False
-    for ddl in ("ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'chat'",
-                "ALTER TABLE messages ADD COLUMN meta TEXT"):
-        try:
+    for col, ddl in (
+        ("kind", "ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'chat'"),
+        ("meta", "ALTER TABLE messages ADD COLUMN meta TEXT"),
+    ):
+        if col not in cols:
             conn.execute(ddl)
             added = True
-        except sqlite3.OperationalError:
-            pass          # column already there
 
     # Older rows may predate the DEFAULT and hold NULL.
-    conn.execute("UPDATE messages SET kind='chat' WHERE kind IS NULL")
+    if conn.execute(
+        "SELECT 1 FROM messages WHERE kind IS NULL LIMIT 1"
+    ).fetchone():
+        conn.execute("UPDATE messages SET kind='chat' WHERE kind IS NULL")
 
     rows = conn.execute(
         "SELECT id, content FROM messages "
         "WHERE kind='chat' AND content LIKE '[:remember %'"
     ).fetchall()
+    wrote_marker = False
     for mid, content in rows:
         m = _MARKER_RE.match(content or "")
         if not m:
@@ -192,7 +216,8 @@ def _migrate_messages(conn):
             "UPDATE messages SET kind='recall_marker', meta=? WHERE id=?",
             (meta, mid),
         )
-    if added or rows:
+        wrote_marker = True
+    if added or wrote_marker:
         conn.commit()
 
 

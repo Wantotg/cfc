@@ -622,6 +622,113 @@ def main():
         dbmod.drop_chunks = real_drop
     c.close()
 
+    print("\n--- B-1.5.1-01a: a current-schema populated database opens "
+          "without retaining a writer ---")
+    # The bug: every connect ran an UPDATE unconditionally, even when nothing
+    # matched its WHERE clause — and SQLite takes the write lock the moment an
+    # UPDATE opens, whether or not a row is found. A scheduled tick opening
+    # the database while a chat holds it could exhaust its busy timeout and
+    # die with no routine run at all. Guard each write with a check first, so
+    # the overwhelmingly common case — a database that is already current —
+    # does no writing.
+    current = tmp / "current.db"
+    dbmod.DB_PATH = current
+    seed = dbmod.db()          # first connect: creates + migrates fresh
+    sid = dbmod.new_session(seed, title="s")
+    dbmod.save_message(seed, sid, "user", "hello", kind="chat")
+    dbmod.save_message(seed, sid, "assistant", "hi", kind="chat")
+    dbmod.save_message(
+        seed, sid, "user",
+        '[:remember "already classified" → 2 excerpts injected (ephemeral)]',
+        kind="recall_marker",
+        meta={"query": "already classified", "excerpts": 2})
+    seed.close()
+
+    before = sqlite3.connect(current).execute(
+        "SELECT id, kind, meta FROM messages ORDER BY id").fetchall()
+
+    reopened = dbmod.db()
+    ok("re-opening a current, populated database leaves conn.in_transaction "
+       "False — no writer retained", reopened.in_transaction is False)
+    after = reopened.execute(
+        "SELECT id, kind, meta FROM messages ORDER BY id").fetchall()
+    ok("...and the data is unchanged", before == after, (before, after))
+    reopened.close()
+
+    print("\n--- a legacy database still acquires the columns and both "
+          "real backfills, guard or no guard ---")
+    legacy3 = tmp / "legacy3.db"
+    legacy_db(legacy3)
+    dbmod.DB_PATH = legacy3
+    conn = dbmod.db()
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    ok("legacy-column: kind added under the guarded path", "kind" in cols)
+    ok("legacy-column: meta added under the guarded path", "meta" in cols)
+    ok("legacy-column: nothing left NULL",
+       conn.execute("SELECT COUNT(*) FROM messages WHERE kind IS NULL"
+                    ).fetchone()[0] == 0)
+    marker = ('[:remember "what did we decide" → 8 excerpts '
+              'injected (ephemeral)]')
+    ok("recall-marker: still reclassified under the guarded path",
+       conn.execute("SELECT kind FROM messages WHERE content=?",
+                    (marker,)).fetchone()[0] == "recall_marker")
+    conn.close()
+
+    print("\n--- NULL-kind fixture: columns already present, some rows still "
+          "NULL — the backfill UPDATE still runs and commits ---")
+    nullkind = tmp / "nullkind.db"
+    dbmod.DB_PATH = nullkind
+    seed2 = dbmod.db()   # creates the columns
+    sid2 = dbmod.new_session(seed2, title="s2")
+    seed2.execute(
+        "INSERT INTO messages (session_id, role, content, kind) "
+        "VALUES (?,?,?,NULL)", (sid2, "user", "predates the default"))
+    seed2.commit()
+    seed2.close()
+
+    conn2 = dbmod.db()   # reconnecting must find and fix the NULL row
+    ok("a NULL kind row is backfilled to 'chat' on the next connect",
+       conn2.execute("SELECT kind FROM messages WHERE content=?",
+                     ("predates the default",)).fetchone()[0] == "chat")
+    ok("...and nothing is left NULL",
+       conn2.execute("SELECT COUNT(*) FROM messages WHERE kind IS NULL"
+                    ).fetchone()[0] == 0)
+    conn2.close()
+
+    print("\n--- the mechanism the guard defends against, shown directly ---")
+    # Disabling the guard, in miniature: an UPDATE with a WHERE clause that
+    # matches nothing still opens a write transaction in SQLite, which is
+    # exactly why the unconditional UPDATE used to hold the lock a scheduled
+    # tick could not get. If this ever stopped being true, the guard above
+    # would be defending against nothing.
+    probe = sqlite3.connect(tmp / "probe.db")
+    probe.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, kind TEXT)")
+    probe.commit()
+    ok("a clean connection starts with no transaction open",
+       probe.in_transaction is False)
+    probe.execute("UPDATE t SET kind='chat' WHERE kind IS NULL")
+    ok("an UPDATE matching zero rows still opens a write transaction — "
+       "the reason a guard-free migration can hold the lock",
+       probe.in_transaction is True)
+    probe.rollback()
+    probe.close()
+
+    print("\n--- legacy-routine-session fixture, isolated: the backfill "
+          "commits only when a legacy row actually exists ---")
+    routinelegacy = tmp / "routinelegacy.db"
+    dbmod.DB_PATH = routinelegacy
+    seed3 = dbmod.db()
+    dbmod.new_session(
+        seed3, title="routine: Heartbeat — 2026-07-20 19:13")
+    seed3.close()
+    conn3 = dbmod.db()
+    ok("a legacy routine-titled session is backfilled to provider='routine'",
+       conn3.execute(
+           "SELECT provider FROM sessions WHERE title=?",
+           ("routine: Heartbeat — 2026-07-20 19:13",)).fetchone()[0]
+       == dbmod.PROVIDER_ROUTINE)
+    conn3.close()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
