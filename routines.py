@@ -531,6 +531,7 @@ def save_routine(routine, overwrite=False):
 
 _LOG_RE = re.compile(
     r"^- \*\*(?P<ts>[^*]+)\*\* — (?P<status>\w+)(?P<review> \(review\))?"
+    r"(?: — run #(?P<run>\d+))?"
     r"(?: — (?P<rest>.*))?$")
 
 # The touched-files clause, wherever it sits in `rest`. Two shapes because
@@ -559,6 +560,17 @@ _NEW_SESSION_RE = re.compile(r"\(session (?P<sid>\d+)\)$")
 # this parser's job, only reading them is.
 _LEGACY_SESSION_RE = re.compile(r"\bsession (?P<sid>\d+)\)")
 
+# `elapsed_seconds`'s own marker, anchored at the end of whatever remains
+# once touched and session are stripped. Gated on the run-number marker's
+# presence (see parse_log_line) rather than tried unconditionally: an old
+# line's elapsed time is prose baked into `detail` itself — the same
+# "(NNs, ...)" shape `_LEGACY_SESSION_RE` already has to work around — and
+# reinterpreting that prose as structured data on read would rewrite what
+# every pre-existing log line means without touching a single byte of it.
+# This marker only ever appears on a line `append_log` itself wrote under
+# the new shape, so the gate costs nothing on the lines it protects.
+_ELAPSED_RE = re.compile(r"\((?P<secs>\d+)s\)$")
+
 
 class RunRecord:
     """One parsed line from a routine's run log.
@@ -572,19 +584,36 @@ class RunRecord:
     `touched` is the joined display string `append_log` already built, not a
     re-split list: a filename may itself contain ", ", so there is no lossless
     way back to individual names and nothing here needs one.
+
+    `run_number` is `None` only transiently, between parsing and `read_log`'s
+    post-pass — every record that reaches a caller has one, explicit (a line
+    this module wrote under the new shape) or derived (an older line, given
+    one deterministically, oldest first). `session_id` stays an internal
+    field: it is what `db.routine_session` checks a transcript reference
+    against, never what a routine surface names at a person — see
+    `<routine-id>/<run-number>` on the routines screen.
+
+    `elapsed_seconds` is `None` for a line that predates the field — the
+    active-runtime clock `runner.py` measures with, not the wall-clock gap
+    between this run's start and its log line, which a suspended machine can
+    inflate to hours for a run that took seconds (`N-0.9.2-03`).
     """
 
-    def __init__(self, timestamp, status, review, detail, touched, session_id):
+    def __init__(self, timestamp, status, review, detail, touched, session_id,
+                 run_number=None, elapsed_seconds=None):
         self.timestamp = timestamp
         self.status = status
         self.review = review
         self.detail = detail
         self.touched = touched
         self.session_id = session_id
+        self.run_number = run_number
+        self.elapsed_seconds = elapsed_seconds
 
     def __repr__(self):
-        return (f"<RunRecord {self.timestamp} {self.status} "
-                f"review={self.review} session={self.session_id}>")
+        return (f"<RunRecord #{self.run_number} {self.timestamp} {self.status} "
+                f"review={self.review} session={self.session_id} "
+                f"elapsed={self.elapsed_seconds}>")
 
 
 def parse_log_line(line):
@@ -594,10 +623,17 @@ def parse_log_line(line):
     one — see the module comment above `_LEGACY_SESSION_RE`. `last_run()` and
     the routines screen's history both read the log through this one
     function, so there is exactly one place that understands a run-log line.
+
+    `run_number` comes back `None` here for a line that never had the marker
+    — `read_log`'s `_assign_run_numbers` pass is what gives it one. A single
+    line is not enough context to derive it from: derivation is oldest-first
+    across the *whole* log, so it belongs to the reader of the file, not the
+    reader of one line.
     """
     m = _LOG_RE.match(line.strip())
     if not m:
         return None
+    run_number = int(m.group("run")) if m.group("run") else None
     rest = m.group("rest") or ""
 
     touched = ""
@@ -616,6 +652,13 @@ def parse_log_line(line):
         if lm:
             session_id = int(lm.group("sid"))
 
+    elapsed_seconds = None
+    if run_number is not None:
+        em = _ELAPSED_RE.search(rest.rstrip())
+        if em:
+            elapsed_seconds = float(em.group("secs"))
+            rest = rest[:em.start()].rstrip()
+
     return RunRecord(
         timestamp=m.group("ts"),
         status=m.group("status"),
@@ -623,6 +666,8 @@ def parse_log_line(line):
         detail=rest,
         touched=touched,
         session_id=session_id,
+        run_number=run_number,
+        elapsed_seconds=elapsed_seconds,
     )
 
 
@@ -630,9 +675,58 @@ def log_path(routine_id):
     return log_dir() / f"{routine_id}.md"
 
 
+def _parse_lines(text):
+    """Every parseable `RunRecord` in `text`, in file order. No I/O, no
+    derivation — the shared core `read_log` and `_reserve_run_number` both
+    build on, so the two can never read a line differently from one another."""
+    out = []
+    for line in text.splitlines():
+        rec = parse_log_line(line)
+        if rec is not None:
+            out.append(rec)
+    return out
+
+
+def _assign_run_numbers(records):
+    """Give every record missing a `run_number` one, oldest first — mutates
+    and returns `records`.
+
+    One counter, carried across the whole file: it only ever moves forward,
+    to the explicit number on a record that has one or by one otherwise. In
+    the log this design actually produces — a run of old, unnumbered lines
+    followed by new, numbered ones, because numbering began at a point in
+    time and nothing rewrites what came before it — that means the old lines
+    number themselves 1, 2, 3… and the first numbered line continues from
+    wherever they left off, with no gap and no collision.
+    """
+    counter = 0
+    for rec in records:
+        if rec.run_number is not None:
+            counter = max(counter, rec.run_number)
+        else:
+            counter += 1
+            rec.run_number = counter
+    return records
+
+
+def _reserve_run_number(existing_text):
+    """The number the next `append_log` call should use, read fresh from the
+    log's current text.
+
+    Never from a caller's own read of history — a second read is a second
+    chance for the two to disagree — and never defaulted on a read failure:
+    `append_log` calls this against text it has already read, so a failure
+    here is a failure to read the log, and letting that raise is what keeps
+    a mis-reserved number from ever being silently reused. A duplicate run
+    reference is a worse failure than a routine run that didn't get logged.
+    """
+    records = _assign_run_numbers(_parse_lines(existing_text))
+    return max((r.run_number for r in records), default=0) + 1
+
+
 def append_log(routine_id, status, detail="", touched=(), review=False,
-               session_id=None):
-    """Record one run. `status` is 'ok' or 'failed'.
+               session_id=None, elapsed_seconds=None):
+    """Record one run. `status` is 'ok', 'failed' or 'cancelled'.
 
     `review` is a **second, orthogonal signal**, and the reason it isn't folded
     into `status`: a run's loop can complete cleanly (`status='ok'`) while the
@@ -643,11 +737,19 @@ def append_log(routine_id, status, detail="", touched=(), review=False,
     `last_run` can parse it back, while `status` stays exactly 'ok' for the
     scheduler's on_failure logic, which must not retry a run that didn't fail.
 
-    `session_id` is the run's own session — data, not prose. `runner.py` used
-    to splice "(session N)" into `detail` itself, which made a session id
-    something you had to recover by reading the runner's wording rather than
-    something the log structurally carries. `parse_log_line` is the one place
-    that reads it back, on either shape.
+    `run_number` is not a parameter — it is this function's own job to
+    allocate one, from the same log text it is about to append to, so a
+    caller can never hand it a number read at some earlier, now-stale moment.
+
+    `elapsed_seconds` is data, not prose: `runner.py` used to format
+    "({elapsed:.0f}s)" straight into `detail` in three different branches,
+    which meant a reader recovering the number was reading the runner's
+    wording rather than something the log structurally carries. One field,
+    written once, here.
+
+    `session_id` is the run's own session — also data, not prose, for the
+    same reason. `parse_log_line` reads it back on either the current shape
+    or any of the ones `runner.py` wrote before this field existed.
 
     `touched` is the files the run wrote — filled by the collector
     `runner.run_routine` hands to `agent_turn`. Two things about how it renders,
@@ -665,13 +767,18 @@ def append_log(routine_id, status, detail="", touched=(), review=False,
     d = log_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = log_path(routine_id)
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    run_number = _reserve_run_number(existing)
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"- **{ts}** — {status}"
     if review:
         line += " (review)"
+    line += f" — run #{run_number}"
     notes = []
     if detail:
         notes.append(detail.strip())
+    if elapsed_seconds is not None:
+        notes.append(f"({elapsed_seconds:.0f}s)")
     if session_id is not None:
         notes.append(f"(session {session_id})")
     if notes:
@@ -681,8 +788,7 @@ def append_log(routine_id, status, detail="", touched=(), review=False,
         plural = "" if len(touched) == 1 else "s"
         line += f" — wrote {len(touched)} file{plural}: {names}"
 
-    head = f"# Run log — {routine_id}\n\n" if not path.exists() else ""
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    head = "" if path.exists() else f"# Run log — {routine_id}\n\n"
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(existing + head + line + "\n", encoding="utf-8")
     os.replace(tmp, path)
@@ -691,22 +797,20 @@ def append_log(routine_id, status, detail="", touched=(), review=False,
 
 def read_log(routine_id):
     """Every parseable `RunRecord` for this routine, oldest first (file
-    order). A line that doesn't parse is skipped rather than fatal — same
-    policy `list_routines()` gives a malformed file: one bad line must not
-    hide the rest of the history."""
+    order), each carrying a `run_number` — explicit or derived. A line that
+    doesn't parse is skipped rather than fatal — same policy `list_routines()`
+    gives a malformed file: one bad line must not hide the rest of the
+    history. Unlike `_reserve_run_number`, a read failure here returns []
+    rather than raising: this is the lenient, consumer-facing reader, and a
+    hidden history is a smaller failure than a broken hub or a broken screen."""
     path = log_path(routine_id)
     if not path.exists():
         return []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return []
-    out = []
-    for line in lines:
-        rec = parse_log_line(line)
-        if rec is not None:
-            out.append(rec)
-    return out
+    return _assign_run_numbers(_parse_lines(text))
 
 
 def last_run(routine_id):

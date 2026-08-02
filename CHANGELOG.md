@@ -27,6 +27,28 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — A routine's run log carries active elapsed time and a stable run number (`W-0.9.2-01`, `W-0.9.1-07`)
+A machine suspend used to inflate a run's logged elapsed time to the length of
+the outage — `runner.py` measured `datetime.now() - started`, and a frozen
+laptop counts as elapsed exactly like real work does. `runner._active_clock`
+(monotonic, injectable) now feeds one `elapsed_seconds` field to `append_log`
+from the success, failure and Ctrl-C paths alike, instead of three branches
+each formatting `"({elapsed:.0f}s)"` into `detail` by hand; the wall clock
+still stamps the title, the log timestamp, the prompt date and every
+scheduler calculation.
+
+Every run also gets a `run_number`, allocated inside `append_log`'s own
+atomic append — never from a caller's separate read of history, which is
+what would let two callers race to the same number. A log written before
+this field existed derives its numbers oldest-first on read, and a fresh
+append continues from the highest number already on file, explicit or
+derived, so a log that transitions from old lines to new ones never repeats
+or skips a reference. `session_id` stays an internal field; the `<routine-
+id>/<run-number>` a routine surface will show a person is next.
+- Files: routines.py, runner.py, tests/test_routines.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-01 — `preset_params` is a list of parameter names, and said otherwise (`B-1.5-02`)
 `config.example.py` and `models.py`'s field table both described
 `preset_params` as "the `PARAMETER_PRESETS` keys verified for this id" — it

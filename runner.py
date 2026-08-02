@@ -24,6 +24,7 @@
 #      log exists to prevent.
 import datetime
 import re
+import time
 import traceback
 
 import httpx
@@ -334,6 +335,26 @@ def _turn_with_retry(prefix, task, model, conn, session_id, ctx, event,
     )
 
 
+def _active_clock():
+    """The monotonic clock a run's elapsed time is measured against.
+
+    A seam, not an inlined `time.monotonic()` call, so a test can fake a
+    suspend without actually suspending anything: monkeypatch this name and
+    the run's reported elapsed time stops agreeing with a wall-clock delta.
+
+    That gap is real, not hypothetical — `N-0.9.2-03` is a run that logged
+    10,148s elapsed for a call that was actually silent for a few seconds,
+    because the guest suspended mid-request and resumed 2h49m later. httpx's
+    read timeout is monotonic-clock-based and this guest's monotonic clock
+    was paused with it (that is *why* the timeout never fired, and how the
+    outage was told apart from a real hang), so measuring elapsed time the
+    same way — instead of `datetime.now() - started`, which counts the
+    suspend as if the call had been running the whole time — reports what
+    the run actually spent doing something.
+    """
+    return time.monotonic()
+
+
 def run_routine(key, conn, model=None, interactive=False, on_event=None):
     """Run one routine. Returns `(status, summary, session_id)`.
 
@@ -375,6 +396,16 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     # the on-command path), then the vetted default for an unattended run.
     model = effective_model(routine, model)
     started = datetime.datetime.now()
+    # The active-runtime clock, started alongside the wall clock above but
+    # read only through `_active_clock` — see there for why the two can
+    # diverge. `started` still anchors the title, the log timestamp, the
+    # prompt date and every scheduler calculation; this is the one thing
+    # measured differently, and only at the three places that log elapsed
+    # time.
+    clock_start = _active_clock()
+
+    def active_elapsed():
+        return _active_clock() - clock_start
 
     # provider marks this as a routine run so the hub can filter it out
     # without parsing the title. The title prefix stays because it is what a
@@ -440,13 +471,14 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # `cancelled` (not `failed`) is what keeps `on_failure` from firing
         # and `schedule.last_settled` from treating today's cadence as
         # satisfied — a manual cancel must not look like the job ran.
-        elapsed = (datetime.datetime.now() - started).total_seconds()
-        detail = f"interrupted (Ctrl-C) after {elapsed:.0f}s"
+        secs = active_elapsed()
+        detail = f"interrupted (Ctrl-C) after {secs:.0f}s"
         save_message(conn, session_id, "assistant",
                      f"[routine cancelled]\n\n{detail}", model=model)
         conn.commit()
-        append_log(routine.id, "cancelled", detail, touched=touched,
-                   session_id=session_id)
+        append_log(routine.id, "cancelled", "interrupted (Ctrl-C)",
+                   touched=touched, session_id=session_id,
+                   elapsed_seconds=secs)
         return "cancelled", detail, session_id
     except Exception as e:                      # noqa: BLE001 — see below
         # Deliberately broad. Anything from an HTTP timeout to a provider
@@ -479,24 +511,24 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
             errorlog.log_error(e, session_id=session_id, model=model,
                                where=f"routine {routine.id}")
         detail = f"{type(e).__name__}: {e}"
-        elapsed = (datetime.datetime.now() - started).total_seconds()
+        secs = active_elapsed()
         # The session id goes in the *log*, not just the terminal — a failed
         # run is the one you most want to open, and on the scheduled path the
         # terminal line never existed. Return the bare detail so do_routine's
         # own `transcript: session #N` line stays the single on-screen source.
-        append_log(routine.id, "failed", f"{detail} ({elapsed:.0f}s)",
-                   touched=touched, session_id=session_id)
+        append_log(routine.id, "failed", detail, touched=touched,
+                   session_id=session_id, elapsed_seconds=secs)
         return "failed", detail, session_id
 
     conn.commit()
     content = final.get("content", "")
     summary = _summarise(content)
     review = looks_unclear(content)
-    elapsed = (datetime.datetime.now() - started).total_seconds()
+    secs = active_elapsed()
     # `review` is the second, orthogonal signal: the loop is `ok` AND the output
     # looks like the model hit a wall it merely reported. The run did not fail —
     # on_failure must not treat this as a retry — so it rides alongside the
     # status, not inside it.
-    append_log(routine.id, "ok", f"{summary} ({elapsed:.0f}s)",
-               touched=touched, review=review, session_id=session_id)
+    append_log(routine.id, "ok", summary, touched=touched, review=review,
+               session_id=session_id, elapsed_seconds=secs)
     return "ok", summary, session_id

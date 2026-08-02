@@ -798,15 +798,22 @@ def main():
                okc == "failed" and f"session {scid}" in logtext, logtext)
 
             print("\n--- RunRecord: an explicit field, not recovered from prose ---")
-            # The whole point of D-10's `RunRecord` work: session_id is now a
-            # structured field append_log/parse_log_line agree on, not
-            # something a reader has to recover by pattern-matching the
-            # runner's wording.
+            # session_id is a structured field append_log/parse_log_line
+            # agree on, not something a reader has to recover by
+            # pattern-matching the runner's wording. Same now for
+            # run_number and elapsed_seconds (W-0.9.2-01/W-0.9.1-07):
+            # runner.py used to format "({elapsed:.0f}s)" straight into
+            # detail, in three separate branches, which is exactly the kind
+            # of thing that drifts the moment one branch's wording changes.
             rec = routines.read_log("crashlog")[-1]
             ok("the current writer's session id round-trips as a field",
                rec.session_id == scid, (rec.session_id, scid))
-            ok("...and detail keeps the elapsed time but not the marker",
-               "(session" not in rec.detail and "s)" in rec.detail, rec.detail)
+            ok("...and detail carries neither the session nor the elapsed marker",
+               "(session" not in rec.detail and "s)" not in rec.detail, rec.detail)
+            ok("elapsed_seconds is its own field",
+               rec.elapsed_seconds is not None, rec.elapsed_seconds)
+            ok("a first run gets run_number 1",
+               rec.run_number == 1, rec.run_number)
             ok("last_run is a consumer of the same parser",
                routines.last_run("crashlog")[:2] ==
                (rec.status, rec.timestamp), routines.last_run("crashlog"))
@@ -843,6 +850,95 @@ def main():
             ok("last_run reads a legacy file too",
                routines.last_run("legacy-session") ==
                ("ok", "2026-01-02 03:00:05", False))
+            ok("neither legacy line has the run-number marker, so both "
+               "derive one, oldest first",
+               [r.run_number for r in legacy] == [1, 2], legacy)
+
+            print("\n--- run_number: derived for old lines, allocated fresh "
+                  "for new ones, never a duplicate ---")
+            # W-0.9.1-07: the reference this routine's `history`/`open` will
+            # use. A mixed file — legacy lines with no marker, then lines
+            # this module itself appended — must number the whole thing as
+            # one unbroken oldest-first sequence, because a caller reading
+            # `read_log()` cannot tell (and must not need to know) which
+            # part of the file predates the field.
+            routines.append_log("legacy-session", "ok", "a new-shape run")
+            mixed = routines.read_log("legacy-session")
+            ok("the new entry continues the sequence rather than "
+               "restarting or colliding",
+               [r.run_number for r in mixed] == [1, 2, 3], mixed)
+            ok("...and the new entry's number is persisted, not just "
+               "derived on this read",
+               "run #3" in legacy_path.read_text(encoding="utf-8"))
+            routines.append_log("legacy-session", "ok", "and another")
+            ok("a second new append continues from the persisted number, "
+               "not from a fresh derivation of the legacy prefix",
+               routines.read_log("legacy-session")[-1].run_number == 4,
+               routines.read_log("legacy-session")[-1].run_number)
+
+            fresh = make(id="numbered", read_roots=[str(store.pdir)])
+            routines.save_routine(fresh)
+            for _ in range(3):
+                routines.append_log("numbered", "ok", "tick")
+            ok("three fresh appends to an empty log number 1, 2, 3",
+               [r.run_number for r in routines.read_log("numbered")] ==
+               [1, 2, 3], routines.read_log("numbered"))
+
+            print("\n--- active elapsed time excludes a simulated suspend "
+                  "(N-0.9.2-03), while the logged timestamp stays real ---")
+            # A frozen laptop must not log a multi-hour gap as a run's
+            # elapsed time. Faking `_active_clock` proves the run measures
+            # *it*, not `datetime.now() - started`, without actually
+            # suspending anything: the fake clock advances by an exact,
+            # arbitrary 4s regardless of how fast this test itself runs,
+            # so an elapsed_seconds of anything else could only have come
+            # from the wall clock.
+            import datetime as _dt
+
+            real_clock = runner._active_clock
+            before_wall = _dt.datetime.now()
+
+            def clock_pair(gap):
+                seq = iter([0.0, gap])
+                return lambda: next(seq)
+
+            def check_elapsed(routine_id, gap, label):
+                rec = routines.read_log(routine_id)[-1]
+                ok(f"{label}: elapsed_seconds is the active clock's delta",
+                   rec.elapsed_seconds == gap, rec.elapsed_seconds)
+                logged = _dt.datetime.strptime(rec.timestamp,
+                                               "%Y-%m-%d %H:%M:%S")
+                ok(f"{label}: the logged timestamp is still real wall-clock "
+                   "time, unaffected by the fake active clock",
+                   abs((logged - before_wall).total_seconds()) < 10, logged)
+
+            routines.save_routine(make(id="suspend-ok",
+                                       read_roots=[str(store.pdir)]))
+            runner.agent_turn = lambda *a, **kw: {"role": "assistant",
+                                                  "content": "fine"}
+            runner._active_clock = clock_pair(4.0)
+            runner.run_routine("suspend-ok", conn, model="m")
+            runner._active_clock = real_clock
+            check_elapsed("suspend-ok", 4.0, "success")
+
+            routines.save_routine(make(id="suspend-failed",
+                                       read_roots=[str(store.pdir)]))
+            runner.agent_turn = explode
+            runner._active_clock = clock_pair(7.0)
+            runner.run_routine("suspend-failed", conn, model="m")
+            runner._active_clock = real_clock
+            check_elapsed("suspend-failed", 7.0, "failure")
+
+            def interrupted(*a, **kw):
+                raise KeyboardInterrupt()
+
+            routines.save_routine(make(id="suspend-cancelled",
+                                       read_roots=[str(store.pdir)]))
+            runner.agent_turn = interrupted
+            runner._active_clock = clock_pair(2.0)
+            runner.run_routine("suspend-cancelled", conn, model="m")
+            runner._active_clock = real_clock
+            check_elapsed("suspend-cancelled", 2.0, "cancellation")
 
             print("\n--- db.routine_session: the narrow provider check ---")
             from db import PROVIDER_CHAT, new_session, routine_session
