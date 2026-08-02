@@ -8,6 +8,7 @@ feeds them to a chat model that answers ONLY from those excerpts, with citations
 Grounding discipline: the model is instructed to answer only from retrieved
 excerpts and to say plainly when they don't cover the question — no invention.
 """
+import re
 import sys, os, json
 from search import search
 # `ui` is imported for `format_date` alone and imports no cfc module itself, so
@@ -38,6 +39,57 @@ SYSTEM = (
     "- Be concise."
 )
 
+# --- excerpt spacing, for the synthesis request only -----------------------
+#
+# Excess blank lines between paragraphs cost tokens and carry nothing. This is
+# the one input class eligible for that: the request built here is a
+# dedicated, tool-free model call whose text is never parsed back, stored, or
+# quoted (Concept.md's inventory). It never touches `hits` themselves — only
+# the local string this module builds for the provider — and it is
+# deliberately fail-open: anything that makes "is this blank line just
+# spacing" uncertain leaves the whole excerpt exact rather than guess.
+
+_FENCE_RE = re.compile(r'^\s{0,3}(`{3,}|~{3,})')
+_HEADING_RE = re.compile(r'^#{1,6}(\s|$)')
+_BLOCKQUOTE_RE = re.compile(r'^\s{0,3}>')
+_LIST_RE = re.compile(r'^\s*([-*+]\s+|\d+\.\s+)')
+_TABLE_RE = re.compile(r'^\s*\|')
+
+
+def _is_plain_prose(text):
+    """False if any line looks like fenced/indented code or Markdown block
+    structure. A fence disqualifies the excerpt whether or not it is closed —
+    pairing fences correctly is exactly the kind of classification this stays
+    conservative about, so any fence marker is enough to leave it alone."""
+    for line in text.split("\n"):
+        if (_FENCE_RE.match(line) or line.startswith("    ")
+                or line.startswith("\t") or _HEADING_RE.match(line)
+                or _BLOCKQUOTE_RE.match(line) or _LIST_RE.match(line)
+                or _TABLE_RE.match(line)):
+            return False
+    return True
+
+
+def _compact_spacing(text):
+    """Collapse a run of more than one blank line to exactly one. Non-empty
+    lines, their order and their characters are untouched; only excess blank
+    lines are dropped. Returns `text` unchanged when `_is_plain_prose` says
+    no — this never runs on code-shaped or structured input."""
+    if not _is_plain_prose(text):
+        return text
+    out = []
+    blank_run = 0
+    for line in text.split("\n"):
+        if line == "":
+            blank_run += 1
+            if blank_run > 1:
+                continue
+        else:
+            blank_run = 0
+        out.append(line)
+    return "\n".join(out)
+
+
 def build_context(hits):
     blocks = []
     for h in hits:
@@ -45,9 +97,10 @@ def build_context(hits):
         date = format_date(h["created_at"])
         wid = h.get("source_uuid") or "?"
         datepart = f", {date}" if date else ""
+        text = _compact_spacing(h["text"])
         blocks.append(
             f"From: {h['session_title']} (id {wid}{datepart}){tag}\n"
-            f"{h['text']}"
+            f"{text}"
         )
     return "\n\n---\n\n".join(blocks)
 

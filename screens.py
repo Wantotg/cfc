@@ -420,14 +420,19 @@ PHRASE_ALIASES = {
 # above `commands.show_wiki_status`.
 def _wiki_status(rest, conn, table):
     import commands as _commands
-    _commands.show_wiki_status(lead="")
+    _commands.show_wiki_status(rest, lead="")
 
 
 def _wiki_diff(rest, conn, table):
     import commands as _commands
     import wikigit
-    scope, _gran, _msg = _commands._parse_wiki_args(rest)
-    _commands.show_wiki_diff(rest, lead="")
+    # One parse, done inside show_wiki_diff: its return is the scope actually
+    # diffed, or None on a refused argument. Re-parsing `rest` here to decide
+    # whether to arm the review is exactly the split that let a refused diff
+    # arm one anyway (`B-1.6-01`).
+    scope = _commands.show_wiki_diff(rest, lead="")
+    if scope is None:
+        return
     # A successful diff arms the review for this scope; a failed one (a
     # GitError, already reported by show_wiki_diff) must not.
     try:

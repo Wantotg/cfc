@@ -1689,7 +1689,13 @@ def do_updatedb(arg=""):
     # surfaced loudly rather than swallowed.
     why = _wiki_hidden_reason()
     if why:
-        console.print(f"\n[{why} — wiki re-import skipped]", style="yellow")
+        # Name both halves before the spinner starts (D-1.6-03): the wiki
+        # re-import is skipped, but the chat half of the index below still
+        # runs — it never reads the vault, so a hidden wiki has no opinion
+        # about it. One notice, not a skip line followed by a spinner that
+        # looks like it contradicts it.
+        console.print(f"\n[{why} — wiki re-import skipped; eligible chat "
+                      f"messages will still be indexed]", style="yellow")
     else:
         try:
             from import_wiki import run_import
@@ -3010,6 +3016,40 @@ def _parse_wiki_args(arg):
     return scope, gran, " ".join(tokens)
 
 
+# `diff` and `status` are read-only, so unlike `commit` a remainder isn't text
+# they can do anything with — it's a typo or a stale word, and running anyway
+# answers about the wrong corpus while looking correct (`B-1.6-01`). Each
+# prints its own refusal and is the one place either reader — the chat verb
+# and the wiki screen — decides acceptance, so the two can't parse the same
+# line into two different answers.
+def _wiki_diff_accept(arg):
+    """'/wiki diff …' arguments → (scope, granularity, accepted).
+
+    `accepted` is False when `_parse_wiki_args` leaves a remainder; the
+    refusal is printed here, before any git call.
+    """
+    scope, gran, rest = _parse_wiki_args(arg)
+    if rest.strip():
+        console.print()
+        console.print(
+            "  diff takes an optional scope (wiki | journal | vault) and an "
+            "optional granularity (folder | file) — nothing else",
+            style="red")
+        console.print()
+        return scope, gran, False
+    return scope, gran, True
+
+
+def _wiki_status_accept(arg):
+    """'/wiki status …' arguments → accepted. `status` takes no argument."""
+    if (arg or "").strip():
+        console.print()
+        console.print("  status takes no arguments", style="red")
+        console.print()
+        return False
+    return True
+
+
 def _pick_change(changes):
     """Numbered pick over changed paths — the hub-picker idiom (input(), so it
     works headless). Returns the chosen Change, or None on cancel/bad input.
@@ -3063,15 +3103,19 @@ def _print_changes(changes, indent="     "):
 # pass `lead=""` reproduces exactly the visible refusal above; a default of `""`
 # would instead tell a chat user to type `diff`, which is not a verb and so goes
 # to the model as a message. Prefer the failure that is visible.
-def show_wiki_status(lead="/wiki "):
+def show_wiki_status(arg="", lead="/wiki "):
     """'/wiki' — what has changed, wiki first, the rest of the vault counted.
 
-    The vault line is a count and a pointer, not a listing. It exists so that
+    Takes no argument; a non-empty `arg` is refused before any git call. The
+    vault line is a count and a pointer, not a listing. It exists so that
     "wiki db: clean" can never be mistaken for "the vault is clean" — which is
     exactly the state the vault is in most of the time, since pages get edited
     far less often than notes do.
     """
     import wikigit
+
+    if not _wiki_status_accept(arg):
+        return
 
     try:
         wiki, other = wikigit.summary()
@@ -3114,12 +3158,20 @@ def show_wiki_status(lead="/wiki "):
 
 
 def show_wiki_diff(arg="", lead="/wiki "):
-    """'/wiki diff [scope] [folder|file]' — the diff, whole-corpus or one file."""
-    scope, gran, _ = _parse_wiki_args(arg)
+    """'/wiki diff [scope] [folder|file]' — the diff, whole-corpus or one file.
+
+    Returns the scope actually diffed, or `None` if the argument was refused
+    — the one acceptance decision, read back by the wiki screen instead of
+    re-parsing `arg` itself to decide whether to arm its review.
+    """
+    scope, gran, accepted = _wiki_diff_accept(arg)
+    if not accepted:
+        return None
     if gran == "file":
         _wiki_diff_file(scope, lead)
     else:
         _wiki_diff_folder(scope, lead)
+    return scope
 
 
 def _wiki_diff_folder(scope, lead="/wiki "):

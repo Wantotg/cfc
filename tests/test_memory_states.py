@@ -201,13 +201,35 @@ def test_wiki_scope_gating():
                 "import", True)
         except ImportError:
             pass
+        # backfill.update_index is the continuing chat-index half (D-1.6-03):
+        # mocked only so this proves it ran, without touching a real index.
+        import backfill
+        real_update_index = backfill.update_index
+
+        def fake_update_index(*a, **k):
+            calls["index"] = True
+            return (0, 0)
+
+        backfill.update_index = fake_update_index
+        import io
+        buf = io.StringIO()
+        commands.console.file = buf
         try:
             commands.do_updatedb()
         finally:
+            commands.console.file = sys.stdout
+            backfill.update_index = real_update_index
             if real_import is not None:
                 import_wiki.run_import = real_import
+        notice = buf.getvalue()
         check("do_updatedb skips the wiki re-import while it is hidden",
               "import" not in calls, True)
+        check("...and still calls the continuing chat index",
+              "index" in calls, True)
+        check("the one pre-spinner notice names the wiki skip",
+              "wiki re-import skipped" in notice, True)
+        check("...and names the chat index continuing",
+              "chat messages will still be indexed" in notice, True)
 
         vault.VAULT_SCOPES = (dict(name="wiki", path="03 resources/wiki db",
                                    exposed=True),)

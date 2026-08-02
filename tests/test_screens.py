@@ -597,6 +597,125 @@ def test_screens_never_print_chat_syntax():
                (chat[:160], screen[:160]))
 
 
+def test_wiki_read_argument_refusal():
+    """B-1.6-01: `diff` and `status` refuse a remainder they cannot use, on
+    both readers (the chat quick form and the wiki screen), before any git
+    call — and a refused screen diff arms no review. `commit`'s remainder is
+    untouched: it is the message, punctuation and spacing included."""
+    import io
+    import commands
+    import wikigit
+
+    def captured(fn):
+        buf = io.StringIO()
+        screens.console.file = buf
+        try:
+            fn()
+        finally:
+            screens.console.file = sys.stdout
+        return buf.getvalue()
+
+    class NoGit:
+        """Fails the test loudly if `wikigit.status`/`diff` is reached —
+        the refusal must return before any git query, not just before
+        printing one."""
+
+        def __enter__(self):
+            self.calls = []
+            self._saved = (wikigit.status, wikigit.diff)
+
+            def tripwire(name):
+                def _fn(*a, **k):
+                    self.calls.append(name)
+                    raise AssertionError(f"wikigit.{name} reached")
+                return _fn
+            wikigit.status = tripwire("status")
+            wikigit.diff = tripwire("diff")
+            return self
+
+        def __exit__(self, *exc):
+            wikigit.status, wikigit.diff = self._saved
+
+    print("\n--- diff: a bad remainder refuses before any git call ---")
+    with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
+        repo.edit()
+
+        with NoGit() as guard:
+            out_chat = captured(
+                lambda: commands.show_wiki_diff("al;;", lead="/wiki "))
+        ok("chat 'diff al;;' makes no git call", guard.calls == [], guard.calls)
+        ok("chat 'diff al;;' names the accepted scope/granularity words",
+           "scope" in out_chat and "granularity" in out_chat, out_chat)
+
+        conn = dbmod.db(":memory:")
+        table = screens.build_table("wiki")
+        with NoGit() as guard:
+            out_screen = captured(
+                lambda: table.dispatch["diff"]("al;;", conn, table))
+        ok("screen 'diff al;;' makes no git call", guard.calls == [], guard.calls)
+        ok("screen 'diff al;;' refuses the same way",
+           "scope" in out_screen and "granularity" in out_screen, out_screen)
+        ok("a refused screen diff arms no review",
+           "wiki_review" not in table.state, table.state)
+        conn.close()
+
+    print("\n--- status: any argument refuses before any git call ---")
+    with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
+        repo.edit()
+        real_summary = wikigit.summary
+        wikigit.summary = lambda: (_ for _ in ()).throw(
+            AssertionError("wikigit.summary reached"))
+        try:
+            out_status = captured(
+                lambda: commands.show_wiki_status("anything", lead="/wiki "))
+        finally:
+            wikigit.summary = real_summary
+        ok("status with an argument refuses without inspecting the repo",
+           "takes no arguments" in out_status, out_status)
+
+        real_summary = wikigit.summary
+        wikigit.summary = lambda: (_ for _ in ()).throw(
+            AssertionError("wikigit.summary reached"))
+        conn = dbmod.db(":memory:")
+        table = screens.build_table("wiki")
+        try:
+            out_screen_status = captured(
+                lambda: table.dispatch["status"]("anything", conn, table))
+        finally:
+            wikigit.summary = real_summary
+        ok("screen status with an argument refuses the same way",
+           "takes no arguments" in out_screen_status, out_screen_status)
+        conn.close()
+
+    print("\n--- valid forms are unaffected ---")
+    with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
+        repo.edit()
+        out = captured(lambda: commands.show_wiki_diff("wiki", lead="/wiki "))
+        ok("a valid scoped diff still renders", "change(s)" in out, out)
+        out = captured(lambda: commands.show_wiki_status(lead="/wiki "))
+        ok("a bare status still renders", "wiki db" in out, out)
+
+        # _parse_wiki_args reconstructs the remainder by splitting on and
+        # re-joining whitespace, so this pins what that remainder actually
+        # is — ordinary words, punctuation and single spaces intact — not a
+        # byte-for-byte claim about runs of internal whitespace, which
+        # `_parse_wiki_args` was never asked to preserve and this order
+        # doesn't touch.
+        message = "tidied, re-tied, and re-punctuated: the aquarium's pages!"
+        captured_msg = {}
+        real_commit = wikigit.commit
+        def fake_commit(msg, scope, **k):
+            captured_msg["msg"] = msg
+            return "abc1234", msg.splitlines()[0]
+        wikigit.commit = fake_commit
+        try:
+            commands.do_wiki_commit(message, lead="/wiki ")
+        finally:
+            wikigit.commit = real_commit
+        ok("a multiword commit message with punctuation reaches the commit "
+           "unchanged", captured_msg.get("msg") == message, captured_msg)
+
+
 def test_wiki_review():
     print("\n--- wiki: a successful diff arms review; leaving asks ---")
     with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
@@ -1058,6 +1177,7 @@ def main():
     test_config_scopes_and_names()
     test_config_paths_and_connect()
     test_screens_never_print_chat_syntax()
+    test_wiki_read_argument_refusal()
     test_wiki_review()
     test_wiki_quick_forms_unaffected()
     test_routines_show_history_open()

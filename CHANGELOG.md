@@ -27,6 +27,38 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — v1.7 — Wiki reads refuse leftovers; the first model-context experiment (`B-1.6-01`, `D-1.6-03`)
+Three contained changes. `/wiki diff` and `/wiki status` now refuse a
+remainder they cannot use, on both the chat quick form and the wiki screen,
+before any git call — a typo like `diff al;;` used to run against the default
+scope and print a correct-looking answer about the wrong corpus. Both readers
+now share one acceptance decision (`commands._wiki_diff_accept` /
+`_wiki_status_accept`); the screen's diff handler reads the scope back from
+`show_wiki_diff`'s return instead of re-parsing the same argument a second
+time to decide whether to arm its review. `commit` is untouched — its
+remainder is still the free-text message.
+
+`/update db`'s hidden-wiki notice now names both outcomes in the one line
+before the index spinner: the wiki re-import was skipped by the configured
+vault scope, and eligible chat messages will still be indexed. It used to name
+only the skip, one line before a spinner and a chunk count that looked like
+they contradicted it.
+
+The first model-context experiment: `recall.py` compacts a run of more than
+one blank line to one, but only in the local excerpt text used to build
+`/recall`'s dedicated, tool-free synthesis request — never in the hit dicts,
+never anywhere else. It is fail-open: any fenced or indented code, or
+Markdown block structure (headings, lists, blockquotes, tables), or a fence
+that isn't cleanly closed, leaves the whole excerpt exact rather than guess.
+`/remember`'s envelope and every stored or retrieved representation are
+unaffected — this is the one narrow boundary in `Concept.md`'s inventory.
+- Files: commands.py, screens.py, recall.py, tests/test_screens.py,
+  tests/test_memory_states.py, tests/test_recall.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-02 — Stop v1.6's two new config lines pinning config.py (`B-1.6-05`)
 The `config.py` scar, twice, in the release that added the surfaces: `/config`
 grew a `Vault scopes` row and a `Names` row, and `tests/golden.py` pinned
