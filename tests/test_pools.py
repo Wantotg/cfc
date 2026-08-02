@@ -188,17 +188,25 @@ def main():
 
             print("\n--- v1.6: First Messages are personalised too ---")
             import names
-            saved_user = names.USER_DISPLAY_NAME
+            # Both names, not just the one being asserted on: the assertion
+            # below names the {{AI}} default, so patching only {{user}} left
+            # the other half reading the real config.py and the test failed
+            # the day one was configured (`B-1.6-05`). `None` is "absent", so
+            # the default is what the assertion may talk about.
+            saved_user, saved_ai = (names.USER_DISPLAY_NAME,
+                                    names.AI_DISPLAY_NAME)
             (fm_dir / "greeter.md").write_text(
                 "Hello {{user}}, {{AI}} here.\n", encoding="utf-8")
             try:
                 names.USER_DISPLAY_NAME = "Cas"
+                names.AI_DISPLAY_NAME = None
                 ok("a First Message substitutes the configured name",
                    pools.load_first_message("greeter.md")
                    == "Hello Cas, Cooking for Cats here.",
                    pools.load_first_message("greeter.md"))
             finally:
                 names.USER_DISPLAY_NAME = saved_user
+                names.AI_DISPLAY_NAME = saved_ai
         finally:
             pools.FIRST_MESSAGES_DIR = saved_fm
 

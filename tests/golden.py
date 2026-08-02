@@ -587,6 +587,25 @@ def capture():
             if hasattr(mod, "VAULT_ROOT"):
                 setattr(mod, "VAULT_ROOT", str(FIXTURE_VAULT))
 
+    # v1.6 put two more config-derived lines on the /config screen, and both
+    # are the same scar one more time (`B-1.6-05`). VAULT_SCOPES is pinned
+    # *empty* rather than to a fixture scope set: this harness repoints
+    # VAULT_ROOT at the fixture vault above, so a real declaration's paths
+    # resolve to directories that do not exist there and the screen honestly
+    # reports them invalid — a baseline line describing Cas's config.py and
+    # this script's own redirection, and nothing about the source. The scope
+    # rendering itself is pinned directly in tests/test_screens.py, which is
+    # where a policy display belongs; golden pins the no-scopes line only.
+    # The two display names are pinned absent so the defaults render.
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
+            if hasattr(mod, "VAULT_SCOPES"):
+                setattr(mod, "VAULT_SCOPES", ())
+            if hasattr(mod, "USER_DISPLAY_NAME"):
+                setattr(mod, "USER_DISPLAY_NAME", None)
+            if hasattr(mod, "AI_DISPLAY_NAME"):
+                setattr(mod, "AI_DISPLAY_NAME", None)
+
     # Pin AUTO_EXPORT on rather than reading it from config. The script's :q
     # takes the export path only when it's true, so leaving it to config would
     # mean the baseline covers a different amount of code on different

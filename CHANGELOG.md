@@ -27,6 +27,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — Stop v1.6's two new config lines pinning config.py (`B-1.6-05`)
+The `config.py` scar, twice, in the release that added the surfaces: `/config`
+grew a `Vault scopes` row and a `Names` row, and `tests/golden.py` pinned
+neither — so the baseline described whoever's `config.py` recorded it, and
+`check` went red the moment Cas declared his own scopes and display names, on
+two lines that say nothing about the source. `capture()` now pins
+`VAULT_SCOPES` empty and both display names absent, beside the `VAULT_ROOT`
+and `AUTO_EXPORT` pins that already exist for this reason. Scopes are pinned
+*empty* rather than to a fixture set because `capture()` repoints `VAULT_ROOT`
+at the fixture vault, so any real declaration resolves to directories that
+don't exist there and renders as invalid — the scope display is pinned
+directly in `tests/test_screens.py` instead, which is where a policy rendering
+belongs. Same defect in `tests/test_pools.py`: the new First Message test
+patched `USER_DISPLAY_NAME` only while asserting on the `{{AI}}` default, so
+it read the live config for half its expectation. Both restore the recorded
+baseline untouched, which is the evidence they were leaks rather than
+intended changes.
+- Files: tests/golden.py, tests/test_pools.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-02 — v1.6 — A governed view of shared vault material (`D-16`)
 A new `vault.py` is the one authority for two things that share a frontmatter
 reader: an optional, named partition of the vault (`VAULT_SCOPES`, resolved
