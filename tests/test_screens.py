@@ -603,7 +603,13 @@ def test_routines_show_history_open():
         r = routines.Routine(id="nightly", name="Nightly", prompt="task.md",
                              read_roots=[str(store.pdir)])
         routines.save_routine(r)
-        routines.append_log("nightly", "ok", "did the thing", session_id=99)
+        # A real routine session, the way `runner.run_routine` actually
+        # creates one — not an arbitrary id — so the later 'open' tests
+        # exercise the same session db.routine_session will find.
+        real_sid = dbmod.new_session(conn, title="routine: Nightly",
+                                     provider=dbmod.PROVIDER_ROUTINE)
+        routines.append_log("nightly", "ok", "did the thing",
+                            session_id=real_sid)
 
         import io
         buf = io.StringIO()
@@ -624,46 +630,73 @@ def test_routines_show_history_open():
         table.dispatch["history"]("nightly", conn, table)
         screens.console.file = sys.stdout
         out = buf.getvalue()
-        ok("history names the session id", "session #99" in out, out)
+        # W-0.9.1-07: a routine-run reference, never a session number.
+        ok("history names the routine-run reference, not a session number",
+           "nightly/1" in out and "session" not in out.lower(), out)
 
-        # 'open' is provider-checked, using db.routine_session — a chat
-        # session id is refused, only a real routine session opens.
+        print("\n--- routines: 'open' resolves through the routine's own "
+              "log, db.routine_session as the final check ---")
+        result = table.dispatch["open"]("nightly/1", conn, table)
+        ok("a valid reference opens the real session",
+           result == ("transcript", real_sid), result)
+
+        result = table.dispatch["open"]("nightly/99", conn, table)
+        ok("a fabricated run number for a real routine is refused",
+           result is None)
+
+        result = table.dispatch["open"]("ghost/1", conn, table)
+        ok("an unknown routine is refused", result is None)
+
+        # Mismatched: the log record exists and parses, but the session id
+        # it names isn't a real row — db.routine_session is still the final
+        # word, even once the reference itself has resolved.
+        routines.append_log("nightly", "failed", "boom", session_id=424242)
+        result = table.dispatch["open"]("nightly/2", conn, table)
+        ok("a run whose session id doesn't exist is refused",
+           result is None)
+
+        # The old bare numeric form: unadvertised, provider-checked
+        # compatibility only — nothing new ever prints it.
+        result = table.dispatch["open"](str(real_sid), conn, table)
+        ok("the legacy numeric session-id form still opens",
+           result == ("transcript", real_sid), result)
+
         chat_sid = dbmod.new_session(conn, title="a chat")
         result = table.dispatch["open"](str(chat_sid), conn, table)
-        ok("open refuses a non-routine session id", result is None)
-
-        routine_sid = dbmod.new_session(conn, title="routine: Nightly",
-                                        provider=dbmod.PROVIDER_ROUTINE)
-        result = table.dispatch["open"](str(routine_sid), conn, table)
-        ok("open accepts a real routine session",
-           result == ("transcript", routine_sid), result)
-
-        result = table.dispatch["open"]("99999", conn, table)
-        ok("open refuses a session id that doesn't exist", result is None)
+        ok("...but only a real routine session, not an ordinary chat",
+           result is None)
 
         result = table.dispatch["open"]("not-a-number", conn, table)
-        ok("open refuses a non-numeric argument, not raise", result is None)
+        ok("open refuses a non-numeric, non-reference argument, not raise",
+           result is None)
 
         print("\n--- routines: legacy and current records share one history ---")
-        # Prepended, not appended: a legacy line is an *older* run, so it
-        # belongs before the current one in file order — matching how a real
-        # log actually accumulates, oldest write first.
-        legacy_path = routines.log_path("nightly")
-        text = legacy_path.read_text(encoding="utf-8")
-        header, _, rest = text.partition("\n\n")
+        # The legacy line is written first, directly to the file — an
+        # *older* run predating this field, exactly the shape a real log
+        # has: an unnumbered prefix, then everything append_log writes
+        # after it. A fresh routine id, so its numbering is self-contained
+        # and not affected by the 'open' tests above.
+        routines.save_routine(routines.Routine(
+            id="legacy-and-new", name="Legacy and new", prompt="task.md",
+            read_roots=[str(store.pdir)]))
+        legacy_path = routines.log_path("legacy-and-new")
         legacy_path.write_text(
-            f"{header}\n\n"
-            "- **2020-01-01 00:00:00** — ok — an old run (session 1)\n"
-            f"{rest}", encoding="utf-8")
+            "# Run log — legacy-and-new\n\n"
+            "- **2020-01-01 00:00:00** — ok — an old run (session 1)\n",
+            encoding="utf-8")
+        routines.append_log("legacy-and-new", "ok", "the current one")
         buf = io.StringIO()
         screens.console.file = buf
-        table.dispatch["history"]("nightly", conn, table)
+        table.dispatch["history"]("legacy-and-new", conn, table)
         screens.console.file = sys.stdout
         out = buf.getvalue()
         lines = [l.strip() for l in out.splitlines()
                 if l.strip().startswith("20")]
         ok("newest first", lines[0].startswith("2026") and
            lines[1].startswith("2020"), lines)
+        ok("both share one reference scheme — the legacy line derives a "
+           "run_number, and the new one continues after it",
+           "legacy-and-new/2" in out and "legacy-and-new/1" in out, out)
 
 
 def test_routines_run_and_new():

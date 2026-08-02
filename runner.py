@@ -356,14 +356,22 @@ def _active_clock():
 
 
 def run_routine(key, conn, model=None, interactive=False, on_event=None):
-    """Run one routine. Returns `(status, summary, session_id)`.
+    """Run one routine. Returns `(status, summary, session_id, run_number)`.
 
     `status` is an explicit outcome — `"ok"`, `"failed"` or `"cancelled"` —
     rather than one bool asked to mean all three. Never raises for an
     expected failure — a routine that dies must still get a log line, so
-    failures come back as `("failed", reason, session_id)` and the log is
-    written on every path out of here. `on_event(str)` is optional progress
-    reporting, so the REPL can narrate without this module owning a console.
+    failures come back as `("failed", reason, session_id, run_number)` and
+    the log is written on every path out of here. `on_event(str)` is
+    optional progress reporting, so the REPL can narrate without this
+    module owning a console.
+
+    `run_number` is `append_log`'s own return value, threaded straight
+    through — the reference a caller shows a person (`<routine-id>/
+    <run-number>`) is data handed back from the one place that allocated
+    it, never reconstructed from `session_id` by re-reading the log.
+    `None` only when the routine itself couldn't be found or loaded, since
+    there is then no log to have appended anything to.
     """
     def event(msg):
         if on_event:
@@ -372,17 +380,17 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     try:
         routine = key if hasattr(key, "id") else load_routine(key)
     except RoutineError as e:
-        return "failed", str(e), None
+        return "failed", str(e), None, None
 
     if not routine.enabled:
-        append_log(routine.id, "skipped", "routine is disabled")
-        return "failed", f"{routine.id} is disabled", None
+        run_number = append_log(routine.id, "skipped", "routine is disabled")
+        return "failed", f"{routine.id} is disabled", None, run_number
 
     problems = routine.validate()
     if problems:
         detail = "; ".join(problems)
-        append_log(routine.id, "failed", f"invalid: {detail}")
-        return "failed", f"{routine.id} is invalid: {detail}", None
+        run_number = append_log(routine.id, "failed", f"invalid: {detail}")
+        return "failed", f"{routine.id} is invalid: {detail}", None, run_number
 
     # The previous outcome is read from the log, not from memory — a scheduled
     # run is a fresh process and has no memory to read. on_failure is stored
@@ -433,8 +441,9 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     try:
         task = routine.prompt_text()
     except RoutineError as e:
-        append_log(routine.id, "failed", str(e), session_id=session_id)
-        return "failed", str(e), session_id
+        run_number = append_log(routine.id, "failed", str(e),
+                                session_id=session_id)
+        return "failed", str(e), session_id, run_number
 
     task, unfilled = fill_placeholders(task, started, routine.id)
     if unfilled:
@@ -476,10 +485,10 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         save_message(conn, session_id, "assistant",
                      f"[routine cancelled]\n\n{detail}", model=model)
         conn.commit()
-        append_log(routine.id, "cancelled", "interrupted (Ctrl-C)",
-                   touched=touched, session_id=session_id,
-                   elapsed_seconds=secs)
-        return "cancelled", detail, session_id
+        run_number = append_log(routine.id, "cancelled",
+                                "interrupted (Ctrl-C)", touched=touched,
+                                session_id=session_id, elapsed_seconds=secs)
+        return "cancelled", detail, session_id, run_number
     except Exception as e:                      # noqa: BLE001 — see below
         # Deliberately broad. Anything from an HTTP timeout to a provider
         # returning a shape we don't expect has to reach the log, because an
@@ -515,10 +524,10 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # The session id goes in the *log*, not just the terminal — a failed
         # run is the one you most want to open, and on the scheduled path the
         # terminal line never existed. Return the bare detail so do_routine's
-        # own `transcript: session #N` line stays the single on-screen source.
-        append_log(routine.id, "failed", detail, touched=touched,
-                   session_id=session_id, elapsed_seconds=secs)
-        return "failed", detail, session_id
+        # own transcript-reference line stays the single on-screen source.
+        run_number = append_log(routine.id, "failed", detail, touched=touched,
+                                session_id=session_id, elapsed_seconds=secs)
+        return "failed", detail, session_id, run_number
 
     conn.commit()
     content = final.get("content", "")
@@ -529,6 +538,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     # looks like the model hit a wall it merely reported. The run did not fail —
     # on_failure must not treat this as a retry — so it rides alongside the
     # status, not inside it.
-    append_log(routine.id, "ok", summary, touched=touched, review=review,
-               session_id=session_id, elapsed_seconds=secs)
-    return "ok", summary, session_id
+    run_number = append_log(routine.id, "ok", summary, touched=touched,
+                            review=review, session_id=session_id,
+                            elapsed_seconds=secs)
+    return "ok", summary, session_id, run_number

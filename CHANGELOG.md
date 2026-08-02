@@ -27,6 +27,27 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — Routine surfaces teach a routine-run reference, never a chat session number (`W-0.9.1-07`)
+`history`, a completed `/routine` command, the routines screen's generated
+help and `open` all named a run by its backing chat session number —
+`session #45` — which is what it is internally, not what a person reading a
+routine surface should have to learn. Every one of them now shows
+`<routine-id>/<run-number>` instead, and `open` resolves it through the
+named routine's own parsed log record (`routines.find_run`) before
+`db.routine_session` makes the final provider-level check. The reference is
+threaded through as data — `routines.append_log` returns the `run_number`
+it allocated, and `runner.run_routine` hands it back as a fourth return
+value — so no presenter reconstructs it by re-reading the log.
+
+The old bare numeric session id still opens a transcript — unadvertised,
+provider-checked compatibility only, for anything typed from before this
+existed. Nothing new ever prints that form.
+- Files: routines.py, runner.py, commands.py, schedule.py, screens.py,
+  main.py, tests/test_routines.py, tests/test_screens.py,
+  tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — A retry-limited routine no longer reads green in the one column a person checks first (`W-0.9.2-02`)
 `schedule.assess()` is the one place that now decides a routine's schedule
 state — `due`, `settled`, `not yet`, `command`, `disabled`, `invalid`,
@@ -48,7 +69,7 @@ count reads `assess(...).due` directly instead of its own due check.
 - Files: schedule.py, hub.py, screens.py, tests/test_schedule.py,
   tests/test_hub.py, tests/test_screens.py
 - Status: shipped
-- Commit: pending
+- Commit: 31ae418
 
 ## 2026-08-02 — A routine's run log carries active elapsed time and a stable run number (`W-0.9.2-01`, `W-0.9.1-07`)
 A machine suspend used to inflate a run's logged elapsed time to the length of

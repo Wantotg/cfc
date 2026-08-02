@@ -203,7 +203,8 @@ def repl(session_id=None):
 
     A screen (config/wiki/routines, see screens.py) is entered from inside a
     session and, like a session, has exactly one way out: back to the hub, or
-    — for the routines screen's `open <id>` — a persisted routine transcript.
+    — for the routines screen's `open <routine-id>/<run-number>` — a
+    persisted routine transcript.
     `run_session()`'s return value carries that; this loop is what turns an
     `_Open` into the next `run_session()` call, so a screen never has to call
     `run_session()` itself.

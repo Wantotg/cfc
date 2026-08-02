@@ -342,7 +342,7 @@ def _run(keys, model=None, verbose=True):
             name = getattr(key, "id", key)
             print(f"[{datetime.datetime.now().strftime(_TS_FMT)}] {name}: "
                   f"starting")
-            status, summary, session_id = run_routine(
+            status, summary, _session_id, _run_number = run_routine(
                 key, conn, model=model,
                 on_event=(lambda m, n=name: print(f"  {n}: {m}"))
                 if verbose else None)

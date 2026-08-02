@@ -539,7 +539,7 @@ def _routine_show(rest, conn, table):
 
 
 def _routine_history(rest, conn, table):
-    from routines import RoutineError, load_routine, read_log
+    from routines import RoutineError, load_routine, read_log, run_reference
     name = rest.strip()
     if not name:
         console.print("Usage: history <routine>", style="dim")
@@ -558,8 +558,11 @@ def _routine_history(rest, conn, table):
     console.print(f"{r.name} — run history, newest first", style="bold")
     for rec in records:
         flag = " (review)" if rec.review else ""
-        sid = f"session #{rec.session_id}" if rec.session_id is not None else "—"
-        console.print(f"  {rec.timestamp}  {rec.status}{flag}  {sid}")
+        # A routine-run reference, not a session number (W-0.9.1-07) —
+        # every record `read_log` returns carries a run_number, explicit or
+        # derived, so this is never the "—" a missing one would print.
+        ref = run_reference(r.id, rec.run_number)
+        console.print(f"  {rec.timestamp}  {rec.status}{flag}  {ref}")
         if rec.detail:
             console.print(f"    {rec.detail}")
         if rec.touched:
@@ -568,15 +571,45 @@ def _routine_history(rest, conn, table):
 
 
 def _routine_open(rest, conn, table):
+    """`open <routine-id>/<run-number>` — resolved through the named
+    routine's own parsed log record, `db.routine_session` kept as the final
+    provider check before its backing SQLite session is opened.
+
+    A bare numeric session id still works — unadvertised, provider-checked
+    compatibility only, for anything typed from before this reference
+    existed. Nothing new ever presents that form; see `_routine_history`
+    and `commands.do_routine`.
+    """
     from db import routine_session
+    from routines import RoutineError, find_run, load_routine, \
+        parse_run_reference
     token = rest.strip()
-    if not token.lstrip("-").isdigit():
-        console.print("Usage: open <session id>", style="dim")
+
+    parsed = parse_run_reference(token)
+    if parsed is not None:
+        routine_id, run_number = parsed
+        try:
+            r = load_routine(routine_id)
+        except RoutineError as e:
+            console.print(f"  {e}", style="red")
+            return
+        rec = find_run(r.id, run_number)
+        if rec is None or rec.session_id is None:
+            console.print(f"  no run {token!r} for {r.id} — see "
+                          f"'history {r.id}' for valid references",
+                          style="red")
+            return
+        sid = rec.session_id
+    elif token.lstrip("-").isdigit():
+        sid = int(token)
+    else:
+        console.print("Usage: open <routine-id>/<run-number>", style="dim")
         return
-    sid = int(token)
+
     if routine_session(conn, sid) is None:
-        console.print(f"  no routine transcript at session #{sid} — "
-                      f"see 'history <routine>' for valid ids", style="red")
+        console.print(f"  no routine transcript at {token!r} — "
+                      f"see 'history <routine>' for valid references",
+                      style="red")
         return
     return ("transcript", sid)
 
@@ -610,7 +643,8 @@ def _routine_entries():
     return [
         ("show", (), "show <routine> — the complete routine", _routine_show),
         ("history", (), "history <routine> — recent runs", _routine_history),
-        ("open", (), "open <session id> — a run's transcript", _routine_open),
+        ("open", (), "open <routine-id>/<run-number> — a run's transcript",
+         _routine_open),
         ("run", (), "run <routine> — run it now", _routine_run),
         ("new", (), "create a routine", _routine_new),
         ("refresh", (), "re-evaluate this screen", _routine_refresh),

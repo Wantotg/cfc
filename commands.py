@@ -2410,7 +2410,7 @@ def do_routine(conn, arg, model=None):
     # something sane before they press it.
     console.print(f"Running routine: {routine.name}  "
                   f"(Ctrl-C cancels)")
-    status, summary, session_id = run_routine(
+    status, summary, session_id, run_number = run_routine(
         routine, conn, model=model,
         # A human is present for an on-command run. The scheduled path passes
         # False, which is what ToolContext.interactive is reserved for.
@@ -2429,8 +2429,14 @@ def do_routine(conn, arg, model=None):
         console.print(f"  cancelled — {summary}", style="yellow")
     else:
         console.print(f"  FAILED — {summary}", style="red")
-    if session_id:
-        console.print(f"  transcript: session #{session_id}", style="dim")
+    # A routine-run reference, never a session number — `session_id` is
+    # still what actually opens (db.routine_session's job), but nothing a
+    # person reads here should teach them a routine transcript is a chat
+    # session (W-0.9.1-07).
+    if session_id and run_number is not None:
+        from routines import run_reference
+        console.print(f"  transcript: {run_reference(routine.id, run_number)}"
+                      f" — open it from the routines screen", style="dim")
     console.print()
 
 

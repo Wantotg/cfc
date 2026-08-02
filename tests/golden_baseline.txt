@@ -479,7 +479,7 @@ routine>
 routine commands
   show     show <routine> — the complete routine
   history  history <routine> — recent runs
-  open     open <session id> — a run's transcript
+  open     open <routine-id>/<run-number> — a run's transcript
   run      run <routine> — run it now
   new      create a routine
   refresh  re-evaluate this screen

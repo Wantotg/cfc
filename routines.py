@@ -739,7 +739,11 @@ def append_log(routine_id, status, detail="", touched=(), review=False,
 
     `run_number` is not a parameter — it is this function's own job to
     allocate one, from the same log text it is about to append to, so a
-    caller can never hand it a number read at some earlier, now-stale moment.
+    caller can never hand it a number read at some earlier, now-stale
+    moment. It is the return value: a caller that needs `<routine-id>/
+    <run-number>` for the reference it will show a person gets it as data,
+    from the one place that decided it, rather than reconstructing it with
+    a second read of the log it just wrote.
 
     `elapsed_seconds` is data, not prose: `runner.py` used to format
     "({elapsed:.0f}s)" straight into `detail` in three different branches,
@@ -792,7 +796,7 @@ def append_log(routine_id, status, detail="", touched=(), review=False,
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(existing + head + line + "\n", encoding="utf-8")
     os.replace(tmp, path)
-    return path
+    return run_number
 
 
 def read_log(routine_id):
@@ -811,6 +815,43 @@ def read_log(routine_id):
     except OSError:
         return []
     return _assign_run_numbers(_parse_lines(text))
+
+
+def run_reference(routine_id, run_number):
+    """The reference a routine surface shows a person: `<routine-id>/
+    <run-number>`. `parse_run_reference` is the other half of this pair,
+    kept in the same module so the two cannot drift apart."""
+    return f"{routine_id}/{run_number}"
+
+
+def parse_run_reference(token):
+    """(routine_id, run_number) from a `<routine-id>/<run-number>` token,
+    or None if it isn't shaped like one.
+
+    `rpartition` rather than `split`, because a routine id is a slug and
+    contains no `/` of its own (`slugify`), while nothing stops one being
+    typed with extra slashes by hand — the run number is always the part
+    after the *last* one.
+    """
+    routine_id, sep, num = token.rpartition("/")
+    if not sep or not routine_id or not num.isdigit():
+        return None
+    return routine_id, int(num)
+
+
+def find_run(routine_id, run_number):
+    """The `RunRecord` for this routine's `run_number`, or None.
+
+    What `open <routine-id>/<run-number>` resolves through before it ever
+    touches the database (`db.routine_session` is the final, provider-level
+    check) — a fabricated or mismatched reference is refused here, against
+    the log this routine actually wrote, not against whatever a bare
+    session id would happen to open.
+    """
+    for rec in read_log(routine_id):
+        if rec.run_number == run_number:
+            return rec
+    return None
 
 
 def last_run(routine_id):
