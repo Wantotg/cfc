@@ -69,7 +69,7 @@ in. From here down is the shape described above.
 
 ---
 
-## v1.1 - Name it, don't count it **completed, 30/07**
+## v1.1 - Name it, don't count it *completed, 30/07*
 Three commands close three pieces of workflow that were number-only or manual.
 You can file a proposal by typing its title instead of counting rows, walk one
 loose outbox file to a folder you pick, and archive the notes inbox in one
@@ -100,7 +100,7 @@ confirmed batch instead of deleting notes by hand.
                        \\//
                      --" "---
 ```
-## v1.1.1 - A hiccup is not a rejection **completed, 30/07**
+## v1.1.1 - A hiccup is not a rejection *completed, 30/07*
 The v1.1 playtest patch. A model you just switched to now survives a provider
 hiccup on its first turn instead of being switched back out from under you, and
 you can pick a model by the number the list already prints.
@@ -128,7 +128,7 @@ you can pick a model by the number the list already prints.
 ==_~_==
  /___\
 ```
-## v1.2 - Screens that aren't chat **completed, 31/07**
+## v1.2 - Screens that aren't chat *completed, 31/07*
 The wiki and routines each get a command centre instead of a chat window doing
 double duty. `/wiki` reviews and acts on vault diffs, `/routine` manages
 routines with their run history, and `/config` gathers connection, model and
@@ -155,7 +155,7 @@ path settings in one place — none of them ever hand a stray line to a model.
  (  /  )
   \(__)| 
 ```
-## v1.2.1 - 1.2 bug patch **completed, 31/07**
+## v1.2.1 - 1.2 bug patch *completed, 31/07*
 Three small fixes
 - a revert no longer lands on a rejected model
 - improved /model <n> 
@@ -166,7 +166,7 @@ Three small fixes
 ₍^. .^₎⟆ 'more mistakes!'
 ```
 
-## v1.3 - The hidden turn **completed, 31/07**
+## v1.3 - The hidden turn *completed, 31/07*
 
 cfc can now put something in front of the model that you didn't type and that
 never becomes a line in the conversation. A chat can open with the model
@@ -206,7 +206,7 @@ history. All five are one mechanism wearing five triggers, and a dim
 ```
 
 
-## v1.3.1 — First Message visibility — **completed, 31/07**
+## v1.3.1 — First Message visibility — *completed, 31/07*
 
 A light patch. A First Message now has somewhere to be seen, the export
 destination has a name that says what it is rather than one that looks like the
@@ -228,7 +228,7 @@ vault, and two commands that were called hand-verified stopped being.
 𐔌˙. 'visible.'
 ```
 
-## v1.4 — The third chat **completed, 01/08**
+## v1.4 — The third chat *completed, 01/08*
 
 cfc now has a durable Main chat for the vault: one fixed profile, one frozen
 opening, and live persona and system-prompt files read again on each turn. The
@@ -258,7 +258,7 @@ selected model is process-wide, so changing chats no longer changes what
        (__/  (__ /  \|
 ```
 
-## v1.4.1 — Main chat follow-through **completed, 01/08**
+## v1.4.1 — Main chat follow-through *completed, 01/08*
 
 A turn now ends honestly: cfc says it is still working instead of looking
 ready, and everything it does after an answer happens before it offers you
@@ -286,7 +286,7 @@ saying every way cfc puts words in front of the model.
 =^._.^= ∫ 'make them visible, make them scream!'
 ```
 
-## v1.5 — Conversation control **completed, 01/08**
+## v1.5 — Conversation control *completed, 01/08*
 
 An answer you didn't like is no longer something you have to live with. You can
 ask for a different one, take your own message back and try a different turn,
@@ -310,6 +310,38 @@ hub instead of from inside it.
 **Fixed**
 - `config.example.py` said `preset_params` takes preset names; it takes
   parameter names, and following it stopped cfc launching (B-1.5-02)
+
+## v1.5.1 — Say the true thing *completed, 02/08*
+
+A patch about honesty rather than features. The hub stops answering a question
+you didn't ask with a colour, a routine run stops borrowing a chat's identity,
+a run's elapsed time stops counting the hours your machine was asleep, and the
+two words that overclaimed — the product's name and "private" — now say what
+they mean.
+
+**Fixed**
+- the hub's Routines panel splits into `Last run`, `Result` and `Schedule`, so a
+  routine that spent its retry budget on failures can no longer read green in
+  the column you check first (W-0.9.2-02)
+- a run's logged elapsed time measures the time it was actually running, so a
+  machine suspend no longer turns a three-second call into 10,148 seconds
+  (W-0.9.2-01)
+- a routine run has its own reference, `<routine>/<run number>` — `history`, a
+  finished `/routine`, the routines screen's help and `open` all use it, and no
+  routine surface calls a transcript a chat session (W-0.9.1-07)
+- the application calls itself Cooking for Cats where it speaks to you, and
+  `cfc` only where it's an identifier — a test derives the list and fails on a
+  new one (W-0.9.1-03)
+- a private chat's own notice says what "private" covers and what it doesn't:
+  nothing written locally, and your messages still reach the chat provider
+  (W-0.9.1-04)
+
+> *Note: some fixes and changes to make things easier to understand*
+```
+ /\___/\
+꒰ ˶• ༝ - ˶꒱ 'MOAR FIXES!'
+./づᡕᠵ᠊ᡃ࡚ࠢ࠘ ⸝່ࠡࠣ᠊߯᠆ࠣ࠘ᡁࠣ࠘᠊᠊°.~♡︎
+```
 
 > *Note: the most useful new features so far: turn the tide against the 503's*
 ```

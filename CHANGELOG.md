@@ -54,7 +54,7 @@ chat path, permission or hand-off behaviour changed.
   recall.py, runner.py, schedule.py, tests/test_ui.py,
   tests/test_private.py, tests/test_turn_paths.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 9369233
 
 ## 2026-08-02 — Routine surfaces teach a routine-run reference, never a chat session number (`W-0.9.1-07`)
 `history`, a completed `/routine` command, the routines screen's generated

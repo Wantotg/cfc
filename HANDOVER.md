@@ -66,7 +66,9 @@ arguable forever and gets argued under pressure to ship. *Does this version's cl
 
 **Why the private file and not `ROADMAP.md`, since v1.1 (`Q-02`).** `W-06`
 moved the public entry to a stub written the day a version ships, filled from use *after* the playtest — so a playtest starting under that shape has nothing public to test against yet. The private proposal is still finite and still written before testing starts; it just isn't the file that ends up carrying the claim. This is `Q-02`, settled 2026-07-30: the debugger session tested v1.1 against the private proposal without the rule saying so, which worked and is
-now the rule.
+now the rule. A patch version may have no separate private-roadmap entry: its
+finite `Concept.md` and `Work Order.md` are the finish line instead, so the
+manager does not invent a planning note after the fact.
 
 **Do not grow the entry during the playtest.** A finding that makes you want to add a claim is a finding for the *next* version. The entry is the finish line, and a finish line that can be moved is not one.
 
@@ -286,8 +288,10 @@ Settled. Argue with them only with a reason, and say that you are.
     `tests/test_connection.py` pins both properties against the mapping, not
     against colour names or an exact phrase, so re-wording stays free.
 
-    **The routine column is the second light** (v0.9.2, `B-0.9.1-04`).
-    `hub._freshness` renders `schedule.why_not_due()` and decides nothing.
+    **The routine columns are the second light** (v0.9.2, `B-0.9.1-04`).
+    `hub.py` renders `schedule.assess()` in the `Schedule` column and decides
+    nothing; `Last run` and `Result` are separate fields rather than extra
+    opinions hidden in that light.
     It used to be hours-since-last-run against v0.4's 24/48h thresholds — an
     independent opinion about the question the scheduler already answers, and
     therefore free to disagree with it. Five of six live rows were untrue when
@@ -313,7 +317,7 @@ Settled. Argue with them only with a reason, and say that you are.
     a malformed trigger in one cell — `D-10`, not something this colour can fix.
 
     **The dim conflation is the least of `D-10`** — three tiers, body in
-    `BACKLOG.md`. The colour is not lying about what it measures — *is a run
+    `legacy/BACKLOG.md`. The colour is not lying about what it measures — *is a run
     owed* — and that is the trap: the panel is read as *is this still working*,
     and the two questions agree on every routine except a broken one.
 17. **Typing can only reach a model from a chat mode** (v1.2, config/wiki/routine
@@ -612,7 +616,7 @@ tells you the true thing.** Styled output is `style=`, never brackets.
 
 **`db.py` is the only module that stores UTC.** `new_session` and `save_message`
 write `datetime.now(timezone.utc).isoformat()`. Everything else — `routines`,
-`schedule`, `runner`, `mover`, `backup`, `hub._freshness` — writes and compares
+`schedule`, `runner`, `mover`, `backup`, `hub.py` — writes and compares
 **local naive** time. That split is not going away casually; the db's offsets are
 the correct thing to store and the rest is correct for what it does.
 
@@ -735,6 +739,8 @@ Thirty-odd unit suites beside it; none needs an API key. **What is hand-verified
 **A list of what isn't tested goes stale in the safe-looking direction.** The picker sat on that table as hand-verified for two releases after `test_hub.py` already drove it — adding a test is the moment nobody thinks to edit the docs, and the result is a version planning work that is already done.
 
 Three habits worth keeping, all learned here: **verify a guard by disabling it** and watching the assertions fail (seven of them for the journal's git guard);
+restore a deliberately disabled guard by re-editing the file, or commit/stash
+first if using git — never use `git checkout` to recover uncommitted work; and
 **patch the seam, not `config`** — `test_routines` patches `routines.routine_dir` because patching config misses anything that read the
 value at import; and **compare two implementations to each other rather than to a literal** where there are two — `test_turn_paths.py` asserts the tool path ends exactly as the streaming path does, which cannot pass while they disagree and needs no edit when they agree differently.
 
