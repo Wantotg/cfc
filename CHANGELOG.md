@@ -44,7 +44,7 @@ added to the legacy-routine-session fixture, which had the identical blind
 spot without the identical bug.
 - Files: db.py, tests/test_schema.py
 - Status: shipped
-- Commit: pending
+- Commit: f93b341
 
 ## 2026-08-02 — The routines screen shows each routine's scheduler state (`D-1.5.1-01c`)
 `/config` could report a due routine and point at the routines screen, but

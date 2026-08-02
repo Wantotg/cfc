@@ -14,19 +14,6 @@ nothing behind here.** This file holds open entries only. The reasoning is in
 
 ---
 
-## D-1.5.1-01c · The routines screen cannot say which routine is due
-
-**Found:** 2026-08-02, in the v1.5.1 playtest. `/config` correctly reports a
-due routine and points to the routines screen, but that screen shows last-run
-status and review state rather than due-ness. The count is right; the screen it
-opens cannot answer the question it raised unless the user already knows which
-routine to inspect with `show`.
-
-**Owed:** give the on-demand routines screen a due/schedule column based on the
-same assessment the scheduler uses. This is deliberately separate from the
-hub's compact schedule light: the screen can afford the fuller check and can
-show the routine-specific reason.
-
 ## D-14 · `ui.vault_relative`'s docstring names the retired export key
 
 **Found:** 2026-07-31, during the v1.3.1 config-key rename. The docstring says
@@ -36,6 +23,30 @@ is stale after `CHAT_EXPORT_DIR` replaced the old export-destination name.
 
 **Owed:** correct the docstring when that file is next touched. No code change
 is needed for the current release.
+
+## D-16 · `runner._mark_transcript` swallows a failed marker write without rolling the connection back
+
+**Found:** 2026-08-02, while reviewing v1.5.2's routine failure paths.
+`runner._mark_transcript` correctly treats a failed transcript marker as
+best-effort because the authoritative run log already exists, but it swallows
+the failure without rolling back. A failed `save_message` therefore leaves
+`conn.in_transaction` true; the next save commits that stale transaction along
+with its own work. It is a dangling transaction rather than a retained writer,
+but the two best-effort paths in the same function should not clean up
+differently.
+
+**Owed:** roll back the connection before swallowing a failed marker write, and
+test that the connection is clean afterward.
+
+## D-17 · `errorlog` records the turn's module, never its kind
+
+**Found:** 2026-08-02, while answering whether `/swipe` is luckier than sending
+a second message. `errorlog` records a chat error as `chat`, but does not say
+whether the turn was a send, `/swipe`, `/continue`, or OOC turn, so the question
+cannot be counted from the log.
+
+**Owed:** pass the turn kind from `_run_turn` to `errorlog` at its call site,
+preserving the existing module context while making those paths measurable.
 
 ## D-04 · `[esc]` doesn't back out of prompts, and can't while they're `input()`. 0.8.2 remnant
 

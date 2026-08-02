@@ -311,6 +311,31 @@ hub instead of from inside it.
 - `config.example.py` said `preset_params` takes preset names; it takes
   parameter names, and following it stopped cfc launching (B-1.5-02)
 
+## v1.5.2 — Fail out loud — 2026-08-02
+Adding more information only helps if it agrees on what is true, and if it points out where something might me wrong.
+
+**Added**
+- The routines screen shows each routine's scheduler state in a `Schedule`
+  column, so `/config` saying something is due now leads somewhere
+  (`D-1.5.1-01c`)
+
+**Fixed**
+- A scheduled tick no longer dies with `database is locked` while a chat is
+  open — an ordinary database open takes no write lock at all (`B-1.5.1-01a`)
+- A routine that did its work always leaves a run-log line, even when saving
+  its transcript fails, and one routine's failure no longer ends the tick for
+  the rest (`B-1.5.1-01b`)
+- The NULL-kind migration commits the write it makes, instead of handing back
+  a connection holding an open transaction forever (`B-09`)
+
+> *Note: trying to keep the issue-tracker emptry; we add, we take away*
+```
+        /\_/\  'failing loudly, silently: is this a text based app or what?'
+   ____/ o o \
+ /~____  =ø= /
+(______)__m_m)
+```
+
 ## v1.5.1 — Say the true thing *completed, 02/08*
 
 A patch about honesty rather than features. The hub stops answering a question

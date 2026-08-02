@@ -22,13 +22,38 @@ not the file.
 
 # Closed since the split
 
+## ~~D-1.5.1-01c · The routines screen cannot say which routine is due~~ — CLOSED (v1.5.2, 2026-08-02)
+
+**Closed 2026-08-02**, v1.5.2 — the routines screen now renders the scheduler's
+own assessment in a `Schedule` column and narrow-layout line. The playtest
+drove real triggers and cross-read the hub and screen; both agreed.
+`TRACKER.md`, `CHANGELOG.md`, `49e8df2`.
+
+The entry as it stood:
+
+---
+
+## D-1.5.1-01c · The routines screen cannot say which routine is due
+
+**Found:** 2026-08-02, in the v1.5.1 playtest. `/config` correctly reports a
+due routine and points to the routines screen, but that screen shows last-run
+status and review state rather than due-ness. The count is right; the screen it
+opens cannot answer the question it raised unless the user already knows which
+routine to inspect with `show`.
+
+**Owed:** give the on-demand routines screen a due/schedule column based on the
+same assessment the scheduler uses. This is deliberately separate from the
+hub's compact schedule light: the screen can afford the fuller check and can
+show the routine-specific reason.
+
 ## ~~D-10 · The hub's Routines panel cannot say a routine is broken. 1.0, 29-07-2026~~ — CLOSED (v1.5.1, 2026-08-02)
 
 **Closed 2026-08-02**, against the shipped code rather than by new work, as
 `Concept.md` scoped it. The hub's validation nudge covers the middle tier and
 the routine panel now prints the schedule state in text, so the entry's
-conflation is resolved without a new colour. `D-1.5.1-01c` remains the separate
-due-ness gap in the on-demand routines screen. `TRACKER.md`, `CHANGELOG.md`.
+conflation is resolved without a new colour. `D-1.5.1-01c` was the separate
+due-ness gap in the on-demand routines screen; it shipped in v1.5.2. See the
+newer closed entry above. `TRACKER.md`, `CHANGELOG.md`.
 
 The entry as it stood:
 

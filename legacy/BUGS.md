@@ -14,6 +14,61 @@ split line is what is frozen, not the file.
 
 # Closed since the split
 
+## ~~B-1.5.1-01a · A scheduled tick dies with `database is locked`~~ — CLOSED (v1.5.2, 2026-08-02)
+
+**Closed 2026-08-02**, v1.5.2 — current-schema database opens no longer run
+unneeded writes. A real two-process reproduction confirmed the pre-fix lock
+failure and the shipped lock-free open. `TRACKER.md`, `CHANGELOG.md`,
+`eb8db69`, `4e747bb`.
+
+The entry as it stood:
+
+---
+
+## B-1.5.1-01a · A scheduled tick dies with `database is locked`
+
+**Found:** 2026-08-02, in the v1.5.1 playtest. The scheduler had already
+identified a due routine, but opening the database failed before the routine
+started. The same failure was present in earlier schedule logs, so this is not
+a regression in v1.5.1.
+
+`db()` runs schema migrations on every connection. The message migration still
+executes an `UPDATE` when there is nothing left to change, taking a write lock
+in SQLite's rollback-journal mode. A chat holding the database can therefore
+make the unattended tick exhaust its five-second wait and die, with no routine
+run and no user-facing record of the failure.
+
+**Owed:** make both migrations check whether work exists before writing. The
+routine path also needs a designer decision about a busy timeout and whether
+the database should use WAL; the latter must account for restore handling.
+
+## ~~B-1.5.1-01b · A routine can do its work and leave no run-log line~~ — CLOSED (v1.5.2, 2026-08-02)
+
+**Closed 2026-08-02**, v1.5.2 — every runner exit now appends the authoritative
+run-log record before its best-effort transcript marker, and schedule ticks
+contain each routine independently. `TRACKER.md`, `CHANGELOG.md`,
+`076c806`, `4e747bb`.
+
+The entry as it stood:
+
+---
+
+## B-1.5.1-01b · A routine can do its work and leave no run-log line
+
+**Found:** 2026-08-02, in the same playtest. A manual run wrote its vault output
+and then hit the database lock while saving its transcript. The failure handler
+tries to save the transcript before appending the run record, so the second
+failure prevented `append_log` from running. The run therefore looked identical
+to one that had done nothing.
+
+The same path leaves no provider error entry because `errorlog` is deliberately
+narrowed to HTTP errors. In addition, `schedule._run` has no per-routine
+containment, so one exception can end a tick before later due routines run.
+
+**Owed:** ensure the run log is appended on every success, failure and
+cancellation exit even when transcript persistence fails, with the success
+commit completed before the append; contain each routine in the schedule tick.
+
 ## ~~B-06 · `ui.console` still rewrites `:word:` in chat content as an emoji~~ — CLOSED (v1.4.1, 2026-08-01)
 
 **Closed 2026-08-01**, v1.4.1 — `ui.console` is now
