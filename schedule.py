@@ -29,6 +29,7 @@
 #      noise you stop reading.
 import datetime
 import fcntl
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -324,29 +325,92 @@ class _Lock:
         return False
 
 
+# The shared connection's own busy-wait, paid only once due work is already
+# known to exist (see _run's docstring). Longer than db.DEFAULT_BUSY_TIMEOUT
+# on purpose: a scheduled tick is exactly the moment an ordinary chat session
+# is most likely to be mid-turn and holding the write lock, and this is the
+# one caller that can afford to wait rather than fail fast — nobody is
+# sitting at a REPL for it (B-1.5.1-01a).
+DB_OPEN_TIMEOUT = 30.0
+
+
 def _run(keys, model=None, verbose=True):
     """Run each routine in turn. Returns the number that failed.
 
     Everything the runner needs is opened here and not before: the idle tick —
     the overwhelmingly common case — must not pay for a database connection or
-    a backup just to discover it has nothing to do.
+    a backup just to discover it has nothing to do. Every caller of `_run`
+    only reaches it with a non-empty `keys`, which is what lets the shared
+    connection's bounded wait be paid here rather than on the idle path.
     """
     from backup import safe_backup
     from db import db
+    from routines import append_log
     from runner import run_routine
 
     safe_backup()
-    conn = db()
+    try:
+        conn = db(timeout=DB_OPEN_TIMEOUT)
+    except sqlite3.Error as e:
+        # B-1.5.1-01a one level up: the database itself could not be opened
+        # inside the bounded wait, so no routine gets to run at all. Every
+        # selected routine still needs its own record — a single line naming
+        # the tick would leave every routine but one looking like it was
+        # never even considered — and no provider call is possible without a
+        # connection, so none is attempted.
+        detail = f"could not open the database: {e}"
+        print(detail)
+        failed = 0
+        for key in keys:
+            name = getattr(key, "id", key)
+            try:
+                append_log(name, "failed", detail)
+            except Exception as log_error:            # noqa: BLE001
+                # The run log lives on the filesystem, not in SQLite, so a
+                # database lock does not usually take it down too — but if it
+                # does, say so plainly rather than letting the print above
+                # imply the failure landed somewhere it didn't.
+                print(f"{name}: could not record the failure either — "
+                      f"{log_error}")
+            failed += 1
+        return failed
+
     failed = 0
     try:
         for key in keys:
             name = getattr(key, "id", key)
             print(f"[{datetime.datetime.now().strftime(_TS_FMT)}] {name}: "
                   f"starting")
-            status, summary, _session_id, _run_number = run_routine(
-                key, conn, model=model,
-                on_event=(lambda m, n=name: print(f"  {n}: {m}"))
-                if verbose else None)
+            try:
+                status, summary, _session_id, _run_number = run_routine(
+                    key, conn, model=model,
+                    on_event=(lambda m, n=name: print(f"  {n}: {m}"))
+                    if verbose else None)
+            except Exception as e:                    # noqa: BLE001
+                # run_routine() is built to never raise for an expected
+                # failure — its own outcome boundary appends exactly one run
+                # record on every path out (B-1.5.1-01b). This is the
+                # scheduler's containment for whatever that boundary doesn't
+                # cover: one routine's unexpected escape must not end the
+                # tick before later selected routines run. Roll back first —
+                # whatever state the escape left the shared connection in
+                # must not leak into the next routine.
+                conn.rollback()
+                detail = f"{type(e).__name__}: {e}"
+                print(f"[{datetime.datetime.now().strftime(_TS_FMT)}] {name}: "
+                      f"FAILED (uncontained) — {detail}")
+                # The scheduler's own fallback record. Used only here: a
+                # normal return from run_routine() — including a 'failed'
+                # one — already has its own record, and appending a second
+                # one for it would be exactly the double-logging this must
+                # not do.
+                try:
+                    append_log(name, "failed", detail)
+                except Exception as log_error:        # noqa: BLE001
+                    print(f"{name}: could not record the failure either — "
+                          f"{log_error}")
+                failed += 1
+                continue
             print(f"[{datetime.datetime.now().strftime(_TS_FMT)}] {name}: "
                   f"{'FAILED' if status == 'failed' else status} — {summary}")
             # `cancelled` has no human at the wheel on this path — a scheduled

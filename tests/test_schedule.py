@@ -14,6 +14,7 @@ or retries a permanent failure ninety times a day, costs real money while
 nobody is watching.
 """
 import datetime
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -404,10 +405,181 @@ def main():
        schedule.cli(["--run-routine", "does-not-exist"]) == 2)
     ok("--due reports without running", schedule.cli(["--due"]) == 0)
 
+    test_run_containment()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
     return 1 if FAIL else 0
+
+
+class _FakeConn:
+    """Stands in for the shared routine connection in the tests below —
+    `run_routine` itself is mocked out too, so nothing here ever needs to
+    execute real SQL. Only the two things schedule._run touches directly:
+    `rollback()`, counted to prove the containment seam actually rolls back,
+    and `close()`, so the real `finally: conn.close()` has something to call.
+    """
+
+    def __init__(self):
+        self.rollback_calls = 0
+        self.closed = False
+
+    def rollback(self):
+        self.rollback_calls += 1
+
+    def close(self):
+        self.closed = True
+
+
+def test_run_containment():
+    """B-1.5.1-01a / B-1.5.1-01b, one level up: schedule._run's own handling
+    of a database that won't open and a routine that escapes run_routine's
+    outcome boundary unexpectedly.
+
+    `db.db`, `runner.run_routine`, `routines.append_log` and
+    `backup.safe_backup` are all patched at the module level — `_run`
+    imports each of them locally on every call (`from x import y`), which is
+    exactly what makes patching the source module's attribute enough; no
+    seam needs to be added for this.
+    """
+    import backup as backup_mod
+    import db as dbmod
+    import runner as runner_mod
+
+    def make(rid):
+        return Routine(id=rid, name=rid, prompt="task.md", trigger="0300")
+
+    real_db, real_run_routine = dbmod.db, runner_mod.run_routine
+    real_append_log, real_backup = routines.append_log, backup_mod.safe_backup
+    backup_mod.safe_backup = lambda: None
+
+    def restore():
+        dbmod.db = real_db
+        runner_mod.run_routine = real_run_routine
+        routines.append_log = real_append_log
+        backup_mod.safe_backup = real_backup
+
+    try:
+        print("\n--- schedule._run: the shared connection's own bounded "
+              "wait ---")
+        # The 30s policy is only paid once due work is already known — proved
+        # by _run itself never being called with an empty `keys` anywhere in
+        # cli() (see --run-due above); this pins the value it asks db() for.
+        seen_timeouts = []
+
+        def spy_db_ok(path=None, timeout=None):
+            seen_timeouts.append(timeout)
+            return _FakeConn()
+
+        dbmod.db = spy_db_ok
+        runner_mod.run_routine = lambda *a, **kw: ("ok", "did it", 1, 1)
+        failed = schedule._run([make("policy-check")], model="m",
+                               verbose=False)
+        ok("the shared connection is opened with the concept's 30s "
+           "busy-wait", seen_timeouts == [schedule.DB_OPEN_TIMEOUT],
+           seen_timeouts)
+        ok("...which is longer than db's own interactive default",
+           schedule.DB_OPEN_TIMEOUT > dbmod.DEFAULT_BUSY_TIMEOUT,
+           (schedule.DB_OPEN_TIMEOUT, dbmod.DEFAULT_BUSY_TIMEOUT))
+        ok("an ordinary ok run costs nothing", failed == 0, failed)
+
+        print("\n--- schedule._run: the database itself cannot be opened ---")
+
+        def spy_db_fail(path=None, timeout=None):
+            raise sqlite3.OperationalError("database is locked")
+
+        run_calls = []
+        runner_mod.run_routine = (
+            lambda *a, **kw: run_calls.append(a) or ("ok", "x", 1, 1))
+
+        log_calls = []
+
+        def spy_append_log(routine_id, status, detail="", **kw):
+            log_calls.append((routine_id, status, detail))
+            return len(log_calls)
+
+        routines.append_log = spy_append_log
+        dbmod.db = spy_db_fail
+
+        failed = schedule._run([make("open-fail-a"), make("open-fail-b")],
+                               model="m", verbose=False)
+        ok("no provider call is made when the database can't be opened",
+           run_calls == [], run_calls)
+        ok("one failed record is appended per selected routine",
+           {c[0] for c in log_calls} == {"open-fail-a", "open-fail-b"}
+           and len(log_calls) == 2, log_calls)
+        ok("...each naming the database error",
+           all("database is locked" in c[2] for c in log_calls), log_calls)
+        ok("...each logged failed, not some other status",
+           all(c[1] == "failed" for c in log_calls), log_calls)
+        ok("the tick reports every selected routine as failed",
+           failed == 2, failed)
+
+        print("\n--- schedule._run: a run-log append failing too, when the "
+              "database can't be opened ---")
+        log_calls.clear()
+
+        def spy_append_log_also_fails(routine_id, status, detail="", **kw):
+            raise OSError("routine log dir unreadable")
+
+        routines.append_log = spy_append_log_also_fails
+        failed = schedule._run([make("open-fail-c")], model="m",
+                               verbose=False)
+        ok("a run-log append failure on top of an open failure still "
+           "counts the routine failed, not silently",
+           failed == 1, failed)
+
+        print("\n--- schedule._run: an unexpected escape from one routine "
+              "is contained, and the next selected routine still runs ---")
+        routines.append_log = spy_append_log
+        log_calls.clear()
+        seen_routines = []
+
+        def escapes_then_succeeds(key, conn, model=None, on_event=None):
+            name = getattr(key, "id", key)
+            seen_routines.append(name)
+            if name == "seam-a":
+                raise RuntimeError("unexpected escape")
+            return "ok", "fine", 9, 4
+
+        fake_conns = []
+
+        def spy_db_containment(path=None, timeout=None):
+            c = _FakeConn()
+            fake_conns.append(c)
+            return c
+
+        dbmod.db = spy_db_containment
+        runner_mod.run_routine = escapes_then_succeeds
+
+        failed = schedule._run([make("seam-a"), make("seam-b")], model="m",
+                               verbose=False)
+        ok("the escaping routine's failure rolls back the shared connection "
+           "before the next routine", fake_conns[0].rollback_calls == 1,
+           fake_conns[0].rollback_calls)
+        ok("the second selected routine is still attempted despite the "
+           "first's escape", seen_routines == ["seam-a", "seam-b"],
+           seen_routines)
+        ok("the tick's exit stays non-zero", failed >= 1, failed)
+        ok("the scheduler's own fallback logged exactly the escape, once",
+           log_calls == [("seam-a", "failed",
+                          "RuntimeError: unexpected escape")], log_calls)
+
+        print("\n--- schedule._run: a runner-returned failure is never "
+              "double-logged ---")
+        log_calls.clear()
+        runner_mod.run_routine = (
+            lambda key, conn, model=None, on_event=None:
+            ("failed", "provider error", 5, 3))
+        failed = schedule._run([make("returns-failed")], model="m",
+                               verbose=False)
+        ok("a normal 'failed' return still counts toward the tick",
+           failed == 1, failed)
+        ok("...but the scheduler appends nothing of its own — run_routine "
+           "already made its one record", log_calls == [], log_calls)
+    finally:
+        restore()
 
 
 if __name__ == "__main__":

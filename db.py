@@ -45,7 +45,13 @@ _MARKER_RE = re.compile(
 )
 
 
-def db(path=None):
+# sqlite3.connect's own default busy-wait, named so a caller passing its own
+# `timeout` (schedule.py's 30s, once due work is known) is a deliberate
+# departure from a known value rather than a guess at what "the default" was.
+DEFAULT_BUSY_TIMEOUT = 5.0
+
+
+def db(path=None, timeout=None):
     # `path` is the seam private chat uses: db(":memory:") gets an isolated
     # connection with byte-identical schema and migrations, so every conn-driven
     # write (save_message, titles, agent_turn's own saves) lands in a throwaway
@@ -55,7 +61,17 @@ def db(path=None):
     # definition time, so `path=DB_PATH` would freeze the value the module had at
     # import — and the tests that redirect the database by patching db.DB_PATH
     # would silently hit the real ~/.cfc/chat.db. Read the global at call time.
-    conn = sqlite3.connect(DB_PATH if path is None else path)
+    #
+    # `timeout` is SQLite's busy-wait, in seconds, before a locked database
+    # raises `sqlite3.OperationalError`. Every interactive and `:memory:`
+    # caller gets `DEFAULT_BUSY_TIMEOUT` unchanged — a human at the REPL
+    # should not sit through a 30-second stall the moment they open a chat.
+    # `schedule._run` is the one caller that opts into a longer wait, and only
+    # after it already knows there is due work to run (B-1.5.1-01a).
+    conn = sqlite3.connect(
+        DB_PATH if path is None else path,
+        timeout=DEFAULT_BUSY_TIMEOUT if timeout is None else timeout,
+    )
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY,

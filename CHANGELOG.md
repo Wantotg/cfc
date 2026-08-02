@@ -27,6 +27,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — Headless scheduling gets bounded lock patience and per-routine containment (`B-1.5.1-01a`, `B-1.5.1-01b`)
+`db.db()` now takes an explicit `timeout=` (SQLite's busy-wait), defaulting
+to the same 5s every interactive and `:memory:` caller always had.
+`schedule._run()` opens the shared routine connection with a 30-second
+timeout — only once due work is already known, so the idle `--run-due` tick
+stays database-free — because a scheduled tick is exactly the moment an
+ordinary chat session is most likely to be holding the write lock, and
+nobody is sitting at a REPL waiting on it. If that open still fails, every
+selected routine gets its own `failed` run-log record naming the database
+error (no provider call is made), and if the run-log append itself fails
+too, that is reported plainly rather than implied. Each call to
+`run_routine()` is now individually contained: an unexpected escape (the
+outcome boundary from the previous entry doesn't cover, by construction,
+anything that isn't itself) rolls back the shared connection, gets one
+fallback log record from the scheduler, and lets the tick continue to later
+selected routines rather than ending it — a normal return from
+`run_routine()`, including its own `failed`, is never double-logged. The
+whole-tick lock, the existing retry policy, and the final non-zero CLI exit
+on any failure are all unchanged.
+- Files: db.py, schedule.py, tests/test_schedule.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — The routine run log is authoritative across every runner exit (`B-1.5.1-01b`)
 `runner.run_routine` used to leave session creation and task persistence
 outside any try/except, and its failure/cancellation handlers tried to save
