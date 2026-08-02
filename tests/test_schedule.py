@@ -314,6 +314,49 @@ def main():
        schedule.why_not_due(review, at("2026-07-29", "0301")) is not None,
        schedule.why_not_due(review, at("2026-07-29", "0301")))
 
+    print("\n--- assess(): one structured answer, all nine states ---")
+    # W-0.9.2-02: `why_not_due`'s prose collapsed nine different situations
+    # into "is not None", which is why a retry-limited routine and a
+    # cleanly-settled one used to be indistinguishable to any consumer that
+    # only checked that. `assess()` is the one place that decides which of
+    # them a routine is in; `why_not_due` is proved above to still be an
+    # exact, unchanged view over its `.reason`.
+    def check(label, routine, now, state, due):
+        a = schedule.assess(routine, now)
+        ok(f"{label}: state is {state!r}", a.state == state, a)
+        ok(f"{label}: due is {due}", a.due is due, a)
+        if due:
+            ok(f"{label}: due carries no reason", a.reason is None, a)
+        else:
+            ok(f"{label}: reason matches the why_not_due compatibility view",
+               a.reason == schedule.why_not_due(routine, now), a)
+
+    check("disabled", make("d2", enabled=False), at("2026-07-23", "0301"),
+           "disabled", False)
+    check("invalid trigger", make("bad2", trigger="9999"),
+           at("2026-07-23", "0301"), "invalid", False)
+    check("command", make("c3", trigger="command"),
+           at("2026-07-23", "1200"), "command", False)
+    check("not yet", make("notyet"), at("2026-07-23", "0200"), "not yet",
+           False)
+    check("never settled: due", make("neversettled"),
+           at("2026-07-23", "0301"), "due", True)
+    check("unreadable timestamp", make("corrupt"),
+           at("2026-07-23", "0301"), "unreadable", False)
+    check("already ran today: settled", make("daily"),
+           at("2026-07-23", "2300"), "settled", False)
+    check("on_failure=skip after a failure: held", make("skipper",
+           on_failure="skip"), at("2026-07-23", "0315"), "held", False)
+    doomed_now = at("2026-07-23", "0400")
+    check("retry budget spent: retry limit",
+           make("doomed", on_failure="retry"), doomed_now, "retry limit",
+           False)
+    # And the ordinary "still retrying, under budget" and "due again
+    # tomorrow" cases both land on the one `due` state too.
+    check("still under the retry budget: due",
+           make("retrier", on_failure="retry"), at("2026-07-23", "0315"),
+           "due", True)
+
     print("\n--- due_routines reads the folder ---")
     for f in (tmp / "routines").glob("*.md"):
         f.unlink()

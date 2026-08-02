@@ -230,20 +230,26 @@ def main():
        vault_relative(f"{root}/06 metadata", "") == f"{root}/06 metadata")
 
     print("\n--- the routine column answers 'is anything owed' ---")
-    # Rewritten in v0.9.2 (`B-0.9.1-04`). The four assertions that used to live
-    # here pinned hours-since-last-run against v0.4's 24/48h thresholds; that
-    # rule no longer exists, so they were statements about nothing. The two that
-    # survive unchanged are the ones about the *label* rather than the
-    # threshold, which is why they survive: they were never about the rule.
+    # Rewritten in v0.9.2 (`B-0.9.1-04`) and again in v1.5.1 (`W-0.9.2-02`).
+    # v0.9.2 replaced hours-since-last-run thresholds with `why_not_due()`
+    # itself, so the assertions that pinned those thresholds are gone — that
+    # rule no longer exists, and they were statements about nothing.
     #
-    # The colour now renders `schedule.why_not_due()`. `schedule` binds
-    # `last_settled` at import (`from routines import ... last_settled`) —
-    # 1.3's `why_not_due` reads that instead of `last_run` so a cancelled run
-    # can't make a due routine look done for the day — so the seam to patch
-    # is `schedule.last_settled` and NOT `routines.last_run` or
-    # `routines.last_settled`. Patching the latter is the mistake
-    # `HANDOVER.md` names under "patch the seam, not config", and it would
-    # leave every due assertion silently reading Cas's real run logs.
+    # v1.5.1 splits what used to be one coloured `_freshness` cell into two:
+    # `_last_run_cell` (a plain timestamp, never coloured) and
+    # `_schedule_cell` (over `schedule.assess()`, which is what actually
+    # carries the due-ness colour now). The reason is the bug itself: a
+    # routine that had spent its whole retry budget on failures still read
+    # green in the one cell a person looks at first, because "is anything
+    # owed" and "did the last run go well" had been folded into one colour.
+    #
+    # `schedule` binds `last_settled`/`last_success` at import
+    # (`from routines import ... last_settled`), so the seam to patch is
+    # `schedule.last_settled`/`schedule.last_success`/`schedule._runs_today`,
+    # never `routines.last_run` or `routines.last_settled`. Patching the
+    # latter is the mistake `HANDOVER.md` names under "patch the seam, not
+    # config", and it would leave every due assertion silently reading
+    # Cas's real run logs.
     import schedule as sched
     from routines import Routine
 
@@ -265,31 +271,33 @@ def main():
         finally:
             sched.last_settled = saved
 
-    # --- the two that are about the label, and are unchanged ---
-    ok("never run is dim, not red",
-       hub._freshness(routine(), None) == ("never", "dim"))
-    ok("an unparseable timestamp is shown, not dropped",
-       hub._freshness(routine(), "garbage")[0] == "garbage")
-    # ...and the colour that goes with it, which is the branch that had to come
-    # first: why_not_due refuses to read a stamp it can't parse, and that
-    # refusal reads as "not due" — so getting this wrong paints a broken log
-    # green. That is decision 16's "green over a dead server", one row up.
-    ok("...and is dim, never green — a log we can't read is not 'nothing owed'",
-       hub._freshness(routine(), "garbage")[1] == "dim")
+    def schedule_style(routine_obj, now_):
+        return hub._schedule_cell(sched.assess(routine_obj, now_))[1]
 
-    # --- dim means "cannot be owed a run", whatever the timestamp says ---
-    # The four-in-six case that made this bug wider than the report: a command
-    # routine has no honest threshold, so its age must not colour anything.
+    # --- Last run: formatting only, never coloured by due-ness ---
+    ok("never run is dim, not red",
+       hub._last_run_cell(None) == ("never", "dim"))
+    ok("an unparseable timestamp is shown, not dropped",
+       hub._last_run_cell("garbage")[0] == "garbage")
+    ok("...and is dim", hub._last_run_cell("garbage")[1] == "dim")
+
+    # --- Schedule: dim means "cannot be owed a run", whatever the timestamp
+    # says. The four-in-six case that made this bug wider than the report: a
+    # command routine has no honest threshold, so its age must not colour
+    # anything.
     ok("a command routine is dim however old its last run",
-       hub._freshness(routine(trigger="command"), at(500))[1] == "dim")
-    ok("...and however fresh", hub._freshness(routine(trigger="command"),
-                                              at(1))[1] == "dim")
+       with_last_run(at(500), lambda: schedule_style(
+           routine(trigger="command"), now)) == "dim")
+    ok("...and however fresh",
+       with_last_run(at(1), lambda: schedule_style(
+           routine(trigger="command"), now)) == "dim")
     ok("a disabled routine is dim, not green",
-       hub._freshness(routine(enabled=False), at(1))[1] == "dim")
-    # Detected via parse_trigger, so a trigger nobody can read lands here too
-    # rather than falling through to green. See the docstring on D-10.
+       schedule_style(routine(enabled=False), now) == "dim")
+    # Detected via parse_trigger inside assess(), so a trigger nobody can
+    # read lands here too rather than falling through to green. See the
+    # docstring on D-10.
     ok("a malformed trigger is dim, not green",
-       hub._freshness(routine(trigger="nonsense"), at(1))[1] == "dim")
+       schedule_style(routine(trigger="nonsense"), now) == "dim")
 
     # --- the colour flips across the trigger time, not across a duration ---
     today_late = now.replace(hour=12, minute=0, second=0, microsecond=0)
@@ -299,25 +307,20 @@ def main():
 
     ok("a daily routine that already ran today is green",
        with_last_run(ran_today,
-                     lambda: hub._freshness(routine(), ran_today,
-                                            today_late)[1]) == "green")
+                     lambda: schedule_style(routine(), today_late)) == "green")
     ok("...and is orange once today's trigger has passed unserved",
        with_last_run(ran_yesterday,
-                     lambda: hub._freshness(routine(), ran_yesterday,
-                                            today_late)[1]) == "orange3")
+                     lambda: schedule_style(routine(), today_late)) == "orange3")
     # Before its trigger, nothing is owed yet — the same routine, the same last
     # run, an earlier clock. This is the assertion that would fail if anything
     # went back to measuring elapsed hours.
     early = today_late.replace(hour=1, minute=0)
     ok("...and green again before today's trigger comes round",
        with_last_run(ran_yesterday,
-                     lambda: hub._freshness(routine(), ran_yesterday,
-                                            early)[1]) == "green")
+                     lambda: schedule_style(routine(), early)) == "green")
 
-    # --- the two that pin the *reported* bug, and the only ones here that
-    # would fail against the old thresholds. Worth stating plainly: most of the
-    # assertions above pass under v0.4's rule too, because they are about cases
-    # it never reached. These two are the rule change itself.
+    # --- the two that pin the *reported* bug (B-0.9.1-04), and the only
+    # ones here that would fail against the old thresholds ---
     #
     # A weekly job that absorbed its week on schedule, looked at six days later
     # — the report's own words were "red for five days in seven". Fixed dates,
@@ -332,28 +335,69 @@ def main():
         sched.last_success = lambda _id: datetime.datetime(2026, 7, 27, 3, 30)
         ok("a weekly routine that absorbed its week is green six days on",
            with_last_run(weekly_ran,
-                         lambda: hub._freshness(routine(trigger="weekly 0330"),
-                                                weekly_ran, weekly_now)[1])
-           == "green",
+                         lambda: schedule_style(routine(trigger="weekly 0330"),
+                                                weekly_now)) == "green",
            "was red under the v0.4 thresholds — this is B-0.9.1-04 itself")
     finally:
         sched.last_success = saved_success
 
     # And the other direction: badly overdue is still only orange. Red left
-    # this column deliberately — "how badly overdue" is not a fact why_not_due
+    # this column deliberately — "how badly overdue" is not a fact assess()
     # knows, and inventing it means reinventing the threshold.
     long_ago = (today_late - datetime.timedelta(days=3)).replace(
         hour=3, minute=5).strftime("%Y-%m-%d %H:%M:%S")
     ok("three days overdue is orange, not red — red is gone from this column",
        with_last_run(long_ago,
-                     lambda: hub._freshness(routine(), long_ago,
-                                            today_late)[1]) == "orange3")
+                     lambda: schedule_style(routine(), today_late)) == "orange3")
+
+    print("\n--- W-0.9.2-02: a retry-limited routine reads 'retry limit', "
+          "not green reassurance ---")
+    # The bug this whole split exists for: `Last run` used to be coloured by
+    # due-ness, so a routine that had spent its retry budget on failures —
+    # genuinely "not due until tomorrow" — read exactly like a routine that
+    # had simply settled cleanly. Splitting the columns doesn't need the
+    # Schedule colour to change: green here is still an honest answer to
+    # "is a run owed" (no, not until tomorrow). What changes is that `Last
+    # run` no longer borrows that colour, and `Result` — driven by the
+    # routine's real last-run status — says `failed`, in red, right beside
+    # it, so the row as a whole cannot be misread as fine.
+    import routines as routines_mod
+    saved_list, saved_lr = routines_mod.list_routines, routines_mod.last_run
+    saved_settled = sched.last_settled
+    saved_runs_today = sched._runs_today
+    try:
+        # A midnight trigger is always "at or after" by the time this test
+        # runs, so the retry-limit branch is reached regardless of the
+        # wall-clock hour the suite happens to run at.
+        limited = routine(rid="limited", trigger="0000")
+        ran_ts = datetime.datetime.now().replace(
+            hour=0, minute=1, second=0, microsecond=0
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        routines_mod.list_routines = lambda: ([limited], [])
+        routines_mod.last_run = lambda _id: ("failed", ran_ts, False)
+        sched.last_settled = lambda _id: ("failed", ran_ts, False)
+        sched._runs_today = lambda rid, since: (
+            [("failed", None)] * sched.MAX_RETRIES_PER_DAY)
+        rows = hub._routine_rows()
+        ok("one row for the retry-limited routine", len(rows) == 1, rows)
+        (_name, last_label, last_style, sched_label, sched_style,
+         status, review) = rows[0]
+        ok("Schedule names the retry limit specifically",
+           sched_label == "retry limit", sched_label)
+        ok("...and it is not red — the alarm belongs to Result, not here",
+           sched_style == "green", sched_style)
+        ok("Last run stays dim regardless — no due-ness colour leaks into it",
+           last_style == "dim", last_style)
+        ok("Result still carries the real failure, in its own field",
+           status == "failed", status)
+    finally:
+        routines_mod.list_routines, routines_mod.last_run = saved_list, saved_lr
+        sched.last_settled, sched._runs_today = saved_settled, saved_runs_today
 
     print("\n--- one bad routine costs its row, never the panel ---")
     # pick_session renders the panel under `if routines:`, so [] and "no
     # routines configured" are the same screen. A routine that upsets
-    # why_not_due must not be able to empty it.
-    import routines as routines_mod
+    # assess() must not be able to empty it.
     saved_list, saved_lr = routines_mod.list_routines, routines_mod.last_run
     try:
         rs = [routine(rid="good"), routine(rid="bad")]
@@ -365,8 +409,10 @@ def main():
         routines_mod.last_run = boom
         rows = hub._routine_rows()
         ok("both rows survive one exploding routine", len(rows) == 2, rows)
-        ok("...and the broken one degrades to a dim '?', not a vanished row",
-           any(r[1] == "?" and r[2] == "dim" for r in rows), rows)
+        ok("...and the broken one degrades to a dim '?' in both cells, not "
+           "a vanished row",
+           any(r[1] == "?" and r[2] == "dim" and r[3] == "?" and r[4] == "dim"
+               for r in rows), rows)
     finally:
         routines_mod.list_routines, routines_mod.last_run = saved_list, saved_lr
 

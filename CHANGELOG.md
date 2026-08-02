@@ -27,6 +27,29 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — A retry-limited routine no longer reads green in the one column a person checks first (`W-0.9.2-02`)
+`schedule.assess()` is the one place that now decides a routine's schedule
+state — `due`, `settled`, `not yet`, `command`, `disabled`, `invalid`,
+`unreadable`, `held` or `retry limit` — with `why_not_due()` kept as an exact
+compatibility view over its `.reason` for `due_routines`. Before this, the
+hub's `Last run` cell was coloured by "is anything owed", so a routine that
+had spent its whole retry budget on failures read the same reassuring green
+as one that had simply settled cleanly — the actual bug is that "owed" and
+"healthy" were one colour.
+
+The hub's Routines panel now renders three separate fields instead of one:
+`Last run` (a timestamp, never coloured), `Result` (the recorded outcome,
+including review — failed still red), and `Schedule` (the compact
+assessment, coloured by due-ness alone). A retry-limited routine now shows
+`failed` in red under Result and `retry limit` in Schedule — an honest,
+separable pair, rather than one cell trying to say both. `show <routine>`
+prints the full reason sentence, and the config screen's routine-attention
+count reads `assess(...).due` directly instead of its own due check.
+- Files: schedule.py, hub.py, screens.py, tests/test_schedule.py,
+  tests/test_hub.py, tests/test_screens.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — A routine's run log carries active elapsed time and a stable run number (`W-0.9.2-01`, `W-0.9.1-07`)
 A machine suspend used to inflate a run's logged elapsed time to the length of
 the outage — `runner.py` measured `datetime.now() - started`, and a frozen
@@ -47,7 +70,7 @@ or skips a reference. `session_id` stays an internal field; the `<routine-
 id>/<run-number>` a routine surface will show a person is next.
 - Files: routines.py, runner.py, tests/test_routines.py
 - Status: shipped
-- Commit: pending
+- Commit: 040d2ab
 
 ## 2026-08-01 — `preset_params` is a list of parameter names, and said otherwise (`B-1.5-02`)
 `config.example.py` and `models.py`'s field table both described

@@ -141,40 +141,90 @@ def _weekly_not_due(now, last):
     return None
 
 
-def why_not_due(routine, now):
-    """Why this routine should not run at `now`, or None if it should.
+class Assessment:
+    """The one structured answer to "is this routine due, and why".
 
-    Returns the *reason* rather than a bool because every one of these is worth
-    reading when a job you expected didn't fire, and "not due" alone sends you
-    to the code to find out which of six rules applied.
+    `state` is a fixed, compact vocabulary — `due`, `settled`, `not yet`,
+    `command`, `disabled`, `invalid`, `unreadable`, `held`, `retry limit` — a
+    renderer switches on, never a prose match against `reason`. `due` is the
+    fact a scheduler decides against; it is `True` for exactly one state,
+    `due`. `reason` is the full sentence `why_not_due` used to return on its
+    own, worth reading when a job you expected didn't fire — `None` only when
+    `due` is `True`, since there is nothing to explain about "run it".
+
+    A hub, a screen and `due_routines` all want a different *slice* of the
+    same decision — a colour, a sentence, a bool — and before this each read
+    its own thing off `why_not_due`'s prose or re-derived a piece of it (the
+    hub's old `_freshness` re-ran `parse_trigger` itself). One function
+    computes the whole assessment once; every consumer reads a field.
     """
+
+    def __init__(self, state, due, reason=None):
+        self.state = state
+        self.due = due
+        self.reason = reason
+
+    def __repr__(self):
+        return f"<Assessment {self.state} due={self.due}>"
+
+    def __eq__(self, other):
+        if not isinstance(other, Assessment):
+            return NotImplemented
+        return ((self.state, self.due, self.reason) ==
+                (other.state, other.due, other.reason))
+
+
+def assess(routine, now):
+    """The full `Assessment` for this routine at `now`.
+
+    Every branch is unchanged from the `why_not_due` this replaces as the
+    real logic — same order, same conditions, same reason strings — so a
+    caller of the compatibility view below sees no difference at all. What's
+    new is that each branch also names its own compact `state`, most of them
+    previously indistinguishable from one another once reduced to "not
+    None": `held` (an `on_failure: skip` waiting for tomorrow) and `retry
+    limit` (a retry budget spent on failures) used to both collapse into
+    "not due", the same bucket as a routine that simply ran cleanly today —
+    which is `W-0.9.2-02`: a routine that spent its whole retry budget on
+    failures still read green on the hub, in the one column a person
+    actually looks at first.
+    """
+    def not_due(state, reason):
+        return Assessment(state, False, reason)
+
+    def is_due():
+        return Assessment("due", True, None)
+
     if not routine.enabled:
-        return "disabled"
+        return not_due("disabled", "disabled")
 
     kind, at = parse_trigger(routine.trigger)
     if at is None:
         if str(routine.trigger).strip() == "command":
-            return "trigger is 'command' — runs only from /routine"
-        return (f"trigger {routine.trigger!r} is not 'command', HHMM or "
-                f"'weekly HHMM'")
+            return not_due("command",
+                           "trigger is 'command' — runs only from /routine")
+        return not_due("invalid",
+                       f"trigger {routine.trigger!r} is not 'command', HHMM "
+                       f"or 'weekly HHMM'")
 
     today_at = datetime.datetime.combine(now.date(), at)
     if now < today_at:
-        return f"not yet — due at {at.strftime('%H:%M')}"
+        return not_due("not yet", f"not yet — due at {at.strftime('%H:%M')}")
 
     # `last_settled`, not `last_run`: a Ctrl-C cancellation absorbed nothing,
     # so due-ness looks past it to the latest `ok`/`failed` run — otherwise a
     # manual cancel today would make a due routine look done for the day.
     status, ts, _ = last_settled(routine.id)
     if status is None:
-        return None                       # never settled: due
+        return is_due()                   # never settled: due
 
     when = _parse_ts(ts)
     if when is None:
         # A log line we wrote and cannot read back. Refusing to run is the safe
         # direction: the alternative reads as "never run" and fires on every
         # tick for the rest of the day.
-        return f"last run timestamp {ts!r} is unreadable — not running"
+        return not_due("unreadable",
+                       f"last run timestamp {ts!r} is unreadable — not running")
 
     if kind == "weekly":
         # Against the last *success*, not `when` — a failed run absorbed
@@ -182,30 +232,44 @@ def why_not_due(routine, now):
         success = last_success(routine.id)
         weekly = _weekly_not_due(now, success) if success else None
         if weekly:
-            return weekly
+            return not_due("settled", weekly)
         # A completed week is unabsorbed, so it is owed. Fall through to the
         # failure rules below — the retry bound applies to a weekly job for the
         # same reason it applies to a daily one.
         if status != "failed":
-            return None
+            return is_due()
     elif when < today_at:
         # Includes the machine having been off since before the trigger. Runs
         # once, late, today. Yesterday's missed run is not replayed.
-        return None
+        return is_due()
 
     if status != "failed":
-        return f"already ran today at {when.strftime('%H:%M')}"
+        return not_due("settled", f"already ran today at {when.strftime('%H:%M')}")
 
     if routine.on_failure != "retry":
-        return (f"failed at {when.strftime('%H:%M')} and on_failure is "
-                f"{routine.on_failure!r} — waiting for tomorrow")
+        return not_due("held",
+                       f"failed at {when.strftime('%H:%M')} and on_failure is "
+                       f"{routine.on_failure!r} — waiting for tomorrow")
 
     failures = [r for r in _runs_today(routine.id, today_at)
                 if r[0] == "failed"]
     if len(failures) >= MAX_RETRIES_PER_DAY:
-        return (f"failed {len(failures)} times today, the retry limit — "
-                f"waiting for tomorrow")
-    return None
+        return not_due("retry limit",
+                       f"failed {len(failures)} times today, the retry limit — "
+                       f"waiting for tomorrow")
+    return is_due()
+
+
+def why_not_due(routine, now):
+    """Why this routine should not run at `now`, or None if it should.
+
+    A **compatibility view over `assess()`** — every existing caller
+    (`due_routines`, and formerly the hub and the routines screen) only ever
+    tested this against `is None`, never against its wording, so that
+    contract is kept exactly. `assess()` is where the state is actually
+    decided now; this is a one-line projection of its `reason`.
+    """
+    return assess(routine, now).reason
 
 
 def due_routines(now=None):

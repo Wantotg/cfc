@@ -374,6 +374,20 @@ def test_config_render():
         ok("...summing both reasons", "1 invalid" in out and "1 failed" in out,
            out)
 
+        # W-0.9.2-02: the "due" bucket now reads schedule.assess(...).due
+        # rather than its own `why_not_due(...) is None` check — a
+        # never-run, past-its-trigger-time routine must still count. A
+        # trigger of 00:01 is "past" for virtually any wall-clock time this
+        # suite runs at, with no date-rollover arithmetic to get wrong.
+        overdue = routines.Routine(id="overdue", name="Overdue",
+                                   prompt="task.md", trigger="0001",
+                                   read_roots=[str(store.pdir)])
+        routines.save_routine(overdue)
+        out = rendered()
+        ok("a due, never-run routine adds to the count",
+           "3 need attention" in out, out)
+        ok("...naming 'due' among the reasons", "1 due" in out, out)
+
 
 def test_config_paths_and_connect():
     print("\n--- config: 'paths' names every path, or 'not configured' ---")
@@ -599,6 +613,11 @@ def test_routines_show_history_open():
         out = buf.getvalue()
         ok("show prints the full detail, model included",
            "nightly" in out and "id" in out and "valid" in out, out)
+        # W-0.9.2-02: `show` is the one screen with room for assess()'s full
+        # reason rather than a compact word — this routine's default
+        # trigger is 'command', so its schedule is never due and says so.
+        ok("...and the full schedule reason, not just a compact word",
+           "schedule" in out and "runs only from /routine" in out, out)
 
         buf = io.StringIO()
         screens.console.file = buf

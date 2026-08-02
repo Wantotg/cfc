@@ -211,65 +211,20 @@ def list_sessions(conn):
     console.print()
 
 
-def _freshness(routine, ts_text, now=None):
-    """(label, style) for a routine's Last run cell.
+def _last_run_cell(ts_text):
+    """(label, style) for the Last run column: what happened, when — never
+    whether it's owed. Always dim; the only thing this cell can get "wrong"
+    is failing to show a timestamp it was actually given, so an unparseable
+    one is shown raw rather than dropped.
 
-    **The colour says whether this routine is owed a run. It renders
-    `schedule.why_not_due()` and forms no opinion of its own** — standing
-    decision 16, applied one panel up the screen from the connection light and
-    for the same reason. Until v0.9.2 this was hours-since-last-run against the
-    v0.4 thresholds, which is a *proxy* for "is anything owed" and a poor one:
-    `weekly` landed three days after those thresholds were written, so a weekly
-    job that absorbed its week on schedule showed red for five days in seven,
-    and a `command` routine — four of six on Cas's machine — can never be
-    overdue at all yet aged into red like everything else.
-
-    What the same function costs the old one could not buy: **if the OS tick
-    stops firing, every scheduled routine goes orange and stays orange.** No
-    threshold over a timestamp can say that.
-
-    The order of the branches is the whole of it.
-
-    1. An **unparseable** timestamp is the raw string, dim, and it must be
-       decided before anything consults `why_not_due` — that function refuses
-       to run on a log line it cannot read, and its refusal reads as *not due*.
-       A naive mapping paints a broken log green, which is exactly the "green
-       over a dead server" failure decision 16 exists to prevent.
-    2. **Never run** stays `never`, dim. The cell's *text* already carries the
-       fact, so a colour would add alarm and no information, and it would cry
-       wolf on the day you write a routine.
-    3. **Dim also means "cannot be owed a run"** — disabled, or a trigger
-       `parse_trigger` won't read. Green would claim nothing is owed, which is a
-       different and stronger thing to say about a routine that will never fire.
-       Note this puts `trigger: command` and a *malformed* trigger in the same
-       cell; the conflation is real and is the hub's broken-routine blind spot
-       (`D-10`), not something a colour here can fix.
-
-       **That blind spot is bigger than this branch, and `D-10`'s `BACKLOG.md`
-       entry is the body** (written v1.0, after driving it). A routine that
-       parses but fails `validate()` — a prompt file that moved, a renamed read
-       root — never reaches this branch at all and renders **green**, identical
-       to a healthy one, because nothing here consults `validate()`. Green over
-       a routine that cannot run is decision 16's own failure shape one panel up
-       from the light it was written for. Read the entry before changing this
-       function; the cost of checking is measured there and it is not small.
-    4. Otherwise the answer is `why_not_due(...) is None`: orange for owed,
-       green for nothing owed.
-
-    **The reason string stays unparsed.** `why_not_due` returns prose because
-    that is what makes "why didn't this fire" answerable, and this function uses
-    only `is None`. Matching on its wording would add a seventh row to
-    `HANDOVER.md`'s producer/parser table inside the fix for a bug caused by a
-    signal forming its own opinion. `trigger: command` is detected with
-    `parse_trigger`, which returns `(None, None)`, for the same reason.
-
-    **Red is deliberately gone from this column.** "How badly overdue" is not a
-    fact `why_not_due` knows — a daily job is due from its trigger until
-    midnight and then due again — and reconstructing severity from that means
-    inventing the threshold this design was chosen to avoid. `failed` is still
-    red in the Status column, where it belongs.
-
-    `now` is injectable so the due cases are writable without freezing the clock.
+    Due-ness used to be coloured here too, and that conflation was
+    `W-0.9.2-02`: a routine that had spent its whole retry budget on
+    failures still read *green* in this cell, because the only question it
+    answered was "is anything owed", not "did the last run go well" — the
+    question a person glancing at a column called *Last run* actually
+    brings to it. `_schedule_cell` answers the first question now, and the
+    Result column (`status`/`review` in `_routine_rows`) already answers the
+    second; this one just shows the timestamp.
     """
     if not ts_text:
         return "never", "dim"
@@ -277,27 +232,44 @@ def _freshness(routine, ts_text, now=None):
         when = datetime.datetime.strptime(ts_text, "%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         return str(ts_text), "dim"
+    return when.strftime("%Y-%m-%d %H:%M"), "dim"
 
-    label = when.strftime("%Y-%m-%d %H:%M")
 
-    # Local, like `routines`: `schedule` shells nothing out, but it reaches the
-    # agent stack (db, backup, runner) inside `_run`, and hub.py is imported by
-    # the golden harness. A hub render must not pay for that at import time.
-    from schedule import parse_trigger, why_not_due
+def _schedule_cell(assessment):
+    """(label, style) for the Schedule column: `schedule.assess()`'s own
+    compact state, rendered without forming any opinion of its own —
+    standing decision 16, applied one panel up the screen from the
+    connection light and for the same reason.
 
-    if not routine.enabled:
-        return label, "dim"
-    _kind, at = parse_trigger(routine.trigger)
-    if at is None:
-        return label, "dim"
-    if why_not_due(routine, now or datetime.datetime.now()) is None:
-        return label, "orange3"
-    return label, "green"
+    `disabled`/`command`/`invalid` are dim: **these can never be owed a run
+    at all**, so green would claim "nothing is owed", a different and
+    stronger thing to say about a routine that will never fire. This puts
+    `trigger: command` and a malformed trigger in the same dim cell; the
+    conflation is real and is the hub's broken-routine blind spot (`D-10`),
+    not something a colour here can fix.
+
+    Everything else follows `assessment.due` directly: orange when owed,
+    green when not — and that includes `held` and `retry limit`. A
+    retry-limited routine is, honestly, not owed a run until tomorrow, so
+    green here is not a mistake; the failure `W-0.9.2-02` names is that this
+    used to be the *only* signal, so "not owed" and "healthy" read as the
+    same thing. The Result column's red `failed`, right beside this one, is
+    what actually says the routine is broken — pinning that as its own
+    field is the fix, not recolouring this one.
+
+    **Red is deliberately absent from this column.** "How badly overdue" is
+    not a fact `assess()` knows — a daily job is due from its trigger until
+    midnight and then due again — and reconstructing severity from that
+    means inventing the threshold this design was chosen to avoid.
+    """
+    if assessment.state in ("disabled", "command", "invalid"):
+        return assessment.state, "dim"
+    return assessment.state, ("orange3" if assessment.due else "green")
 
 
 def _routine_rows(limit=HUB_ROUTINES):
-    """(name, last-run label, style, status) for the most recently run
-    routines, newest first.
+    """(name, last-run label, style, schedule label, style, status, review)
+    for the most recently run routines, newest first.
 
     One row per *routine*, not per run: the useful question is 'is each of
     these still running', and five rows of the same nightly job would answer
@@ -317,10 +289,10 @@ def _routine_rows(limit=HUB_ROUTINES):
     now = datetime.datetime.now()
     out = []
     for r in good:
-        # **`_freshness` goes inside the per-routine `try`, never the outer
+        # **The per-routine work goes inside this `try`, never the outer
         # one.** `pick_session` renders this panel under `if routines:`, so `[]`
         # and "no routines configured" are the same screen — one routine that
-        # upsets `why_not_due` in the outer handler would delete the whole panel
+        # upsets `assess()` in the outer handler would delete the whole panel
         # silently, which is this project's signature failure shape one
         # indentation level away. Here the cost is confined to its own row, and
         # the row still appears: a dim `?` rather than a vanished routine, the
@@ -329,23 +301,30 @@ def _routine_rows(limit=HUB_ROUTINES):
         # failure of the two.
         try:
             status, ts, review = last_run(r.id)
-            label, style = _freshness(r, ts, now)
+            last_label, last_style = _last_run_cell(ts)
+            from schedule import assess
+            sched_label, sched_style = _schedule_cell(assess(r, now))
         except Exception:
             status, ts, review = None, None, False
-            label, style = "?", "dim"
-        out.append((r.name, label, style, status or "", ts or "", bool(review)))
+            last_label, last_style = "?", "dim"
+            sched_label, sched_style = "?", "dim"
+        out.append((r.name, last_label, last_style, sched_label, sched_style,
+                    status or "", ts or "", bool(review)))
     # Never-run routines sort last; among the rest, most recent first.
-    out.sort(key=lambda row: row[4], reverse=True)
-    return [(n, l, s, st, rv) for n, l, s, st, _, rv in out[:limit]]
+    out.sort(key=lambda row: row[6], reverse=True)
+    return [(n, ll, ls, sl, ss, st, rv)
+            for n, ll, ls, sl, ss, st, _, rv in out[:limit]]
 
 
 def _print_routines(rows):
     table = Table(title="Routines", border_style="dim")
     table.add_column("Routine", no_wrap=True, overflow="ellipsis", width=24)
     table.add_column("Last run", width=17)
-    table.add_column("Status", width=8)
+    table.add_column("Result", width=8)
+    table.add_column("Schedule", width=13)
     from rich.text import Text
-    for name, label, style, status, review in rows:
+    for name, last_label, last_style, sched_label, sched_style, status, \
+            review in rows:
         # Two signals, one cell: a failed loop is red, a loop that finished but
         # whose output looks off is a yellow 'review' (the run WORKED — it just
         # wants a glance), everything else the dim status. 'review' shadows 'ok'
@@ -356,19 +335,21 @@ def _print_routines(rows):
             st_text, st_style = "review", "yellow"
         else:
             st_text, st_style = status, "dim"
-        table.add_row(name, Text(label, style=style), Text(st_text, style=st_style))
+        table.add_row(name, Text(last_label, style=last_style),
+                      Text(st_text, style=st_style),
+                      Text(sched_label, style=sched_style))
     console.print(table)
     # **Printed only when a row is actually orange** (Cas's call, 2026-07-28).
     # The connection light gets away with a bare colour because
     # `print_connection` prints dot *plus* sentence — "the dot is the signal,
     # the sentence is the content" — and this column has no content half: a
-    # colour on a cell headed *Last run* has no sentence beside it to say what
+    # colour on a cell headed *Schedule* has no sentence beside it to say what
     # it means. A legend that is always there is furniture you stop reading; one
     # that appears exactly when it applies is the sentence arriving with its
     # signal. It says what is happening rather than what is wrong, because
     # orange here is not a fault — it is the normal state of a routine between
     # its trigger and the next tick.
-    if any(style == "orange3" for _, _, style, _, _ in rows):
+    if any(row[4] == "orange3" for row in rows):
         console.print("  orange: due, waiting for the next scheduled tick",
                       style="dim")
     console.print()
@@ -523,8 +504,9 @@ def print_hub_help():
 
 def _routine_problem_count():
     """Distinct routines with a problem: malformed files plus anything that
-    fails `validate()`. Closes `D-10` without touching `_freshness` — this is
-    a *validation* signal, deliberately separate from "is a run owed".
+    fails `validate()`. Closes `D-10` without touching `_schedule_cell` —
+    this is a *validation* signal, deliberately separate from "is a run
+    owed".
 
     Never raises: the routine folder is a vault path over the /mnt/c bridge,
     and a broken hub is a worse failure than a missing nudge.

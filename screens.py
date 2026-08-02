@@ -203,8 +203,8 @@ def _routine_attention():
             reasons["flagged"] += 1
             hit = True
         try:
-            from schedule import why_not_due
-            if why_not_due(r, now) is None:
+            from schedule import assess
+            if assess(r, now).due:
                 reasons["due"] += 1
                 hit = True
         except Exception:                        # noqa: BLE001
@@ -529,6 +529,12 @@ def _routine_show(rest, conn, table):
                       f" {ts}")
     else:
         console.print("  last run      never")
+    # The full inspection reason, not just a compact word — `assess()` is the
+    # one place that decides it (W-0.9.2-02), and `show` is the one screen
+    # with room for the whole sentence rather than a table cell.
+    from schedule import assess
+    a = assess(r, datetime.datetime.now())
+    console.print(f"  schedule      {a.reason or 'due now'}")
     console.print()
 
 
