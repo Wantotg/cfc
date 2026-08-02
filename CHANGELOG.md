@@ -46,7 +46,7 @@ baseline untouched, which is the evidence they were leaks rather than
 intended changes.
 - Files: tests/golden.py, tests/test_pools.py
 - Status: shipped
-- Commit: pending
+- Commit: 20d4e14
 
 ---
 
@@ -98,7 +98,7 @@ disabling the rollback and watching a stray row survive a later save.
   tests/test_pools.py, tests/test_first_message.py, tests/test_mainchat.py,
   tests/test_routines.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: d73b7ec
 
 ---
 
