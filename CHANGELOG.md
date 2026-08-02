@@ -27,6 +27,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — The routine run log is authoritative across every runner exit (`B-1.5.1-01b`)
+`runner.run_routine` used to leave session creation and task persistence
+outside any try/except, and its failure/cancellation handlers tried to save
+an explanatory transcript marker *before* appending the run-log record —
+so a second SQLite error at either point escaped uncaught (setup) or
+silently swallowed the run record (the marker), and a routine that had done
+real work looked identical to one that never ran. The whole run — session
+creation, task persistence, the tool turn, and final persistence — is now
+one outcome boundary: exactly one `append_log` call happens on every path
+out, using whatever `touched`/`session_id` evidence is already known, and
+the transcript marker (`[routine failed]`/`[routine cancelled]`) is written
+only afterward, best-effort, with its own failure swallowed. On success, the
+final transcript is committed before `ok` is appended; if that commit fails,
+the run is logged `failed` with the known touched-file evidence rather than
+leaving an `ok` record for a transcript that never made it to disk.
+`errors.log` stays narrowed to provider HTTP errors, unchanged.
+- Files: runner.py, tests/test_routines.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — A current-schema database open no longer retains a writer (`B-1.5.1-01a`)
 `db.py`'s two migrations ran an `UPDATE`/`ALTER TABLE` on every connect
 regardless of whether anything needed changing — and SQLite takes the write

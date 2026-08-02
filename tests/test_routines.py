@@ -180,6 +180,226 @@ def test_creation_flow():
         builtins.input = real_input
 
 
+def test_run_log_authoritative():
+    """B-1.5.1-01b: exactly one run-log record survives, however run_routine
+    exits — including a second SQLite failure inside the best-effort marker
+    it writes to explain the first one.
+
+    Failures are injected at each of the four points the work order names —
+    session creation, task persistence, the tool loop, and the final
+    commit — plus both secondary transcript markers (the failure marker and
+    the cancelled marker), by wrapping `runner.new_session`/`save_message`/
+    `conn.commit` so only the targeted call raises and everything else
+    behaves normally. Each case proves the log gets exactly one appropriate
+    record and, where the run got far enough to write something, that the
+    touched-file evidence is in it.
+    """
+    import sqlite3
+
+    import db as dbmod
+    import errorlog
+    import runner
+
+    print("\n--- B-1.5.1-01b: the run log is authoritative across every "
+          "runner exit ---")
+
+    with tempfile.TemporaryDirectory() as tmp, Store(tmp) as store:
+        saved_db_path = dbmod.DB_PATH
+        dbmod.DB_PATH = store.tmp / "chat.db"
+        errorlog.LOG_PATH = store.tmp / "errors.log"
+        assert "tmp" in str(errorlog.LOG_PATH), "refusing to touch the real log"
+        conn = dbmod.db()
+
+        real_new_session = runner.new_session
+        real_save_message = runner.save_message
+        real_agent_turn = runner.agent_turn
+
+        def restore():
+            runner.new_session = real_new_session
+            runner.save_message = real_save_message
+            runner.agent_turn = real_agent_turn
+
+        try:
+            print("\n  --- injected at session creation ---")
+            routines.save_routine(make(id="fail-session",
+                                       read_roots=[str(store.pdir)]))
+
+            def boom_new_session(*a, **kw):
+                raise sqlite3.OperationalError("database is locked")
+
+            runner.new_session = boom_new_session
+            status, detail, sid, run_num = runner.run_routine(
+                "fail-session", conn, model="m")
+            ok("a session-creation failure returns 'failed', not an "
+               "exception", status == "failed", status)
+            ok("...names the SQLite error", "database is locked" in detail,
+               detail)
+            ok("...with no session — nothing was ever created", sid is None,
+               sid)
+            ok("...but still gets a run number, from the one log record "
+               "this made", run_num is not None, run_num)
+            recs = routines.read_log("fail-session")
+            ok("exactly one record was appended", len(recs) == 1, recs)
+            ok("...and it is the failed one", recs[0].status == "failed",
+               recs[0])
+            runner.new_session = real_new_session
+
+            print("\n  --- injected at task persistence ---")
+            routines.save_routine(make(id="fail-tasksave",
+                                       read_roots=[str(store.pdir)]))
+            markers = []
+
+            def fail_task_save(conn, session_id, role, content, **kw):
+                if role == "user":
+                    raise sqlite3.OperationalError("database is locked")
+                markers.append((role, content))
+                return real_save_message(conn, session_id, role, content, **kw)
+
+            runner.save_message = fail_task_save
+            status, detail, sid, run_num = runner.run_routine(
+                "fail-tasksave", conn, model="m")
+            ok("a task-persistence failure returns 'failed'",
+               status == "failed", status)
+            ok("...names the SQLite error", "database is locked" in detail,
+               detail)
+            ok("...but the session it opened is still known — it can be "
+               "read afterwards", sid is not None, sid)
+            recs = routines.read_log("fail-tasksave")
+            ok("exactly one record was appended", len(recs) == 1, recs)
+            ok("...naming the session", recs[0].session_id == sid,
+               (recs[0], sid))
+            ok("the explanatory marker still made it into the transcript — "
+               "only the task save was made to fail",
+               any(r == "assistant" and c.startswith("[routine failed]")
+                   for r, c in markers), markers)
+            runner.save_message = real_save_message
+
+            print("\n  --- injected in the tool loop, with touched files "
+                  "already collected ---")
+            routines.save_routine(make(id="fail-toolloop",
+                                       read_roots=[str(store.pdir)]))
+
+            def toolloop_persistence_dies(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/loop-draft.md"))
+                raise sqlite3.OperationalError("database is locked")
+
+            runner.agent_turn = toolloop_persistence_dies
+            status, detail, sid, run_num = runner.run_routine(
+                "fail-toolloop", conn, model="m")
+            ok("a tool-loop persistence failure returns 'failed'",
+               status == "failed", status)
+            recs = routines.read_log("fail-toolloop")
+            ok("exactly one record was appended", len(recs) == 1, recs)
+            ok("...and it keeps the file the loop reached before dying",
+               "loop-draft.md" in recs[0].touched, recs[0])
+            runner.agent_turn = real_agent_turn
+
+            print("\n  --- injected at the final commit, on an otherwise "
+                  "successful run ---")
+            routines.save_routine(make(id="fail-finalcommit",
+                                       read_roots=[str(store.pdir)]))
+
+            def wrote_and_answered(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/finished.md"))
+                return {"role": "assistant", "content": "filed it"}
+
+            runner.agent_turn = wrote_and_answered
+
+            # sqlite3.Connection is a C type and refuses to have `.commit`
+            # patched as an instance attribute directly, so intercept it
+            # through a thin proxy instead — everything else passes straight
+            # through to the real connection.
+            class _CommitTrap:
+                def __init__(self, real, fail_on):
+                    self._real = real
+                    self._fail_on = fail_on
+                    self._n = 0
+
+                def commit(self):
+                    self._n += 1
+                    if self._n == self._fail_on:
+                        raise sqlite3.OperationalError("database is locked")
+                    return self._real.commit()
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            # new_session and the task save each commit once; the explicit
+            # commit run_routine makes after a successful turn is the third.
+            trap = _CommitTrap(conn, fail_on=3)
+            status, detail, sid, run_num = runner.run_routine(
+                "fail-finalcommit", trap, model="m")
+            ok("an undurable final commit is a 'failed' run, never a "
+               "quiet 'ok'", status == "failed", status)
+            ok("...says why", "durably" in detail, detail)
+            recs = routines.read_log("fail-finalcommit")
+            ok("exactly one record was appended", len(recs) == 1, recs)
+            ok("...and it is 'failed', not 'ok' — an undurable transcript "
+               "must never be logged as a success",
+               recs[0].status == "failed", recs[0])
+            ok("...still carrying the known touched-file evidence",
+               "finished.md" in recs[0].touched, recs[0])
+            runner.agent_turn = real_agent_turn
+
+            print("\n  --- both secondary transcript markers can themselves "
+                  "fail without hiding, duplicating or rewriting the "
+                  "authoritative record ---")
+
+            def fail_marker_writes(conn, session_id, role, content, **kw):
+                if role == "assistant" and (
+                        content.startswith("[routine failed]") or
+                        content.startswith("[routine cancelled]")):
+                    raise sqlite3.OperationalError("database is locked")
+                return real_save_message(conn, session_id, role, content, **kw)
+
+            runner.save_message = fail_marker_writes
+
+            routines.save_routine(make(id="fail-marker-failed",
+                                       read_roots=[str(store.pdir)]))
+
+            def crashes_with_evidence(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/before-crash.md"))
+                raise TimeoutError("provider went away")
+
+            runner.agent_turn = crashes_with_evidence
+            status, detail, sid, run_num = runner.run_routine(
+                "fail-marker-failed", conn, model="m")
+            ok("a failing explanatory marker does not raise out of "
+               "run_routine", status == "failed", status)
+            recs = routines.read_log("fail-marker-failed")
+            ok("...and the authoritative record still exists, exactly once",
+               len(recs) == 1, recs)
+            ok("...unhidden, undupliated, unrewritten — same detail as "
+               "returned", recs[0].detail == detail, (recs[0], detail))
+            ok("...and the touched-file evidence made it in regardless",
+               "before-crash.md" in recs[0].touched, recs[0])
+            runner.agent_turn = real_agent_turn
+
+            routines.save_routine(make(id="fail-marker-cancelled",
+                                       read_roots=[str(store.pdir)]))
+
+            def cancels_with_evidence(*a, touched=None, **kw):
+                touched.append(Path("/vault/99 outbox/before-cancel.md"))
+                raise KeyboardInterrupt()
+
+            runner.agent_turn = cancels_with_evidence
+            status, detail, sid, run_num = runner.run_routine(
+                "fail-marker-cancelled", conn, model="m")
+            ok("a failing cancelled-marker does not raise out of "
+               "run_routine either", status == "cancelled", status)
+            recs = routines.read_log("fail-marker-cancelled")
+            ok("...and the authoritative cancelled record still exists, "
+               "exactly once", len(recs) == 1, recs)
+            ok("...carrying the touched-file evidence",
+               "before-cancel.md" in recs[0].touched, recs[0])
+            runner.agent_turn = real_agent_turn
+            runner.save_message = real_save_message
+        finally:
+            restore()
+            conn.close()
+            dbmod.DB_PATH = saved_db_path
+
+
 def main():
     print("\n--- slugify ---")
     ok("spaces to hyphens", routines.slugify("Nightly Digest") == "nightly-digest")
@@ -1139,6 +1359,7 @@ def main():
            "junk.md" in out_mixed, out_mixed)
 
     test_creation_flow()
+    test_run_log_authoritative()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

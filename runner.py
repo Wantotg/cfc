@@ -356,6 +356,27 @@ def _active_clock():
     return time.monotonic()
 
 
+def _mark_transcript(conn, session_id, model, text):
+    """Best-effort explanatory marker inside the run's own transcript.
+
+    Always attempted *after* the run log's authoritative record is already
+    appended, and its own failure is swallowed rather than raised — a second
+    SQLite error while explaining a failure must not hide, duplicate or
+    rewrite the record of the failure itself (B-1.5.1-01b: a manual run once
+    wrote its output, then hit the database lock saving this exact marker,
+    which prevented `append_log` from ever running and made a real run look
+    like nothing had happened). `session_id` is `None` only when the run
+    never got far enough to create a session, in which case there is no
+    transcript to mark.
+    """
+    if session_id is None:
+        return
+    try:
+        save_message(conn, session_id, "assistant", text, model=model)
+    except Exception:                            # noqa: BLE001 — see above
+        pass
+
+
 def run_routine(key, conn, model=None, interactive=False, on_event=None):
     """Run one routine. Returns `(status, summary, session_id, run_number)`.
 
@@ -420,56 +441,55 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
     # without parsing the title. The title prefix stays because it is what a
     # human reads in the transcript; it is no longer what the code keys off.
     title = f"routine: {routine.name} — {started.strftime('%Y-%m-%d %H:%M')}"
-    session_id = new_session(conn, title=title, model=model,
-                             provider=PROVIDER_ROUTINE)
-    event(f"session {session_id} — {ctx}")
 
-    # The roots go into the prompt because the model otherwise learns them only
-    # by hitting the wall: every run burned a round trip on a relative path
-    # that resolved against the process cwd, recovered only because the guard
-    # returns the real reason. Telling it up front is not a weakening of the
-    # boundary — dispatch still enforces it — it just stops paying for the
-    # lesson once per run.
-    system = SYSTEM.format(
-        name=routine.name, id=routine.id,
-        now=started.strftime("%Y-%m-%d %H:%M (%A)"),
-        max_calls=ROUTINE_MAX_CALLS_PER_TURN,
-        max_chars=f"{TURN_RESULT_CHARS:,}",
-        read_roots=", ".join(str(r) for r in ctx.read_roots) or "(none)",
-        write_roots=", ".join(str(r) for r in ctx.write_roots)
-                    or "(none — you cannot write)",
-    )
-    try:
-        task = routine.prompt_text()
-    except RoutineError as e:
-        run_number = append_log(routine.id, "failed", str(e),
-                                session_id=session_id)
-        return "failed", str(e), session_id, run_number
-
-    task, unfilled = fill_placeholders(task, started, routine.id)
-    if unfilled:
-        # Say what it *means*, not just what was found: the first time this
-        # fired, the reasonable reading was "something wants filling in by
-        # hand". It doesn't — these reach the model as literal characters in
-        # the middle of its instructions. Naming the known set in the same
-        # breath turns "what is this" into "ah, a typo" or "ah, dead text".
-        known = ", ".join(placeholder_values(routine.id, started))
-        event(f"warning: {DISPLAY_NAME} does not recognise "
-              f"{', '.join(unfilled)} — the model will read "
-              f"{'them' if len(unfilled) > 1 else 'it'} literally. "
-              f"Known: {known}")
-
-    prefix = [{"role": "system", "content": system}]
-    save_message(conn, session_id, "user", task, model=model)
-
-    # Owned here, not inside the turn, because every path out of the turn has
-    # to be able to report it — including the two that leave by raising. When a
-    # run fails halfway, "which files did it get to before it stopped" is the
-    # first question asked of the log, and the transcript was the only thing
-    # that could answer it.
+    # Everything from here on — creating the session, saving the task, the
+    # tool turn itself, and persisting the outcome — is one outcome boundary
+    # (B-1.5.1-01b). Session creation and task persistence used to sit
+    # outside any try/except: a SQLite error from either escaped run_routine
+    # uncaught and no run-log record was ever made, which is
+    # indistinguishable from the routine never having been attempted at all.
+    # `session_id` and `touched` are declared before the try so every except
+    # clause below can report exactly how far the run got.
+    session_id = None
     touched = []
-
     try:
+        session_id = new_session(conn, title=title, model=model,
+                                 provider=PROVIDER_ROUTINE)
+        event(f"session {session_id} — {ctx}")
+
+        # The roots go into the prompt because the model otherwise learns them
+        # only by hitting the wall: every run burned a round trip on a
+        # relative path that resolved against the process cwd, recovered only
+        # because the guard returns the real reason. Telling it up front is
+        # not a weakening of the boundary — dispatch still enforces it — it
+        # just stops paying for the lesson once per run.
+        system = SYSTEM.format(
+            name=routine.name, id=routine.id,
+            now=started.strftime("%Y-%m-%d %H:%M (%A)"),
+            max_calls=ROUTINE_MAX_CALLS_PER_TURN,
+            max_chars=f"{TURN_RESULT_CHARS:,}",
+            read_roots=", ".join(str(r) for r in ctx.read_roots) or "(none)",
+            write_roots=", ".join(str(r) for r in ctx.write_roots)
+                        or "(none — you cannot write)",
+        )
+        task = routine.prompt_text()
+        task, unfilled = fill_placeholders(task, started, routine.id)
+        if unfilled:
+            # Say what it *means*, not just what was found: the first time
+            # this fired, the reasonable reading was "something wants filling
+            # in by hand". It doesn't — these reach the model as literal
+            # characters in the middle of its instructions. Naming the known
+            # set in the same breath turns "what is this" into "ah, a typo"
+            # or "ah, dead text".
+            known = ", ".join(placeholder_values(routine.id, started))
+            event(f"warning: {DISPLAY_NAME} does not recognise "
+                  f"{', '.join(unfilled)} — the model will read "
+                  f"{'them' if len(unfilled) > 1 else 'it'} literally. "
+                  f"Known: {known}")
+
+        prefix = [{"role": "system", "content": system}]
+        save_message(conn, session_id, "user", task, model=model)
+
         final = _turn_with_retry(prefix, task, model, conn, session_id, ctx,
                                  event, touched=touched)
     except KeyboardInterrupt:
@@ -483,23 +503,22 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # satisfied — a manual cancel must not look like the job ran.
         secs = active_elapsed()
         detail = f"interrupted (Ctrl-C) after {secs:.0f}s"
-        save_message(conn, session_id, "assistant",
-                     f"[routine cancelled]\n\n{detail}", model=model)
-        conn.commit()
+        # The authoritative record first, from what is already known —
+        # *before* the transcript marker below is even attempted.
         run_number = append_log(routine.id, "cancelled",
                                 "interrupted (Ctrl-C)", touched=touched,
                                 session_id=session_id, elapsed_seconds=secs)
+        _mark_transcript(conn, session_id, model,
+                         f"[routine cancelled]\n\n{detail}")
         return "cancelled", detail, session_id, run_number
     except Exception as e:                      # noqa: BLE001 — see below
         # Deliberately broad. Anything from an HTTP timeout to a provider
         # returning a shape we don't expect has to reach the log, because an
         # unattended run that dies silently looks identical to one that had
-        # nothing to do. The traceback goes to the transcript; the log gets
-        # the one-line reason.
-        save_message(conn, session_id, "assistant",
-                     f"[routine failed]\n\n{traceback.format_exc()}",
-                     model=model)
-        conn.commit()
+        # nothing to do.
+        detail = (str(e) if isinstance(e, RoutineError)
+                  else f"{type(e).__name__}: {e}")
+        secs = active_elapsed()
         # Provider errors *only*, and they go to errors.log in addition to the
         # run log rather than instead of it. The two are not two copies of one
         # fact: `append_log` writes a per-routine **status** that `on_failure`,
@@ -520,21 +539,38 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         if isinstance(e, httpx.HTTPError):
             errorlog.log_error(e, session_id=session_id, model=model,
                                where=f"routine {routine.id}")
-        detail = f"{type(e).__name__}: {e}"
-        secs = active_elapsed()
-        # The session id goes in the *log*, not just the terminal — a failed
-        # run is the one you most want to open, and on the scheduled path the
-        # terminal line never existed. Return the bare detail so do_routine's
-        # own transcript-reference line stays the single on-screen source.
+        # The authoritative record first — see the KeyboardInterrupt branch
+        # above for why the order matters. The session id goes in the *log*,
+        # not just the terminal — a failed run is the one you most want to
+        # open, and on the scheduled path the terminal line never existed.
         run_number = append_log(routine.id, "failed", detail, touched=touched,
                                 session_id=session_id, elapsed_seconds=secs)
+        # Best-effort only, attempted after the record above and never
+        # allowed to change it. The traceback goes to the transcript; the log
+        # already has the one-line reason.
+        _mark_transcript(conn, session_id, model,
+                         f"[routine failed]\n\n{traceback.format_exc()}")
         return "failed", detail, session_id, run_number
 
-    conn.commit()
     content = final.get("content", "")
     summary = _summarise(content)
     review = looks_unclear(content)
     secs = active_elapsed()
+    try:
+        conn.commit()
+    except Exception:                            # noqa: BLE001 — see below
+        # An 'ok' log for a transcript that never made it to disk is a worse
+        # lie than a failed run: the log is the only place anyone checks
+        # "did the nightly thing work", and it would say yes about a run that
+        # left nothing durable behind it.
+        try:
+            conn.rollback()
+        except Exception:                        # noqa: BLE001
+            pass
+        detail = "could not durably save the transcript"
+        run_number = append_log(routine.id, "failed", detail, touched=touched,
+                                session_id=session_id, elapsed_seconds=secs)
+        return "failed", detail, session_id, run_number
     # `review` is the second, orthogonal signal: the loop is `ok` AND the output
     # looks like the model hit a wall it merely reported. The run did not fail —
     # on_failure must not treat this as a retry — so it rides alongside the
