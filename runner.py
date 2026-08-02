@@ -35,6 +35,7 @@ import errorlog
 from db import PROVIDER_ROUTINE, new_session, save_message
 import routines
 from routines import RoutineError, append_log, last_run, load_routine
+from ui import DISPLAY_NAME
 
 try:
     from config import MODEL
@@ -453,7 +454,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # the middle of its instructions. Naming the known set in the same
         # breath turns "what is this" into "ah, a typo" or "ah, dead text".
         known = ", ".join(placeholder_values(routine.id, started))
-        event(f"warning: cfc does not recognise "
+        event(f"warning: {DISPLAY_NAME} does not recognise "
               f"{', '.join(unfilled)} — the model will read "
               f"{'them' if len(unfilled) > 1 else 'it'} literally. "
               f"Known: {known}")

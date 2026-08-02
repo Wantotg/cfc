@@ -266,8 +266,8 @@ def main_():
     print("\n--- the dim governor line names what it added ---")
     out, _ = drive(conn, dbmod.new_session(conn, title="gov-line", model=MODEL),
                    "/tools off\nhi again\n/q\n")
-    ok("an ordinary turn prints 'cfc -> tone check'",
-       "cfc -> tone check" in out, out)
+    ok("an ordinary turn prints 'Cooking for Cats -> tone check'",
+       "Cooking for Cats -> tone check" in out, out)
 
     print("\n--- /continue: usage, refusal, and a real directed turn ---")
     stream_calls.clear()
@@ -308,7 +308,7 @@ def main_():
         (cont_sid,)).fetchall()
     ok("...leaving two consecutive assistant rows in durable history",
        [r[0] for r in last_two] == ["assistant", "assistant"], last_two)
-    ok("the dim line names it", "cfc -> continue" in out, out)
+    ok("the dim line names it", "Cooking for Cats -> continue" in out, out)
 
     print("\n--- OOC: exact grammar, no user row, suppresses tone/trait ---")
     stream_calls.clear()
@@ -334,7 +334,7 @@ def main_():
        conn.execute("SELECT COUNT(*) FROM messages WHERE session_id=? AND "
                     "content LIKE '%be gentler%' AND role='user'",
                     (ooc_sid,)).fetchone()[0] == 0)
-    ok("the dim line names it", "cfc -> ooc" in out, out)
+    ok("the dim line names it", "Cooking for Cats -> ooc" in out, out)
 
     stream_calls.clear()
     empty_ooc_sid = dbmod.new_session(conn, title="ooc-empty", model=MODEL)

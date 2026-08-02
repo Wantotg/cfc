@@ -25,6 +25,24 @@ from rich.text import Text
 # highlight=True (default) gives subtle coloring of numbers/paths.
 console = Console(markup=False, emoji=False)
 
+# The name a person reads, everywhere normal UI prose names the program —
+# `W-0.9.1-03`. One constant so every producer agrees, rather than the
+# handful of ad hoc "cfc" and "cooking for cats" strings this replaces, each
+# free to drift from the others in casing or wording.
+#
+# **Not universal.** `preflight.py` and `errorlog.py` keep their own local
+# "cfc" literals rather than importing this: both modules' import boundaries
+# are deliberate (`preflight.py` — "no rich, so a broken UI import can't stop
+# the app opening"; `errorlog.py` — "imports no cfc module, never raises,
+# nothing private"), and this module is exactly what those boundaries exist
+# to stay clear of. Two duplicated words cost less than the guarantee either
+# file makes. Nor does this reach `[cfc direction]` (a model-facing wire
+# format, `governor.py`), the tool-loop budget notes (provider-facing,
+# `agent.py`), a routine's own system prompt (model input, `runner.py`), or
+# any identifier, path, or config/CLI name — none of those are what a person
+# reads as the program's name.
+DISPLAY_NAME = "Cooking for Cats"
+
 
 # ── palette ──────────────────────────────────────────────────────────
 # The turn's colours live here, next to the console everything shares. Not in

@@ -29,7 +29,7 @@ import datetime
 from rich.table import Table as RichTable
 from rich.text import Text
 
-from ui import console, read_input
+from ui import console, DISPLAY_NAME, read_input
 
 TO_HUB = object()
 
@@ -136,9 +136,9 @@ def _nav_entries(mode):
 
 
 def _title(mode):
-    return {"config": "cooking for cats: config",
-            "wiki": "cooking for cats: wiki",
-            "routine": "cooking for cats: routines"}[mode]
+    return {"config": f"{DISPLAY_NAME}: config",
+            "wiki": f"{DISPLAY_NAME}: wiki",
+            "routine": f"{DISPLAY_NAME}: routines"}[mode]
 
 
 def _print_title(mode):

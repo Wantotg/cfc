@@ -35,6 +35,7 @@ from pathlib import Path
 import routines
 from routines import (RoutineError, last_settled, last_success,
                       list_routines, load_routine)
+from ui import DISPLAY_NAME
 
 # How many times a failing routine may be retried within one day.
 #
@@ -358,16 +359,17 @@ def _run(keys, model=None, verbose=True):
     return failed
 
 
-USAGE = """cfc — headless entry points
+USAGE = f"""{DISPLAY_NAME} — headless entry points
 
   python main.py --run-due               run every routine whose trigger is due
   python main.py --run-routine <name>    run one routine now, due or not
   python main.py --due                   report what is due, run nothing
   python main.py [session_id]            the REPL
 
---run-due is what the OS scheduler calls, on a fixed tick. cfc decides what is
-due from each routine's own `trigger:` field and its run log; the scheduler
-needs one entry and never needs changing when a routine is added.
+--run-due is what the OS scheduler calls, on a fixed tick. {DISPLAY_NAME}
+decides what is due from each routine's own `trigger:` field and its run
+log; the scheduler needs one entry and never needs changing when a routine
+is added.
 
 Exit codes: 0 nothing to do or everything succeeded, 1 a run failed,
 2 the arguments were wrong."""
@@ -409,8 +411,8 @@ def cli(argv):
             return 2
         with _Lock(lock_path()) as held:
             if not held:
-                print("another cfc run is in progress — skipping",
-                      file=sys.stderr)
+                print(f"another {DISPLAY_NAME} run is in progress — "
+                      f"skipping", file=sys.stderr)
                 return 1
             return 1 if _run([routine]) else 0
 

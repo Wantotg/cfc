@@ -120,13 +120,54 @@ def main_():
     priv = dbmod.db(":memory:")
     priv_sid = dbmod.new_session(priv, title="(untitled)")
     embeds.clear(); exports.clear()
-    drive(priv, priv_sid, private=True, keys=script)
+    # Forced True regardless of the real config.py's default, so the entry
+    # notice's db_on branch below is deterministic rather than depending on
+    # whatever this machine happens to be configured with.
+    saved_db_active = main.DATABASE_ACTIVE
+    main.DATABASE_ACTIVE = True
+    try:
+        out = drive(priv, priv_sid, private=True, keys=script)
+    finally:
+        main.DATABASE_ACTIVE = saved_db_active
     ok("the conversation is live in the private db",
        count_msgs(priv) >= 2, count_msgs(priv))
     ok("the real db is untouched", count_msgs(real) == before,
        (before, count_msgs(real)))
     ok("auto-embed is skipped", embeds == [], embeds)
     ok("auto-export is skipped on :q", exports == [], exports)
+
+    print("\n--- W-0.9.1-04: the entry notice states the local boundary, the "
+          "provider boundary, and the read-only db choice ---")
+    # The rewrite this pins: "in memory" told you a mechanism, not what it
+    # means for your data. Every clause below is one of the five things the
+    # notice now states plainly (main.py's `if private:` block).
+    ok("states the local destruction boundary",
+       "destroys it for good" in out and "no restore" in out, out)
+    ok("states this is local privacy only — the provider still sees it",
+       "local privacy only" in out and "selected chat" in out
+       and "provider" in out, out)
+    ok("states model file-writes are blocked",
+       "Model file writes are blocked" in out, out)
+    ok("states the one explicit exception",
+       "/export" in out and "asked for it by name" in out, out)
+    ok("states /database on is read-only for this chat",
+       "read-only for this chat" in out, out)
+    ok("...and does not repeat the old, less specific 'in memory' claim",
+       "in memory, nothing written to disk" not in out, out)
+
+    saved_db_active = main.DATABASE_ACTIVE
+    main.DATABASE_ACTIVE = False
+    try:
+        priv_off = dbmod.db(":memory:")
+        p_off = dbmod.new_session(priv_off, title="(untitled)")
+        out_off = drive(priv_off, p_off, private=True, keys=script)
+        priv_off.close()
+    finally:
+        main.DATABASE_ACTIVE = saved_db_active
+    ok("with the database off, the notice still names read-only access "
+       "as what turning it on would give",
+       "read-only access to existing memory" in out_off, out_off)
+
     priv.close()   # and with the connection gone, so is the conversation
 
     print("\n--- the v0.8 surface adds a session field; it goes nowhere ---")

@@ -21,6 +21,8 @@
 import math
 from collections import namedtuple
 
+from ui import DISPLAY_NAME
+
 # listed          shown in `/list models`, indexable by `/model <n>`
 # tools           emits OpenAI-style tool_calls — verified per id, never guessed
 # routine         vetted for unattended routine runs
@@ -131,10 +133,11 @@ def _from_legacy(cfg, warn):
     sorts first in the combined order" — those disagree the moment a routine
     variant isn't also a chat one, which is exactly that config.
     """
-    warn("config.py's MODELS is still a plain list of ids — cfc now reads "
-        "one 'MODELS = [...]' list of per-model records in place of MODELS "
-        "+ TOOLS_MODELS + ROUTINE_MODELS + MODEL_LIMITS. See the new shape "
-        "in config.example.py; this config.py still works, translated.")
+    warn(f"config.py's MODELS is still a plain list of ids — {DISPLAY_NAME} "
+        "now reads one 'MODELS = [...]' list of per-model records in place "
+        "of MODELS + TOOLS_MODELS + ROUTINE_MODELS + MODEL_LIMITS. See the "
+        "new shape in config.example.py; this config.py still works, "
+        "translated.")
     listed = list(getattr(cfg, "MODELS", []) or [])
     routine = list(getattr(cfg, "ROUTINE_MODELS", []) or [])
     tools = set(getattr(cfg, "TOOLS_MODELS", []) or [])

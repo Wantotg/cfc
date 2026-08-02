@@ -75,8 +75,8 @@ try:
 except ImportError:
     TOOLS_MAX_TURN_RESULT_CHARS = 120_000
 
-from ui import (console, context_style, context_thresholds, make_bar,
-                format_date,
+from ui import (console, context_style, context_thresholds, DISPLAY_NAME,
+                make_bar, format_date,
                 short_model,
                 make_snippet, vault_relative)
 from db import (DB_PATH, save_message, get_session_tags, get_context_info,
@@ -2914,7 +2914,7 @@ def _scope_word(word):
 
 # One string, two commit paths. It was two literals, which is one edit away
 # from the two paths disagreeing about what just happened to your vault.
-_LOCAL_ONLY = "  committed locally — cfc does not push"
+_LOCAL_ONLY = f"  committed locally — {DISPLAY_NAME} does not push"
 
 
 def _scope_label(scope):

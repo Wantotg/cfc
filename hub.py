@@ -26,7 +26,7 @@ from rich.text import Text
 import models
 from db import PROVIDER_MAIN, PROVIDER_ROUTINE, PROVIDER_WIKI
 from ui import (connection_light, CONNECTION_STYLE, console,
-                context_style, format_ts)
+                context_style, DISPLAY_NAME, format_ts)
 
 # Columns are Tags- and Model-free on purpose. Both were near-permanently empty
 # (a tag is rare, and Model only ever printed when a session overrode the
@@ -445,11 +445,16 @@ HUB_KEYS = (
     (("m", "main"), "main",
      "open Main — one durable, vault-configured chat"),
     (("p", "private"), "private",
-     "start a private chat — in memory, nothing written to disk"),
+     # W-0.9.1-04: compact, and the claim is "temporary, not saved
+     # locally" — not "in memory", which reads as a guarantee about where
+     # a message goes rather than what it means for your data. The entry
+     # notice (`main.py`, printed on opening one) is where the full claim
+     # lives, including what "local" doesn't cover.
+     "start a private chat — temporary, not saved locally"),
     (("c", "create"), _CREATE, "create a chat at a chosen id"),
     (("d", "delete"), _DELETE, "delete a chat by id, or Main"),
     (("h", "?", "help"), _SHOW_HELP, "this screen"),
-    (("q", "quit"), "quit", "leave cooking for cats"),
+    (("q", "quit"), "quit", f"leave {DISPLAY_NAME}"),
 )
 
 # Typed key → what pick_session returns. Built from the table rather than

@@ -42,7 +42,7 @@ import tools
 from pools import (bodies as pool_bodies, pool as pool_of, stem,
                    load_first_message, FirstMessageError)
 
-from ui import console, human_panel, read_input, set_completer
+from ui import console, DISPLAY_NAME, human_panel, read_input, set_completer
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
@@ -433,24 +433,38 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # The shared console is markup=False (invariant #4), so a "[bold]…[/]"
         # string prints literally. Build a styled Text via from_markup instead —
         # the same discipline the panel helpers use.
+        #
+        # W-0.9.1-04: "in memory" told you a mechanism, not what it means for
+        # your data. Five things this now says plainly, none of them new
+        # behaviour — see standing decision 10 for what actually enforces
+        # each one: the local destruction boundary (nothing written, closing
+        # it destroys it, no restore); that this is *local* privacy only —
+        # the provider your messages go to still sees them, the same as any
+        # other chat; blocked model file-writes; the one explicit exception
+        # (/export); and, below, that /database on is a read-only choice —
+        # it reaches existing memory, it does not add this chat to it.
         console.print(Text.from_markup(
-            "[bold]Private chat[/] — nothing here is written down. No "
+            "[bold]Private chat[/] — nothing here is written to disk. No "
             "transcript, no\nmemory index, no auto-export, and it won't "
-            "appear in the hub. Closing it\n(/q, Ctrl-D, or quitting) ends "
-            "it for good; there is no restore. Model file\nwrites are "
-            "blocked; an explicit [bold]/export[/] is the one thing that "
-            "reaches disk,\nand only because you asked for it by name.",
+            "appear in the hub. Closing it\n(/q, Ctrl-D, or quitting) "
+            "destroys it for good; there is no restore.\nThat is local "
+            "privacy only — your messages still reach the selected chat\n"
+            "provider, the same as any other chat. Model file writes are "
+            "blocked;\nan explicit [bold]/export[/] is the one thing that "
+            "reaches disk, and only\nbecause you asked for it by name.",
             style="cyan",
         ))
         if db_on:
             console.print(
-                "The wiki database is on: /recall and /remember work here. "
-                "/database off to seal it.", style="cyan")
+                "The wiki database is on, read-only for this chat: /recall "
+                "reaches\nexisting memory; nothing said here is added to "
+                "it. /database off to seal it.", style="cyan")
         else:
             console.print(
                 "The wiki database is off: /recall and /remember are "
-                "disabled. /database on to\nenable them (change the default "
-                "with DATABASE_ACTIVE in config).", style="cyan")
+                "disabled. /database on to\nenable read-only access to "
+                "existing memory (change the default with\n"
+                "DATABASE_ACTIVE in config).", style="cyan")
         console.print()
     print_core_commands()
 
@@ -705,7 +719,8 @@ def run_session(conn, session_id, private=False, app_conn=None,
         # at least a tone check, so this line accompanies every directed
         # answer, not only /continue and OOC.
         if labels:
-            console.print(f"cfc -> {' · '.join(labels)}", style="dim")
+            console.print(f"{DISPLAY_NAME} -> {' · '.join(labels)}",
+                          style="dim")
 
         # The active preset's validated dict, read fresh every turn — never
         # a mutable global, never reaching title/recall/routine calls, which

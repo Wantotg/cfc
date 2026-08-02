@@ -409,7 +409,7 @@ Enter to confirm, or 'back':   cancelled
 you> Usage: /clear notes
 you> [auto-exported: <DATE>_Session-1_Renamed By Golden.md]
 
-cooking for cats: config
+Cooking for Cats: config
 
 Chat default      glm-5.2
 Chat API          https://api.example.invalid/v1 · key set
@@ -425,7 +425,7 @@ Routines          nothing needs attention · open with: routine
 
 Type help to see what works here.
 config>
-cooking for cats: config
+Cooking for Cats: config
 
 Chat default      glm-5.2
 Chat API          https://api.example.invalid/v1 · key set
@@ -449,7 +449,7 @@ config commands
   routine  switch to the routine screen
 
 config>
-cooking for cats: wiki
+Cooking for Cats: wiki
 
 
   WIKI_DIR is not configured
@@ -470,7 +470,7 @@ wiki commands
   routine  switch to the routine screen
 
 wiki>
-cooking for cats: routines
+Cooking for Cats: routines
 
 (none yet — 'new' to make one)
 

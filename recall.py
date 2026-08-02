@@ -14,7 +14,7 @@ from search import search
 # this stays at the bottom of the dependency graph. The date label was reading
 # `created_at[:10]` off a UTC string, which puts an evening session on the wrong
 # day — see ui.format_date.
-from ui import format_date
+from ui import DISPLAY_NAME, format_date
 
 try:
     import config
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     if answer is None:
         from search import why_empty, EMPTY_INDEX
         why = why_empty(db_path, provider="wiki")
-        print("nothing indexed to search — run /update db in cfc"
+        print(f"nothing indexed to search — run /update db in {DISPLAY_NAME}"
               if why == EMPTY_INDEX else
               "the wiki is indexed, but nothing came close enough to that "
               "question")

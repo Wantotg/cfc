@@ -27,6 +27,35 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — Runtime prose says Cooking for Cats; a private chat's own claims are honest (`W-0.9.1-03`, `W-0.9.1-04`)
+`ui.DISPLAY_NAME` is the one source every human-facing "cfc" now reads
+from — the hub's quit line, the config/wiki/routines screen titles, the
+wiki commit notice, the governor's dim nudge line, the headless CLI's usage
+banner and lock message, a startup config warning, and `/recall`'s
+standalone-script message. `preflight.py` and `errorlog.py` keep their own
+local literals on purpose (their import boundaries exist precisely to stay
+clear of `ui.py`); `[cfc direction]`, the tool-loop budget notes, a
+routine's own system prompt, and every path/identifier/CLI/config name are
+untouched. A source-inventory test (`tests/test_ui.py`) derives every
+literal "cfc" left in source and checks it against a two-entry allowlist —
+both explicitly reasoned, both re-verified as still-matching rather than
+trusted — so a new one slipping in fails loudly.
+
+The hub's private-chat line drops "in memory, nothing written to disk" for
+the compact claim that actually matters: "temporary, not saved locally."
+The full entry notice (printed on opening one) now states five things
+plainly — the local destruction boundary, that this is *local* privacy
+only and the selected provider still sees the same messages any other chat
+sends it, blocked model file-writes, the one explicit `/export` exception,
+and that `/database on` is read-only for this chat (`/recall` reaches
+existing memory; nothing said here is added to it). Copy only — no private-
+chat path, permission or hand-off behaviour changed.
+- Files: ui.py, hub.py, screens.py, commands.py, main.py, models.py,
+  recall.py, runner.py, schedule.py, tests/test_ui.py,
+  tests/test_private.py, tests/test_turn_paths.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — Routine surfaces teach a routine-run reference, never a chat session number (`W-0.9.1-07`)
 `history`, a completed `/routine` command, the routines screen's generated
 help and `open` all named a run by its backing chat session number —
@@ -46,7 +75,7 @@ existed. Nothing new ever prints that form.
   main.py, tests/test_routines.py, tests/test_screens.py,
   tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 68d89fd
 
 ## 2026-08-02 — A retry-limited routine no longer reads green in the one column a person checks first (`W-0.9.2-02`)
 `schedule.assess()` is the one place that now decides a routine's schedule
