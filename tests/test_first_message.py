@@ -113,6 +113,34 @@ def main_():
            "A completely different opening." in out4, out4)
         ok("...not the old one", "where should we start" not in out4, out4)
 
+        print("\n--- v1.6: a First Message is personalised once, at "
+              "freeze time ---")
+        import names
+        saved_user = names.USER_DISPLAY_NAME
+        (persona_dir / "greeter.md").write_text("You are Greeter.\n",
+                                                 encoding="utf-8")
+        (fm_dir / "greeter.md").write_text("Hi {{user}}!\n", encoding="utf-8")
+        try:
+            names.USER_DISPLAY_NAME = "Cas"
+            greet_sid = dbmod.new_session(conn, title="greet")
+            out_g1 = drive(conn, greet_sid, "/add persona greeter\n/q\n")
+            ok("the frozen opening carries the name configured at attach "
+               "time", "Hi Cas!" in out_g1, out_g1)
+
+            names.USER_DISPLAY_NAME = "Someone Else"
+            out_g2 = drive(conn, greet_sid, "/q\n")
+            ok("reopening the SAME session keeps the name it froze with — "
+               "live and stored names never disagree retroactively",
+               "Hi Cas!" in out_g2 and "Hi Someone Else!" not in out_g2,
+               out_g2)
+
+            new_greet_sid = dbmod.new_session(conn, title="greet-two")
+            out_g3 = drive(conn, new_greet_sid, "/add persona greeter\n/q\n")
+            ok("a brand new session freezes with the NOW-configured name",
+               "Hi Someone Else!" in out_g3, out_g3)
+        finally:
+            names.USER_DISPLAY_NAME = saved_user
+
         print("\n--- no retroactive opening for a non-empty chat ---")
         chatty_sid = dbmod.new_session(conn, title="already talking")
         drive(conn, chatty_sid, "hello there\n/q\n")   # one ordinary turn first

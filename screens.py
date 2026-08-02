@@ -220,7 +220,9 @@ def _routine_attention():
 
 def _render_config():
     import config as _config
+    import names
     import preflight
+    import vault
     from backfill import wiki_stale
     from db import DB_PATH
     from export import chat_export_dir
@@ -255,6 +257,27 @@ def _render_config():
     _config_row("Database", str(DB_PATH))
     _config_row("Vault", vault_root or "not configured")
     _config_row("Export", vault_path or "not configured")
+
+    n_exp, n_hid, n_bad = vault.scope_counts()
+    if not (n_exp or n_hid or n_bad):
+        _config_row("Vault scopes", "none configured — whole vault exposed")
+    else:
+        bits = [f"{n_exp} exposed", f"{n_hid} hidden"]
+        if n_bad:
+            bits.append(f"{n_bad} invalid")
+        style = "red" if n_bad else None
+        line = Text(", ".join(bits) + " · open with: scopes",
+                    style=style) if style else \
+            ", ".join(bits) + " · open with: scopes"
+        _config_row("Vault scopes", line)
+
+    user, ai, problems = names.effective_names()
+    names_line = f"{user or '(invalid)'} / {ai or '(invalid)'}"
+    if problems:
+        _config_row("Names", Text(f"{names_line} — {'; '.join(problems)}",
+                                  style="red"))
+    else:
+        _config_row("Names", names_line)
 
     console.print()
     n, detail = _wiki_attention()
@@ -343,12 +366,39 @@ def _config_paths(rest, conn, table):
     _render_config_paths()
 
 
+def _render_config_scopes():
+    import vault
+
+    console.print("Vault scopes", style="bold")
+    rows, problems = vault.scope_rows()
+    if not rows and not problems:
+        console.print("  none configured — the whole vault is exposed",
+                      style="dim")
+    for name, state, resolved in rows:
+        style = "green" if state == "exposed" else "yellow"
+        console.print(f"  {name:<20} {state:<8} {resolved}", style=style)
+    if problems:
+        console.print()
+        console.print("  invalid — model-facing vault access fails closed "
+                      "until this is fixed:", style="red")
+        for p in problems:
+            console.print(f"    ! {p}", style="red")
+    console.print()
+
+
+def _config_scopes(rest, conn, table):
+    console.print()
+    _render_config_scopes()
+
+
 def _config_entries():
     return [
         ("refresh", (), "re-evaluate this screen", _config_refresh),
         ("connect", (), "connect embedding — run the connection flow, "
          "then redraw", _config_connect),
         ("paths", (), "the complete effective path inventory", _config_paths),
+        ("scopes", (), "every declared vault scope: name, state, resolved "
+         "path", _config_scopes),
     ]
 
 

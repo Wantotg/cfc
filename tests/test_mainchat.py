@@ -145,6 +145,30 @@ def main_():
         ok("the live profile matches the same two bodies",
            (sp2, pe2) == (sp, pe), (sp2, pe2))
 
+        print("\n--- v1.6: the bundle is personalised on every read ---")
+        import names
+        saved_user, saved_ai = names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME
+        d7 = Path(tempfile.mkdtemp())
+        write_bundle(d7, system_prompt="You help {{user}}.",
+                    persona="I am {{AI}}.",
+                    first_message="Hi {{user}}, I'm {{AI}}.")
+        mainchat.MAIN_CHAT_DIR = str(d7)
+        try:
+            names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = "Cas", "Mittens"
+            sp3, pe3, fm3 = mainchat.load_creation_bundle()
+            ok("creation substitutes both tokens across all three files",
+               (sp3, pe3, fm3) == ("You help Cas.", "I am Mittens.",
+                                   "Hi Cas, I'm Mittens."), (sp3, pe3, fm3))
+
+            names.USER_DISPLAY_NAME = "Someone Else"
+            sp4, pe4 = mainchat.load_live_profile()
+            ok("the LIVE profile re-substitutes on every call — it is "
+               "read fresh, never frozen",
+               sp4 == "You help Someone Else.", sp4)
+        finally:
+            names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = (saved_user,
+                                                               saved_ai)
+
         print("\n--- bundle_states() never raises ---")
         mainchat.MAIN_CHAT_DIR = ""
         states = mainchat.bundle_states()

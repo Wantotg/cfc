@@ -579,6 +579,42 @@ def main():
                  v.outbox / "titled-b.md", v.outbox / "unique.md"):
             f.unlink()
 
+        print("\n--- v1.6: the wiki screen's changed-file picker shows a "
+              "title beside the path ---")
+        import contextlib
+        import io
+        import commands
+
+        wiki_change = v.wiki / "20260801000000.md"
+        wiki_change.write_text(
+            "---\nid: 20260801000000\ntitle: Aquarium Nitrogen Cycle\n"
+            "---\n\nbody\n", encoding="utf-8")
+        changes = wikigit.status(wikigit.WIKI)
+        ok("the fixture actually produced a change to pick from",
+           any(c.path.endswith("20260801000000.md") for c in changes),
+           changes)
+
+        out = io.StringIO()
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO("1\n")
+        try:
+            with contextlib.redirect_stdout(out):
+                commands.console.file = out
+                picked = commands._pick_change(changes)
+        finally:
+            sys.stdin = real_stdin
+            commands.console.file = sys.stdout
+        shown = " ".join(out.getvalue().split())
+        ok("the picker shows the title beside the path",
+           "Aquarium Nitrogen Cycle" in shown, shown)
+        ok("...the real relative path is still on the same line",
+           "20260801000000.md" in shown, shown)
+        ok("the returned Change still carries the real path — a label is "
+           "never a key", picked is not None and
+           picked.path.endswith("20260801000000.md"), picked)
+
+        wiki_change.unlink()
+
         print("\n--- /move: top-level loose inventory ---")
         for f in list(v.outbox.iterdir()):
             if f.is_file():
@@ -599,6 +635,25 @@ def main():
            "wdraft.md" not in names, names)
         (v.wiki_out / "wdraft.md").unlink()
         (v.outbox / "routine logs" / "log.md").unlink()
+
+        print("\n--- v1.6: /move's loose-file picker shows a title too ---")
+        titled_loose = v.outbox / "titled-loose.md"
+        titled_loose.write_text("---\ntitle: A Loose Draft\n---\n\nbody\n",
+                                encoding="utf-8")
+        out = io.StringIO()
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO("\n")  # blank line at the file prompt: cancel
+        try:
+            with contextlib.redirect_stdout(out):
+                commands.console.file = out
+                commands.do_move()
+        finally:
+            sys.stdin = real_stdin
+            commands.console.file = sys.stdout
+        shown = out.getvalue()
+        ok("the loose-file picker shows the title beside the filename",
+           "titled-loose.md  —  A Loose Draft" in shown, shown)
+        titled_loose.unlink()
 
         print("\n--- /move: resolving a typed destination ---")
         ok("a relative folder under a move root resolves",

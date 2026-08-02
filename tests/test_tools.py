@@ -372,6 +372,116 @@ def main():
        tools.written_path("write_file", "") is None and
        tools.written_path("write_file", "wrote something") is None)
 
+    print("\n--- v1.6: the vault-scope boundary, at the dispatcher ---")
+    import vault
+    vroot = Path(tempfile.mkdtemp(prefix="vault-root-"))
+    (vroot / "01 personal").mkdir()
+    (vroot / "01 personal" / "diary.md").write_text("private")
+    (vroot / "01 personal" / "sub").mkdir()
+    (vroot / "01 personal" / "sub" / "deep.md").write_text("deep private")
+    (vroot / "unscoped.md").write_text("fine")
+    saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+    vault.VAULT_ROOT = str(vroot)
+    vault.VAULT_SCOPES = (dict(name="personal", path="01 personal",
+                               exposed=False),)
+    try:
+        V = ToolContext.for_chat(read_roots=(vroot,), write_roots=(vroot,))
+
+        print("  -- listing --")
+        r = tools.dispatch("list_dir", json.dumps({"path": str(vroot)}), V)
+        ok("a hidden directory is omitted from a listing",
+           "01 personal" not in r, r)
+        ok("an unscoped sibling still lists",
+           "unscoped.md" in r, r)
+
+        print("  -- direct reads --")
+        r = tools.dispatch("read_file",
+                           json.dumps({"path": str(vroot / "01 personal" /
+                                                   "diary.md")}), V)
+        ok("a directly-named hidden path is refused",
+           is_err(r, "exposed vault view"), r)
+        ok("...its content is not in the refusal", "private" not in r)
+
+        print("  -- full-tree grep prunes hidden subtrees --")
+        r = tools.dispatch("grep", json.dumps({"pattern": "private"}), V)
+        ok("grep across the whole read root finds nothing hidden",
+           "no matches" in r or "private" not in r, r)
+        r = tools.dispatch("grep",
+                           json.dumps({"pattern": "fine", "path": str(vroot)}),
+                           V)
+        ok("...but still finds an unscoped hit", "unscoped.md" in r, r)
+
+        print("  -- direct writes --")
+        r = tools.dispatch("write_file",
+                           json.dumps({"path": str(vroot / "01 personal" /
+                                                   "new.md"),
+                                       "content": "x"}), V)
+        ok("a write into a hidden scope is refused",
+           is_err(r, "exposed vault view"), r)
+        ok("...nothing was created",
+           not (vroot / "01 personal" / "new.md").exists())
+
+        print("  -- a guessed or symlinked path --")
+        r = tools.dispatch("read_file",
+                           json.dumps({"path": str(vroot / "01 personal" /
+                                                   "sub" / "deep.md")}), V)
+        ok("a route through a hidden ancestor is refused even unlisted",
+           is_err(r, "exposed vault view"), r)
+        if hasattr(__import__("os"), "symlink"):
+            try:
+                link = vroot / "peek.md"
+                link.symlink_to(vroot / "01 personal" / "diary.md")
+                r = tools.dispatch("read_file",
+                                   json.dumps({"path": str(link)}), V)
+                ok("a symlink resolving into a hidden scope is refused",
+                   is_err(r, "exposed vault view"), r)
+            except OSError:
+                pass
+
+        print("  -- precheck refuses before the gate asks --")
+        blocked = tools.precheck(
+            "read_file",
+            json.dumps({"path": str(vroot / "01 personal" / "diary.md")}), V)
+        ok("precheck itself refuses a hidden read",
+           blocked is not None and is_err(blocked, "exposed vault view"),
+           blocked)
+
+        print("  -- routine contexts get the same boundary, ungated --")
+        RC = ToolContext.for_routine("nightly", read_roots=(vroot,),
+                                     write_roots=(vroot,))
+        r = tools.dispatch("read_file",
+                           json.dumps({"path": str(vroot / "01 personal" /
+                                                   "diary.md")}), RC)
+        ok("an ungated routine context is refused too — no interactive gate "
+           "is what would have skipped this", is_err(r, "exposed vault view"),
+           r)
+        r = tools.dispatch("list_dir", json.dumps({"path": str(vroot)}), RC)
+        ok("...and a routine's own listing omits it too",
+           "01 personal" not in r, r)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+
+    print("\n  -- invalid scopes fail closed only for model-facing vault "
+          "access --")
+    vault.VAULT_ROOT = str(vroot)
+    vault.VAULT_SCOPES = (dict(name="typo", path="does not exist",
+                               exposed=False),)
+    try:
+        V = ToolContext.for_chat(read_roots=(vroot,), write_roots=(vroot,))
+        r = tools.dispatch("read_file",
+                           json.dumps({"path": str(vroot / "unscoped.md")}),
+                           V)
+        ok("a vault-rooted read fails closed while VAULT_SCOPES is invalid",
+           is_err(r, "exposed vault view"), r)
+
+        RJ = ToolContext.for_chat(read_roots=(jail,), write_roots=(box,))
+        r = tools.dispatch("read_file",
+                           json.dumps({"path": str(jail / "readme.md")}), RJ)
+        ok("an unrelated read root outside the vault is unaffected",
+           "alpha" in r, r)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+
     print("\n--- the dispatcher never raises ---")
     junk = [("read_file", '{"path": null}'), ("read_file", '{"path": 42}'),
             ("list_dir", '{"path": ""}'), ("grep", '{"pattern": 5}'),

@@ -33,6 +33,7 @@ from agent import LIMIT_MESSAGE, TURN_RESULT_CHARS, agent_turn
 from api import EMPTY_COMPLETION_RETRIES, is_transient_status
 import errorlog
 from db import PROVIDER_ROUTINE, new_session, save_message
+import names
 import routines
 from routines import RoutineError, append_log, last_run, load_routine
 from ui import DISPLAY_NAME
@@ -192,11 +193,20 @@ def placeholder_values(routine_id, now):
 
 
 def fill_placeholders(text, now, routine_id=""):
-    """Substitute the known `{{…}}` placeholders. Returns (text, unfilled)."""
+    """Substitute the known `{{…}}` placeholders. Returns (text, unfilled).
+
+    `{{user}}`/`{{AI}}` are excluded from `unfilled` on purpose: they are
+    real, known tokens, just not this function's to fill — `names.apply`
+    handles them, composed by the caller (run_routine) as a separate pass
+    *after* this one. Reporting them here would warn about a token the run
+    is about to substitute correctly one line later.
+    """
     for token, value in placeholder_values(routine_id, now).items():
         if token in text:
             text = text.replace(token, value)
-    return text, sorted(set(_UNFILLED_RE.findall(text)))
+    unfilled = [t for t in sorted(set(_UNFILLED_RE.findall(text)))
+                if t not in names.TOKENS]
+    return text, unfilled
 
 
 def _summarise(text, limit=200):
@@ -374,7 +384,17 @@ def _mark_transcript(conn, session_id, model, text):
     try:
         save_message(conn, session_id, "assistant", text, model=model)
     except Exception:                            # noqa: BLE001 — see above
-        pass
+        # save_message's own INSERT/UPDATE may have partially executed and be
+        # sitting uncommitted on `conn` when this raised (a locked db on the
+        # commit itself, say). Left alone, that pending work rides along on
+        # whatever the NEXT commit on this connection happens to be — a later,
+        # unrelated save_message poisoned by a marker that was never meant to
+        # land. Roll it back before swallowing, so the failure stays contained
+        # to this best-effort marker and nothing else (D-16).
+        try:
+            conn.rollback()
+        except Exception:                         # noqa: BLE001
+            pass
 
 
 def run_routine(key, conn, model=None, interactive=False, on_event=None):
@@ -486,6 +506,9 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
                   f"{', '.join(unfilled)} — the model will read "
                   f"{'them' if len(unfilled) > 1 else 'it'} literally. "
                   f"Known: {known}")
+        # Last, and never rescanned: a configured display name's own braces
+        # must not be read as a second placeholder pass. See fill_placeholders.
+        task = names.apply(task)
 
         prefix = [{"role": "system", "content": system}]
         save_message(conn, session_id, "user", task, model=model)

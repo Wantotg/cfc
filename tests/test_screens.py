@@ -391,6 +391,97 @@ def test_config_render():
         ok("...naming 'due' among the reasons", "1 due" in out, out)
 
 
+def test_config_scopes_and_names():
+    """v1.6: the config screen's scope summary/detail and effective-names
+    row — useful while a declaration is invalid, and the config screen
+    remains the only editor (no scope is created or changed from here)."""
+    import io
+    import vault
+    import names
+
+    def rendered(fn, *a):
+        buf = io.StringIO()
+        screens.console.file = buf
+        fn(*a)
+        screens.console.file = sys.stdout
+        return buf.getvalue()
+
+    tmp = tempfile.mkdtemp()
+    vroot = Path(tmp) / "vault"
+    (vroot / "01 personal").mkdir(parents=True)
+    (vroot / "03 resources" / "wiki db").mkdir(parents=True)
+    saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+
+    print("\n--- config: no scopes configured ---")
+    vault.VAULT_ROOT, vault.VAULT_SCOPES = str(vroot), ()
+    try:
+        with tempfile.TemporaryDirectory() as t2, Store(t2), NoWiki():
+            out = rendered(screens._render_config)
+            ok("overview says the whole vault is exposed",
+               "none configured" in out and "exposed" in out, out)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+
+    print("\n--- config: exposed/hidden counts, and the detail view ---")
+    vault.VAULT_ROOT = str(vroot)
+    vault.VAULT_SCOPES = (
+        dict(name="personal", path="01 personal", exposed=False),
+        dict(name="shared wiki", path="03 resources/wiki db", exposed=True),
+    )
+    try:
+        with tempfile.TemporaryDirectory() as t2, Store(t2), NoWiki():
+            out = rendered(screens._render_config)
+            ok("overview reports 1 exposed, 1 hidden",
+               "1 exposed" in out and "1 hidden" in out, out)
+            ok("overview points at 'scopes'", "scopes" in out, out)
+
+            detail = rendered(screens._render_config_scopes)
+            ok("detail names both scopes", "personal" in detail
+               and "shared wiki" in detail, detail)
+            ok("detail shows each scope's state",
+               "hidden" in detail and "exposed" in detail, detail)
+            ok("detail shows the resolved path, not just the declared one",
+               str((vroot / "01 personal").resolve()) in detail, detail)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+
+    print("\n--- config: invalid scopes stay useful, not blank ---")
+    vault.VAULT_ROOT = str(vroot)
+    vault.VAULT_SCOPES = (
+        dict(name="personal", path="01 personal", exposed=False),
+        dict(name="typo", path="does not exist", exposed=False),
+    )
+    try:
+        with tempfile.TemporaryDirectory() as t2, Store(t2), NoWiki():
+            out = rendered(screens._render_config)
+            ok("overview names an invalid count",
+               "invalid" in out, out)
+            detail = rendered(screens._render_config_scopes)
+            ok("the valid scope still renders",
+               "personal" in detail, detail)
+            ok("the invalid one is explained, not silently dropped",
+               "does not exist" in detail, detail)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+
+    print("\n--- config: effective display names, and an invalid one ---")
+    saved_user, saved_ai = names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME
+    try:
+        names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = None, None
+        with tempfile.TemporaryDirectory() as t2, Store(t2), NoWiki():
+            out = rendered(screens._render_config)
+            ok("unset names show the defaults",
+               "You / Cooking for Cats" in out, out)
+
+        names.USER_DISPLAY_NAME = "a" * 999   # far over the bound
+        with tempfile.TemporaryDirectory() as t2, Store(t2), NoWiki():
+            out = rendered(screens._render_config)
+            ok("an invalid configured name is visibly reported",
+               "invalid" in out, out)
+    finally:
+        names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = saved_user, saved_ai
+
+
 def test_config_paths_and_connect():
     print("\n--- config: 'paths' names every path, or 'not configured' ---")
     import io
@@ -964,6 +1055,7 @@ def main():
     test_navigation()
     test_no_side_effects_on_invalid_input()
     test_config_render()
+    test_config_scopes_and_names()
     test_config_paths_and_connect()
     test_screens_never_print_chat_syntax()
     test_wiki_review()

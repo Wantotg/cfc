@@ -28,6 +28,7 @@ from pathlib import Path
 
 from context import ToolContext, as_context
 from paths import path_guard, PathError, denial_reason, _as_roots
+import vault
 
 try:
     from config import TOOLS_ROOTS
@@ -250,10 +251,43 @@ def _guard(path, roots):
         return None, _err(str(e))
 
 
+# --- the vault-scope boundary -----------------------------------------
+#
+# path_guard/the deny list is the filesystem jail; this is the separate,
+# narrower question of whether a path that already passed the jail is inside
+# a vault scope the model is not allowed to see. Checked here, inside the
+# dispatcher, for the same reason path_guard is: `dispatch` is reachable
+# with no gate at all (standing decision 5), so a check that lived only in
+# `precheck` would be advice. The refusal deliberately never names a scope —
+# only that the resolved path sits outside the exposed vault view.
+
+
+def _hidden_reason(resolved):
+    """Why a single, already-resolved path is refused for being hidden, or
+    None. For entries the dispatcher already has resolved (a directory
+    listing's children, a grep match) where there is no separate "as typed"
+    form worth checking."""
+    if vault.exposed_path(resolved):
+        return None
+    return f"{resolved} is outside the exposed vault view"
+
+
+def _hidden_reason_for(requested, resolved):
+    """Same as `_hidden_reason`, but also checks the caller's literal
+    request — the route through a hidden ancestor is refused even when the
+    resolved destination alone would not be (see vault.exposed)."""
+    if vault.exposed(requested, resolved):
+        return None
+    return f"{resolved} is outside the exposed vault view"
+
+
 def list_dir(path, roots):
     p, err = _guard(path, roots)
     if err:
         return err
+    why = _hidden_reason_for(path, p)
+    if why:
+        return _err(why)
     if not p.exists():
         return _err(f"no such directory: {p}")
     if not p.is_dir():
@@ -268,6 +302,10 @@ def list_dir(path, roots):
         # deny list still refuses the path if the model simply guesses the
         # name, so nothing here is load-bearing for safety.
         if denial_reason(child):
+            continue
+        # Same ergonomics, for a hidden vault scope: a directory listing
+        # omits a hidden child rather than listing-and-refusing it.
+        if _hidden_reason(child):
             continue
         try:
             size = child.stat().st_size if child.is_file() else 0
@@ -284,6 +322,9 @@ def read_file(path, roots, start_line=None, end_line=None):
     p, err = _guard(path, roots)
     if err:
         return err
+    why = _hidden_reason_for(path, p)
+    if why:
+        return _err(why)
     if not p.exists():
         return _err(f"no such file: {p}")
     if p.is_dir():
@@ -330,6 +371,8 @@ def _searchable(p, roots):
         path_guard(p, roots)
     except PathError:
         return False       # denied files are not grep-able either
+    if _hidden_reason(p):
+        return False       # hidden vault scope: not grep-able either
     return True
 
 
@@ -343,6 +386,9 @@ def grep(pattern, roots, path=None):
         target, err = _guard(path, roots)
         if err:
             return err
+        why = _hidden_reason_for(path, target)
+        if why:
+            return _err(why)
         if not target.exists():
             return _err(f"no such path: {target}")
         targets = [target]
@@ -351,11 +397,16 @@ def grep(pattern, roots, path=None):
 
     files = []
     for target in targets:
+        if _hidden_reason(target):
+            continue
         if target.is_file():
             files.append(target)
             continue
         for dirpath, dirnames, filenames in os.walk(target):
-            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+            # Pruned before descending, not filtered after — a hidden
+            # subtree is never walked, the same shape as _SKIP_DIRS.
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS
+                           and not _hidden_reason(Path(dirpath) / d)]
             for fn in sorted(filenames):
                 files.append(Path(dirpath) / fn)
 
@@ -415,6 +466,9 @@ def write_file(path, content, roots, overwrite=False):
     # precheck(). dispatch() is reachable without a gate at all, so a check
     # that only ran there would be advice.
     why = reserved_write_reason(p)
+    if why:
+        return _err(why)
+    why = _hidden_reason_for(path, p)
     if why:
         return _err(why)
 
@@ -596,6 +650,9 @@ def precheck(name, arguments, ctx=None):
         why = reserved_write_reason(p)
         if why:
             return _err(why)
+    why = _hidden_reason_for(path, p)
+    if why:
+        return _err(why)
     return None
 
 

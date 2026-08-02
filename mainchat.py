@@ -15,6 +15,8 @@
 # frozen snapshot db.py already stores, not through this module.
 from pathlib import Path
 
+import names
+
 try:
     from config import MAIN_CHAT_DIR
 except ImportError:
@@ -81,7 +83,7 @@ def _read(filename):
     body = text.strip()
     if not body:
         raise MainChatProblem(EMPTY, str(path))
-    return body
+    return names.apply(body)
 
 
 def load_creation_bundle():

@@ -394,6 +394,45 @@ def test_run_log_authoritative():
                "before-cancel.md" in recs[0].touched, recs[0])
             runner.agent_turn = real_agent_turn
             runner.save_message = real_save_message
+
+            print("\n  --- D-16: a swallowed marker must not poison the "
+                  "next save on the same connection ---")
+
+            def half_write_then_fail(conn, session_id, role, content, **kw):
+                # save_message's own shape: an INSERT (and the sessions
+                # UPDATE) run against `conn` before its own commit() — sqlite3
+                # auto-starts a transaction on the first DML — and then the
+                # call fails before ever reaching that commit, the same
+                # shape a locked db on the real commit takes.
+                conn.execute(
+                    "INSERT INTO messages(session_id, role, content, "
+                    "model, created_at, kind) VALUES (?,?,?,?,?,?)",
+                    (session_id, role, content, "m",
+                     "2026-01-01T00:00:00+00:00", "chat"))
+                raise sqlite3.OperationalError("database is locked")
+
+            marker_sid = real_new_session(conn, title="d16", model="m")
+            runner.save_message = half_write_then_fail
+            try:
+                runner._mark_transcript(conn, marker_sid, "m",
+                                        "[routine failed] boom")
+            finally:
+                runner.save_message = real_save_message
+
+            n = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id=? AND "
+                "content LIKE '%boom%'", (marker_sid,)).fetchone()[0]
+            ok("the failed marker's own half-finished write was rolled "
+               "back, not left pending", n == 0, n)
+
+            real_save_message(conn, marker_sid, "assistant",
+                              "a real answer", model="m")
+            rows = conn.execute(
+                "SELECT content FROM messages WHERE session_id=?",
+                (marker_sid,)).fetchall()
+            ok("a later, unrelated save on the same connection commits "
+               "only its own work — not the marker's leftover insert too",
+               [r[0] for r in rows] == ["a real answer"], rows)
         finally:
             restore()
             conn.close()
@@ -1202,6 +1241,37 @@ def main():
                (filled, unf))
             ok("a prompt with no placeholders is unchanged",
                runner.fill_placeholders("plain task", when) == ("plain task", []))
+
+            print("\n--- v1.6: {{user}}/{{AI}} compose with the date "
+                  "placeholders, not a second pass ---")
+            import names as names_mod
+            saved_user, saved_ai = (names_mod.USER_DISPLAY_NAME,
+                                    names_mod.AI_DISPLAY_NAME)
+            try:
+                names_mod.USER_DISPLAY_NAME, names_mod.AI_DISPLAY_NAME = (
+                    "Cas", "Mittens")
+                # The order run_routine actually uses: fill_placeholders
+                # first (dates + the unfilled report), names.apply last.
+                task = "Hi {{user}}, today is {{date}}. Yours, {{AI}}."
+                filled, unf = runner.fill_placeholders(task, when)
+                ok("{{user}}/{{AI}} are known — not reported as unfilled",
+                   unf == [], unf)
+                ok("...while {{date}} still substituted in the same pass",
+                   "24-07-2026" in filled, filled)
+                personalised = names_mod.apply(filled)
+                ok("the composed result carries both the date and the names",
+                   personalised == "Hi Cas, today is 24-07-2026. Yours, "
+                                   "Mittens.", personalised)
+
+                # A genuinely unknown token stays reported, alongside the
+                # two name tokens staying quiet.
+                _, unf2 = runner.fill_placeholders(
+                    "{{user}} and {{nope}} and {{AI}}", when)
+                ok("an unknown token is still reported even beside the two "
+                   "known name tokens", unf2 == ["{{nope}}"], unf2)
+            finally:
+                names_mod.USER_DISPLAY_NAME = saved_user
+                names_mod.AI_DISPLAY_NAME = saved_ai
 
             print("\n--- the cadence placeholders ---")
             # Every one of these answers a question the model provably cannot:

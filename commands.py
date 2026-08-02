@@ -91,6 +91,7 @@ from pools import (pool, pool_dir, load as load_pool,
                    POOLS, first_message_status,
                    FM_NO_DIR, FM_NONE, FM_OK, FM_BROKEN)
 import tools
+import vault
 
 # How many chunks /recall and /remember pull. Also a diagnostic: if eight hits
 # come back and seven are the same dead end, that's the corpus talking.
@@ -1452,9 +1453,32 @@ def embed_retry_note(attempt, attempts, detail):
                   style="dim")
 
 
+def _wiki_hidden_reason():
+    """Why /recall, /remember or /update db must not reach WIKI_DIR right
+    now, or None if they may.
+
+    Reports the configured policy state rather than letting the corpus look
+    merely empty (Concept.md: a vault scope protects the model boundary, and
+    a query that silently finds nothing because its corpus is hidden reads
+    identically to an honest empty answer — the exact ambiguity `search.py`'s
+    EMPTY_INDEX/no-match split already exists to avoid one door over).
+    """
+    wiki_dir = getattr(_config, "WIKI_DIR", "")
+    if not wiki_dir:
+        return None
+    if vault.exposed_path(wiki_dir):
+        return None
+    return ("the wiki corpus is hidden by the configured vault scopes — "
+            "see /config, then scopes")
+
+
 def do_recall(query, k=MEMORY_K):
     """Grounded, cited answer synthesised from past conversations.
     Prints only — deliberately has no effect on the live session."""
+    why = _wiki_hidden_reason()
+    if why:
+        console.print(f"\n[{why}]\n", style="yellow")
+        return
     try:
         from recall import recall
     except Exception as e:
@@ -1532,6 +1556,10 @@ def do_remember(conn, session_id, history, injected, query,
     where it would compete with the original in vector space. Only a marker
     row is persisted — see the litter regex in backfill.py.
     """
+    why = _wiki_hidden_reason()
+    if why:
+        console.print(f"\n[{why}]\n", style="yellow")
+        return
     try:
         from search import search
     except Exception as e:
@@ -1659,28 +1687,35 @@ def do_updatedb(arg=""):
     # brings the recall index back in sync, and clears the stale marker. A page
     # with no id is skipped by import_wiki (it can't be keyed), so that count is
     # surfaced loudly rather than swallowed.
-    try:
-        from import_wiki import run_import
-        from backfill import clear_wiki_stale
-        from config import WIKI_DIR
-        stats = run_import(WIKI_DIR, str(DB_PATH))
-        new = stats.get("pages_new", 0)
-        upd = stats.get("messages_updated", 0)
-        skipped = stats.get("skipped_no_id", 0)
-        if new or upd:
-            console.print(f"\nWiki re-imported: +{new} new page(s), "
-                          f"{upd} updated.")
-            # Close the loop: a filed page is now in the recall index and is an
-            # untracked/changed file in the vault repo. Point at the last step.
-            console.print("  new pages are uncommitted in the vault — review "
-                          "with /wiki diff, save with /wiki commit <message>",
-                          style="dim")
-        if skipped:
-            console.print(f"[{skipped} wiki file(s) had no id and were NOT "
-                          f"indexed — add a frontmatter id]", style="yellow")
-        clear_wiki_stale()
-    except Exception as e:
-        console.print(f"\n[wiki re-import skipped: {e}]", style="dim")
+    why = _wiki_hidden_reason()
+    if why:
+        console.print(f"\n[{why} — wiki re-import skipped]", style="yellow")
+    else:
+        try:
+            from import_wiki import run_import
+            from backfill import clear_wiki_stale
+            from config import WIKI_DIR
+            stats = run_import(WIKI_DIR, str(DB_PATH))
+            new = stats.get("pages_new", 0)
+            upd = stats.get("messages_updated", 0)
+            skipped = stats.get("skipped_no_id", 0)
+            if new or upd:
+                console.print(f"\nWiki re-imported: +{new} new page(s), "
+                              f"{upd} updated.")
+                # Close the loop: a filed page is now in the recall index and
+                # is an untracked/changed file in the vault repo. Point at
+                # the last step.
+                console.print(
+                    "  new pages are uncommitted in the vault — review "
+                    "with /wiki diff, save with /wiki commit <message>",
+                    style="dim")
+            if skipped:
+                console.print(f"[{skipped} wiki file(s) had no id and were "
+                              f"NOT indexed — add a frontmatter id]",
+                              style="yellow")
+            clear_wiki_stale()
+        except Exception as e:
+            console.print(f"\n[wiki re-import skipped: {e}]", style="dim")
 
     try:
         with Live(
@@ -1769,6 +1804,10 @@ def do_attach(conn, session_id, history, raw_path, model):
         console.print(f"\n[refused] {e}\n")
         return
 
+    if not vault.exposed(raw_path, p):
+        console.print(f"\n[refused] {p} is outside the exposed vault view\n")
+        return
+
     if not p.exists():
         console.print(f"\n[no such file] {p}\n")
         return
@@ -1838,7 +1877,17 @@ def show_attachments(conn, session_id):
     table.add_column("~Tokens", justify="right")
     table.add_column("sha256", style="dim")
     for i, a in enumerate(items, 1):
-        table.add_row(str(i), a.get("name", "?"),
+        name = a.get("name", "?")
+        # A title beside the still-visible stored name — never in place of
+        # it. `a["path"]` is the real path saved at attach time; the model's
+        # envelope and the row's metadata are untouched.
+        label = name
+        stored_path = a.get("path")
+        if stored_path:
+            title = vault.title_for(stored_path)
+            if title and title.lower() != name.lower():
+                label = f"{name}  —  {title}"
+        table.add_row(str(i), label,
                       f"{a.get('chars', 0):,}",
                       f"{a.get('est_tokens', 0):,}",
                       (a.get("sha256") or "")[:8])
@@ -2510,14 +2559,19 @@ def _proposal_label(p):
     remainder, so a title that runs to end-of-line is one a select-to-EOL
     hands over intact. `tests/test_mover.py` pins the round trip rather than
     the punctuation: whatever this prints after the dash, `match_title` finds.
-    """
-    from mover import proposal_title
 
+    The title shown here is `vault.title_for` (v1.6) — the one shared label
+    read wherever cfc renders a selectable human file list. `/file <title>`
+    itself still matches through `mover.match_title`/`proposal_title`
+    unchanged: that is an exact-title lookup with its own "no title" meaning
+    ("" — never a filename fallback), a different question from what to
+    print, and changing it was not this release's job.
+    """
     tag = ("journal" if getattr(p, "into_journal", False)
            else "wiki" if getattr(p, "into_wiki", False) else "")
     label = f"[{tag}]  {p.name}" if tag else p.name
-    title = proposal_title(p.path)
-    if title and title.lower() != Path(p.name).stem.lower():
+    title = vault.title_for(p.path)
+    if title and title.lower() != p.name.lower():
         label = f"{label}  —  {title}"
     return label
 
@@ -2711,7 +2765,11 @@ def do_move():
 
     console.print("Outbox (top level)")
     for i, f in enumerate(files, 1):
-        console.print(f"  {i}. {f.name}")
+        label = f.name
+        title = vault.title_for(f)
+        if title and title.lower() != f.name.lower():
+            label = f"{f.name}  —  {title}"
+        console.print(f"  {i}. {label}")
     raw = input("  file (number, or 'back'): ").strip()
     if not raw or raw.lower() == "back":
         console.print("  cancelled", style="dim")
@@ -2954,9 +3012,26 @@ def _parse_wiki_args(arg):
 
 def _pick_change(changes):
     """Numbered pick over changed paths — the hub-picker idiom (input(), so it
-    works headless). Returns the chosen Change, or None on cancel/bad input."""
+    works headless). Returns the chosen Change, or None on cancel/bad input.
+
+    A title beside the path, when the changed file has one — the same shared
+    label every other picker uses. `c.path` remains what is typed back into
+    git (status/diff/commit paths); the title is decoration only, so a
+    resolve failure (deleted file, no wiki repo) is swallowed rather than
+    blanking the picker.
+    """
+    try:
+        import wikigit
+        root = wikigit.repo_root()
+    except Exception:                             # noqa: BLE001
+        root = None
     for i, c in enumerate(changes, 1):
-        console.print(f"    {i}) {c.label:8} {c.path}")
+        shown = c.path
+        if root is not None:
+            title = vault.title_for(root / c.path)
+            if title and title.lower() != Path(c.path).name.lower():
+                shown = f"{c.path}  —  {title}"
+        console.print(f"    {i}) {c.label:8} {shown}")
     raw = input("  pick a number (Enter to cancel): ").strip()
     if not raw:
         return None

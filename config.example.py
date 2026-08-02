@@ -29,6 +29,27 @@ CHAT_EXPORT_DIR = "PLACEHOLDER"
 # look different, not be trimmed until it looks local.
 VAULT_ROOT = ""             # e.g. "/mnt/c/Users/you/my vault"
 
+# Optional named partitions of the vault, deciding what a model-facing
+# surface (chat/routine tools, /add, /recall, /remember, /update db) may
+# reach. Each record: a unique `name`, a `path` relative to VAULT_ROOT, and
+# `exposed` (True/False). Leave unset — the default — and the whole
+# configured vault stays exposed exactly as before; this is an opt-in
+# partition, not a demand to classify everything up front.
+#
+#   VAULT_SCOPES = (
+#       dict(name="personal", path="01 personal", exposed=False),
+#       dict(name="shared wiki", path="03 resources/wiki db", exposed=True),
+#   )
+#
+# A scope path must resolve under VAULT_ROOT (no absolute path, no `..`, no
+# symlink escape) and name a directory that exists. A hidden ancestor always
+# wins over a nested exposed scope — privacy is monotonic, so declaration
+# order never matters. `/config` then `scopes` shows the resolved state of
+# every declared scope; an invalid declaration is reported there and fails
+# CLOSED for model-facing vault access only — human screens (/wiki, /file,
+# /move, notes) and chat without vault material keep working.
+VAULT_SCOPES = ()
+
 # Automatically export session to Obsidian when you leave it
 AUTO_EXPORT = True
 
@@ -64,6 +85,17 @@ FIRST_MESSAGES_DIR = "PLACEHOLDER"
 # unconfigured chat that merely looks like Main. Leave unset and 'm' refuses
 # every time, naming MAIN_CHAT_DIR itself as the problem.
 MAIN_CHAT_DIR = "PLACEHOLDER"
+
+# Two fixed names cfc will substitute into the shared, model-facing markdown
+# it owns as a feature surface: pool bodies (system prompts/personas/traits),
+# First Messages, Main's live system prompt/persona, and routine task
+# prompts. `{{user}}` and `{{AI}}` are the only two tokens recognised — exact
+# case, one literal substitution each, never a general template language.
+# Leave unset for the effective defaults below. A value must be a single
+# line, non-blank, and no longer than 40 characters; an invalid value is
+# reported on /config and leaves the token literal rather than guessing.
+# USER_DISPLAY_NAME = "You"           # default when unset
+# AI_DISPLAY_NAME = "Cooking for Cats" # default when unset
 
 # Models available on your plan, and everything cfc needs to know about each
 # one — one place instead of four. Order is what /list models and /model <n>

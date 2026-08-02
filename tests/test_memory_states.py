@@ -133,9 +133,96 @@ def test_recall_returns_none_not_a_sentence():
     check("no hits -> no hits", hits, [])
 
 
+def test_wiki_scope_gating():
+    """v1.6: /recall, /remember and /update db must not reach a hidden
+    WIKI_DIR. Reports the policy state rather than letting the corpus look
+    merely empty — a fourth kind of nothing, alongside the three this file
+    is named for, and the same discipline: branch on an explicit signal, not
+    on a message a caller re-derives."""
+    print("a hidden WIKI_DIR refuses /recall, /remember and /update db "
+          "without reaching search")
+    import commands
+    import vault
+
+    vroot = Path(tempfile.mkdtemp(prefix="vault-root-"))
+    wiki_dir = vroot / "03 resources" / "wiki db"
+    wiki_dir.mkdir(parents=True)
+
+    # Sandboxed, same discipline as every other command test: do_updatedb
+    # touches the memory index for real, and without this it would run
+    # against the developer's own ~/.cfc/chat.db.
+    import db as dbmod
+    saved_db_path_mod, saved_db_path_cmd = dbmod.DB_PATH, commands.DB_PATH
+    dbmod.DB_PATH = commands.DB_PATH = vroot / "chat.db"
+
+    saved_wiki_dir = getattr(commands._config, "WIKI_DIR", "")
+    saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+    commands._config.WIKI_DIR = str(wiki_dir)
+    vault.VAULT_ROOT = str(vroot)
+    vault.VAULT_SCOPES = (dict(name="wiki", path="03 resources/wiki db",
+                               exposed=False),)
+    try:
+        check("hidden: _wiki_hidden_reason names the policy, not emptiness",
+              commands._wiki_hidden_reason() is not None
+              and "hidden" in commands._wiki_hidden_reason(), True)
+
+        # do_recall/do_remember each do a LOCAL `from recall import recall` /
+        # `from search import search` inside their own body — a call-time
+        # import, re-read fresh every call — so patching the source
+        # module's attribute here is what a broken gate would actually
+        # reach, unlike patching a name some other module already bound at
+        # its own import time.
+        calls = {}
+        import recall as recall_mod
+        real_recall = recall_mod.recall
+        recall_mod.recall = lambda *a, **k: calls.setdefault("recall", True)
+        try:
+            commands.do_recall("anything")
+        finally:
+            recall_mod.recall = real_recall
+        check("do_recall never reaches recall() while the corpus is hidden",
+              "recall" not in calls, True)
+
+        import search as search_mod
+        real_search = search_mod.search
+        search_mod.search = lambda *a, **k: calls.setdefault("search", True)
+        try:
+            commands.do_remember(None, 1, [], [], "anything")
+        finally:
+            search_mod.search = real_search
+        check("do_remember never reaches search() while the corpus is hidden",
+              "search" not in calls, True)
+
+        real_import = None
+        try:
+            import import_wiki
+            real_import = import_wiki.run_import
+            import_wiki.run_import = lambda *a, **k: calls.setdefault(
+                "import", True)
+        except ImportError:
+            pass
+        try:
+            commands.do_updatedb()
+        finally:
+            if real_import is not None:
+                import_wiki.run_import = real_import
+        check("do_updatedb skips the wiki re-import while it is hidden",
+              "import" not in calls, True)
+
+        vault.VAULT_SCOPES = (dict(name="wiki", path="03 resources/wiki db",
+                                   exposed=True),)
+        check("exposed: _wiki_hidden_reason clears",
+              commands._wiki_hidden_reason() is None, True)
+    finally:
+        commands._config.WIKI_DIR = saved_wiki_dir
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+        dbmod.DB_PATH, commands.DB_PATH = saved_db_path_mod, saved_db_path_cmd
+
+
 if __name__ == "__main__":
     test_exception_types()
     test_branches_on_type_not_text()
     test_why_empty()
     test_recall_returns_none_not_a_sentence()
+    test_wiki_scope_gating()
     print("\nall memory-state tests passed")

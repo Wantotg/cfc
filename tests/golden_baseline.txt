@@ -393,8 +393,8 @@ Nothing injected in this session to forget.
 
 you>
 Outbox (top level)
-  1. filable-note.md
-  2. no-destination.md
+  1. filable-note.md  —  A Filable Note
+  2. no-destination.md  —  Missing Its Destination
   file (number, or 'back'):   cancelled
 
 you>
@@ -419,6 +419,8 @@ Wiki import       no update flagged
 Database          <ROOT>/tests/_fixture.db
 Vault             <ROOT>/tests/_fixture_vault
 Export            <ROOT>/tests/_fixture_vault
+Vault scopes      none configured — whole vault exposed
+Names             You / Cooking for Cats
 
 Wiki              unavailable — WIKI_DIR is not configured
 Routines          nothing needs attention · open with: routine
@@ -435,6 +437,8 @@ Wiki import       no update flagged
 Database          <ROOT>/tests/_fixture.db
 Vault             <ROOT>/tests/_fixture_vault
 Export            <ROOT>/tests/_fixture_vault
+Vault scopes      none configured — whole vault exposed
+Names             You / Cooking for Cats
 
 Wiki              unavailable — WIKI_DIR is not configured
 Routines          nothing needs attention · open with: routine
@@ -443,6 +447,7 @@ config commands
   refresh  re-evaluate this screen
   connect  connect embedding — run the connection flow, then redraw
   paths    the complete effective path inventory
+  scopes   every declared vault scope: name, state, resolved path
   help     this screen's commands
   q        back to the session picker
   wiki     switch to the wiki screen

@@ -23,6 +23,12 @@
 # split `wikigit.py` and `runner.py` keep.
 from pathlib import Path
 
+# Aliased: this module already defines a function called `names()` (below),
+# which would otherwise rebind this import the moment that def executes —
+# a plain `import names` would silently stop being the module by the time
+# `load()` runs.
+import names as _names
+
 try:
     from config import PROMPTS_DIR
 except ImportError:
@@ -320,7 +326,8 @@ def load(kind, name):
                   else [d / f"{name}.md", d / name])
     for path in candidates:
         if path.is_file():
-            return path.read_text(encoding="utf-8").strip(), path.name
+            body = path.read_text(encoding="utf-8").strip()
+            return _names.apply(body), path.name
     return None, None
 
 
@@ -403,7 +410,7 @@ def load_first_message(persona_name):
     if state != FM_OK:
         return None
     try:
-        return path.read_text(encoding="utf-8").strip()
+        return _names.apply(path.read_text(encoding="utf-8").strip())
     except OSError as e:
         raise FirstMessageError(f"can't read {path}: {e}") from e
 

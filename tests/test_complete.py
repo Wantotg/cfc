@@ -156,6 +156,16 @@ def completions(line):
     return [x.text for x in c.get_completions(Document(line, len(line)), None)]
 
 
+def completion_metas(line):
+    """{text: display_meta} — the title (or fallback) shown beside a path."""
+    from prompt_toolkit.document import Document
+    c = complete.make_completer()
+    if c is None:
+        return {}
+    return {x.text: x.display_meta_text
+            for x in c.get_completions(Document(line, len(line)), None)}
+
+
 def main():
     print("\n--- the front end the REPL actually uses ---")
     c = complete.make_completer()
@@ -213,6 +223,74 @@ def main():
             got = completions(f"{PREFIX}add 00 in")
             ok("a directory is offered with a trailing slash",
                got and got[0].endswith("/"), got)
+
+    print("\n--- v1.6: titles beside completed paths ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Roots(tmp) as r:
+            (r.inbox / "titled-alpha.md").write_text(
+                "---\ntitle: Aquarium Notes\n---\n\nbody\n")
+            (r.inbox / "titled-beta.md").write_text(
+                "---\ntitle: Aquarium Notes\n---\n\nbody\n")  # a duplicate
+            (r.inbox / "malformed.md").write_text(
+                '---\ntitle: "unterminated\n---\n\nbody\n')
+            (r.inbox / "plain.md").write_text("no frontmatter\n")
+
+            metas = completion_metas(f"{PREFIX}add titled-")
+            keys = {k for k in metas if k.endswith("titled-alpha.md") or
+                    k.endswith("titled-beta.md")}
+            ok("both candidates are offered despite sharing a title",
+               len(keys) == 2, metas)
+            ok("both show the SAME title — duplicates are harmless, the "
+               "path still distinguishes them",
+               all(metas[k] == "Aquarium Notes" for k in keys), metas)
+            ok("...and the inserted text is still each file's real path, "
+               "never the title", all(k.endswith(".md") for k in keys), keys)
+
+            metas = completion_metas(f"{PREFIX}add malfor")
+            mkey = next((k for k in metas if k.endswith("malformed.md")),
+                       None)
+            ok("a malformed-frontmatter file is still offered",
+               mkey is not None, metas)
+            ok("...falling back to the parent directory as meta, not a "
+               "blank or a crash", metas.get(mkey) not in (None, ""), metas)
+
+            metas = completion_metas(f"{PREFIX}add plain")
+            pkey = next((k for k in metas if k.endswith("plain.md")), None)
+            ok("a file with no frontmatter at all completes normally",
+               pkey is not None, metas)
+
+            print("\n--- v1.6: a hidden vault scope is never offered ---")
+            import vault
+            hidden_dir = r.vault / "01 personal"
+            hidden_dir.mkdir(parents=True, exist_ok=True)
+            (hidden_dir / "diary.md").write_text("private", encoding="utf-8")
+            saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+            vault.VAULT_ROOT = str(r.vault)
+            vault.VAULT_SCOPES = (dict(name="personal", path="01 personal",
+                                       exposed=False),)
+            try:
+                got = completions(f"{PREFIX}add diary")
+                ok("a hidden file is never offered by path completion",
+                   got == [], got)
+                got = completions(f"{PREFIX}add 01 per")
+                ok("the hidden directory itself is never offered either",
+                   got == [], got)
+
+                if hasattr(__import__("os"), "symlink"):
+                    try:
+                        link = r.inbox / "peek.md"
+                        link.symlink_to(hidden_dir / "diary.md")
+                        got = completions(f"{PREFIX}add peek")
+                        ok("a symlink resolving into a hidden scope is not "
+                           "offered either", got == [], got)
+                    except OSError:
+                        pass
+
+                got = completions(f"{PREFIX}add titled-alpha")
+                ok("an unscoped sibling is still offered while a hidden "
+                   "scope exists elsewhere", got != [], got)
+            finally:
+                vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
 
     print("\n--- pool names: /add and /remove ---")
     with tempfile.TemporaryDirectory() as tmp:

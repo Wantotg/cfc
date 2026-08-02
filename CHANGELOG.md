@@ -27,6 +27,58 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — v1.6 — A governed view of shared vault material (`D-16`)
+A new `vault.py` is the one authority for two things that share a frontmatter
+reader: an optional, named partition of the vault (`VAULT_SCOPES`, resolved
+against `VAULT_ROOT`) deciding what a model-facing surface may reach, and a
+read-only frontmatter `title` label for cfc's own file pickers. No setting
+preserves today's fully-open behaviour; a hidden ancestor always wins over a
+nested exposed scope, checked against both the caller's literal request and
+its fully resolved destination, so a symlink can't launder access either
+direction. `paths.py` remains the filesystem jail — this is a narrower,
+separate question, enforced inside `tools.dispatch`'s `list_dir`/`read_file`/
+`grep`/`write_file` (chat and routine contexts alike, since a routine's
+`ToolContext` is ungated and reaches the same dispatcher), `commands.do_attach`,
+and the `/recall`/`/remember`/`/update db` wiki-corpus seam — which reports the
+policy state rather than letting a hidden corpus look merely empty. An invalid
+scope declaration fails closed only for paths actually inside `VAULT_ROOT`;
+`/wiki`, `/file`, `/move` and notes maintenance are human-only and untouched.
+`/config` gains a scope-count row and a `scopes` detail view; the title label
+reaches every picker that already showed a filename (attachment completion and
+`/status`, outbox/filing, `/move`'s loose files, the wiki screen's changed-file
+picker) without any of them learning frontmatter separately — a path remains
+the only thing ever inserted, stored, or accepted back.
+
+A second, independent module (`names.py`) adds `{{user}}`/`{{AI}}`
+personalisation: two exact, case-sensitive tokens, substituted in one pass over
+the source text so a configured name's own braces can never be read as a second
+placeholder. Applied only at the loaders that already own a shared,
+model-facing instruction file — `pools.load`/`load_first_message` (system
+prompts, personas, traits, First Messages), `mainchat._read` (Main's live
+profile and creation bundle), and `runner.py`'s routine task prompt, composed
+with `fill_placeholders` so `{{user}}`/`{{AI}}` are known tokens excluded from
+its unfilled-placeholder warning rather than two competing scans. Live layers
+(traits, Main's profile) are re-personalised every read; existing snapshot
+surfaces (a First Message, a routine transcript) keep what they froze. An
+invalid configured name is a visible `/config` error and leaves its token
+literal rather than guessing.
+
+Also `D-16`: `runner._mark_transcript` now rolls the connection back when its
+best-effort marker save fails, before swallowing the error — previously the
+marker's own partial INSERT/UPDATE could sit uncommitted on the connection and
+ride along on whichever unrelated `save_message` committed next. Verified by
+disabling the rollback and watching a stray row survive a later save.
+- Files: vault.py, names.py, tools.py, commands.py, complete.py, screens.py,
+  pools.py, mainchat.py, runner.py, config.example.py, tests/test_vault.py,
+  tests/test_tools.py, tests/test_attach.py, tests/test_complete.py,
+  tests/test_mover.py, tests/test_memory_states.py, tests/test_screens.py,
+  tests/test_pools.py, tests/test_first_message.py, tests/test_mainchat.py,
+  tests/test_routines.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-02 — The NULL-kind backfill commits the write it makes (`B-09`)
 The guards added earlier today stopped `_migrate_messages` writing when it
 had nothing to write, but the commit stayed gated on `added or wrote_marker`

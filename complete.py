@@ -28,6 +28,7 @@ except ImportError:
 
 from parse import PREFIX, looks_like_path
 from paths import path_guard, PathError
+import vault
 
 try:
     from config import ATTACH_ROOTS
@@ -168,6 +169,13 @@ def _offer(child, stem, roots):
         return None
     if child.name.startswith(".") and not stem.startswith("."):
         return None        # hidden files only on explicit request
+    # A hidden vault scope, checked before offering either a file or a
+    # directory to navigate into — do_attach would refuse it anyway, and a
+    # completer that offers what /add is about to decline just wastes a
+    # keystroke. Never raises: an unreadable config leaves this permissive,
+    # the same direction path_guard's own denial check already takes here.
+    if not vault.exposed_path(child):
+        return None
     if child.is_dir():
         return _present(child) + "/"
     if child.suffix.lower() not in ATTACH_EXTENSIONS:
@@ -322,6 +330,26 @@ def _preset_candidates(fragment):
     return [(n, n, "") for n in names if n.lower().startswith(frag)]
 
 
+def _path_item(m):
+    """(text, display, meta) for one /add or /remove path candidate.
+
+    `text` is the real path — what Tab inserts and what `/add` receives,
+    unchanged. `meta` is the frontmatter title beside it when the file has
+    one (the shared label, `vault.title_for`), falling back to the parent
+    directory otherwise — the same information this offered before titles
+    existed, so a file with no title completes exactly as it always did.
+    """
+    is_dir = m.endswith("/")
+    p = Path(m)
+    display = p.name + ("/" if is_dir else "")
+    meta = str(p.parent)
+    if not is_dir:
+        title = vault.title_for(p.expanduser())
+        if title and title.lower() != p.name.lower():
+            meta = title
+    return m, display, meta
+
+
 def _dispatch(line):
     """(fragment, [(text, display, meta), …]) for a line, or None if inert.
 
@@ -341,8 +369,7 @@ def _dispatch(line):
             pool_items = _pool_candidates(fragment)
             if pool_items or not fragment:
                 return fragment, pool_items
-        return fragment, [(m, Path(m).name + ("/" if m.endswith("/") else ""),
-                           str(Path(m).parent)) for m in _candidates(fragment)]
+        return fragment, [_path_item(m) for m in _candidates(fragment)]
     if line.startswith(ROUTINE_TRIGGER):
         fragment = line[len(ROUTINE_TRIGGER):].lstrip()
         return fragment, _routine_candidates(fragment)

@@ -56,6 +56,7 @@ def main():
     dbmod.DB_PATH = tmp / "chat.db"
     conn = dbmod.db()
     conn.execute("INSERT INTO sessions (id,title) VALUES (1,'t')")
+    conn.execute("INSERT INTO sessions (id,title) VALUES (2,'t2')")
     conn.commit()
 
     import commands
@@ -142,6 +143,81 @@ def main():
                      "'%sk-real-key%'").fetchone()[0]
     ok("...and never stored", n == 0)
 
+    print("\n--- v1.6: a hidden vault scope is refused before it is read ---")
+    import vault
+    hidden_dir = jail / "01 personal"
+    hidden_dir.mkdir(exist_ok=True)
+    hidden_file = hidden_dir / "diary.md"
+    hidden_file.write_text("private thoughts")
+    exposed_sibling = jail / "unscoped.md"
+    exposed_sibling.write_text("fine")
+
+    saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+    vault.VAULT_ROOT = str(jail)
+    vault.VAULT_SCOPES = (dict(name="personal", path="01 personal",
+                               exposed=False),)
+    try:
+        out = run(commands.do_attach, conn, 2, [], str(hidden_file), model="m")
+        flat = " ".join(out.split())
+        ok("a directly-typed hidden path is refused",
+           "refused" in flat and "exposed vault view" in flat, out)
+        ok("...and its content never printed", "private thoughts" not in out)
+        n = conn.execute("SELECT COUNT(*) FROM messages WHERE content LIKE "
+                         "'%private thoughts%'").fetchone()[0]
+        ok("...and never stored", n == 0)
+
+        if hasattr(__import__("os"), "symlink"):
+            try:
+                link = jail / "sneaky.md"
+                link.symlink_to(hidden_file)
+                out = run(commands.do_attach, conn, 2, [], str(link),
+                          model="m")
+                flat = " ".join(out.split())
+                ok("a symlink resolving into the hidden scope is refused too",
+                   "refused" in flat and "exposed vault view" in flat, out)
+            except OSError:
+                pass
+
+        hist_exposed = []
+        out = run(commands.do_attach, conn, 2, hist_exposed,
+                  str(exposed_sibling), model="m")
+        ok("an unscoped sibling still attaches normally",
+           len(hist_exposed) == 1, out)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+
+    print("\n--- v1.6: attachment completion never offers a hidden path ---")
+    import complete
+    saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+    saved_attach_roots = complete.ATTACH_ROOTS
+    complete.ATTACH_ROOTS = (jail,)
+    vault.VAULT_ROOT = str(jail)
+    vault.VAULT_SCOPES = (dict(name="personal", path="01 personal",
+                               exposed=False),)
+    try:
+        cands = complete._candidates(str(hidden_file))
+        ok("a hidden file is never offered by completion",
+           str(hidden_file) not in cands and
+           not any("diary" in c for c in cands), cands)
+    finally:
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+        complete.ATTACH_ROOTS = saved_attach_roots
+
+    print("\n--- v1.6: a title labels the still-visible stored path ---")
+    titled = jail / "titled.md"
+    titled.write_text("---\ntitle: Aquarium Notes\n---\n\nbody\n")
+    hist_titled = []
+    run(commands.do_attach, conn, 2, hist_titled, str(titled), model="m")
+    out = run(commands.show_attachments, conn, 2)
+    ok("the title is shown beside the filename",
+       "titled.md  —  Aquarium Notes" in out, out)
+    row = conn.execute(
+        "SELECT meta FROM messages WHERE kind='attachment' AND meta LIKE "
+        "'%titled.md%' ORDER BY id DESC LIMIT 1").fetchone()
+    stored_meta = json.loads(row[0])
+    ok("the stored path is the real path, not the title",
+       stored_meta["path"] == str(titled), stored_meta)
+
     print("\n--- :attached ---")
     out = run(commands.show_attachments, conn, 1)
     ok("lists the attachment", "notes.md" in out, out)
@@ -159,15 +235,15 @@ def main():
     out = run(commands.do_detach, conn, 1, hist2, "1", stdin="n\n")
     ok("declining leaves it alone", "Cancelled" in out)
     ok("...still in the database",
-       conn.execute("SELECT COUNT(*) FROM messages WHERE kind='attachment'"
-                    ).fetchone()[0] == 1)
+       conn.execute("SELECT COUNT(*) FROM messages WHERE kind='attachment' "
+                    "AND session_id=1").fetchone()[0] == 1)
 
     before = len(hist2)
     out = run(commands.do_detach, conn, 1, hist2, "1", stdin="y\n")
     ok("confirming detaches", "Detached" in out, out)
     ok("...row gone",
-       conn.execute("SELECT COUNT(*) FROM messages WHERE kind='attachment'"
-                    ).fetchone()[0] == 0)
+       conn.execute("SELECT COUNT(*) FROM messages WHERE kind='attachment' "
+                    "AND session_id=1").fetchone()[0] == 0)
     ok("...and removed from live history too", len(hist2) == before - 1)
 
     out = run(commands.do_detach, conn, 1, hist2, "1")

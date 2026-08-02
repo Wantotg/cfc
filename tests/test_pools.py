@@ -185,6 +185,20 @@ def main():
                state == pools.FM_BROKEN, state)
             ok("...and carries the same detail load_first_message raises",
                "broken.md" in detail, detail)
+
+            print("\n--- v1.6: First Messages are personalised too ---")
+            import names
+            saved_user = names.USER_DISPLAY_NAME
+            (fm_dir / "greeter.md").write_text(
+                "Hello {{user}}, {{AI}} here.\n", encoding="utf-8")
+            try:
+                names.USER_DISPLAY_NAME = "Cas"
+                ok("a First Message substitutes the configured name",
+                   pools.load_first_message("greeter.md")
+                   == "Hello Cas, Cooking for Cats here.",
+                   pools.load_first_message("greeter.md"))
+            finally:
+                names.USER_DISPLAY_NAME = saved_user
         finally:
             pools.FIRST_MESSAGES_DIR = saved_fm
 
@@ -256,6 +270,58 @@ def main():
            "the ALTER TABLE is guarded by OperationalError and runs on "
            "every connect")
         conn.close()
+
+        print("\n--- v1.6: pool bodies are personalised on read ---")
+        import names
+        saved_user, saved_ai = names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME
+
+        (dirs["persona"] / "muse.md").write_text(
+            "Hi {{user}}, I'm {{AI}}.", encoding="utf-8")
+        try:
+            names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = None, None
+            body, _ = pools.load("persona", "muse")
+            ok("unset config uses the effective defaults",
+               body == "Hi You, I'm Cooking for Cats.", body)
+
+            names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = "Cas", "Mittens"
+            body, _ = pools.load("persona", "muse")
+            ok("a configured name substitutes exact-token, case-sensitive",
+               body == "Hi Cas, I'm Mittens.", body)
+
+            (dirs["persona"] / "mismatch.md").write_text(
+                "{{User}} and {{ai}} are not the tokens.", encoding="utf-8")
+            body, _ = pools.load("persona", "mismatch")
+            ok("a case-mismatched token is never substituted",
+               body == "{{User}} and {{ai}} are not the tokens.", body)
+
+            (dirs["persona"] / "unknown.md").write_text(
+                "{{nickname}} stays literal.", encoding="utf-8")
+            body, _ = pools.load("persona", "unknown")
+            ok("an unrecognised placeholder-like token is left alone",
+               body == "{{nickname}} stays literal.", body)
+
+            (dirs["persona"] / "braces.md").write_text(
+                "hi {{user}}", encoding="utf-8")
+            names.USER_DISPLAY_NAME = "{{AI}}"   # braces inside a config value
+            body, _ = pools.load("persona", "braces")
+            ok("a configured name's own braces are inserted literally, "
+               "never rescanned as a second placeholder",
+               body == "hi {{AI}}", body)
+            names.USER_DISPLAY_NAME = "Cas"
+
+            names.USER_DISPLAY_NAME = "a" * 999   # over MAX_LEN
+            body, _ = pools.load("persona", "muse")
+            ok("an invalid configured value leaves its token literal",
+               "{{user}}" in body, body)
+            ok("...but a still-valid sibling setting keeps substituting",
+               "Mittens" in body, body)
+            problem = names.problem(names.USER_DISPLAY_NAME,
+                                    "USER_DISPLAY_NAME")
+            ok("...and the invalid value is reported, not silently dropped",
+               problem is not None, problem)
+        finally:
+            names.USER_DISPLAY_NAME, names.AI_DISPLAY_NAME = (saved_user,
+                                                               saved_ai)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
