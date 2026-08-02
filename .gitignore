@@ -22,25 +22,13 @@ claude_export/
 # Claude Code local files
 .claude/
 
-# Anchored with a leading slash: the same names live in templates/, which ships.
+# Private front doors and specialist instructions.
 /AGENTS.md
 /CLAUDE.md
-/BRAINSTORMER.md
-/DESIGNER.md
-/DRAFTER.md
-/CODER.md
-/DEBUGGER.md
-/MANAGER.md
-/REVIEWER.md
-/MANAGERS_HANDBOOK.md
+/agents/
 
-# Update loop handovers.
-/Start.md
-/Idea.md
-/Concept.md
-/Work Order.md
-/Update.md
-/Tag.md
+# Update loop scratchpad.
+/scratchpad/
 
 # Superseded by the six specialist files above, kept locally for reference.
 legacy/LEGACY_CLAUDE.md
