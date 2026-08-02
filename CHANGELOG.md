@@ -27,6 +27,22 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-02 — The routines screen shows each routine's scheduler state (`D-1.5.1-01c`)
+`/config` could report a due routine and point at the routines screen, but
+that screen only ever showed last-run status and review state — it couldn't
+answer the question `/config` raised unless you already knew which routine
+to `show`. `screens._render_routines` now captures one clock per render and
+passes `schedule.assess(routine, now).state` — the assessment's compact
+state, verbatim, never `reason` text, a timestamp comparison, or a
+re-derivation of trigger logic — into a new `Schedule` column on the wide
+table and a `schedule` line on the narrow layout. This is deliberately
+separate from the hub's compact, coloured Schedule light (`B-0.9.1-04`):
+this screen has no colour of its own to keep in step with it, and `show
+<routine>` remains the one place for `Assessment.reason`'s full sentence.
+- Files: screens.py, tests/test_screens.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-02 — Headless scheduling gets bounded lock patience and per-routine containment (`B-1.5.1-01a`, `B-1.5.1-01b`)
 `db.db()` now takes an explicit `timeout=` (SQLite's busy-wait), defaulting
 to the same 5s every interactive and `:memory:` caller always had.

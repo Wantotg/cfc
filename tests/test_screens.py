@@ -17,6 +17,7 @@ log_dir and wikigit.wiki_dir/journal_dir are patched, never config.py — and a
 temp sqlite db, never ~/.cfc/chat.db.
 """
 import builtins
+import datetime
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,7 @@ sys.dont_write_bytecode = True
 
 import db as dbmod
 import routines
+import schedule
 import screens
 import wikigit
 
@@ -832,6 +834,94 @@ def test_routines_narrow_and_wide():
             screens.console.width = saved_w
 
 
+def test_routines_schedule_column():
+    """D-1.5.1-01c: the routines screen shows scheduler state beside each
+    routine, in both layouts, pinned against the real `schedule.assess()` —
+    never a hardcoded string, a re-derivation of trigger logic, or the
+    hub's own compact colour (this screen affords the fuller check and has
+    no colour of its own to keep in step)."""
+    print("\n--- routines: the Schedule column, real assessment, both "
+          "layouts ---")
+    with tempfile.TemporaryDirectory() as tmp, Store(tmp) as store:
+        due = routines.Routine(id="due-one", name="Due One", prompt="task.md",
+                               trigger="0000", read_roots=[str(store.pdir)])
+        routines.save_routine(due)
+
+        # Midnight, same reason test_hub.py's retry-limit fixture uses it:
+        # "at or after its trigger" holds regardless of what wall-clock hour
+        # this suite happens to run at.
+        limited = routines.Routine(id="limited", name="Limited",
+                                   prompt="task.md", trigger="0000",
+                                   read_roots=[str(store.pdir)])
+        routines.save_routine(limited)
+        for _ in range(schedule.MAX_RETRIES_PER_DAY):
+            routines.append_log("limited", "failed", "boom")
+
+        manual = routines.Routine(id="manual", name="Manual",
+                                  prompt="task.md", trigger="command",
+                                  read_roots=[str(store.pdir)])
+        routines.save_routine(manual)
+
+        # An invalid trigger cannot be saved through save_routine (standing
+        # decision 8), so — same as the hand-edited-in-Obsidian fixtures
+        # elsewhere in this file — write it to disk directly.
+        broken_trigger = routines.Routine(id="broken-trigger",
+                                          name="Broken Trigger",
+                                          prompt="task.md",
+                                          read_roots=[str(store.pdir)])
+        (store.rdir / "broken-trigger.md").write_text(
+            broken_trigger.to_markdown().replace(
+                "trigger: command", "trigger: whenever"),
+            encoding="utf-8")
+        broken_trigger.trigger = "whenever"
+
+        conn = dbmod.db(":memory:")
+        import io
+        saved_w = screens.console.width
+        try:
+            for width, label in ((80, "narrow"), (140, "wide")):
+                screens.console.width = width
+                buf = io.StringIO()
+                screens.console.file = buf
+                # Captured right at the render boundary: proves the row's
+                # Schedule cell is the real assessment computed for this
+                # moment, not a string this test invented independently of
+                # what the screen actually asks schedule.assess() for.
+                now = datetime.datetime.now()
+                screens._render_routines(conn)
+                screens.console.file = sys.stdout
+                out = buf.getvalue()
+
+                for r, expected_label in (
+                    (due, "due"),
+                    (limited, "retry limit"),
+                    (manual, "command"),
+                    (broken_trigger, "invalid"),
+                ):
+                    state = schedule.assess(r, now).state
+                    ok(f"{label} {r.id}: assess() itself says {expected_label!r}",
+                       state == expected_label, state)
+                    ok(f"{label} {r.id}: the screen shows exactly that state",
+                       state in out, out)
+        finally:
+            screens.console.width = saved_w
+            conn.close()
+
+        print("\n  --- show <routine> still carries the full reason, not "
+              "just the compact word ---")
+        conn2 = dbmod.db(":memory:")
+        table = screens.build_table("routine")
+        import io
+        buf = io.StringIO()
+        screens.console.file = buf
+        screens._routine_show("manual", conn2, table)
+        screens.console.file = sys.stdout
+        out = buf.getvalue()
+        ok("the full reason sentence is there, not the compact word alone",
+           "runs only from /routine" in out, out)
+        conn2.close()
+
+
 # --- private chat entering a screen reaches the durable conn ----------------
 
 
@@ -882,6 +972,7 @@ def main():
     test_routines_run_and_new()
     test_chat_model_threading()
     test_routines_narrow_and_wide()
+    test_routines_schedule_column()
     test_private_screen_uses_app_conn()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

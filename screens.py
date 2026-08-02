@@ -424,11 +424,17 @@ def _routines_narrow():
     return console.size.width < _ROUTINES_WIDE_MIN
 
 
-def _routine_row(r, problems, status, ts, review):
+def _routine_row(r, problems, status, ts, review, schedule_state):
     return {
         "name": f"! {r.name}" if problems else r.name,
         "model": r.model or "(default)",
         "trigger": str(r.trigger),
+        # The assessment's own compact state, verbatim — never reason text,
+        # a timestamp comparison or a re-derivation of trigger logic. `show
+        # <routine>` is where the full `Assessment.reason` sentence belongs
+        # (D-1.5.1-01c); this is the same fixed vocabulary the hub's compact
+        # Schedule light renders, one screen over.
+        "schedule": schedule_state,
         "write": "yes" if r.write_roots else "no",
         "loop": status or "never",
         "flag": "yes" if review else "no",
@@ -442,12 +448,13 @@ def _routine_row(r, problems, status, ts, review):
 def _render_routines_wide(rows):
     t = RichTable(show_header=True, header_style="bold", box=None,
                  padding=(0, 2, 0, 0))
-    for col in ("Routine", "Model", "Trigger", "Write", "Loop", "Flag",
-                "Last run"):
+    for col in ("Routine", "Model", "Trigger", "Schedule", "Write", "Loop",
+                "Flag", "Last run"):
         t.add_column(col, overflow="fold")
     for row in rows:
-        t.add_row(row["name"], row["model"], row["trigger"], row["write"],
-                  row["loop"], row["flag"], row["last"])
+        t.add_row(row["name"], row["model"], row["trigger"],
+                  row["schedule"], row["write"], row["loop"], row["flag"],
+                  row["last"])
     console.print(t)
 
 
@@ -456,6 +463,7 @@ def _render_routines_narrow(rows):
         console.print(row["name"])
         console.print(f"  model    {row['model']}")
         console.print(f"  trigger  {row['trigger']}")
+        console.print(f"  schedule {row['schedule']}")
         console.print(f"  write    {row['write']}")
         console.print(f"  loop     {row['loop']}")
         console.print(f"  flag     {row['flag']}")
@@ -465,6 +473,7 @@ def _render_routines_narrow(rows):
 
 def _render_routines(conn):
     from routines import list_routines, last_run
+    from schedule import assess
 
     try:
         good, bad = list_routines()
@@ -476,12 +485,18 @@ def _render_routines(conn):
         console.print("(none yet — 'new' to make one)", style="dim")
         return
 
+    # One clock for the whole render, so two rows assessed a moment apart
+    # can never disagree about whether the same trigger time has passed —
+    # same discipline as hub._routine_rows, one screen over.
+    now = datetime.datetime.now()
+
     rows, problems_by_id = [], {}
     for r in good:
         problems = r.validate()
         problems_by_id[r.id] = problems
         status, ts, review = last_run(r.id)
-        rows.append(_routine_row(r, problems, status, ts, review))
+        rows.append(_routine_row(r, problems, status, ts, review,
+                                 assess(r, now).state))
 
     if rows:
         (_render_routines_narrow if _routines_narrow()
