@@ -257,11 +257,18 @@ def ensure_session_id_seq(conn):
 
     `Q-1.6-02`: before this mark existed, an automatic id was just SQLite's
     own `MAX(rowid)+1` over `sessions` — so a single chosen high id
-    (`/new 900`, the hub's `c`) permanently became the floor every later
-    automatic wiki/routine/Main/chat id started from, because that reused
-    rowid was oblivious to *why* 900 was the max. The mark is that same
-    quantity made explicit and advanced only by the rules below, instead of
-    being re-derived from whatever `sessions` currently contains.
+    (`/new 900`, the hub's `c`) became the floor every later automatic
+    wiki/routine/Main/chat id started from, because that reused rowid was
+    oblivious to *why* 900 was the max. The mark is the automatic sequence's
+    own position, advanced only by `alloc_session_id`, instead of being
+    re-derived from whatever `sessions` currently contains.
+
+    **Seeding from the max is the one place a chosen id still shows through,
+    and it is deliberate.** On a database predating this table there is no
+    way to tell which ids were allocated and which were picked by hand, so
+    the only seed that cannot collide is the greatest one present. A
+    migrating database that contains a hand-picked high id therefore inherits
+    it once, at its first connect under this build, and never again.
     """
     if conn.execute("SELECT 1 FROM session_id_seq WHERE id=1").fetchone():
         return
@@ -271,23 +278,45 @@ def ensure_session_id_seq(conn):
 
 
 def alloc_session_id(conn):
-    """Advance the durable high-water mark by one and return the newly
-    allocated id, as a write inside the caller's own transaction.
+    """Advance the automatic sequence to the next *free* id and return it, as
+    a write inside the caller's own transaction.
 
-    The `UPDATE` is the seam: SQLite takes its write lock the moment this
-    statement runs, so a second connection's own allocation blocks until this
-    one commits or rolls back — that is what serialises simultaneous
-    allocators, not an explicit `BEGIN`. The caller commits (keeping the
-    mark and whatever row it inserted against it) or rolls back (undoing
-    both, since they share the one transaction) as a single unit.
+    The first `UPDATE` is the seam: SQLite takes its write lock the moment
+    that statement runs, so a second connection's own allocation blocks until
+    this one commits or rolls back — that is what serialises simultaneous
+    allocators, not an explicit `BEGIN`. The caller commits (keeping the mark
+    and whatever row it inserted against it) or rolls back (undoing both,
+    since they share the one transaction) as a single unit.
 
     Every automatic session creation — wiki, routine, Main and ordinary chat
     — goes through this, so `import_wiki.py`'s standalone connection uses it
     too rather than its own `cur.lastrowid`.
+
+    **The skip is what keeps a chosen id out of this sequence** (`B-1.6.4-01`).
+    `create_chat` no longer moves the mark, so the only thing standing between
+    the automatic sequence and a hand-picked id is this loop: it steps over
+    anything already occupied instead of the chooser having to push the mark
+    up past it. It terminates because every step it takes is over an existing
+    `sessions` row and that table is finite — the bound below is that fact
+    written down, not a policy, and reaching it means the invariant broke
+    rather than that someone chose too many ids.
     """
-    conn.execute("UPDATE session_id_seq SET mark = mark + 1 WHERE id=1")
-    return conn.execute(
-        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+    def _advance():
+        conn.execute("UPDATE session_id_seq SET mark = mark + 1 WHERE id=1")
+        return conn.execute(
+            "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+
+    mark = _advance()
+    ceiling = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] + 1
+    for _ in range(ceiling):
+        if not conn.execute(
+            "SELECT 1 FROM sessions WHERE id=?", (mark,)
+        ).fetchone():
+            return mark
+        mark = _advance()
+    raise RuntimeError(
+        f"session id allocation stepped over {ceiling} occupied ids; "
+        f"the mark ({mark}) and the sessions table disagree")
 
 
 def new_session(conn, title="(untitled)", model=None,
@@ -331,12 +360,14 @@ def create_chat(conn, chat_id, title="(untitled)", model=None):
     still raises IntegrityError and is reported the same way as an ordinary
     pre-existing row.
 
-    `Q-1.6-02`: a chosen id only ever raises the durable mark, in the same
-    transaction as its insert, and only when it lands above the current
-    mark — the `WHERE mark < ?` makes that conditional atomic without a
-    separate read. A vacant chosen id below the mark stays insertable and
-    never touches it; a collision rolls the whole transaction back, so
-    neither the row nor the mark changes.
+    `B-1.6.4-01`: **a chosen id never moves the automatic sequence.** It did
+    for one release, which made a mistyped number at the hub's `c` prompt
+    permanent: the mark rose to it, `d` deleted the row without lowering the
+    mark again, and every session created afterwards carried a sixteen-digit
+    id. Deleting the mistake used to be the whole undo (`N-1.5-01`), and
+    tying the two together took that away. `alloc_session_id` steps over an
+    occupied id instead, so the two id spaces coexist without either one
+    dragging the other.
     """
     if isinstance(chat_id, bool) or not isinstance(chat_id, int) or chat_id <= 0:
         raise ValueError(f"chat_id must be a positive int, got {chat_id!r}")
@@ -351,10 +382,6 @@ def create_chat(conn, chat_id, title="(untitled)", model=None):
             "INSERT INTO sessions(id, title, model, provider, "
             "created_at, updated_at) VALUES (?,?,?,?,?,?)",
             (chat_id, title, model, PROVIDER_CHAT, now, now),
-        )
-        conn.execute(
-            "UPDATE session_id_seq SET mark = ? WHERE id=1 AND mark < ?",
-            (chat_id, chat_id),
         )
     except sqlite3.IntegrityError:
         conn.rollback()

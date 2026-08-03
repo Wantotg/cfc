@@ -803,26 +803,45 @@ def main():
     ok("three more connects leave the mark exactly where it was",
        before_mark == after_mark == 38, (before_mark, after_mark))
 
-    print("(a chosen high id raises the mark; automatic ids never land "
-          "on it, and deletion never lowers it)")
+    print("(B-1.6.4-01: a chosen high id leaves the automatic sequence "
+          "exactly where it was, and deletion never lowers it)")
     chosen_seq = tmp / "chosen_seq.db"
     dbmod.DB_PATH = chosen_seq
     c = dbmod.db()
     dbmod.new_session(c, title="ordinary #1")           # id 1
     high = dbmod.create_chat(c, 900, title="hand-picked")
     ok("create_chat returns the chosen id", high == 900, high)
-    ok("...and raises the mark to it",
+    ok("...and leaves the mark alone",
        c.execute("SELECT mark FROM session_id_seq WHERE id=1"
-                ).fetchone()[0] == 900)
+                ).fetchone()[0] == 1)
     after_high = dbmod.new_session(c, title="ordinary #2")
-    ok("the next automatic id continues from 900, not from 1",
-       after_high == 901, after_high)
+    ok("the next automatic id continues from 1, not from 900",
+       after_high == 2, after_high)
 
-    dbmod.delete_session(c, 900)
-    dbmod.delete_session(c, 901)
-    still_alloc = dbmod.new_session(c, title="ordinary #3")
+    # The failure this rule exists for: one mistyped number at `c`, undone
+    # the way the hub's own help says to undo it, must leave nothing behind.
+    typo = dbmod.create_chat(c, 1982471289471204, title="fat-fingered")
+    dbmod.delete_session(c, typo)
+    after_typo = dbmod.new_session(c, title="ordinary #3")
+    ok("a mistyped sixteen-digit id, created and deleted, costs nothing",
+       after_typo == 3, after_typo)
+
+    dbmod.delete_session(c, 2)
+    dbmod.delete_session(c, 3)
+    still_alloc = dbmod.new_session(c, title="ordinary #4")
     ok("automatic allocation keeps climbing past deleted rows, never "
-       "reusing them", still_alloc == 902, still_alloc)
+       "reusing them", still_alloc == 4, still_alloc)
+
+    print("(automatic allocation steps over a chosen id in its path "
+          "instead of being pushed above it)")
+    dbmod.create_chat(c, 5, title="sits in the sequence's way")
+    dbmod.create_chat(c, 6, title="and so does this one")
+    stepped = dbmod.new_session(c, title="ordinary #5")
+    ok("the automatic id skips both occupied ids and takes the next free "
+       "one", stepped == 7, stepped)
+    ok("...and the mark stops at what it allocated, not past it",
+       c.execute("SELECT mark FROM session_id_seq WHERE id=1"
+                ).fetchone()[0] == 7)
 
     print("(a lower vacant chosen id stays valid and never touches the "
           "mark)")
@@ -856,15 +875,14 @@ def main():
     dbmod.create_chat(c, 500, title="hand-picked")
     wiki_id = dbmod.new_session(c, title="a wiki page",
                                 provider=dbmod.PROVIDER_WIKI)
-    ok("a wiki session lands above the chosen high id", wiki_id == 501,
-       wiki_id)
+    ok("a wiki session ignores the chosen high id", wiki_id == 1, wiki_id)
     routine_id = dbmod.new_session(c, title="a routine run",
                                    provider=dbmod.PROVIDER_ROUTINE)
-    ok("a routine session continues the same sequence", routine_id == 502,
+    ok("a routine session continues the same sequence", routine_id == 2,
        routine_id)
     main_id, created = dbmod.get_or_create_main(c, "muse.md", "hi")
     ok("Main is allocated through the mark too",
-       created is True and main_id == 503, (created, main_id))
+       created is True and main_id == 3, (created, main_id))
     main_id2, created2 = dbmod.get_or_create_main(c, "muse.md", "hi")
     ok("...and reopening it later spends no new id",
        created2 is False and main_id2 == main_id, (created2, main_id2))
@@ -882,7 +900,7 @@ def main():
     ok("...leaving the durable mark exactly as the private allocation "
        "found it",
        durable.execute("SELECT mark FROM session_id_seq WHERE id=1"
-                       ).fetchone()[0] == 700)
+                       ).fetchone()[0] == 0)
     priv.close()
     durable.close()
 
@@ -904,8 +922,8 @@ def main():
     wc = sqlite3.connect(wikidb)
     wiki_row_id = wc.execute(
         "SELECT id FROM sessions WHERE provider='wiki'").fetchone()[0]
-    ok("the imported wiki page's id continues past the chosen high one",
-       wiki_row_id == 951, wiki_row_id)
+    ok("the imported wiki page's id ignores the chosen high one",
+       wiki_row_id == 1, wiki_row_id)
     wc.close()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
