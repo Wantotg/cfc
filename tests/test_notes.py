@@ -14,8 +14,10 @@ the folder itself is that the list on screen is what a human confirmed, and a
 note that shows up after that must not be swept into a batch it was never
 shown for.
 """
+import io
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -23,6 +25,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+import commands
 import notes
 
 PASS, FAIL = [], []
@@ -194,6 +197,61 @@ def main():
         files, _ = notes.inventory()
         ok("the template never appears in an inventory to hand to clear_batch",
            notes.TEMPLATE_NAME not in [f.name for f in files], files)
+
+        # --- the prompt above the batch (B-1.6.4-09b) ----------------------
+        #
+        # Everything above tests notes.py. This tests the one thing that
+        # decides whether any of it runs: the confirmation. It was untested,
+        # and it confirmed on anything typed — 'apifjaf' archived a real
+        # inbox. Driven through commands._do_clear_notes with a scripted
+        # input(), not by calling the helper alone, because the bug was the
+        # call site's rule and not the helper's (there was no helper).
+        print("\n--- the confirmation confirms only on Enter ---")
+        for name, typed, expect_moved, expect_asks in (
+            ("a typo does not archive; 'back' after it cancels",
+             ["apifjaf", "back"], False, 2),
+            ("a typo is re-asked, and Enter then archives",
+             ["apifjaf", ""], True, 2),
+            ("Enter alone archives", [""], True, 1),
+            ("'back' alone cancels", ["back"], False, 1),
+        ):
+            for stale in list(v.inbox.iterdir()):
+                stale.unlink()
+            v.note("prompt-case.md")
+            asked = []
+
+            def fake_input(prompt="", _script=list(typed), _asked=asked):
+                _asked.append(prompt)
+                return _script.pop(0)
+
+            saved_input = getattr(commands, "input", None)
+            commands.input = fake_input
+            buf = io.StringIO()
+            try:
+                with redirect_stdout(buf):
+                    commands._do_clear_notes()
+            finally:
+                if saved_input is None:
+                    del commands.input
+                else:
+                    commands.input = saved_input
+
+            moved = not (v.inbox / "prompt-case.md").exists()
+            ok(name, moved == expect_moved and len(asked) == expect_asks,
+               (moved, len(asked), buf.getvalue()[-200:]))
+            if len(typed) > 1:
+                ok("...and the unrecognised line said so",
+                   "not recognised" in buf.getvalue(), buf.getvalue()[-200:])
+
+        # A fourth copy of this prompt is how the first three disagreed. The
+        # wording is written in exactly one place now; this fails if it isn't.
+        src = (ROOT / "commands.py").read_text(encoding="utf-8")
+        ok("the prompt's wording exists once in commands.py",
+           src.count("Enter to confirm, or 'back': ") == 1,
+           src.count("Enter to confirm, or 'back': "))
+        ok("...and both /move confirmations go through the helper",
+           src.count("confirm_or_back(") == 4,
+           src.count("confirm_or_back("))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

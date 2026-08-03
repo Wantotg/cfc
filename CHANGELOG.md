@@ -27,6 +27,33 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — A confirmation prompt confirms only on Enter (`B-1.6.4-09b`)
+`/clear notes` and `/move` both printed `Enter to confirm, or 'back'` and then
+compared the typed line to `back` only, falling through to the action for
+anything else — so a typo, a stray paste or a half-typed command read as yes.
+Found in the v1.6.4 round-2 playtest by typing `apifjaf` at `/clear notes` and
+watching four notes archive. The wording was written three times and the third
+copy, `/move`'s rename confirmation, was the one that enforced what it printed.
+
+`commands.confirm_or_back` is now the single reader: Enter returns True, `back`
+returns False, anything else prints `not recognised` and asks again. All three
+sites call it, so the wording and the rule cannot drift apart. `/move`'s rename
+confirmation keeps its meaning — `back` there steps back to the collision
+prompt, not out of `/move`.
+
+The files are recoverable in both cases (a clear lands in a dated archive
+folder, a move states its target first), but `/clear notes` exists so that a
+*human* declares the batch closed once the routines have read the inbox; an
+accidental clear takes that inbox away from a routine that had not read it yet,
+and nothing reports it. The prompt seam had no test at all — `test_notes.py`
+covered `notes.py` and `test_mover.py` covered `mover.py`, while the `input()`
+shell deciding whether either ran was reachable only by typing. It now drives
+`_do_clear_notes` with a scripted `input()` across all four cases, verified by
+restoring the old behaviour and watching the typo archive again.
+- Files: commands.py, tests/test_notes.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-03 — Show what cfc actually sent on a turn (`W-1.6.4-04`)
 A provider 400 always arrived as one opaque `[error] HTTP 400` line, and
 nothing else in cfc could show what the request actually looked like —
@@ -57,7 +84,7 @@ private chat's request is visible in `/status request` while the session is
 alive and gone with it, the same way its messages are.
 - Files: api.py, main.py, commands.py, tests/test_agent.py, tests/test_turn_paths.py, tests/test_private.py
 - Status: shipped
-- Commit: pending
+- Commit: 9d1ca1e
 
 ## 2026-08-03 — Open a listed session as the provider kind it actually is (`W-1.6.4-05`)
 A wiki page and a routine transcript were listed by `/list sessions` but

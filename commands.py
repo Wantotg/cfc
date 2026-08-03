@@ -2827,6 +2827,31 @@ def _wiki_filed_note():
 # (`D-04`) — the honest 1.x exit.
 
 
+def confirm_or_back(indent="  "):
+    """Enter confirms, 'back' cancels, anything else asks again.
+
+    One function because the prompt states a two-option contract, and the
+    contract has to be the thing that runs: a typo, a stray paste or a
+    half-typed command must not read as yes. Three prompts shared this wording
+    and two of them fell through to the action on everything that was not the
+    literal word 'back', which is how `/clear notes` archived an inbox on
+    'apifjaf' (`B-1.6.4-09b`). Two copies of a rule are two chances to write it
+    differently; `/move`'s rename confirmation had the right one and the other
+    two did not.
+
+    `indent` is the caller's own leading space, not a style — /move's prompts
+    sit under a numbered list and /clear notes' does not.
+    """
+    while True:
+        raw = input(f"{indent}Enter to confirm, or 'back': ").strip().lower()
+        if raw == "":
+            return True
+        if raw == "back":
+            return False
+        console.print(f"{indent}not recognised — press Enter to confirm, or "
+                      f"type 'back'", style="red")
+
+
 def do_move():
     """/move — list every top-level outbox file, then guide one to a
     destination (D-1.7-04: any file type, not just the Markdown proposals
@@ -2885,8 +2910,7 @@ def do_move():
 
     if not plan.collides:
         console.print(f"  {source.name} → {plan.target}")
-        raw = input("  Enter to confirm, or 'back': ").strip().lower()
-        if raw == "back":
+        if not confirm_or_back():
             console.print("  cancelled", style="dim")
             console.print()
             return
@@ -2907,12 +2931,12 @@ def do_move():
         if raw == "rename":
             renamed = suggest_rename(plan.target)
             console.print(f"  → {renamed}")
-            confirm = input("  Enter to confirm, or 'back': ").strip().lower()
-            if confirm == "":
+            if confirm_or_back():
                 _finish_move(source, renamed, "moved")
                 return
-            if confirm != "back":
-                console.print("  not recognised", style="red")
+            # 'back' here steps back to the collision prompt, not out of
+            # /move — the file still exists and rename is one of three
+            # answers to that.
             continue
         if raw == "replace":
             if plan.replace_reason:
@@ -2981,8 +3005,7 @@ def _do_clear_notes():
     for f in files:
         console.print(f"  {f.name}")
     console.print()
-    raw = input("Enter to confirm, or 'back': ").strip().lower()
-    if raw == "back":
+    if not confirm_or_back(indent=""):
         console.print("  cancelled", style="dim")
         console.print()
         return
