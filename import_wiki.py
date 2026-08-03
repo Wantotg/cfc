@@ -131,13 +131,16 @@ def run_import(wiki_dir, db_path, wipe=False):
 
 def _import_pages(db, wiki_dir):
     stats = Counter()
+    skipped_no_id_names = []
     # Top-level *.md only — sources/ is one level deeper and stays out.
     for path in sorted(glob.glob(os.path.join(wiki_dir, "*.md"))):
         raw = open(path, encoding="utf-8").read()
         fm, body = split_frontmatter(raw)
         wid = fm.get("id")
         if wid is None:
-            stats["skipped_no_id"] += 1; continue
+            stats["skipped_no_id"] += 1
+            skipped_no_id_names.append(os.path.relpath(path, wiki_dir))
+            continue
         if str(fm.get("type", "")).lower() == "index":
             stats["skipped_index"] += 1; continue
         wid = str(wid)
@@ -176,6 +179,7 @@ def _import_pages(db, wiki_dir):
             stats["messages_updated"] += 1
         else:
             stats["messages_unchanged"] += 1
+    stats["skipped_no_id_names"] = skipped_no_id_names
     return stats
 
 

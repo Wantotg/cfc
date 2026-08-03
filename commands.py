@@ -1714,6 +1714,7 @@ def do_updatedb(arg=""):
             new = stats.get("pages_new", 0)
             upd = stats.get("messages_updated", 0)
             skipped = stats.get("skipped_no_id", 0)
+            skipped_names = stats.get("skipped_no_id_names", [])
             if new or upd:
                 console.print(f"\nWiki re-imported: +{new} new page(s), "
                               f"{upd} updated.")
@@ -1725,8 +1726,9 @@ def do_updatedb(arg=""):
                     "with /wiki diff, save with /wiki commit <message>",
                     style="dim")
             if skipped:
+                names = ", ".join(skipped_names)
                 console.print(f"[{skipped} wiki file(s) had no id and were "
-                              f"NOT indexed — add a frontmatter id]",
+                              f"NOT indexed: {names} — add a frontmatter id]",
                               style="yellow")
             clear_wiki_stale()
         except Exception as e:

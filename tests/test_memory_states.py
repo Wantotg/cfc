@@ -241,10 +241,89 @@ def test_wiki_scope_gating():
         dbmod.DB_PATH, commands.DB_PATH = saved_db_path_mod, saved_db_path_cmd
 
 
+def test_missing_id_wiki_warning_names_files():
+    """B-1.6.2-01a: a missing-id skip is diagnostic, not just a count.
+
+    Two top-level pages with no frontmatter `id` sit beside one eligible page
+    in a real temp wiki directory. Driven through the real `import_wiki` and
+    `commands.do_updatedb`, not a stub, so the producer (`_import_pages`) and
+    the parser (`do_updatedb`'s renderer) are proven against each other: one
+    yellow warning names both filenames, the eligible page still imports, and
+    the continuing chat-index pass still runs — a missing id is evidence, not
+    a partial-import failure.
+    """
+    print("a missing-id skip names every skipped file in one warning")
+    import commands
+    import db as dbmod
+    import vault
+
+    vroot = Path(tempfile.mkdtemp(prefix="vault-root-"))
+    wiki_dir = vroot / "wiki db"
+    wiki_dir.mkdir(parents=True)
+
+    (wiki_dir / "no-id-b.md").write_text(
+        "---\ntitle: No Id B\n---\nSome body text.\n", encoding="utf-8")
+    (wiki_dir / "no-id-a.md").write_text(
+        "---\ntitle: No Id A\n---\nSome other body text.\n", encoding="utf-8")
+    (wiki_dir / "eligible.md").write_text(
+        "---\nid: 20260101000000\ntitle: Eligible Page\n---\n"
+        "This page has an id and real content.\n", encoding="utf-8")
+
+    db_path = vroot / "chat.db"
+    saved_db_path_mod, saved_db_path_cmd = dbmod.DB_PATH, commands.DB_PATH
+    dbmod.DB_PATH = commands.DB_PATH = db_path
+
+    saved_wiki_dir = getattr(commands._config, "WIKI_DIR", "")
+    saved_root, saved_scopes = vault.VAULT_ROOT, vault.VAULT_SCOPES
+    commands._config.WIKI_DIR = str(wiki_dir)
+    vault.VAULT_ROOT = str(vroot)
+    vault.VAULT_SCOPES = ()   # exposed: nothing declared hides it
+
+    import backfill
+    real_update_index = backfill.update_index
+    calls = {}
+
+    def fake_update_index(*a, **k):
+        calls["index"] = True
+        return (0, 0)
+    backfill.update_index = fake_update_index
+
+    import io
+    buf = io.StringIO()
+    commands.console.file = buf
+    try:
+        commands.do_updatedb()
+    finally:
+        commands.console.file = sys.stdout
+        backfill.update_index = real_update_index
+        commands._config.WIKI_DIR = saved_wiki_dir
+        vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes
+        dbmod.DB_PATH, commands.DB_PATH = saved_db_path_mod, saved_db_path_cmd
+
+    notice = buf.getvalue()
+    check("the warning names the count", "2 wiki file(s) had no id" in notice, True)
+    check("...and both deterministic filenames, in one warning",
+          "no-id-a.md" in notice and "no-id-b.md" in notice
+          and notice.count("had no id") == 1, True)
+    check("the eligible page still imports",
+          "+1 new page(s)" in notice, True)
+    check("...and the continuing chat-index pass still runs",
+          "index" in calls, True)
+
+    db = sqlite3.connect(db_path)
+    row = db.execute(
+        "SELECT title FROM sessions WHERE provider='wiki' AND source_uuid=?",
+        ("20260101000000",)).fetchone()
+    db.close()
+    check("the eligible page's row is really there, not just counted",
+          row is not None and row[0] == "Eligible Page", True)
+
+
 if __name__ == "__main__":
     test_exception_types()
     test_branches_on_type_not_text()
     test_why_empty()
     test_recall_returns_none_not_a_sentence()
     test_wiki_scope_gating()
+    test_missing_id_wiki_warning_names_files()
     print("\nall memory-state tests passed")

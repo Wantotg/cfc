@@ -27,6 +27,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Name skipped wiki pages in `/update db` (`B-1.6.2-01a`)
+A missing-id skip warned with a count only, so knowing *which* top-level page
+to fix meant opening the wiki directory and guessing. `import_wiki._import_pages`
+now returns every skipped filename (relative to the configured wiki directory)
+alongside the count, and `commands.do_updatedb` names all of them in its
+existing yellow partial-import warning. Eligible pages still import and the
+chat-index pass still runs — this is diagnostic evidence, not a new fatal or
+repair path.
+- Files: import_wiki.py, commands.py, tests/test_memory_states.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-03 — v1.6.2 triage — The hub says what its `Ctx` column means (`B-10`)
 The one finding that blocked the v1.6.2 tag, and it came from reading the
 version's own `Concept.md` against the shipped code rather than from the
