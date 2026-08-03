@@ -40,13 +40,30 @@ HUB_ROUTINES = 7   # routines on the picker
 # Not a chat: excluded from the picker, still visible in `/list`.
 _NON_CHAT = (PROVIDER_WIKI, PROVIDER_ROUTINE)
 
-# Everything the flexible three don't get: ID, Latest message, Messages, Ctx,
-# plus Rich's per-column padding and the vertical rules. The ID column is 4
-# wide for every view now — it used to be declared 3 here and then widened to
-# 4 in `list_sessions`/`show_recent_chats` *after* `_widths()` had already
-# divided up the terminal, so those two tables were quietly one column over
-# budget.
-_CHROME = 4 + 17 + 8 + 7 + (7 * 2) + 8
+# Everything the flexible three don't get: Latest message, Messages, Ctx, plus
+# Rich's per-column padding and the vertical rules. ID is *not* in here — it
+# is measured per table and passed in, see `_id_width`.
+_CHROME = 17 + 8 + 7 + (7 * 2) + 8
+
+_ID_MIN = 4         # the header word itself, and three digits under it
+
+
+def _id_width(rows):
+    """How wide the ID column has to be to print every id in `rows` whole.
+
+    A fixed width was the bug (`B-1.6.4-07`). ID was declared 4 and Rich
+    ellipsises rather than overflows, so a five-digit id rendered `1…` and a
+    sixteen-digit one rendered `198…` — in the picker, whose entire contract
+    is that you type back the number it printed, and in `/list sessions`,
+    where `_add_rows`' own comment explains that one number everywhere is
+    what stops you opening the wrong chat. A truncated id is worse than no
+    id: it looks like a value.
+
+    Measured rather than capped, because an id has no bound cfc gets to
+    choose — `create_chat` takes any positive integer, and refusing wide ones
+    would be a policy about ids invented at the renderer."""
+    return max([_ID_MIN] + [len(str(r[0])) for r in rows])
+
 
 _TITLE_MIN = 20     # below this a title stops being recognisable
 _TITLE_ENOUGH = 50  # past this, slack is worth more to Prompt/Persona
@@ -63,8 +80,9 @@ def _strip_md(name):
     return name or ""
 
 
-def _widths():
-    """(title, prompt, persona) for the current terminal.
+def _widths(id_w=_ID_MIN):
+    """(title, prompt, persona) for the current terminal, given the width the
+    ID column needs (`_id_width`).
 
     Computed, but still *fixed* widths when the table is built, which is the
     point. Rich grants a no_wrap column whatever its longest row asks for and
@@ -78,7 +96,7 @@ def _widths():
     with 70 columns to spread over is mostly trailing space, while at width 8
     every prompt name reads 'medium …' and tells you nothing. Truncating the
     field that distinguishes rows is the more expensive mistake."""
-    avail = console.size.width - _CHROME
+    avail = console.size.width - _CHROME - id_w
     prompt = persona = _NAME_MIN
     title = max(_TITLE_MIN, avail - prompt - persona)
     if title > _TITLE_ENOUGH:
@@ -89,16 +107,21 @@ def _widths():
     return title, prompt, persona
 
 
-def _session_table(title):
+def _session_table(title, rows=()):
     """Both views are the same table at different limits; building them in one
     place is what stops them drifting apart again.
+
+    `rows` is what will be added to it, and is needed before the table exists
+    because the ID column's width comes off them and the flexible three are
+    divided up from whatever is left.
 
     Title is no_wrap + ellipsis rather than wrapping: a wrapped title stacked a
     single row four lines high and pushed the rest of the list off the screen,
     which is worse than a truncated one you can still read."""
-    title_w, prompt_w, persona_w = _widths()
+    id_w = _id_width(rows)
+    title_w, prompt_w, persona_w = _widths(id_w)
     table = Table(title=title, border_style="dim")
-    table.add_column("ID", style="cyan", justify="right", width=4)
+    table.add_column("ID", style="cyan", justify="right", width=id_w)
     table.add_column("Latest message", width=17)
     table.add_column("Messages", justify="right", width=8)
     table.add_column("Ctx", justify="right", width=7)
@@ -207,7 +230,7 @@ def list_sessions(conn):
         console.print("No sessions yet.")
         return
 
-    table = _session_table("Sessions")
+    table = _session_table("Sessions", rows)
     _add_rows(table, rows)
     console.print(table)
     console.print()
@@ -384,7 +407,7 @@ def show_recent_chats(conn):
     if not rows:
         console.print("No chats yet.")
         return
-    table = _session_table("Recent chats")
+    table = _session_table("Recent chats", rows)
     _add_rows(table, rows)
     console.print(table)
     console.print()
@@ -649,7 +672,7 @@ def pick_session(conn):
         routines = _routine_rows()
 
         if rows:
-            table = _session_table("Recent chats")
+            table = _session_table("Recent chats", rows)
             _add_rows(table, rows)
             console.print(table)
             console.print()

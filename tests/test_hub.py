@@ -500,6 +500,30 @@ def main():
            p200 > p80, (p80, p200))
         ok("every column carries an explicit width (none flexible)",
            all(c.width for c in hub._session_table("x").columns))
+
+        # B-1.6.4-07: the ID column is measured off the rows, not fixed at 4.
+        # Rendered rather than asserted on the column object, because what
+        # broke was what reached the screen — Rich ellipsised a five-digit id
+        # to `1…` in the one table whose contract is that you type the number
+        # back. Driven through the real renderer at a width that fits.
+        console.width = 120
+        wide = [(1982471289471215, "a routine run", "2026-08-03T14:04:00+00:00",
+                 14, None, None, "m", 11000, 300, 0, "routine"),
+                (190, "a chat", "2026-08-03T13:48:32+00:00",
+                 0, None, None, "m", None, None, 0, "nano-gpt")]
+        t = hub._session_table("Sessions", wide)
+        hub._add_rows(t, wide)
+        painted = "\n".join(
+            s.text for s in console.render(t) if s.text)
+        ok("a sixteen-digit id prints whole, not ellipsised",
+           "1982471289471215" in painted and "…" not in painted.split("\n")[3],
+           painted)
+        ok("...and a short id in the same table still prints whole",
+           "190" in painted, painted)
+        ok("an all-short table keeps the narrow ID column",
+           hub._id_width([(1,), (955,)]) == hub._ID_MIN)
+        ok("...and the width comes off the flexible three, not the terminal",
+           hub._widths(16)[0] < hub._widths(hub._ID_MIN)[0])
     finally:
         console.width = saved_w
 
