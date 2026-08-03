@@ -372,3 +372,14 @@ request, that nothing reads back.
 ((_ `^--' /_<  \
 `` `-'(((/  (((/
 ```
+
+## v1.6.2 — Truthful boundaries *completed, 03/08*
+
+Four small repairs keep filing, reasoning display, context usage, and outbox
+wording honest. No new surface was added.
+
+**Fixed**
+- filed wiki drafts no longer lose their generated id when an empty id exists
+- whitespace-only reasoning no longer draws an empty panel
+- unknown context limits are named consistently across chat and hub displays
+- /move and /outbox explain which top-level files they list
