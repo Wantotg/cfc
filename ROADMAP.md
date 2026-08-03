@@ -395,3 +395,37 @@ say where their two lists overlap and why they stay different.
   means (D-1.7-02, B-10)
 - `/move` and `/outbox` name what each lists, and the filing view explains once
   that a top-level Markdown file can appear in both (D-1.7-04)
+
+## v1.6.4 — Trust the turn, the chat id, and what was sent *completed, 03/08*
+
+Two loops. Round one shipped a hub rename and four fixes; the round-two
+playtest found one real bug — a confirmation prompt that acted on anything
+typed except the word `back` — and confirmed round one's tone fix against the
+real provider, which `/status request` is what made checkable at all.
+
+**Added**
+- Rename a chat from the hub (`r`) — the same operation `/title` uses, so
+  `/title` gained the same refusals (`W-10`)
+- A wiki page or a routine transcript now opens like any other session, with
+  a settled notice on open and a `Kind` column in `/list sessions` (`W-1.6.4-05`)
+- `/status request` shows exactly what cfc sent the provider on the last
+  turn, call by call (`W-1.6.4-04`)
+
+**Fixed**
+- An ordinary turn is answered, not the tone direction (`B-1.6.3-01a`)
+- A chosen chat id no longer moves the automatic numbering, and the hub opens
+  any chat by id, not only the ten it lists (`Q-1.6-02`, `B-1.6.4-01`)
+- Session tables no longer truncate a five-digit-or-longer id (`B-1.6.4-07`)
+- A rename says what it renamed, old title beside new (`W-1.6.4-06`)
+- The post-turn wait names the job actually running — titling, memory, both,
+  or neither — and clears when it's done (`W-1.6.4-02`)
+- `/clear notes` and `/move`'s confirmation prompts act only on Enter;
+  anything else asks again instead of confirming (`B-1.6.4-09b`)
+
+*(some more time on fixes, before we venture out of the vault)*
+```
+ _._     _,-'""`-._
+(,-.`._,'(       |\`-/|  'OUT...of the vault?'
+    `-.-' \ )-`( , o o)
+          `-    \`_`"'-
+```

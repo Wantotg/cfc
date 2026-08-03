@@ -246,9 +246,11 @@ kept off this list; `/list sessions` inside a session shows every session there 
 
 The number you type is the session id, the same one `/delete chat 7` and
 `/export chat 7` take. There is no second numbering anywhere: an id that isn't
-on the list can still open an ordinary chat. Wiki pages and routine transcripts
-are listed by `/list sessions` but are refused rather than opened, since
-resuming either as a conversation is not a thing you meant to do.
+on the list can still open any session — a chat, a wiki page, or a routine
+transcript. Opening a wiki page or a routine transcript prints a settled
+notice: you're continuing a conversation grounded in that page or run, never
+editing the vault or rerunning the routine. Typed replies persist like an
+ordinary chat, but neither auto-titles, and `/swipe`/`/undo` refuse on both.
 
 The hub is home base. `/q` inside a session comes back here rather than quitting,
 so the program only exits from the hub. The splash does not reappear on the way
@@ -291,13 +293,16 @@ Everything else changes something.
 | `/help` | Every command, grouped (aliases `/h`, `/?`) |
 | `/list` | The kinds you can list |
 | `/list <kind>` | `prompts` · `personas` · `traits` · `models` · `routines` · `tags` · `chats` · `sessions` · `outbox` |
-| `/status` | Everything active here: prompt, persona, traits, attachments, tags, tools, database, context |
+| `/status` | Everything active here: prompt, persona, traits, attachments, tags, tools, database, context, calls sent |
 | `/status <kind>` | Print the attached prompt's, persona's or traits' actual text |
+| `/status request` | The literal payload cfc sent the provider on the last turn, call by call; empty if the turn was refused before any call |
 | `/config` | Deployment settings (key masked) |
 | `/search <word>` | Substring search across all messages |
 
 `/list chats` is the picker's view — real conversations. `/list sessions` is
-everything, routine runs  and wiki pages included. Two different questions.
+everything, routine runs and wiki pages included, each row's Kind noting
+which — and any of them can be opened the same way as a chat. Two different
+questions.
 
 `/outbox` is a real alias for `/list outbox`, not just the noun the table
 above uses — it's been resolved since v0.8.
