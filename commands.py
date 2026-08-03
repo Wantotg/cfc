@@ -1086,6 +1086,28 @@ def delete_chat(conn, token):
     return target["id"]
 
 
+def rename_chat(conn, chat_id, new_title):
+    """Resolve and rename one ordinary durable chat by identity. The
+    validation, write and result wording `/title <id> <new title>` and the
+    hub's `r` share (`W-10`) — everything either surface needs to say is
+    said here once.
+
+    Returns the new title on success, None after printing why: no such
+    session, Main (its title is fixed), or a row that exists but isn't an
+    ordinary chat (a wiki page or routine transcript). None of those change
+    a row — resolution happens before any write.
+    """
+    from db import resolve_rename_target, RenameTargetError, set_session_title
+    try:
+        target = resolve_rename_target(conn, chat_id)
+    except RenameTargetError as e:
+        console.print(str(e), style="red")
+        return None
+    set_session_title(conn, target["id"], new_title)
+    console.print(f"Session #{target['id']} titled: {new_title}")
+    return new_title
+
+
 # What `/list` can list, in the order the bare form prints them. Two of these
 # answer questions people think are one: `chats` is the picker's view — real
 # conversations — while `sessions` is everything, routine runs and wiki pages

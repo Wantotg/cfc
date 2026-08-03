@@ -440,6 +440,7 @@ def print_connection(state=None):
 # screen in front of you, and the help says so in its own line.
 _SHOW_HELP = object()       # print the help and stay at the prompt
 _CREATE = object()          # prompt for a chosen id, then redraw
+_RENAME = object()          # prompt for a rename target and new title, then redraw
 _DELETE = object()          # prompt for a delete target, then redraw
 
 HUB_KEYS = (
@@ -454,6 +455,7 @@ HUB_KEYS = (
      # lives, including what "local" doesn't cover.
      "start a private chat — temporary, not saved locally"),
     (("c", "create"), _CREATE, "create a chat at a chosen id"),
+    (("r", "rename"), _RENAME, "rename a chat by id"),
     (("d", "delete"), _DELETE, "delete a chat by id, or Main"),
     (("h", "?", "help"), _SHOW_HELP, "this screen"),
     (("q", "quit"), "quit", f"leave {DISPLAY_NAME}"),
@@ -579,6 +581,35 @@ def _hub_create(conn):
     return create_chat_with_id(conn, raw)
 
 
+def _hub_rename(conn):
+    """`r` at the hub: resolve an existing ordinary chat by id — even one
+    outside the ten displayed rows, since the picker's table is a recency
+    view, not the whole namespace — show its current title, then ask for
+    the replacement. A blank at either prompt cancels. The write and the
+    report are `commands.rename_chat`, the same operation `/title <id> <new
+    title>` uses from inside a chat (`W-10`)."""
+    raw = input("Rename which chat? (numeric id): ").strip()
+    if not raw:
+        console.print("Cancelled.")
+        return
+    if not raw.lstrip("-").isdigit():
+        console.print(f"'{raw}' isn't a chat id.")
+        return
+    from db import resolve_rename_target, RenameTargetError
+    try:
+        target = resolve_rename_target(conn, int(raw))
+    except RenameTargetError as e:
+        console.print(str(e), style="red")
+        return
+    console.print(f"#{target['id']} — currently \"{target['title']}\"")
+    new_title = input("New title: ").strip()
+    if not new_title:
+        console.print("Cancelled.")
+        return
+    from commands import rename_chat
+    rename_chat(conn, target["id"], new_title)
+
+
 def _hub_delete(conn):
     """`d` at the hub: prompt for a target and delete it through the same
     resolver, confirmation and operation `/delete chat` uses from inside a
@@ -630,7 +661,8 @@ def pick_session(conn):
         print_connection()
         console.print("Type a chat ID to resume, 'n' for new session, 'm' "
                       "for Main, 'p' for private, 'c' to create a chosen "
-                      "id, 'd' to delete, 'h' for help, 'q' to quit.")
+                      "id, 'r' to rename, 'd' to delete, 'h' for help, "
+                      "'q' to quit.")
         console.print("'/list sessions' inside a session shows every "
                       "session, routine runs included.", style="dim")
 
@@ -656,6 +688,10 @@ def pick_session(conn):
                     new_id = _hub_create(conn)
                     if new_id is not None:
                         return new_id
+                    redraw = True
+                    break
+                if value is _RENAME:
+                    _hub_rename(conn)
                     redraw = True
                     break
                 if value is _DELETE:

@@ -89,7 +89,7 @@ from commands import (
     show_wiki_diff, do_wiki_commit,
     connect_embedding, connect_status, empty_completion_decision,
     print_session_header, print_core_commands, print_help,
-    create_chat_with_id, delete_chat,
+    create_chat_with_id, delete_chat, rename_chat,
 )
 
 # --- Main REPL ---
@@ -1087,16 +1087,12 @@ def run_session(conn, session_id, private=False, app_conn=None,
         if not new_title:
             console.print(f"Title: {get_session_title(conn, target)}")
             return
-        if get_session_provider(conn, target) == PROVIDER_MAIN:
-            # Checked against the target, not just this session — /title can
-            # name any session id, so 'this chat is Main' isn't enough.
-            console.print("Main can't be renamed — its title is fixed.")
-            return
-        set_session_title(conn, target, new_title)
-        if target == session_id:
-            current_title = new_title
-        console.print(f"Session #{target} titled: "
-                      f"{new_title}")
+        # The validation, write and wording are `commands.rename_chat` —
+        # the same operation the hub's `r` uses (`W-10`). It refuses Main, a
+        # wiki page or a routine transcript by identity, not just Main.
+        result = rename_chat(conn, target, new_title)
+        if result is not None and target == session_id:
+            current_title = result
 
     def h_delete(cmd):
         """`/delete` destroys durable data, so it **always** needs a kind.

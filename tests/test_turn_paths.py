@@ -671,6 +671,46 @@ def main_():
     main.agent_turn = lambda *a, **k: {"content": ANSWER}
     main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
 
+    print("\n--- W-10: /title <id> <new title> shares commands.rename_chat "
+          "with the hub's 'r' ---")
+    driver_sid = dbmod.new_session(conn, title="driver")
+
+    title_sid = dbmod.new_session(conn, title="before")
+    out, _ = drive(conn, driver_sid, f"/title {title_sid} after\n/q\n")
+    ok("/title <id> <new title> renames through the shared operation",
+       dbmod.get_session_title(conn, title_sid) == "after",
+       dbmod.get_session_title(conn, title_sid))
+    ok("...reporting the exact wording rename_chat prints",
+       f"Session #{title_sid} titled: after" in out, out)
+
+    main_sid, _ = dbmod.get_or_create_main(conn, "muse.md", "hi")
+    out, _ = drive(conn, driver_sid, f"/title {main_sid} renamed?\n/q\n")
+    ok("/title refuses Main through the same operation the hub's 'r' uses",
+       "Main can't be renamed" in out, out)
+    ok("...untouched",
+       dbmod.get_session_title(conn, main_sid) == dbmod.MAIN_TITLE)
+
+    wiki_sid = dbmod.new_session(conn, title="a wiki page",
+                                 provider=dbmod.PROVIDER_WIKI)
+    out, _ = drive(conn, driver_sid, f"/title {wiki_sid} renamed?\n/q\n")
+    ok("/title refuses a wiki row the same way 'r' does",
+       "isn't a chat" in out, out)
+    ok("...untouched",
+       dbmod.get_session_title(conn, wiki_sid) == "a wiki page")
+
+    routine_sid = dbmod.new_session(conn, title="a routine run",
+                                    provider=dbmod.PROVIDER_ROUTINE)
+    out, _ = drive(conn, driver_sid, f"/title {routine_sid} renamed?\n/q\n")
+    ok("/title refuses a routine transcript the same way 'r' does",
+       "isn't a chat" in out, out)
+    ok("...untouched",
+       dbmod.get_session_title(conn, routine_sid) == "a routine run")
+
+    missing_id = 999999
+    out, _ = drive(conn, driver_sid, f"/title {missing_id} renamed?\n/q\n")
+    ok("/title refuses a missing id the same way 'r' does",
+       f"No session #{missing_id}." in out, out)
+
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

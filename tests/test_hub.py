@@ -543,6 +543,7 @@ def main():
     test_hub_help_is_derived()
     test_first_message_counts()
     test_hub_lifecycle()
+    test_hub_rename()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
@@ -809,6 +810,98 @@ def test_hub_lifecycle():
     print("\n--- cancelling create with a blank id redraws too ---")
     ok("an empty id at 'c' cancels, and the hub comes back",
        pick("c", "", "q") == "quit")
+
+    conn.close()
+
+
+def test_hub_rename():
+    """`r` at the hub: resolve an ordinary chat by id — even one outside the
+    ten displayed rows — show its current title, ask for the replacement,
+    then write and report through `commands.rename_chat`, the same
+    operation `/title <id> <new title>` uses from inside a chat (`W-10`).
+
+    Same shape as `test_hub_lifecycle`'s `c`/`d` coverage: driven end to end
+    through `hub.pick_session` against a real `db.db(":memory:")`.
+    """
+    import builtins
+    import contextlib
+    import io
+
+    import db as dbmod
+    import hub as hubmod
+
+    def pick(*typed):
+        feed = iter(typed)
+        real_input = builtins.input
+        builtins.input = lambda *a, **k: next(feed)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return hubmod.pick_session(conn)
+        finally:
+            builtins.input = real_input
+
+    conn = dbmod.db(":memory:")
+
+    print("\n--- 'r' renames, reports the shared result, and redraws ---")
+    target_id = dbmod.new_session(conn, title="before")
+    ok("'r' resolves, renames, then the hub redraws and 'q' is read fresh",
+       pick("r", str(target_id), "after", "q") == "quit")
+    ok("the row is really renamed",
+       dbmod.get_session_title(conn, target_id) == "after",
+       dbmod.get_session_title(conn, target_id))
+    ok("...and the redraw's own query — what the table actually prints — "
+       "carries the changed row",
+       dict((r[0], r[1]) for r in hubmod.recent_chats(conn))[target_id]
+       == "after")
+
+    print("\n--- both prompts cancel on a blank, leaving the row untouched ---")
+    ok("a blank id cancels before asking for a title",
+       pick("r", "", "q") == "quit")
+    ok("...nothing changed", dbmod.get_session_title(conn, target_id) == "after")
+    ok("a blank new title cancels after showing the current one",
+       pick("r", str(target_id), "", "q") == "quit")
+    ok("...still nothing changed",
+       dbmod.get_session_title(conn, target_id) == "after")
+
+    print("\n--- resolves an older chat outside the ten displayed rows ---")
+    old_id = dbmod.new_session(conn, title="an old one")
+    conn.execute("UPDATE sessions SET updated_at='2020-01-01T00:00:00+00:00' "
+                "WHERE id=?", (old_id,))
+    conn.commit()
+    for i in range(hubmod.HUB_CHATS):
+        dbmod.new_session(conn, title=f"filler {i}")
+    listed = {row[0] for row in hubmod.recent_chats(conn)}
+    ok("the setup actually pushed the old chat off the displayed rows",
+       old_id not in listed, listed)
+    ok("'r' still resolves an id the picker isn't currently showing",
+       pick("r", str(old_id), "renamed off-screen", "q") == "quit")
+    ok("...and really renamed it",
+       dbmod.get_session_title(conn, old_id) == "renamed off-screen",
+       dbmod.get_session_title(conn, old_id))
+
+    print("\n--- refusals: missing id, Main, wiki, routine — none change "
+          "a row ---")
+    ok("a missing id refuses, and the hub redraws",
+       pick("r", "999999", "q") == "quit")
+
+    main_id, _ = dbmod.get_or_create_main(conn, "muse.md", "hi")
+    ok("Main refuses through 'r' too",
+       pick("r", str(main_id), "renamed?", "q") == "quit")
+    ok("...and Main's title is untouched",
+       dbmod.get_session_title(conn, main_id) == dbmod.MAIN_TITLE)
+
+    wiki_id = dbmod.new_session(conn, title="a wiki page",
+                                provider=dbmod.PROVIDER_WIKI)
+    ok("a wiki row refuses through 'r'",
+       pick("r", str(wiki_id), "renamed?", "q") == "quit")
+    ok("...untouched", dbmod.get_session_title(conn, wiki_id) == "a wiki page")
+
+    routine_id = dbmod.new_session(conn, title="a routine run",
+                                   provider=dbmod.PROVIDER_ROUTINE)
+    ok("a routine row refuses through 'r'",
+       pick("r", str(routine_id), "renamed?", "q") == "quit")
+    ok("...untouched",
+       dbmod.get_session_title(conn, routine_id) == "a routine run")
 
     conn.close()
 

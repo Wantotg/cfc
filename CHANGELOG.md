@@ -27,6 +27,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Rename a chat from the hub, through the same operation as `/title` (`W-10`)
+`/title <id> <new title>` could rename any session by id from inside a chat,
+but the hub had no rename at all — and `/title`'s own write had no refusal
+for a missing id, a wiki page or a routine transcript, only for Main.
+`db.resolve_rename_target` now resolves an ordinary durable chat by
+identity — refusing a missing id, Main, a wiki page or a routine transcript,
+without changing a row — and `commands.rename_chat` is the one write-and-
+report operation built on it. The hub's new `r` / `rename` (added to
+`hub.HUB_KEYS`, so dispatch and help derive from the same table) prompts for
+an id, resolves it even when it's outside the ten displayed rows, shows the
+current title, then asks for the replacement — a blank at either prompt
+cancels. `main.py`'s `h_title` now calls the same operation for its
+mutating form; the automatic first-turn title write and `/title`'s
+non-mutating forms (bare, `/title <id>`) are unchanged.
+- Files: db.py, commands.py, main.py, hub.py, tests/test_hub.py, tests/test_turn_paths.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-03 — One durable high-water mark for every automatic session id (`Q-1.6-02`)
 An automatic id used to be plain SQLite `MAX(rowid)+1` over `sessions`, so a
 single chosen high id (`/new 900`, the hub's `c`) permanently became the
@@ -45,7 +65,7 @@ import allocates through the identical mark. No change to `sessions` and no
 `AUTOINCREMENT`.
 - Files: db.py, import_wiki.py, tests/test_schema.py
 - Status: shipped
-- Commit: pending
+- Commit: 3a6fc18
 
 ---
 

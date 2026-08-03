@@ -405,6 +405,38 @@ def resolve_delete_target(conn, token):
     }
 
 
+class RenameTargetError(Exception):
+    """Why a rename target could not be resolved — a missing id, Main
+    (whose title is fixed, not just usually left alone), or a row that
+    exists but isn't an ordinary chat (a wiki page or routine transcript)."""
+
+
+def resolve_rename_target(conn, chat_id):
+    """An ordinary durable chat's (id, title), resolved by identity — never
+    Main, a wiki page or a routine transcript. `W-10`: the hub's `r` and
+    `/title <id> <new title>` both resolve through this before writing
+    anything, so a numeric id that isn't a renameable chat is refused
+    identically from either surface.
+
+    Raises RenameTargetError, with a reason fit to show directly, when
+    nothing resolves or the row is real but not an ordinary chat. Unlike
+    `resolve_delete_target`, Main is refused rather than accepted — a
+    rename has no `is_main` branch to take.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sessions WHERE id=?", (chat_id,)
+    ).fetchone():
+        raise RenameTargetError(f"No session #{chat_id}.")
+    provider = get_session_provider(conn, chat_id)
+    if provider == PROVIDER_MAIN:
+        raise RenameTargetError("Main can't be renamed — its title is fixed.")
+    if provider != PROVIDER_CHAT:
+        raise RenameTargetError(
+            f"#{chat_id} isn't a chat (it's a {provider or 'unknown'} "
+            f"session) — nothing was renamed.")
+    return {"id": chat_id, "title": get_session_title(conn, chat_id)}
+
+
 # --- the last-turn repair boundary (Concept.md's "One latest ordinary turn") -
 #
 # /swipe and /undo act on the latest durable kind='chat', role='user' row and
