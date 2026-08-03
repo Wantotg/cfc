@@ -14,6 +14,57 @@ split line is what is frozen, not the file.
 
 # Closed since the split
 
+## ~~B-1.7-05 · An empty wiki id is filed twice and never indexed~~ — CLOSED (v1.6.2, 2026-08-03)
+
+**Closed 2026-08-03**, v1.6.2 — filing now removes an empty existing id before
+writing the generated one, and the filing/import boundary is covered by a real
+database regression test. `TRACKER.md`, `CHANGELOG.md`, `0f3c122`.
+
+The entry as it stood:
+
+---
+
+## B-1.7-05 · An empty wiki id is filed twice and never indexed
+
+**Symptom:** A wiki-bound draft whose frontmatter contains an empty `id:` is
+filed successfully, but the resulting page has two `id` keys. The importer reads
+the later empty value and skips the page as if it had no id, so the filed page
+never reaches the wiki index.
+
+**Where:** `mover._ensure_id()` treats an empty id as missing, prepends the new
+id, then serializes the original empty key as well. `import_wiki._import_pages()`
+skips a page when the parsed id is `None`. The direct path reproduces two id
+lines and an imported id of `None`.
+
+**Leading hypothesis:** Replace or remove an empty existing id before writing the
+generated one. Add the regression at the filing/import boundary; the existing
+test only covers a draft with no id key at all.
+
+## ~~B-1.7-01 · Whitespace-only reasoning draws an empty panel~~ — CLOSED (v1.6.2, 2026-08-03)
+
+**Closed 2026-08-03**, v1.6.2 — the streaming path now applies the same
+readable-content guard as the tool path while retaining raw reasoning for
+empty-completion diagnosis. `TRACKER.md`, `CHANGELOG.md`, `0f3c122`.
+
+The entry as it stood:
+
+---
+
+## B-1.7-01 · Whitespace-only reasoning draws an empty panel
+
+**Symptom:** A thinking model that streams reasoning containing only whitespace
+causes the live streaming path to draw an `AI · reasoning` panel with nothing
+readable in it.
+
+**Where:** `api.stream_response()` appends any truthy reasoning delta and sends
+it to `_thinking_panel()`, which builds the panel without trimming it first. The
+non-streaming tool path already guards its equivalent in
+`agent._render_reasoning()` with `.strip()`, so this is a streaming-path gap.
+
+**Leading hypothesis:** Apply the same readable-content check before updating the
+live reasoning panel, while keeping the raw value available for the empty-
+completion diagnosis.
+
 ## ~~B-1.6-01 · `diff <anything>` silently diffs the wiki instead of refusing~~ — CLOSED (v1.6.1, 2026-08-03)
 
 **Closed 2026-08-03**, v1.6.1 — `/wiki diff` and `/wiki status` now refuse

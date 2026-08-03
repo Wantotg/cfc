@@ -373,13 +373,25 @@ request, that nothing reads back.
 `` `-'(((/  (((/
 ```
 
-## v1.6.2 — Truthful boundaries *completed, 03/08*
+## v1.6.2 - Say the true thing *pushed, 03/08*
 
-Four small repairs keep filing, reasoning display, context usage, and outbox
-wording honest. No new surface was added.
+Four places where cfc already knew enough to tell the truth and either wrote
+the wrong state or rendered half of it. A wiki page filed from the outbox now
+carries one usable id instead of two, so recall can actually index it; the
+reasoning panel only opens when there is reasoning to read; a model with no
+configured context limit says so in the same words everywhere instead of
+looking empty in one view and coloured in another; and `/move` and `/outbox`
+say where their two lists overlap and why they stay different.
 
 **Fixed**
-- filed wiki drafts no longer lose their generated id when an empty id exists
-- whitespace-only reasoning no longer draws an empty panel
-- unknown context limits are named consistently across chat and hub displays
-- /move and /outbox explain which top-level files they list
+- a wiki draft whose frontmatter carries an empty `id:` is filed with one id,
+  not two, and imports into the recall index under it (B-1.7-05)
+- the live reasoning panel no longer opens for a stream of whitespace; the raw
+  reasoning is still returned untrimmed, so an empty completion is still
+  diagnosable (B-1.7-01)
+- a model with no configured `limit` reads `N tokens · limit unknown` in the
+  chat header, `/status` and after a turn, and `N / ?` in the hub — no
+  invented percentage, colour or bar. The hub's `h` screen says what `N / ?`
+  means (D-1.7-02, B-10)
+- `/move` and `/outbox` name what each lists, and the filing view explains once
+  that a top-level Markdown file can appear in both (D-1.7-04)

@@ -22,6 +22,56 @@ not the file.
 
 # Closed since the split
 
+## ~~D-1.7-04 · `/move` and `/outbox` describe overlapping files as different things~~ — CLOSED (v1.6.2, 2026-08-03)
+
+**Closed 2026-08-03**, v1.6.2 — the two screens now name their different
+top-level file lists and explain why a Markdown file can appear in both.
+`TRACKER.md`, `CHANGELOG.md`, `0f3c122`.
+
+The entry as it stood:
+
+---
+
+## D-1.7-04 · `/move` and `/outbox` describe overlapping files as different things
+
+**Found:** 2026-08-03, while comparing `/move` against `/outbox`. `/move`
+answers “Nothing loose in the outbox to move” even when `/outbox` lists files.
+“Loose” is never defined to the person using either command, so the two
+screens appear to disagree.
+
+**What they mean now:** `/move` offers every non-reserved regular file directly
+inside an outbox root, whatever its extension or frontmatter. `/outbox` lists
+only Markdown proposals and shows whether each can be filed. A file can belong
+to both lists, but the screens present that shared case as two unrelated
+categories.
+
+**Owed:** give the shared top-level-outbox case one understandable name and
+make each screen say which files it lists. Preserve the distinction: `/move`
+remains the human-directed path for a file without a proposed destination;
+`/file` remains the reviewed proposal path.
+
+## ~~D-1.7-02 · Unknown model limits make context usage disappear between screens~~ — CLOSED (v1.6.2, 2026-08-03)
+
+**Closed 2026-08-03**, v1.6.2 — chat, `/status`, post-turn and hub context
+displays now state when the token count is known but the model limit is not.
+`TRACKER.md`, `CHANGELOG.md`, `0f3c122`.
+
+The entry as it stood:
+
+---
+
+## D-1.7-02 · Unknown model limits make context usage disappear between screens
+
+**Found:** 2026-08-03, while trying a model whose `MODELS` record has no
+`limit`. The chat header and `/status` show its current context as a bare token
+count, while the post-turn context bar prints nothing at all. `/tokens` is more
+helpful: it says the limit is unknown and explains how to add one.
+
+**Owed:** make the header, `/status`, and post-turn display tell the same honest
+story when cfc knows the token count but not the model's context window. Do not
+invent a percentage, colour, remaining-token estimate, or limit; those require
+a configured limit.
+
 ## ~~D-1.6-03 · `/update db`'s hidden-wiki notice doesn't say what still ran~~ — CLOSED (v1.6.1, 2026-08-03)
 
 **Closed 2026-08-03**, v1.6.1 — the notice now names both halves: the hidden
