@@ -104,6 +104,10 @@ def db(path=None, timeout=None):
             FOREIGN KEY (session_id) REFERENCES sessions(id),
             FOREIGN KEY (tag_id) REFERENCES tags(id)
         );
+        CREATE TABLE IF NOT EXISTS session_id_seq (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            mark INTEGER NOT NULL
+        );
     """)
     # Checked before writing, not caught after — an ALTER TABLE that already
     # applies still takes a write lock while SQLite discovers the column is
@@ -129,6 +133,7 @@ def db(path=None, timeout=None):
     )
     _migrate_messages(conn)
     _migrate_routine_sessions(conn)
+    ensure_session_id_seq(conn)
     return conn
 
 
@@ -243,6 +248,48 @@ def _migrate_messages(conn):
         conn.commit()
 
 
+def ensure_session_id_seq(conn):
+    """Seed the durable session-id high-water mark once, from the greatest
+    existing `sessions.id` — the same call on a brand-new database (seeds 0)
+    and an old one predating this table (seeds its current max). Guarded like
+    every other migration here (B-1.5.1-01a): an already-seeded database is
+    read, never written, on later connects.
+
+    `Q-1.6-02`: before this mark existed, an automatic id was just SQLite's
+    own `MAX(rowid)+1` over `sessions` — so a single chosen high id
+    (`/new 900`, the hub's `c`) permanently became the floor every later
+    automatic wiki/routine/Main/chat id started from, because that reused
+    rowid was oblivious to *why* 900 was the max. The mark is that same
+    quantity made explicit and advanced only by the rules below, instead of
+    being re-derived from whatever `sessions` currently contains.
+    """
+    if conn.execute("SELECT 1 FROM session_id_seq WHERE id=1").fetchone():
+        return
+    high = conn.execute("SELECT COALESCE(MAX(id), 0) FROM sessions").fetchone()[0]
+    conn.execute("INSERT INTO session_id_seq(id, mark) VALUES (1, ?)", (high,))
+    conn.commit()
+
+
+def alloc_session_id(conn):
+    """Advance the durable high-water mark by one and return the newly
+    allocated id, as a write inside the caller's own transaction.
+
+    The `UPDATE` is the seam: SQLite takes its write lock the moment this
+    statement runs, so a second connection's own allocation blocks until this
+    one commits or rolls back — that is what serialises simultaneous
+    allocators, not an explicit `BEGIN`. The caller commits (keeping the
+    mark and whatever row it inserted against it) or rolls back (undoing
+    both, since they share the one transaction) as a single unit.
+
+    Every automatic session creation — wiki, routine, Main and ordinary chat
+    — goes through this, so `import_wiki.py`'s standalone connection uses it
+    too rather than its own `cur.lastrowid`.
+    """
+    conn.execute("UPDATE session_id_seq SET mark = mark + 1 WHERE id=1")
+    return conn.execute(
+        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+
+
 def new_session(conn, title="(untitled)", model=None,
                 provider=PROVIDER_CHAT):
     """Create a session. `provider` is the session-kind discriminator — pass
@@ -250,13 +297,18 @@ def new_session(conn, title="(untitled)", model=None,
     without parsing its title."""
     model = model or MODEL
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    cur = conn.execute(
-        "INSERT INTO sessions(title, model, provider, "
-        "created_at, updated_at) VALUES (?,?,?,?,?)",
-        (title, model, provider, now, now),
-    )
+    new_id = alloc_session_id(conn)
+    try:
+        conn.execute(
+            "INSERT INTO sessions(id, title, model, provider, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            (new_id, title, model, provider, now, now),
+        )
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise
     conn.commit()
-    return cur.lastrowid
+    return new_id
 
 
 class ChatIdTaken(Exception):
@@ -278,6 +330,13 @@ def create_chat(conn, chat_id, title="(untitled)", model=None):
     a collision from a concurrent insert between the SELECT and the INSERT
     still raises IntegrityError and is reported the same way as an ordinary
     pre-existing row.
+
+    `Q-1.6-02`: a chosen id only ever raises the durable mark, in the same
+    transaction as its insert, and only when it lands above the current
+    mark — the `WHERE mark < ?` makes that conditional atomic without a
+    separate read. A vacant chosen id below the mark stays insertable and
+    never touches it; a collision rolls the whole transaction back, so
+    neither the row nor the mark changes.
     """
     if isinstance(chat_id, bool) or not isinstance(chat_id, int) or chat_id <= 0:
         raise ValueError(f"chat_id must be a positive int, got {chat_id!r}")
@@ -292,6 +351,10 @@ def create_chat(conn, chat_id, title="(untitled)", model=None):
             "INSERT INTO sessions(id, title, model, provider, "
             "created_at, updated_at) VALUES (?,?,?,?,?,?)",
             (chat_id, title, model, PROVIDER_CHAT, now, now),
+        )
+        conn.execute(
+            "UPDATE session_id_seq SET mark = ? WHERE id=1 AND mark < ?",
+            (chat_id, chat_id),
         )
     except sqlite3.IntegrityError:
         conn.rollback()
@@ -509,12 +572,13 @@ def get_or_create_main(conn, first_message_name, first_message_text,
     if ids:
         return ids[0], False
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    new_id = alloc_session_id(conn)
     try:
-        cur = conn.execute(
-            "INSERT INTO sessions(title, model, provider, created_at, "
+        conn.execute(
+            "INSERT INTO sessions(id, title, model, provider, created_at, "
             "updated_at, first_message_name, first_message_text, "
-            "first_message_at) VALUES (?,?,?,?,?,?,?,?)",
-            (MAIN_TITLE, model, PROVIDER_MAIN, now, now,
+            "first_message_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (new_id, MAIN_TITLE, model, PROVIDER_MAIN, now, now,
              first_message_name, first_message_text, now),
         )
     except sqlite3.IntegrityError:
@@ -525,7 +589,7 @@ def get_or_create_main(conn, first_message_name, first_message_text,
         raise MainCorruption(
             f"{len(ids)} Main rows exist after a create race: {ids}")
     conn.commit()
-    return cur.lastrowid, True
+    return new_id, True
 
 
 def routine_session(conn, session_id):

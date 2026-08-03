@@ -755,6 +755,159 @@ def main():
        == dbmod.PROVIDER_ROUTINE)
     conn3b.close()
 
+    print("\n--- Q-1.6-02: a chosen high id is not a floor for the ones "
+          "after it ---")
+    # Before the mark, an automatic id was just SQLite's own MAX(rowid)+1
+    # over sessions — so `/new 900` permanently became the floor every
+    # later automatic wiki/routine/Main/chat id started from. The mark
+    # replaces that with an explicit high-water row, advanced only by the
+    # rules under test here.
+
+    print("(fresh schema: the mark seeds at 0)")
+    fresh_seq = tmp / "fresh_seq.db"
+    dbmod.DB_PATH = fresh_seq
+    c = dbmod.db()
+    ok("a brand-new database seeds the mark at 0",
+       c.execute("SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+       == 0)
+    first = dbmod.new_session(c, title="first")
+    ok("...so the first automatic id is 1", first == 1, first)
+    c.close()
+
+    print("(old schema: the mark seeds from the greatest row already there, "
+          "not a row count)")
+    old_seq = tmp / "old_seq.db"
+    legacy_db(old_seq)      # id=1, no session_id_seq table at all
+    raw = sqlite3.connect(old_seq)
+    raw.execute("INSERT INTO sessions (id, title) VALUES "
+               "(37, 'hand-chosen before this build')")
+    raw.commit()
+    raw.close()
+    dbmod.DB_PATH = old_seq
+    oc = dbmod.db()          # first connect under this build
+    ok("an old database seeds the mark from its real max",
+       oc.execute("SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+       == 37)
+    nxt = dbmod.new_session(oc, title="next")
+    ok("...so the next automatic id continues from there", nxt == 38, nxt)
+    oc.close()
+
+    print("(an already-seeded database is read, never rewritten, on "
+          "reconnect)")
+    before_mark = sqlite3.connect(old_seq).execute(
+        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+    for _ in range(3):
+        dbmod.db().close()
+    after_mark = sqlite3.connect(old_seq).execute(
+        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+    ok("three more connects leave the mark exactly where it was",
+       before_mark == after_mark == 38, (before_mark, after_mark))
+
+    print("(a chosen high id raises the mark; automatic ids never land "
+          "on it, and deletion never lowers it)")
+    chosen_seq = tmp / "chosen_seq.db"
+    dbmod.DB_PATH = chosen_seq
+    c = dbmod.db()
+    dbmod.new_session(c, title="ordinary #1")           # id 1
+    high = dbmod.create_chat(c, 900, title="hand-picked")
+    ok("create_chat returns the chosen id", high == 900, high)
+    ok("...and raises the mark to it",
+       c.execute("SELECT mark FROM session_id_seq WHERE id=1"
+                ).fetchone()[0] == 900)
+    after_high = dbmod.new_session(c, title="ordinary #2")
+    ok("the next automatic id continues from 900, not from 1",
+       after_high == 901, after_high)
+
+    dbmod.delete_session(c, 900)
+    dbmod.delete_session(c, 901)
+    still_alloc = dbmod.new_session(c, title="ordinary #3")
+    ok("automatic allocation keeps climbing past deleted rows, never "
+       "reusing them", still_alloc == 902, still_alloc)
+
+    print("(a lower vacant chosen id stays valid and never touches the "
+          "mark)")
+    mark_before = c.execute(
+        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+    low = dbmod.create_chat(c, 2, title="low vacant")
+    ok("a low vacant id is still accepted", low == 2, low)
+    mark_after = c.execute(
+        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+    ok("...and the mark is untouched by it", mark_before == mark_after,
+       (mark_before, mark_after))
+
+    print("(a collision changes neither the row nor the mark)")
+    try:
+        dbmod.create_chat(c, 2, title="collides")
+        ok("a collision on an occupied id refuses", False, "did not raise")
+    except dbmod.ChatIdTaken:
+        ok("a collision on an occupied id refuses", True)
+    mark_after2 = c.execute(
+        "SELECT mark FROM session_id_seq WHERE id=1").fetchone()[0]
+    ok("...leaving the mark unchanged", mark_after == mark_after2,
+       (mark_after, mark_after2))
+    ok("...and the occupied row unchanged",
+       c.execute("SELECT title FROM sessions WHERE id=2").fetchone()[0]
+       == "low vacant")
+    c.close()
+
+    print("(automatic wiki, routine and Main allocation all go through the "
+          "same mark)")
+    c = dbmod.db(":memory:")
+    dbmod.create_chat(c, 500, title="hand-picked")
+    wiki_id = dbmod.new_session(c, title="a wiki page",
+                                provider=dbmod.PROVIDER_WIKI)
+    ok("a wiki session lands above the chosen high id", wiki_id == 501,
+       wiki_id)
+    routine_id = dbmod.new_session(c, title="a routine run",
+                                   provider=dbmod.PROVIDER_ROUTINE)
+    ok("a routine session continues the same sequence", routine_id == 502,
+       routine_id)
+    main_id, created = dbmod.get_or_create_main(c, "muse.md", "hi")
+    ok("Main is allocated through the mark too",
+       created is True and main_id == 503, (created, main_id))
+    main_id2, created2 = dbmod.get_or_create_main(c, "muse.md", "hi")
+    ok("...and reopening it later spends no new id",
+       created2 is False and main_id2 == main_id, (created2, main_id2))
+    c.close()
+
+    print("(the isolated private :memory: mark never reads or advances "
+          "the durable database's)")
+    dbmod.DB_PATH = tmp / "durable_boundary.db"
+    durable = dbmod.db()
+    dbmod.create_chat(durable, 700)
+    priv = dbmod.db(":memory:")
+    priv_first = dbmod.new_session(priv, title="private")
+    ok("a private connection seeds and allocates from its own mark",
+       priv_first == 1, priv_first)
+    ok("...leaving the durable mark exactly as the private allocation "
+       "found it",
+       durable.execute("SELECT mark FROM session_id_seq WHERE id=1"
+                       ).fetchone()[0] == 700)
+    priv.close()
+    durable.close()
+
+    print("(a real wiki import allocates through the same mark, from its "
+          "own standalone connection)")
+    import import_wiki
+    wikidb = tmp / "wiki_import.db"
+    dbmod.DB_PATH = wikidb
+    seed = dbmod.db()
+    dbmod.create_chat(seed, 950, title="hand-picked, pre-import")
+    seed.close()
+    wikidir = tmp / "wiki_src"
+    wikidir.mkdir()
+    (wikidir / "page.md").write_text(
+        "---\nid: 20260101000000\ntitle: A page\n---\nSome body text.\n")
+    stats = import_wiki.run_import(str(wikidir), str(wikidb))
+    ok("the import created exactly one new page", stats["pages_new"] == 1,
+       dict(stats))
+    wc = sqlite3.connect(wikidb)
+    wiki_row_id = wc.execute(
+        "SELECT id FROM sessions WHERE provider='wiki'").fetchone()[0]
+    ok("the imported wiki page's id continues past the chosen high one",
+       wiki_row_id == 951, wiki_row_id)
+    wc.close()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

@@ -23,6 +23,17 @@ import json, sqlite3, sys, os, re, glob
 from collections import Counter
 import yaml
 
+# Q-1.6-02: a wiki session's id is a durable session id like any other, so
+# it is allocated through the same high-water mark `db.py` uses for
+# ordinary chat, routine and Main creation — sharing the two functions
+# rather than re-deriving the allocation here, which is exactly the pair
+# this codebase would otherwise be pinning across a module boundary that
+# doesn't need to stay open (CODER.md: "a pair that *can* be closed by an
+# import should be closed rather than pinned"). This module still opens its
+# own connection and does its own migration, by design (see the module
+# docstring) — only the id allocation is shared.
+from db import alloc_session_id, ensure_session_id_seq
+
 PROVIDER = "wiki"
 
 # Everything from the first "## Related" / "## Sources" heading onward is
@@ -32,14 +43,22 @@ _TAIL_HEADING = re.compile(r"^\s*##\s+(Related|Sources)\s*$", re.IGNORECASE)
 
 
 def migrate(db):
-    """Ensure the source_uuid columns exist (shared with import_anthropic)."""
+    """Ensure the source_uuid columns exist (shared with import_anthropic),
+    and the session-id high-water mark this module now allocates through."""
     cols_s = {r[1] for r in db.execute("PRAGMA table_info(sessions)")}
     cols_m = {r[1] for r in db.execute("PRAGMA table_info(messages)")}
     if "source_uuid" not in cols_s:
         db.execute("ALTER TABLE sessions ADD COLUMN source_uuid TEXT")
     if "source_uuid" not in cols_m:
         db.execute("ALTER TABLE messages ADD COLUMN source_uuid TEXT")
+    # Same table `db.py` creates — CREATE TABLE IF NOT EXISTS so a standalone
+    # run against a database this process didn't open first still has it.
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS session_id_seq ("
+        "id INTEGER PRIMARY KEY CHECK (id = 1), mark INTEGER NOT NULL)"
+    )
     db.commit()
+    ensure_session_id_seq(db)
 
 
 def split_frontmatter(text):
@@ -158,10 +177,10 @@ def _import_pages(db, wiki_dir):
             db.execute("UPDATE sessions SET title=?, updated_at=? WHERE id=?",
                        (title, updated, sid))
         else:
-            cur = db.execute(
-                "INSERT INTO sessions (title, provider, created_at, updated_at, source_uuid) "
-                "VALUES (?,?,?,?,?)", (title, PROVIDER, created, updated, wid))
-            sid = cur.lastrowid
+            sid = alloc_session_id(db)
+            db.execute(
+                "INSERT INTO sessions (id, title, provider, created_at, updated_at, source_uuid) "
+                "VALUES (?,?,?,?,?,?)", (sid, title, PROVIDER, created, updated, wid))
             stats["pages_new"] += 1
 
         # One message per page, keyed by the same id.

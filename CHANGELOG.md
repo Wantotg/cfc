@@ -27,6 +27,28 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — One durable high-water mark for every automatic session id (`Q-1.6-02`)
+An automatic id used to be plain SQLite `MAX(rowid)+1` over `sessions`, so a
+single chosen high id (`/new 900`, the hub's `c`) permanently became the
+floor every later automatic wiki, routine, Main or chat id started from —
+oblivious to *why* it was the max, and immune to the row being deleted
+afterwards. `db.py` now keeps an explicit one-row `session_id_seq` table,
+seeded once from the greatest existing `sessions.id` on a new or old
+database and otherwise read-only on connect. `new_session` and
+`get_or_create_main` allocate through it — advance, insert, one
+transaction, rolled back together on failure; `create_chat` raises it only
+when its own successfully-inserted chosen id lands above it, in the same
+transaction, so a vacant low id or a refused collision never touches it and
+deletion never lowers it. `import_wiki.py`'s standalone connection shares
+the same two functions rather than re-deriving the allocation, so a wiki
+import allocates through the identical mark. No change to `sessions` and no
+`AUTOINCREMENT`.
+- Files: db.py, import_wiki.py, tests/test_schema.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-03 — Make the tone direction unanswerable as conversation control (`B-1.6.3-01a`)
 A user turn with nothing to answer (`ok`) could come back as the model
 acknowledging cfc's own tone direction instead of the conversation — the
@@ -41,7 +63,7 @@ against a real model from a test — the v1.6.4 playtest repeats the reported
 turn with the affected provider.
 - Files: governor.py, tests/test_governor.py, tests/test_turn_paths.py
 - Status: shipped
-- Commit: pending
+- Commit: 8444ea5
 
 ---
 
