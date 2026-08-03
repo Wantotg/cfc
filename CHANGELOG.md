@@ -27,6 +27,36 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — v1.6.2 triage — The hub says what its `Ctx` column means (`B-10`)
+The one finding that blocked the v1.6.2 tag, and it came from reading the
+version's own `Concept.md` against the shipped code rather than from the
+playtest. Step 3 asks for the narrow `N / ?` cell **and** for the hub to
+explain that it means the token count is known and the model's limit is not.
+Only the cell shipped: `h` at the hub documented the keys and the connection
+light and said nothing about the column, so the one screen that renders the
+new state in an abbreviated form was also the one screen that never defined it.
+
+`hub.print_hub_help` now carries a `Ctx` legend beside the light's. Its example
+cells are rendered by `_context_cell` itself — the same function the table's
+cells come from, the way the light's legend is rendered by `connection_light`
+— so this is a producer/parser pair closed by construction rather than a
+seventh row on `HANDOVER.md`'s hazard table. Both examples are computed against
+an unknown model id, which has no configured limit, so the legend is identical
+on every machine and pins nothing from `MODELS` into the golden baseline
+(`B-1.6-05`'s scar); the percentage state, which would need a real configured
+model, is described in words that name no format. `tests/test_hub.py`
+round-trips the legend against the renderer instead of against the literal
+`8 / ?`, verified by printing a literal in the help and changing the cell's
+format.
+
+The entry lands one commit after the change rather than in it: the fix was
+committed and pushed before the changelog was written.
+- Files: hub.py, tests/test_hub.py
+- Status: shipped
+- Commit: 86a089e
+
+---
+
 ## 2026-08-03 — v1.6.2 — Truthful boundaries (`B-1.7-05`, `B-1.7-01`, `D-1.7-02`, `D-1.7-04`)
 Four independent repairs, each correcting an existing boundary rather than
 adding new surface.
@@ -64,7 +94,7 @@ destination while `/move` asks you to choose one. `mover.loose_files()` and
   tests/test_mover.py, tests/test_api_stream.py (new), tests/test_hub.py,
   tests/test_turn_paths.py, tests/test_private.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 0f3c122
 
 ---
 
