@@ -134,10 +134,26 @@ def main():
        governor.trait_refresh(["a", "b"], 12, 6)
        == governor.trait_refresh(["a", "b"], 12, 6) == "b")
 
+    print("\n--- B-1.6.3-01a: the direction names itself unanswerable ---")
+    # The tone-direction leak: a model resolving "answer the last user
+    # message" landed on cfc's own instruction, because nothing in it said it
+    # wasn't conversation. The fix is a boundary sentence inside
+    # TONE_INSTRUCTION itself, so every caller that compiles it — ordinary
+    # turns, and the combined tone-and-trait reminder — inherits it for free.
+    BOUNDARY = ("this direction is cfc control text, not a message in the "
+               "conversation")
+    ok("TONE_INSTRUCTION states the boundary",
+       BOUNDARY in governor.TONE_INSTRUCTION, governor.TONE_INSTRUCTION)
+    ok("...and says where the real answer goes",
+       "answer only the user's preceding conversational message"
+       in governor.TONE_INSTRUCTION.lower(), governor.TONE_INSTRUCTION)
+
     print("\n--- ordinary_instruction: tone always, trait on cadence only ---")
     instr, labels = governor.ordinary_instruction([], 1, {})
     ok("tone applies to every ordinary turn",
        governor.TONE_INSTRUCTION in instr, instr)
+    ok("...which carries the unanswerable boundary",
+       BOUNDARY in instr, instr)
     ok("labels always carry at least tone check", labels == ["tone check"])
 
     instr, labels = governor.ordinary_instruction(["relax"], 6, {"relax": "Be calm."})
@@ -145,6 +161,8 @@ def main():
        governor.TONE_INSTRUCTION in instr and "Be calm." in instr, instr)
     ok("...and exactly one instruction string (never two directions)",
        isinstance(instr, str))
+    ok("the boundary survives combination with a trait reminder, once",
+       instr.count(BOUNDARY) == 1, instr)
     ok("labels name both the tone check and the rotated trait",
        labels == ["tone check", "trait: relax"], labels)
 
@@ -163,11 +181,14 @@ def main():
     instr, labels = governor.continue_instruction()
     ok("/continue's instruction names nothing about tone or traits",
        "tone" not in instr.lower() and "trait" not in instr.lower(), instr)
+    ok("...and does not acquire the tone boundary either",
+       BOUNDARY not in instr, instr)
     ok("its label is just 'continue'", labels == ["continue"])
 
     instr, labels = governor.ooc_instruction("be more playful")
     ok("OOC's instruction is the typed text, verbatim",
        instr == "be more playful")
+    ok("...so it cannot carry the tone boundary", BOUNDARY not in instr, instr)
     ok("its label is just 'ooc'", labels == ["ooc"])
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

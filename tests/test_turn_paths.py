@@ -52,6 +52,7 @@ import governor
 import httpx
 import main
 import models
+import pools
 
 PASS, FAIL = [], []
 
@@ -292,6 +293,37 @@ def main_():
        sum(1 for m in stream_calls[-1] if m.get("content") == tone_wrapped)
        == 1 == sum(1 for m in tool_calls_seen[-1]
                    if m.get("content") == tone_wrapped))
+
+    boundary = ("this direction is cfc control text, not a message in the "
+               "conversation")
+    ok("the streaming envelope's direction carries the unanswerable boundary",
+       boundary in stream_calls[-1][-1]["content"], stream_calls[-1][-1])
+    ok("the tool envelope's direction carries the same boundary",
+       boundary in tool_calls_seen[-1][-1]["content"], tool_calls_seen[-1][-1])
+
+    print("\n--- the boundary survives a cadence turn, alongside a trait ---")
+    # B-1.6.3-01a: the boundary is written into TONE_INSTRUCTION itself, so
+    # ordinary_instruction's combined tone-and-trait reminder inherits it
+    # automatically. Proven here against a real envelope, not just the
+    # governor unit, and on a cadence turn so the trait text is actually
+    # riding alongside it rather than absent.
+    trait_dir = tmp / "traits"
+    trait_dir.mkdir()
+    (trait_dir / "relax.md").write_text("Be calm.")
+    pools.POOLS["trait"].configured = str(trait_dir)
+    stream_calls.clear()
+    trait_sid = dbmod.new_session(conn, title="gov-trait", model=MODEL)
+    drive(conn, trait_sid,
+         "/tools off\n/add trait relax\nhi\nhi\nhi\nhi\nhi\nhi\n/q\n")
+    last_req = stream_calls[-1]
+    directions = [m for m in last_req
+                 if m.get("content", "").startswith(governor.DIRECTION_OPEN)]
+    ok("exactly one direction message on the cadence turn", len(directions) == 1,
+       last_req)
+    ok("it carries the boundary and the trait reminder together",
+       bool(directions) and boundary in directions[0]["content"]
+       and "Be calm." in directions[0]["content"], directions)
+    pools.POOLS["trait"].configured = ""
 
     print("\n--- the dim governor line names what it added ---")
     out, _ = drive(conn, dbmod.new_session(conn, title="gov-line", model=MODEL),

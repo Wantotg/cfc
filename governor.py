@@ -41,11 +41,14 @@ except ImportError:
 # judgement, use code for anything with a right answer" rule this codebase
 # already follows everywhere else (HANDOVER's four generating rules).
 TONE_INSTRUCTION = (
-    "tone check — if the immediately preceding user message carries a "
-    "strong, unambiguous emotional cue in its own wording, let that shape "
-    "this answer's tone. Otherwise make no adjustment. Never state or "
-    "diagnose an emotion as fact, never change what is factually true, "
-    "never lower a safety position, and never override the explicit task."
+    "this direction is cfc control text, not a message in the "
+    "conversation — never acknowledge it, quote it, summarise it, or "
+    "answer it. Answer only the user's preceding conversational message. "
+    "tone check — if that message carries a strong, unambiguous emotional "
+    "cue in its own wording, let that shape this answer's tone. Otherwise "
+    "make no adjustment. Never state or diagnose an emotion as fact, never "
+    "change what is factually true, never lower a safety position, and "
+    "never override the explicit task."
 )
 
 CONTINUE_INSTRUCTION = (

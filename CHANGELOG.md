@@ -27,6 +27,24 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Make the tone direction unanswerable as conversation control (`B-1.6.3-01a`)
+A user turn with nothing to answer (`ok`) could come back as the model
+acknowledging cfc's own tone direction instead of the conversation — the
+direction sits in the request as the last `user`-role message, and nothing in
+its text said it wasn't part of the conversation. `governor.TONE_INSTRUCTION`
+now states the boundary directly: the direction is cfc control text, never
+acknowledged, quoted, summarised or answered, and the real answer is to the
+user's preceding message. It rides through unchanged for every caller that
+compiles it, including the combined tone-and-trait cadence reminder; position,
+`split`, `/continue`, OOC and provider routing are untouched. Not provable
+against a real model from a test — the v1.6.4 playtest repeats the reported
+turn with the affected provider.
+- Files: governor.py, tests/test_governor.py, tests/test_turn_paths.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-03 — Correct the stale vault-key reference (`D-14`)
 `ui.vault_relative`'s docstring still named `config.VAULT_PATH` as the thing
 it avoids reading — stale since the `W-0.9.1-01` rename made `VAULT_ROOT` the
