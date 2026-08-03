@@ -318,7 +318,7 @@ you>
   db     re-import the wiki and embed anything not yet indexed
 
 you> Don't know how to update 'wombat'. Updatable: db.
-you> Session #1 titled: Renamed By Golden
+you> Renamed chat #1: "Golden session one" -> "Renamed By Golden"
 you> /title | /title <session id> | /title <session id> <new title>
 you>
 Available prompts (<ROOT>/tests/_fixture_prompts):

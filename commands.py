@@ -1104,7 +1104,13 @@ def rename_chat(conn, chat_id, new_title):
         console.print(str(e), style="red")
         return None
     set_session_title(conn, target["id"], new_title)
-    console.print(f"Session #{target['id']} titled: {new_title}")
+    # "Renamed", and the old title beside the new one. The line used to read
+    # `Session #190 titled: 0`, which the playtest read as cfc having made
+    # something called a session rather than having renamed the chat asked
+    # for (`W-1.6.4-06`): a noun this surface doesn't otherwise use, a verb
+    # that isn't the one typed, and nothing to check the result against.
+    console.print(f"Renamed chat #{target['id']}: "
+                  f"\"{target['title']}\" -> \"{new_title}\"")
     return new_title
 
 

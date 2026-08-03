@@ -720,11 +720,16 @@ def test_hub_help_is_derived():
        set(hubmod._HUB_DISPATCH) == declared,
        set(hubmod._HUB_DISPATCH) ^ declared)
 
+    # `console.file = buf`, not `redirect_stdout` alone: rich resolves its
+    # file dynamically only while it holds none of its own, so assigning one
+    # here has to be undone by putting *None* back — assigning `sys.stdout`
+    # pins it, and every later `redirect_stdout` in this file then captures
+    # nothing while still looking like it works.
     buf = io.StringIO()
     with redirect_stdout(buf):
         hubmod.console.file = buf
         hubmod.print_hub_help()
-        hubmod.console.file = sys.stdout
+        hubmod.console.file = None
     out = buf.getvalue()
     for keys, _, what in hubmod.HUB_KEYS:
         ok(f"'{keys[0]}' appears on the help screen", keys[0] in out, out[:200])
@@ -882,17 +887,20 @@ def test_hub_rename():
     import db as dbmod
     import hub as hubmod
 
+    conn = dbmod.db(":memory:")
+    printed = []      # what the last pick() painted, for the wording checks
+
     def pick(*typed):
         feed = iter(typed)
         real_input = builtins.input
         builtins.input = lambda *a, **k: next(feed)
+        buf = io.StringIO()
         try:
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stdout(buf):
                 return hubmod.pick_session(conn)
         finally:
             builtins.input = real_input
-
-    conn = dbmod.db(":memory:")
+            printed[:] = [buf.getvalue()]
 
     print("\n--- 'r' renames, reports the shared result, and redraws ---")
     target_id = dbmod.new_session(conn, title="before")
@@ -905,6 +913,14 @@ def test_hub_rename():
        "carries the changed row",
        dict((r[0], r[1]) for r in hubmod.recent_chats(conn))[target_id]
        == "after")
+    # W-1.6.4-06: the result names the verb that was typed and both titles.
+    # `Session #N titled: X` read as cfc having produced something called a
+    # session rather than renamed the chat that was asked for.
+    ok("the result says renamed, and shows what it was before",
+       'Renamed chat #' in printed[0]
+       and '"before" -> "after"' in printed[0], printed[0][-400:])
+    ok("...and doesn't say it 'titled' a 'session'",
+       "titled:" not in printed[0], printed[0][-400:])
 
     print("\n--- both prompts cancel on a blank, leaving the row untouched ---")
     ok("a blank id cancels before asking for a title",
@@ -930,6 +946,18 @@ def test_hub_rename():
     ok("...and really renamed it",
        dbmod.get_session_title(conn, old_id) == "renamed off-screen",
        dbmod.get_session_title(conn, old_id))
+    # The half that made the rename look like it hadn't happened: the redraw
+    # is a recency view, this flow is explicitly allowed to rename outside
+    # it, and an unchanged table was the only answer on screen.
+    ok("...and says the redraw below won't show it",
+       f"#{old_id} isn't among the {hubmod.HUB_CHATS} most recent"
+       in printed[0], printed[0][-500:])
+    fresh_id = dbmod.new_session(conn, title="freshest")
+    ok("a chat that IS on screen gets no such line",
+       pick("r", str(fresh_id), "still here", "q") == "quit")
+    ok("...no absence claimed about a row the table does carry",
+       fresh_id in {r[0] for r in hubmod.recent_chats(conn)}
+       and "most recent" not in printed[0], printed[0][-500:])
 
     print("\n--- refusals: missing id, Main, wiki, routine — none change "
           "a row ---")

@@ -630,7 +630,18 @@ def _hub_rename(conn):
         console.print("Cancelled.")
         return
     from commands import rename_chat
-    rename_chat(conn, target["id"], new_title)
+    if rename_chat(conn, target["id"], new_title) is None:
+        return
+    # The redraw about to happen is a recency view, and this flow is
+    # explicitly allowed to rename a chat outside it. `Concept.md` claims the
+    # redraw "immediately shows the changed title", which for those chats it
+    # cannot — and the playtest read the empty result as the rename having
+    # gone somewhere else entirely (`W-1.6.4-06`). Say which of the two
+    # happened rather than leaving the table to be read as the answer.
+    if target["id"] not in {row[0] for row in recent_chats(conn)}:
+        console.print(f"#{target['id']} isn't among the {HUB_CHATS} most "
+                      f"recent, so the table below won't show it.",
+                      style="dim")
 
 
 def _hub_delete(conn):

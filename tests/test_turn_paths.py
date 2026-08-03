@@ -681,7 +681,7 @@ def main_():
        dbmod.get_session_title(conn, title_sid) == "after",
        dbmod.get_session_title(conn, title_sid))
     ok("...reporting the exact wording rename_chat prints",
-       f"Session #{title_sid} titled: after" in out, out)
+       f'Renamed chat #{title_sid}: "before" -> "after"' in out, out)
 
     main_sid, _ = dbmod.get_or_create_main(conn, "muse.md", "hi")
     out, _ = drive(conn, driver_sid, f"/title {main_sid} renamed?\n/q\n")
