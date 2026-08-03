@@ -405,8 +405,8 @@ def main_():
        "Empty OOC direction" in out, out)
     ok("...and really makes no call", stream_calls == [])
 
-    print("\n--- v1.4.1: one shared finisher — busy marker, order, titling "
-          "(B-1.3.1-02, D-13) ---")
+    print("\n--- W-1.6.4-02: one shared finisher — transient status, order, "
+          "titling (B-1.3.1-02, D-13) ---")
     # `main.stream_response`/`agent.call_api` were left as capturing stubs by
     # the governor section above; put back a plain answering one so what's
     # under test here is `_finish_turn`, not the request capture.
@@ -416,13 +416,21 @@ def main_():
         "usage": dict(USAGE),
     }
 
-    def drive_finish(sid, keys, title_result=None, title_error=None):
-        """Like `drive`, but spies on `generate_title`/`auto_embed` and
-        records the accumulated stdout at the moment each fires — proof
-        that the busy marker was already on screen and the *next* prompt
-        boundary was not, when the finisher's post-turn work ran."""
+    def drive_finish(sid, keys, title_result=None, title_error=None,
+                     embed_error=None, private=False):
+        """Like `drive`, but spies on `generate_title`/`auto_embed` and on
+        `console.status` itself — the wording only ever reaches a real
+        terminal (Rich's Live rendering is a no-op against a redirected,
+        non-tty stream, same as `agent.py`'s "Thinking..." status already
+        is), so the seam to patch for the *wording* is `console.status`,
+        not the captured text. `calls` is one ordered timeline — a
+        ("status", wording) entry on entry, then ("title", snapshot) /
+        ("embed", snapshot) — so list order alone proves the finisher's
+        sequencing, and the snapshots still prove neither job sees the next
+        prompt boundary before the finisher returns."""
         calls = []
         real_title, real_embed = main.generate_title, main.auto_embed
+        real_status = main.console.status
 
         def title_spy(user_text):
             calls.append(("title", out.getvalue()))
@@ -432,41 +440,62 @@ def main_():
 
         def embed_spy():
             calls.append(("embed", out.getvalue()))
+            if embed_error is not None:
+                # commands.auto_embed() never raises out of a real failure —
+                # it prints this line itself and swallows the exception. The
+                # spy mirrors that shape rather than propagating.
+                main.console.print(f"[auto-embed skipped: {embed_error}]")
+
+        class _FakeStatus:
+            """Records the wording `_finish_turn` chose and behaves as a
+            no-op context manager — proving what cfc *decided* to show
+            without depending on Rich's terminal-only rendering."""
+
+            def __init__(self, wording, **_kw):
+                self.wording = wording
+
+            def __enter__(self):
+                calls.append(("status", self.wording))
+                return self
+
+            def __exit__(self, *exc):
+                return False
 
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO(keys)
         main.generate_title = title_spy
         main.auto_embed = embed_spy
+        main.console.status = lambda wording, **kw: _FakeStatus(wording, **kw)
         try:
             with contextlib.redirect_stdout(out):
                 main.console.file = out
                 commands.console.file = out
                 agent.console.file = out
-                main.run_session(conn, sid, auto_export=False, private=False)
+                main.run_session(conn, sid, auto_export=False,
+                                 private=private)
         finally:
             sys.stdin = real_stdin
             main.generate_title = real_title
             main.auto_embed = real_embed
+            main.console.status = real_status
             main.console.file = sys.stdout
             commands.console.file = sys.stdout
             agent.console.file = sys.stdout
         return out.getvalue(), calls
 
-    print("  (first-turn success: ordering and the one busy marker)")
+    print("  (first-turn success: title plus embed, in order)")
     fin_sid = dbmod.new_session(conn, title="(untitled)")
     out, calls = drive_finish(fin_sid, "/tools off\nhello\n/q\n",
                               title_result="First Turn Title")
-    ok("'finishing turn' prints exactly once",
-       out.count("finishing turn") == 1, out)
-    ok("the title spy fires", any(c[0] == "title" for c in calls), calls)
-    ok("the embed spy fires", any(c[0] == "embed" for c in calls), calls)
+    ok("the status wording names both jobs",
+       calls[0] == ("status", "Titling chat and updating memory..."), calls)
+    ok("...entered exactly once", sum(1 for c in calls if c[0] == "status") == 1,
+       calls)
+    ok("...before title, and title before embed",
+       [c[0] for c in calls] == ["status", "title", "embed"], calls)
     title_snap = next(c[1] for c in calls if c[0] == "title")
     embed_snap = next(c[1] for c in calls if c[0] == "embed")
-    ok("the busy marker is already on screen when titling starts",
-       "finishing turn" in title_snap, title_snap[-200:])
-    ok("titling happens before embedding",
-       len(title_snap) <= len(embed_snap))
     # Three input() calls in the script ("/tools off", "hello", "/q") each
     # print "you> "; the finisher's work happens between the second and
     # third, so neither spy should see the third prompt yet.
@@ -477,6 +506,111 @@ def main_():
        out.count("you> ") == 3, out)
     ok("a successful title is persisted",
        dbmod.get_session_title(conn, fin_sid) == "First Turn Title")
+    ok("the transient wording never becomes conversation history",
+       not any("Titling chat" in (m.get("content") or "")
+              or "Updating memory" in (m.get("content") or "")
+              for m in dbmod.load_history(conn, fin_sid)),
+       dbmod.load_history(conn, fin_sid))
+
+    print("  (title-only: embed disabled this turn, so the wording names "
+          "just the one job)")
+    saved_auto_embed = commands.AUTO_EMBED
+    commands.AUTO_EMBED = False
+    try:
+        title_only_sid = dbmod.new_session(conn, title="(untitled)")
+        out, calls = drive_finish(title_only_sid, "/tools off\nhi\n/q\n",
+                                  title_result="Title Only")
+    finally:
+        commands.AUTO_EMBED = saved_auto_embed
+    ok("wording names titling alone",
+       calls[0] == ("status", "Titling chat..."), calls)
+    ok("...and embed never fires", not any(c[0] == "embed" for c in calls),
+       calls)
+
+    print("  (embed-only: a later turn, so titling doesn't run — the "
+          "wording names just the one job)")
+    embed_only_sid = dbmod.new_session(conn, title="(untitled)")
+    drive_finish(embed_only_sid, "/tools off\nfirst\n/q\n",
+                title_result="Embed Only Setup")
+    out, calls = drive_finish(embed_only_sid, "/tools off\nsecond\n/q\n",
+                              title_result="Should Not Land")
+    ok("wording names embedding alone",
+       calls[0] == ("status", "Updating memory..."), calls)
+    ok("...and title never fires", not any(c[0] == "title" for c in calls),
+       calls)
+
+    print("  (neither job: a later turn with embed off too — no status at "
+          "all)")
+    saved_auto_embed = commands.AUTO_EMBED
+    commands.AUTO_EMBED = False
+    try:
+        neither_sid = dbmod.new_session(conn, title="(untitled)")
+        drive_finish(neither_sid, "/tools off\nfirst\n/q\n",
+                    title_result="Neither Setup")
+        out, calls = drive_finish(neither_sid, "/tools off\nsecond\n/q\n",
+                                  title_result="Should Not Land")
+    finally:
+        commands.AUTO_EMBED = saved_auto_embed
+    ok("no status, no title, no embed — the turn still ends cleanly",
+       calls == [], calls)
+
+    print("  (title failure: the wording still named the attempt, and the "
+          "failure line is durable)")
+    saved_auto_embed = commands.AUTO_EMBED
+    commands.AUTO_EMBED = False
+    try:
+        tfail_sid = dbmod.new_session(conn, title="(untitled)")
+        out, calls = drive_finish(
+            tfail_sid, "/tools off\nhi\n/q\n",
+            title_error=main.TitleGenerationError("boom"))
+    finally:
+        commands.AUTO_EMBED = saved_auto_embed
+    ok("wording still said titling was attempted",
+       calls[0] == ("status", "Titling chat..."), calls)
+    ok("a title failure prints exactly one concise yellow line",
+       out.count("[title unavailable]") == 1, out)
+    ok("the session stays displayed as untitled after a failed attempt",
+       dbmod.get_session_title(conn, tfail_sid) == "(untitled)")
+
+    print("  (embed failure: the wording still named the attempt, and the "
+          "failure line is durable)")
+    efail_sid = dbmod.new_session(conn, title="(untitled)")
+    drive_finish(efail_sid, "/tools off\nfirst\n/q\n", title_result="T0")
+    out, calls = drive_finish(efail_sid, "/tools off\nsecond\n/q\n",
+                              title_result="Should Not Land",
+                              embed_error="embedder unreachable")
+    ok("wording still said embedding was attempted",
+       calls[0] == ("status", "Updating memory..."), calls)
+    ok("an embed failure prints exactly one concise line",
+       out.count("[auto-embed skipped: embedder unreachable]") == 1, out)
+
+    print("  (private: neither job runs, so there is no status at all)")
+    priv_conn = dbmod.db(":memory:")
+    priv_sid = dbmod.new_session(priv_conn, title="(untitled)")
+    real_title, real_embed = main.generate_title, main.auto_embed
+    real_status = main.console.status
+    priv_calls = []
+    main.generate_title = lambda user_text: priv_calls.append("title") or "X"
+    main.auto_embed = lambda: priv_calls.append("embed")
+    main.console.status = lambda wording, **kw: priv_calls.append(
+        ("status", wording)) or contextlib.nullcontext()
+    out = io.StringIO()
+    real_stdin = sys.stdin
+    sys.stdin = io.StringIO("/tools off\nhello\n/q\n")
+    try:
+        with contextlib.redirect_stdout(out):
+            main.console.file = out
+            main.run_session(priv_conn, priv_sid, auto_export=False,
+                             private=True)
+    finally:
+        sys.stdin = real_stdin
+        main.generate_title = real_title
+        main.auto_embed = real_embed
+        main.console.status = real_status
+        main.console.file = sys.stdout
+        priv_conn.close()
+    ok("a private turn never enters a status, never titles, never embeds",
+       priv_calls == [], priv_calls)
 
     print("  (failure once, no retry on a later turn — D-13)")
     fail_sid = dbmod.new_session(conn, title="(untitled)")
@@ -485,8 +619,8 @@ def main_():
         title_error=main.TitleGenerationError("boom"))
     ok("a title failure prints exactly one concise yellow line",
        out.count("[title unavailable]") == 1, out)
-    ok("...alongside the same one busy marker",
-       out.count("finishing turn") == 1, out)
+    ok("...alongside the one status naming both jobs",
+       calls[0] == ("status", "Titling chat and updating memory..."), calls)
     ok("the session stays displayed as untitled after a failed attempt",
        dbmod.get_session_title(conn, fail_sid) == "(untitled)")
     # A second run_session against the same id is a reopen. turn_count is now
@@ -514,7 +648,7 @@ def main_():
     out, calls = drive_finish(late_sid, "/tools off\nheya\n/q\n",
                               title_result="Should Not Land Yet")
     ok("a failed first turn never reaches the finisher",
-       "finishing turn" not in out and calls == [], (out[-200:], calls))
+       calls == [], calls)
     ok("...but its user row is durable, so the turn count has moved",
        dbmod.count_chat_user_turns(conn, late_sid) == 1)
 
@@ -538,8 +672,8 @@ def main_():
     drive_finish(cont_sid, "/tools off\nfirst\n/q\n", title_result="T1")
     out, calls = drive_finish(cont_sid, "/tools off\n/continue\n/q\n",
                               title_result="Should Not Land")
-    ok("/continue reaches the shared finisher",
-       out.count("finishing turn") == 1, out)
+    ok("/continue reaches the shared finisher, wording naming embed alone",
+       calls[0] == ("status", "Updating memory..."), calls)
     ok("...but never titles", not any(c[0] == "title" for c in calls), calls)
     ok("...and still runs auto-embed",
        any(c[0] == "embed" for c in calls), calls)
@@ -547,8 +681,8 @@ def main_():
     ooc_sid = dbmod.new_session(conn, title="(untitled)")
     out, calls = drive_finish(ooc_sid, "/tools off\n((be nicer))\n/q\n",
                               title_result="Should Not Land")
-    ok("an OOC turn reaches the shared finisher too",
-       out.count("finishing turn") == 1, out)
+    ok("an OOC turn reaches the shared finisher too, same wording",
+       calls[0] == ("status", "Updating memory..."), calls)
     ok("...but never titles, even on the session's first turn",
        not any(c[0] == "title" for c in calls), calls)
     ok("...and still runs auto-embed",
@@ -567,9 +701,8 @@ def main_():
     empty_sid = dbmod.new_session(conn, title="(untitled)")
     out, calls = drive_finish(empty_sid, "/tools off\nhello\n/q\n",
                               title_result="Should Not Land")
-    ok("an empty completion never shows the busy marker",
-       "finishing turn" not in out, out)
-    ok("...and never calls title or embed", calls == [], calls)
+    ok("an empty completion never enters a status, titles, or embeds",
+       calls == [], calls)
 
     def raises_interrupt(messages, model=None):
         raise KeyboardInterrupt
@@ -578,9 +711,8 @@ def main_():
     cancel_sid = dbmod.new_session(conn, title="(untitled)")
     out, calls = drive_finish(cancel_sid, "/tools off\nhello\n/q\n",
                               title_result="Should Not Land")
-    ok("a cancelled turn never shows the busy marker",
-       "finishing turn" not in out, out)
-    ok("...and never calls title or embed", calls == [], calls)
+    ok("a cancelled turn never enters a status, titles, or embeds",
+       calls == [], calls)
     main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
 
     print("\n--- D-17: a chat-turn provider error records its action, not "

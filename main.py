@@ -6,6 +6,7 @@
 # and what to do with the result.
 #
 #     python3 main.py [session_id]
+import contextlib
 import sys
 from itertools import takewhile
 
@@ -42,7 +43,8 @@ import tools
 from pools import (bodies as pool_bodies, pool as pool_of, stem,
                    load_first_message, FirstMessageError)
 
-from ui import console, DISPLAY_NAME, human_panel, read_input, set_completer
+from ui import (console, DISPLAY_NAME, SPINNER_COLOR, human_panel,
+                read_input, set_completer)
 # `db` is both the module and its connect function; main.py wants the
 # function, so import the names directly rather than the module.
 from db import (
@@ -72,6 +74,7 @@ import screens
 from complete import install as install_completion, make_completer
 from export import export_session, safe_export
 from hub import list_sessions, pick_session
+import commands
 from commands import (
     show_tags, list_all_tags,
     list_prompts, load_prompt_file, list_personas, load_persona_file,
@@ -600,7 +603,8 @@ def run_session(conn, session_id, *, auto_export, private=False,
         """The one honest ending for a successful turn — streaming and tool
         paths alike (standing decision 7, extended by this function). Called
         once an answer is on screen and persisted; it owns everything after
-        that: the context bar, a visible busy marker, the eligible title
+        that: the context bar, a transient status covering whichever
+        post-turn jobs are actually about to run, the eligible title
         attempt, automatic embedding, and only then the blank line that
         precedes the next `read_input()`.
 
@@ -631,31 +635,58 @@ def run_session(conn, session_id, *, auto_export, private=False,
 
         Neither clause can re-open titling after a title *failure*: turn one
         succeeded, so both counts have moved past by the next turn.
+
+        `W-1.6.4-02`: the old `finishing turn` line was permanent — printed
+        whether or not either job was about to run, and never saying when
+        they were done. The wording now names the jobs that are actually
+        about to run, decided *before* either one starts (`will_title`,
+        `will_embed`), and the status is Rich's own transient one: it clears
+        itself the moment the `with` block ends, which is before this
+        function returns and therefore before the next `read_input()` can
+        run. Title success and the title/embed failure lines below are
+        printed *inside* the status and are durable output regardless —
+        `console.status` interleaves a `console.print` with its own spinner
+        rather than being clobbered by it, the same as `agent.py`'s
+        "Thinking..." status already relies on.
         """
         nonlocal current_title
         print_context_bar(current_model, tok_in, tok_out)
         if private:
             # Decision 10: title, auto-embed and the error log all escape the
-            # connection by path, so none of them run for a private chat —
-            # there is nothing for a busy marker to cover.
+            # connection by path, so neither job runs for a private chat —
+            # there is nothing for a status to cover.
             console.print()
             return
-        console.print("finishing turn", style="dim")
-        if kind == "chat" and (turn_count == 1
-                               or count_chat_answers(conn, session_id) == 1):
-            try:
-                new_title = generate_title(user_text)
-            except TitleGenerationError as e:
-                errorlog.log_error(e, session_id=session_id,
-                                   model=current_model,
-                                   interrupted=turns_interrupted,
-                                   private=private, where="title")
-                console.print("[title unavailable]", style="yellow")
-            else:
-                set_session_title(conn, session_id, new_title)
-                current_title = new_title
-                console.print(f"[title: {new_title}]")
-        auto_embed()   # index this turn's messages (best-effort)
+        will_title = (kind == "chat" and (turn_count == 1
+                       or count_chat_answers(conn, session_id) == 1))
+        will_embed = commands.AUTO_EMBED
+        if will_title and will_embed:
+            wording = "Titling chat and updating memory..."
+        elif will_title:
+            wording = "Titling chat..."
+        elif will_embed:
+            wording = "Updating memory..."
+        else:
+            wording = None
+        status = console.status(wording, spinner="dots",
+                                spinner_style=SPINNER_COLOR) if wording \
+            else contextlib.nullcontext()
+        with status:
+            if will_title:
+                try:
+                    new_title = generate_title(user_text)
+                except TitleGenerationError as e:
+                    errorlog.log_error(e, session_id=session_id,
+                                       model=current_model,
+                                       interrupted=turns_interrupted,
+                                       private=private, where="title")
+                    console.print("[title unavailable]", style="yellow")
+                else:
+                    set_session_title(conn, session_id, new_title)
+                    current_title = new_title
+                    console.print(f"[title: {new_title}]")
+            if will_embed:
+                auto_embed()   # index this turn's messages (best-effort)
         console.print()
 
     def _run_turn(kind, user_text=None):

@@ -27,6 +27,27 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Name the post-turn work, and let it leave (`W-1.6.4-02`)
+`finishing turn` printed permanently after every non-private turn, whether or
+not a title attempt or auto-embed was about to run, and never said when they
+were done — the only signal that cfc was still busy was the *absence* of the
+next `you>` prompt. `_finish_turn` now decides, before either job starts,
+which of them are actually about to run (`will_title`, `will_embed` off
+`commands.AUTO_EMBED`) and shows a Rich transient status naming exactly
+those — `Titling chat and updating memory...`, `Titling chat...`, `Updating
+memory...`, or no status at all when neither runs. The status is the same
+kind `agent.py`'s "Thinking..." spinner already uses (standing decision 6):
+it clears itself when the `with` block ends, before `_finish_turn` returns
+and therefore before the next `read_input()`. Title success and the title/
+embed failure lines are unaffected — both still print as durable output.
+Private chats stay quiet, unchanged. Rich's status rendering is a no-op
+against a redirected non-tty stream, so `tests/test_turn_paths.py` proves
+the wording by patching `console.status` itself to a recording no-op context
+manager rather than by reading captured text.
+- Files: main.py, tests/test_turn_paths.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-03 — Automatic export is an explicit decision, not a config read mid-session (`D-1.6.4-08`)
 `run_session` used to read `config.AUTO_EXPORT` itself at every automatic
 export point (leaving, `/new`, entering a screen), which is exactly what let
@@ -46,7 +67,7 @@ passes `auto_export=True` only after redirecting `CHAT_EXPORT_DIR` to its
 fixture.
 - Files: main.py, tests/golden.py, tests/test_private.py, tests/test_turn_paths.py, tests/test_turn_repair.py, tests/test_process_model.py, tests/test_mainchat_turns.py, tests/test_empty.py, tests/test_screens.py, tests/test_model_tools_notice.py, tests/test_first_message.py, tests/test_model_revert.py
 - Status: shipped
-- Commit: pending
+- Commit: 7c1f441
 
 ## 2026-08-03 — Explain the final v1.6.4 hub behavior (`B-1.6.4-01`, `B-1.6.4-07`, `W-1.6.4-06`)
 The v1.6.4 triage corrected three hub boundaries. Automatic allocation no
