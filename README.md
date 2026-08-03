@@ -38,10 +38,12 @@ per step of a loop, with the personal half taken out so you can copy them.
 - **Routines** — a task the model runs on command or on a schedule, against its
   own declared roots, with an append-only run log
 - **Propose, review, approve** — everything the model writes lands in one outbox
-  with a suggested destination. `/list outbox` shows what would happen, `/file`
-  carries it out (by number or by its exact title), `/file <n> decline <why>`
-  rejects it and records why. `/move` guides a loose outbox file to a
-  destination you pick by hand, for the files that never had a suggestion
+  with a suggested destination. `/list outbox` shows what would happen to every
+  Markdown filing proposal (top level, plus its `wiki/` and `journal/`
+  subfolders), `/file` carries one out (by number or by its exact title),
+  `/file <n> decline <why>` rejects it and records why. `/move` is the manual
+  path: it guides *any* top-level outbox file — any type, with or without a
+  suggested destination — to a place you pick by hand
 - **A tiered journal the model maintains** — a diary in three tiers, each more
   compressed than the last, rolled over by routines and approved by you
 - **Vault git from the REPL** — `/wiki diff`, `/wiki commit`, scoped to a corpus
@@ -406,7 +408,7 @@ it back**. `/remove` never destroys anything.
 | `/file <title>` | File the proposal with that exact title (case-insensitive, no quotes needed) |
 | `/file all` | File every valid proposal |
 | `/file <n> decline [why]` | Reject a proposal — moved aside with the reason recorded on it (`drop` is the terse form) |
-| `/move` | Guide one loose top-level outbox file to a destination you pick |
+| `/move` | Guide one top-level outbox file (any type) to a destination you pick |
 | `/clear notes` | Archive everything in the notes inbox (`00 inbox/notes`) into a dated batch folder |
 
 **Two deliberate exceptions to the grammar.** `/file 1 decline <why>` keeps

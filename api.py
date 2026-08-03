@@ -309,7 +309,12 @@ def stream_response(messages, model=None, params=None):
                                 full_text += content
                             if think or content:
                                 panels = []
-                                if reasoning:
+                                # Whitespace-only reasoning is unreadable, but
+                                # the raw `reasoning` returned below is left
+                                # alone — it's still the diagnostic that tells
+                                # a reasoning-only completion apart from a
+                                # truly empty one.
+                                if reasoning.strip():
                                     panels.append(
                                         _thinking_panel(reasoning)
                                     )

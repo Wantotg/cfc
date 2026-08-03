@@ -157,6 +157,10 @@ def _ensure_id(text, wid):
     existing = fm.get("id")
     if existing:
         return text, str(existing)
+    # An `id:` key with no value parses truthy-false but is still a key in
+    # `fm` — drop it before dumping, or it survives as a second, empty id
+    # line alongside the generated one.
+    fm.pop("id", None)
     # The id line is written by hand, not via yaml.safe_dump, which would quote
     # a pure-digit string (`id: '2026…'`). The vault's pages use it unquoted
     # (`id: 20260719160004`) and the wiki index links to it that way; keep the

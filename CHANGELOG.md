@@ -27,6 +27,47 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — v1.6.2 — Truthful boundaries (`B-1.7-05`, `B-1.7-01`, `D-1.7-02`, `D-1.7-04`)
+Four independent repairs, each correcting an existing boundary rather than
+adding new surface.
+
+`mover._ensure_id` used to serialise an empty frontmatter `id:` beside the one
+it generated, so a filed wiki page carried two id lines and `import_wiki` —
+reading the later, empty one — silently skipped it out of the index. The
+empty key is now dropped before the generated id is written; a filing-to-import
+test drives the real boundary against a real db rather than mover's own
+frontmatter.
+
+`api.stream_response()` drew a reasoning panel for whitespace-only
+`delta.reasoning`, unreadable and indistinguishable on screen from a real
+think. The panel now gates on readable content, the same check
+`agent._render_reasoning` already used on the tool path; the raw `reasoning`
+string returned to the caller is untouched, since it's still what tells a
+reasoning-only completion apart from a truly empty one.
+
+An unconfigured model's context usage used to read differently on every
+screen: a bare count in the header and `/status`, nothing at all post-turn.
+All three now say the same thing — `N tokens · limit unknown` — through a
+shared `commands._context_value` helper for the two full-width views and
+`print_context_bar`'s own third branch for the post-turn line; the hub's Ctx
+column says `N / ?` for the same case. `models.context_limit()` stays the one
+source of whether a limit exists.
+
+`/move` and `/outbox` described the same top-level file as two unrelated
+things — "loose" was never defined, so a shared file read as the two screens
+disagreeing rather than answering different questions about it. Both screens
+now name what they list, and `/outbox` explains once that a top-level
+Markdown file can appear in both because `/file` follows its proposed
+destination while `/move` asks you to choose one. `mover.loose_files()` and
+`list_proposals()` are unchanged — display only.
+- Files: mover.py, api.py, commands.py, hub.py, README.md,
+  tests/test_mover.py, tests/test_api_stream.py (new), tests/test_hub.py,
+  tests/test_turn_paths.py, tests/test_private.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-02 — v1.6.1 — Wiki reads refuse leftovers; the first model-context experiment (`B-1.6-01`, `D-1.6-03`)
 Three contained changes. `/wiki diff` and `/wiki status` now refuse a
 remainder they cannot use, on both the chat quick form and the wiki screen,

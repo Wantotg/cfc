@@ -3,7 +3,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   System prompt   not set — available: alpha, beta
   Persona         not set — available: delta, gamma
   Traits          none — available: epsilon, zeta
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Tools           off — glm-5.2 doesn't support tools — switch to: tool-model
 
   /help             every command
@@ -96,7 +96,7 @@ chats · sessions · outbox
     /file 1                 carry out filing proposal #1  (/list outbox)
     /file Some Title        …or file the proposal with that exact title
     /file 1 decline why     reject #1, keeping it and the reason
-    /move                   guide one loose outbox file to a destination you pick
+    /move                   guide one top-level outbox file (any type) to a destination you pick
     /clear notes            archive everything in the notes inbox
 
   editing
@@ -112,8 +112,8 @@ you>                                               Sessions
 ┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃   ID ┃ Latest message    ┃ Messages ┃     Ctx ┃ Title                      ┃ Prompt   ┃ Persona  ┃
 ┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│    1 │ <TS>  │        4 │       8 │ Golden session one         │          │          │
-│    2 │ <TS>  │        2 │       3 │ Golden session two         │          │          │
+│    1 │ <TS>  │        4 │   8 / ? │ Golden session one         │          │          │
+│    2 │ <TS>  │        2 │   3 / ? │ Golden session two         │          │          │
 │    3 │ <TS>  │        0 │       — │ (untitled)                 │          │          │
 └──────┴───────────────────┴──────────┴─────────┴────────────────────────────┴──────────┴──────────┘
 
@@ -121,8 +121,8 @@ you>                                             Recent chats
 ┏━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃   ID ┃ Latest message    ┃ Messages ┃     Ctx ┃ Title                      ┃ Prompt   ┃ Persona  ┃
 ┡━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│    1 │ <TS>  │        4 │       8 │ Golden session one         │          │          │
-│    2 │ <TS>  │        2 │       3 │ Golden session two         │          │          │
+│    1 │ <TS>  │        4 │   8 / ? │ Golden session one         │          │          │
+│    2 │ <TS>  │        2 │   3 / ? │ Golden session two         │          │          │
 │    3 │ <TS>  │        0 │       — │ (untitled)                 │          │          │
 └──────┴───────────────────┴──────────┴─────────┴────────────────────────────┴──────────┴──────────┘
 
@@ -171,7 +171,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Preset          provider default
   Database        on
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
@@ -192,7 +192,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Preset          provider default
   Database        on
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
@@ -243,7 +243,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Preset          provider default
   Database        on
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
@@ -299,7 +299,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Preset          steady (temperature=0.3)
   Database        on
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
@@ -353,7 +353,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Preset          provider default
   Database        on
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
@@ -367,12 +367,15 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Tools           inactive — glm-5.2 doesn't support tools — switch to: tool-model
   Preset          provider default
   Database        on
-  Context         8 tokens
+  Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
-Outbox (<ROOT>/tests/_fixture_outbox)
+Outbox — Markdown filing proposals (<ROOT>/tests/_fixture_outbox)
+  top level, plus the wiki/ and journal/ proposal folders
+  a top-level Markdown file may also show under /move — /file follows its proposed destination,
+/move lets you pick one yourself
   1. filable-note.md  —  A Filable Note
      → <ROOT>/tests/_fixture_filed/filable-note.md
   2. no-destination.md  —  Missing Its Destination
@@ -392,7 +395,7 @@ you>
 Nothing injected in this session to forget.
 
 you>
-Outbox (top level)
+Outbox — every top-level file, any type
   1. filable-note.md  —  A Filable Note
   2. no-destination.md  —  Missing Its Destination
   file (number, or 'back'):   cancelled

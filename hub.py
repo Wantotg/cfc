@@ -157,11 +157,13 @@ def _context_cell(model, tok_in, tok_out):
         return Text("—", style="dim")
     limit = models.context_limit(model)
     if not limit:
-        # No denominator, so no colour — an uncoloured raw count says "this is
-        # a size, not a verdict". Abbreviated only once it's long enough for
-        # the abbreviation to be true: 8 tokens rendered as "0k" reads as zero.
-        return Text(f"{ctx:,}" if ctx < 1000 else f"{ctx / 1000:.0f}k",
-                    style="dim")
+        # No denominator, so no colour — an uncoloured "N / ?" says "this is
+        # a size, not a verdict" and matches the header/status wording rather
+        # than looking like a shorter, different fact (D-1.7-02). Abbreviated
+        # only once it's long enough for the abbreviation to be true: 8 tokens
+        # rendered as "0k" reads as zero.
+        n = f"{ctx:,}" if ctx < 1000 else f"{ctx / 1000:.0f}k"
+        return Text(f"{n} / ?", style="dim")
     pct = ctx / limit * 100
     return Text(f"{pct:.1f}%", style=context_style(pct))
 

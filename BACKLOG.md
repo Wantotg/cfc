@@ -14,6 +14,36 @@ nothing behind here.** This file holds open entries only. The reasoning is in
 
 ---
 
+## D-1.7-04 · `/move` and `/outbox` describe overlapping files as different things
+
+**Found:** 2026-08-03, while comparing `/move` against `/outbox`. `/move`
+answers “Nothing loose in the outbox to move” even when `/outbox` lists files.
+“Loose” is never defined to the person using either command, so the two
+screens appear to disagree.
+
+**What they mean now:** `/move` offers every non-reserved regular file directly
+inside an outbox root, whatever its extension or frontmatter. `/outbox` lists
+only Markdown proposals and shows whether each can be filed. A file can belong
+to both lists, but the screens present that shared case as two unrelated
+categories.
+
+**Owed:** give the shared top-level-outbox case one understandable name and
+make each screen say which files it lists. Preserve the distinction: `/move`
+remains the human-directed path for a file without a proposed destination;
+`/file` remains the reviewed proposal path.
+
+## D-1.7-02 · Unknown model limits make context usage disappear between screens
+
+**Found:** 2026-08-03, while trying a model whose `MODELS` record has no
+`limit`. The chat header and `/status` show its current context as a bare token
+count, while the post-turn context bar prints nothing at all. `/tokens` is more
+helpful: it says the limit is unknown and explains how to add one.
+
+**Owed:** make the header, `/status`, and post-turn display tell the same honest
+story when cfc knows the token count but not the model's context window. Do not
+invent a percentage, colour, remaining-token estimate, or limit; those require
+a configured limit.
+
 ## D-14 · `ui.vault_relative`'s docstring names the retired export key
 
 **Found:** 2026-07-31, during the v1.3.1 config-key rename. The docstring says

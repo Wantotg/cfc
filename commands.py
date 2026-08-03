@@ -698,6 +698,21 @@ def _header_row(label, value, style=None):
     console.print(line)
 
 
+def _context_value(ctx, limit):
+    """(text, style) for a full-width Context row — the chat header and
+    `/status` share this rather than each computing it, so the three states
+    (no data, a known limit, a count with none) can't drift between the two
+    screens that show them side by side (D-1.7-02)."""
+    if not ctx:
+        return "empty — no messages yet", "dim"
+    if limit:
+        pct = ctx / limit * 100
+        return f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)", context_style(pct)
+    # No known limit: a raw count, uncoloured — a colour would be a verdict
+    # the code can't make, and "limit unknown" is what /tokens already says.
+    return f"{ctx:,} tokens · limit unknown", "dim"
+
+
 def _strip_md(name):
     """Display-only: the .md is noise in a status line. The stored name keeps
     its extension. One implementation, in `pools`, because the resolver
@@ -720,14 +735,8 @@ def _footer_rows(conn, session_id, model):
 
     tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
     limit = models.context_limit(model)
-    if ctx and limit:
-        pct = ctx / limit * 100
-        _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
-                    context_style(pct))
-    elif ctx:
-        _header_row("Context", f"{ctx:,} tokens", "dim")
-    else:
-        _header_row("Context", "empty — no messages yet", "dim")
+    value, style = _context_value(ctx, limit)
+    _header_row("Context", value, style)
 
     # Once, here — not on every turn. A warning printed every turn is a
     # warning nobody reads.
@@ -972,16 +981,8 @@ def show_status(conn, session_id, model, title, private=False,
 
     tok_in, tok_out, ctx = get_context_info(conn, session_id, model)
     limit = models.context_limit(model)
-    if ctx and limit:
-        pct = ctx / limit * 100
-        _header_row("Context", f"{ctx:,} / {limit:,} tokens ({pct:.1f}%)",
-                    context_style(pct))
-    elif ctx:
-        # No known limit for this model: a raw count, uncoloured. A colour
-        # would be a verdict the code can't make.
-        _header_row("Context", f"{ctx:,} tokens", "dim")
-    else:
-        _header_row("Context", "empty — no messages yet", "dim")
+    value, style = _context_value(ctx, limit)
+    _header_row("Context", value, style)
     if tok_in or tok_out:
         # Not dim: this is ordinary workflow information, not an inactive
         # state, and printing it in the same grey as "not set" was the
@@ -1223,7 +1224,8 @@ _ALL_COMMANDS = [
         (f"{PREFIX}file Some Title",
          "…or file the proposal with that exact title"),
         (f"{PREFIX}file 1 decline why", "reject #1, keeping it and the reason"),
-        (f"{PREFIX}move", "guide one loose outbox file to a destination you pick"),
+        (f"{PREFIX}move",
+         "guide one top-level outbox file (any type) to a destination you pick"),
         (f"{PREFIX}clear notes", "archive everything in the notes inbox"),
     ]),
     ("editing", [
@@ -1281,10 +1283,17 @@ def context_bar(conn, session_id, model):
 def print_context_bar(model, tok_in, tok_out):
     """Post-turn context-usage bar. Shared by the streaming and tool paths,
     so both end a turn the same way — a change to one can't drift from the
-    other. Silent when the model has no known limit or no tokens came back."""
+    other. Silent when no tokens came back at all; a known limit draws the
+    coloured bar; an unconfigured one says the same honest count the header
+    and /status show, not a percentage, colour, remaining estimate or bar
+    the code has no denominator to compute (D-1.7-02)."""
     limit = models.context_limit(model)
     ctx = (tok_in or 0) + (tok_out or 0)
-    if not (limit and ctx > 0):
+    if ctx <= 0:
+        return
+    if not limit:
+        console.print()
+        console.print(f"{ctx:,} tokens · limit unknown", style="dim")
         return
     pct = ctx / limit * 100
     console.print()
@@ -2514,7 +2523,16 @@ def show_outbox():
     proposals = list_proposals()
     console.print()
     roots = ", ".join(str(r) for r in outbox_roots()) or "(none configured)"
-    console.print(f"Outbox ({roots})")
+    console.print(f"Outbox — Markdown filing proposals ({roots})")
+    console.print("  top level, plus the wiki/ and journal/ proposal folders",
+                  style="dim")
+    # D-1.7-04: a top-level Markdown file can be listed here AND by /move —
+    # they're not disagreeing about what's in the outbox, they answer two
+    # different questions about the same file. Said once, here, rather than
+    # left for the two screens to look like they disagree.
+    console.print("  a top-level Markdown file may also show under /move — "
+                  "/file follows its proposed destination, /move lets you "
+                  "pick one yourself", style="dim")
     _print_wiki_stale()
     if not proposals:
         console.print("  (nothing pending)", style="dim")
@@ -2758,18 +2776,20 @@ def _wiki_filed_note():
 
 
 def do_move():
-    """/move — list loose outbox files, then guide one to a destination."""
+    """/move — list every top-level outbox file, then guide one to a
+    destination (D-1.7-04: any file type, not just the Markdown proposals
+    /outbox lists)."""
     from mover import (MoveError, commit_move, loose_files, plan_move,
                        resolve_move_destination, suggest_rename)
 
     console.print()
     files = loose_files()
     if not files:
-        console.print("Nothing loose in the outbox to move.", style="dim")
+        console.print("No outbox files are available to move.", style="dim")
         console.print()
         return
 
-    console.print("Outbox (top level)")
+    console.print("Outbox — every top-level file, any type")
     for i, f in enumerate(files, 1):
         label = f.name
         title = vault.title_for(f)

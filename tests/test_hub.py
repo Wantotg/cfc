@@ -169,16 +169,31 @@ def main():
     ok(f"just over {orange_max}% is red", context_style(orange_max + 0.1) == "red")
     ok("0% is green", context_style(0) == "green")
 
-    # A count with no denominator gets no colour — an uncoloured number reads
-    # as a size, a coloured one reads as a verdict the code can't actually make.
+    # A count with no denominator gets no colour — an uncoloured "N / ?" reads
+    # as a size, a coloured one reads as a verdict the code can't actually
+    # make. "/ ?" matches the header/status wording (D-1.7-02) rather than
+    # looking like a shorter, different fact.
     cell = hub._context_cell("unknown-model", 8, 0)
-    ok("no known limit -> raw count, dim", cell.plain == "8" and "dim" in str(cell.style),
+    ok("no known limit -> 'N / ?', dim", cell.plain == "8 / ?" and "dim" in str(cell.style),
        (cell.plain, cell.style))
-    ok("8 tokens does not render as '0k'", cell.plain != "0k", cell.plain)
+    ok("8 tokens does not render as '0k'", cell.plain != "0k / ?", cell.plain)
     ok("a big count abbreviates",
-       hub._context_cell("unknown-model", 40000, 0).plain == "40k")
+       hub._context_cell("unknown-model", 40000, 0).plain == "40k / ?")
     ok("no tokens at all -> em dash",
        hub._context_cell("unknown-model", 0, 0).plain == "—")
+
+    # A known limit still gets the coloured percentage — the "N / ?" fallback
+    # above must not have swallowed this branch.
+    import models as models_mod
+    saved_limit = models_mod.context_limit
+    models_mod.context_limit = lambda model: 1000
+    try:
+        known = hub._context_cell("known-model", 250, 0)
+        ok("a known limit -> coloured percentage, not 'N / ?'",
+           known.plain == "25.0%" and "dim" not in str(known.style),
+           (known.plain, known.style))
+    finally:
+        models_mod.context_limit = saved_limit
 
     print("\n--- timestamps are shown in local time ---")
     # `db.py` stores UTC; every other module writes local naive time. The hub

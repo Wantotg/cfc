@@ -32,6 +32,7 @@ sys.dont_write_bytecode = True
 import context
 import db as dbmod
 import main
+import models
 import tools
 
 PASS, FAIL = [], []
@@ -125,16 +126,27 @@ def main_():
     # whatever this machine happens to be configured with.
     saved_db_active = main.DATABASE_ACTIVE
     main.DATABASE_ACTIVE = True
+    # D-1.7-02's post-turn context line goes through the same shared finisher
+    # every chat uses — decision 15's "every feature is specified for private
+    # chat too" — so it's exercised here rather than assumed. Pinned against a
+    # model with no configured limit rather than whatever the real config.py
+    # happens to say, or the assertion below would depend on this machine.
+    saved_models = models.MODELS
+    models.MODELS = [models._spec(main.current_process_model(), tools=False)]
     try:
         out = drive(priv, priv_sid, private=True, keys=script)
     finally:
         main.DATABASE_ACTIVE = saved_db_active
+        models.MODELS = saved_models
     ok("the conversation is live in the private db",
        count_msgs(priv) >= 2, count_msgs(priv))
     ok("the real db is untouched", count_msgs(real) == before,
        (before, count_msgs(real)))
     ok("auto-embed is skipped", embeds == [], embeds)
     ok("auto-export is skipped on :q", exports == [], exports)
+    ok("a private turn still shows an honest context line through the "
+       "shared post-turn path",
+       "tokens · limit unknown" in out, out)
 
     print("\n--- W-0.9.1-04: the entry notice states the local boundary, the "
           "provider boundary, and the read-only db choice ---")

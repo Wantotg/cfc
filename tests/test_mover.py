@@ -26,6 +26,8 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
+import db as dbmod
+import import_wiki
 import mover
 from parse import PREFIX
 import wikigit
@@ -186,6 +188,23 @@ def main():
         target = mover.commit(pp)
         ok("...and names the file for it", target.name == "20260101120000.md",
            target.name)
+
+        # An `id:` key present but empty (`id:` with nothing after it) must be
+        # treated as no id at all — filed once, under one generated id — not
+        # serialised beside the generated one (B-1.7-05).
+        blank = v.propose("blank id.md", extra="id:", body="Blank.",
+                          folder=v.wiki_out)
+        pp = mover.plan(blank)
+        ok("a blank id plans as needing one, not honoured",
+           pp.ok and pp.needs_id and pp.wiki_id is None,
+           (pp.ok, pp.needs_id, pp.wiki_id))
+        target = mover.commit(pp)
+        stamped = target.read_text(encoding="utf-8")
+        ok("...named <id>.md for the one id generated",
+           target.stem.isdigit() and len(target.stem) == 14, target.name)
+        ok("...exactly one id line is written, matching the filename",
+           stamped.count("id:") == 1 and f"id: {target.stem}" in stamped,
+           stamped)
 
         # Re-filing a page whose id already exists is an edit, not a new file —
         # refused rather than clobbered.
@@ -874,6 +893,31 @@ def main():
            result.read_text(encoding="utf-8") == "new content")
         ok("...and the source left the outbox", not loose_rep.exists())
         v.commit_all("area: replace-me done")
+
+    print("\n--- the real filing-to-import boundary (B-1.7-05) ---")
+    # An empty `id:` used to survive the write as a second, empty id line,
+    # which import_wiki's frontmatter-id-only rule (`fm.get("id") is None`)
+    # then skipped — the page filed cleanly but never reached the index. This
+    # drives the actual importer against a real db, not just mover's own
+    # frontmatter.
+    with tempfile.TemporaryDirectory() as tmp, Vault(tmp) as v:
+        draft = v.propose("blank id.md", extra="id:", body="Indexed fact.",
+                          folder=v.wiki_out)
+        target = mover.commit(mover.plan(draft))
+
+        dbfile = Path(tmp) / "chat.db"
+        dbmod.db(str(dbfile)).close()
+        stats = import_wiki.run_import(str(v.wiki), str(dbfile))
+        ok("the filed page imports as one new page, not skipped",
+           stats["pages_new"] == 1 and stats["skipped_no_id"] == 0,
+           dict(stats))
+
+        conn = dbmod.db(str(dbfile))
+        row = conn.execute(
+            "SELECT source_uuid FROM sessions WHERE provider='wiki'").fetchone()
+        conn.close()
+        ok("...imported under the id the mover generated",
+           row is not None and row[0] == target.stem, (row, target.stem))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

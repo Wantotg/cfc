@@ -211,6 +211,36 @@ def main_():
        bar_lines(stream_out) == bar_lines(tool_out),
        (bar_lines(stream_out), bar_lines(tool_out)))
 
+    print("\n--- the post-turn bar states an honest count when the limit "
+          "isn't known (D-1.7-02) ---")
+    # Same shared ending, a model with no configured limit. print_context_bar
+    # must not go silent the way it used to (nothing at all) or invent a
+    # percentage — it says the count and that the limit is unknown, exactly
+    # once, on both paths.
+    UNLIMITED_MODEL = "stub-model-nolimit"
+    models.MODELS = [models._spec(MODEL, tools=True, limit=128_000),
+                     models._spec(UNLIMITED_MODEL, tools=True)]
+    main.set_process_model(UNLIMITED_MODEL)
+    try:
+        u_stream_sid = dbmod.new_session(conn, title="streaming-nolimit",
+                                         model=UNLIMITED_MODEL)
+        u_stream_out, u_stream_bars = drive(conn, u_stream_sid,
+                                            "/tools off\nhello\n/q\n")
+        u_tool_sid = dbmod.new_session(conn, title="tools-nolimit",
+                                       model=UNLIMITED_MODEL)
+        u_tool_out, u_tool_bars = drive(conn, u_tool_sid, "hello\n/q\n")
+    finally:
+        main.set_process_model(MODEL)
+
+    for label, out, bars in (("streaming", u_stream_out, u_stream_bars),
+                             ("tools", u_tool_out, u_tool_bars)):
+        ok(f"{label}: the bar is still reached with the usage",
+           len(bars) == 1 and bars[0][0] == UNLIMITED_MODEL, bars)
+        ok(f"{label}: it says the count and that the limit is unknown",
+           "tokens · limit unknown" in out, out[-300:])
+        ok(f"{label}: no percentage bar is drawn", not bar_lines(out),
+           out[-300:])
+
     print("\n--- the next turn replays what the last one left ---")
     # `history` is rebuilt from the db on reopen, so this is the check that a
     # turn is not merely rendered but usable as context afterwards — the
