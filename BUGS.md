@@ -155,57 +155,6 @@ one happened rather than let an empty `BUGS.md` imply the stronger one.
 
 ---
 
-## B-1.6.3-01a · The tone direction gets answered as if the user had typed it
-
-**Found:** 2026-08-03, v1.6.3 playtest. Reproduced the same day.
-
-**Symptom:** a user turn with nothing in it to answer (`ok`) comes back as
-*"Understood. I have noted the direction regarding tone adjustments based on
-emotional cues in user messages. How can I help you today?"* — the model
-answering cfc's own governor instead of the conversation.
-
-**Cause: the direction's position, not the model.** Every ordinary turn appends
-one `user`-role message after the user's own line — the compiled
-`[cfc direction]`, v1.3's design (`governor.compile_messages`, `split` defaults
-to `len(history)`). The last message in the request is therefore an instruction
-addressed to the model, in the same role the user's typing uses. A model
-resolving "answer the last user message" resolves it to the instruction.
-
-**Measured, not inferred.** Session 950's exact envelope rebuilt and sent:
-`google/gemma-4-31b-it` returned the reported answer near word-for-word on the
-first try; `minimax-m3` and `glm-5.2` answered normally. Four variants narrow it:
-
-| | |
-|---|---|
-| bare chat, `ok` | leaks |
-| bare chat, a real question | clean — the question wins |
-| **system prompt present, `ok`** | **still leaks** |
-| `ok` with no direction (control) | clean |
-
-The control rules out the model simply being chatty. The third row is the scope:
-**a system prompt does not protect against it, so Main and persona chats are
-exposed too.**
-
-**Why nothing caught it.** v1.3 drove the governor against GLM-5.2:thinking and
-recorded that "the shape is accepted". True, and the wrong question — it proves
-the provider tolerates two consecutive `user` messages, not that a model knows
-which one to answer.
-
-**Remedy, measured 3/3 clean:** add a clause to `governor.TONE_INSTRUCTION`
-stating the direction is not part of the conversation and is not to be
-acknowledged, quoted or replied to. One constant, no envelope change; the trait
-reminder shares that message and inherits it. `/continue` needs nothing (its
-direction is meant to be obeyed) and OOC needs nothing (its direction is the
-user's own text).
-
-**The alternative is a designer's question.** Moving the direction in front of
-the user's last message (`compile_messages` already takes `split`) also measured
-3/3 clean, but changes the envelope both turn paths build every ordinary turn,
-and falsifies the instruction's own wording — *"the immediately preceding user
-message"* — the moment it moves.
-
----
-
 ## B-11 · A wiki page deleted from the vault stays in the recall index
 
 **Found:** 2026-08-03, by reading during the v1.6.3 triage. Live on the

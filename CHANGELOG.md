@@ -27,6 +27,19 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Explain the final v1.6.4 hub behavior (`B-1.6.4-01`, `B-1.6.4-07`, `W-1.6.4-06`)
+The v1.6.4 triage corrected three hub boundaries. Automatic allocation no
+longer treats a manually chosen chat id as a new floor: the durable sequence
+mark stays where it is, and automatic allocation steps over an occupied id.
+The hub picker now resolves any ordinary chat by id rather than only the ten
+rows it printed, while still refusing wiki pages and routine transcripts. The
+session-table ID column measures the ids it contains, and rename feedback names
+the old and new titles and says when the redrawn table cannot show the renamed
+chat.
+- Files: db.py, hub.py, main.py, commands.py, tests/test_schema.py, tests/test_hub.py, tests/test_turn_paths.py
+- Status: shipped in the v1.6.4 triage
+- Commit: 36e6c69, 1b1ef63, e24b320, f4ba189
+
 ## 2026-08-03 — Rename a chat from the hub, through the same operation as `/title` (`W-10`)
 `/title <id> <new title>` could rename any session by id from inside a chat,
 but the hub had no rename at all — and `/title`'s own write had no refusal
@@ -43,7 +56,7 @@ mutating form; the automatic first-turn title write and `/title`'s
 non-mutating forms (bare, `/title <id>`) are unchanged.
 - Files: db.py, commands.py, main.py, hub.py, tests/test_hub.py, tests/test_turn_paths.py
 - Status: shipped
-- Commit: pending
+- Commit: 3129e45
 
 ---
 
@@ -78,9 +91,13 @@ now states the boundary directly: the direction is cfc control text, never
 acknowledged, quoted, summarised or answered, and the real answer is to the
 user's preceding message. It rides through unchanged for every caller that
 compiles it, including the combined tone-and-trait cadence reminder; position,
-`split`, `/continue`, OOC and provider routing are untouched. Not provable
-against a real model from a test — the v1.6.4 playtest repeats the reported
-turn with the affected provider.
+`split`, `/continue`, OOC and provider routing are untouched. The playtest
+could not prove the boundary — a model behaving and a direction never arriving
+produce the same screen — so the triage rebuilt the real `ok` envelope through
+the governor, assembly and wire paths and sent it to `google/gemma-4-31b-it`
+under both tone texts. The old envelope reproduced the reported answer 3/3;
+the v1.6.4 envelope answered the user 3/3, including one reply byte-identical
+to the playtest.
 - Files: governor.py, tests/test_governor.py, tests/test_turn_paths.py
 - Status: shipped
 - Commit: 8444ea5

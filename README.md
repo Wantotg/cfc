@@ -238,15 +238,17 @@ kept off this list; `/list sessions` inside a session shows every session there 
 
 | Key | Action |
 |-----|--------|
-| chat id | Open that chat — the number in the **ID** column |
+| chat id | Open that chat — any ordinary chat id, whether or not it is printed |
 | `n` | New session |
 | `p` | New **private** chat |
+| `r` | Rename an ordinary chat by id |
 | `q` | Quit |
 
 The number you type is the session id, the same one `/delete chat 7` and
 `/export chat 7` take. There is no second numbering anywhere: an id that isn't
-on the list is refused rather than opened, since the hub shows chats only and
-resuming a wiki page as a conversation is not a thing you meant to do.
+on the list can still open an ordinary chat. Wiki pages and routine transcripts
+are listed by `/list sessions` but are refused rather than opened, since
+resuming either as a conversation is not a thing you meant to do.
 
 The hub is home base. `/q` inside a session comes back here rather than quitting,
 so the program only exits from the hub. The splash does not reappear on the way

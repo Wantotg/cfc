@@ -610,6 +610,15 @@ tells you the true thing.** Styled output is `style=`, never brackets.
 **A prose sweep nearly renamed the persisted `[:remember …]` marker** during the
 `:`→`/` flip, which would have stopped every existing marker row from parsing. When you sweep for a prefix, storage formats are not prose.
 
+**A replacement can remove an incidental recovery path.** The old automatic
+session-id allocation re-derived its next value from `sessions`, so deleting a
+mistakenly chosen high id also repaired the sequence. v1.6.4 replaced that
+calculation with a durable mark; the new rule was implemented and tested, but
+the closed finding and handoff did not record the old self-repair behavior.
+One mistyped sixteen-digit id then poisoned the mark until a hand repair. When
+a new invariant removes a recovery path, record that loss and test the recovery
+path or explicitly reject it.
+
 ---
 
 ## Two time bases, and one conversion point
