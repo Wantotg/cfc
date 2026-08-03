@@ -83,6 +83,11 @@ _ALLOWLIST = {
     # runner.py: SYSTEM is a routine's system prompt — model input, out of
     # scope by the work order's own words ("Do not change ... model input").
     ("runner", "unattended cfc routine"),
+    # governor.py: TONE_INSTRUCTION is the compiled [cfc direction] sent to
+    # the model (B-1.6.3-01a) — never rendered to the human, who sees only
+    # the dim "Cooking for Cats -> tone check" label main.py prints
+    # alongside it. Same exception as runner.py's SYSTEM, one line up.
+    ("governor", "cfc control text"),
 }
 
 
