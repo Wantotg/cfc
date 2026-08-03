@@ -688,6 +688,19 @@ def test_hub_help_is_derived():
         flat_text = " ".join(text.split())
         ok(f"the legend carries: {text[:28]}", flat_text in flat_out, text)
 
+    # The Ctx legend is rendered by `_context_cell`, the same function the
+    # table's cells come from, so the shape in the help cannot drift from the
+    # shape on screen (Concept.md, v1.6.2: the hub explains what `number / ?`
+    # means). Round-tripped rather than compared to the literal "8 / ?" —
+    # a test written against the literal passes forever while the pair drifts.
+    ok("the Ctx legend names the column", "Ctx column" in flat_out, out[:400])
+    for tok in (0, 8):
+        cell = str(hubmod._context_cell("", tok, 0))
+        ok(f"the Ctx legend renders the cell for {tok} tokens",
+           cell in flat_out, cell)
+    ok("...and says the unknown state is a missing config limit",
+       "no 'limit' in config.py" in flat_out, out[:400])
+
 
 def test_hub_lifecycle():
     """`c`/`d` at the hub: create at a chosen id, delete by identity,

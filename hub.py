@@ -499,6 +499,27 @@ def print_hub_help():
         console.print(line)
 
     console.print()
+    console.print("The Ctx column", style="bold")
+    # Rendered by `_context_cell` itself, the same way the light's legend is
+    # rendered by `connection_light` — so the shapes in this legend cannot
+    # drift from the shapes in the table. Both example cells are computed
+    # without touching `MODELS`: an unknown model id has no configured limit
+    # (`models.context_limit` returns None), so the "/ ?" row is the same on
+    # every machine and pins nothing from config.py into the golden baseline.
+    examples = [(_context_cell("", 0, 0), "no token data yet"),
+                (_context_cell("", 8, 0),
+                 "tokens counted; this model has no 'limit' in config.py")]
+    cell_width = max(len(cell) for cell, _ in examples) + 3
+    for cell, what in examples:
+        line = Text("  ")
+        line.append(cell)
+        line.append(" " * (cell_width - len(cell)))
+        line.append(what, style="dim")
+        console.print(line)
+    console.print("  a percentage where the model's limit is configured",
+                  style="dim")
+
+    console.print()
     console.print("Inside a chat", style="bold")
     # highlight=False: rich's auto-highlighter reads `/help` as a path and
     # colours the slash separately, which makes the one line about how to type
