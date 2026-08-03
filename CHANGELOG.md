@@ -27,6 +27,23 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Record chat turn kind in provider errors (`D-17`)
+`errors.log`'s `chat` origin said a failure happened during a chat turn, but
+not which action — an ordinary send, `/swipe`, `/continue` or an OOC
+direction all wrote the same header. `_run_turn`'s own `kind` is now threaded
+through `handle_turn_error` into `errorlog.log_error`'s new optional `kind`
+argument, which renders as a separate `turn <kind>` header component for
+exactly those four actions. Title (`where="title"`) and routine
+(`where="routine <id>"`) failures are untouched — they have no invented
+chat-turn kind. `errorlog.py` stays dependency-free and append-only, and a
+private chat's refusal (at the write, before any of this) now also covers the
+new field.
+- Files: main.py, errorlog.py, tests/test_turn_paths.py, tests/test_private.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-03 — Name skipped wiki pages in `/update db` (`B-1.6.2-01a`)
 A missing-id skip warned with a count only, so knowing *which* top-level page
 to fix meant opening the wiki directory and guessing. `import_wiki._import_pages`

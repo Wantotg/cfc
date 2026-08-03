@@ -528,9 +528,13 @@ def run_session(conn, session_id, private=False, app_conn=None,
                       f"{current_model}\n")
         return True
 
-    def handle_turn_error(e):
+    def handle_turn_error(e, kind):
         """What both turn paths do with an HTTP error: record it, then decide
         how to render it. In that order, and the order is the fix.
+
+        `kind` is `_run_turn`'s own `"chat"`/`"continue"`/`"ooc"`/`"swipe"` —
+        passed through to `errorlog.log_error` so a chat-origin failure's
+        record names the action, not just that it was a chat (D-17).
 
         `revert_bad_model()` prints `provider rejected 'X' — switched back to Y`
         **instead of** the provider's words, so before this existed the one
@@ -561,7 +565,8 @@ def run_session(conn, session_id, private=False, app_conn=None,
         400s already poisons that id against ever being reverted onto later.
         """
         errorlog.log_error(e, session_id=session_id, model=current_model,
-                           interrupted=turns_interrupted, private=private)
+                           interrupted=turns_interrupted, private=private,
+                           kind=kind)
         if getattr(e, "status_code", None) == 400:
             rejected_models.add(current_model)
         if revert_model and is_transient_status(e):
@@ -757,7 +762,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
                     final = None
                     break
                 except httpx.HTTPError as e:
-                    handle_turn_error(e)
+                    handle_turn_error(e, kind)
                     final = None
                     break
                 revert_model = None   # the model answered — it's real; disarm
@@ -805,7 +810,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
                 assistant = ""
                 break
             except httpx.HTTPError as e:
-                handle_turn_error(e)
+                handle_turn_error(e, kind)
                 assistant = ""
                 break
             revert_model = None   # a response came back — the model is real

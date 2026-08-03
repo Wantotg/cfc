@@ -302,8 +302,14 @@ def main_():
     after_log = errorlog.LOG_PATH.read_text()
     ok("a private chat records nothing", after_log == before_log,
        after_log[len(before_log):][:200])
+    # D-17 added a second field to the same write — `kind`, the chat-turn
+    # action. Same guard, so the same two-assertion shape: no line at all,
+    # and the new field's own marker isn't the one line that snuck through.
+    ok("...and the new turn-kind field isn't in the nothing that was written",
+       "turn chat" not in after_log[len(before_log):], after_log[len(before_log):][:200])
     ok("...and log_error refuses it at the write, not at the call site",
-       errorlog.log_error(Exception(SECRET), session_id=1, private=True) is False)
+       errorlog.log_error(Exception(SECRET), session_id=1, private=True,
+                          kind="chat") is False)
 
     # The launch line is what makes an empty log mean "never written" rather
     # than "no errors" — the distinction the whole absence-watch rests on.

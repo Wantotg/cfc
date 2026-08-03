@@ -82,7 +82,7 @@ def log_launch():
 
 
 def log_error(err, *, session_id=None, model=None, interrupted=0,
-              private=False, where="chat"):
+              private=False, where="chat", kind=None):
     """Record a provider error. Returns True if it was written.
 
     `err` is the exception (or any object): its `str()` is the whole error
@@ -96,17 +96,26 @@ def log_error(err, *, session_id=None, model=None, interrupted=0,
     flag because 'was anything interrupted' and 'how much' are the same cost to
     record and not the same finding.
 
+    `kind` is the chat-turn action (`chat`, `swipe`, `continue`, `ooc`) that a
+    `where="chat"` failure happened during — origin and action are different
+    facts and D-17 asks for both. Title (`where="title"`) and routine
+    (`where="routine <id>"`) failures have no invented chat-turn kind, so
+    callers there leave it unset.
+
     A private chat writes nothing and reports False — see property 3.
     """
     if private:
         return False
-    head = f"{_now()}  error    " + " · ".join(str(x) for x in (
+    parts = [
         f"session {session_id}" if session_id is not None else "no session",
         f"model {model}" if model else "model unknown",
         f"{interrupted} turn(s) interrupted this session"
         if interrupted else "nothing interrupted this session",
         where,
-    ))
+    ]
+    if kind is not None:
+        parts.append(f"turn {kind}")
+    head = f"{_now()}  error    " + " · ".join(str(x) for x in parts)
     # The error line is indented onto its own line rather than appended: it can
     # be 800 characters of provider body plus the shape rider, and a header you
     # can scan is worth more than a single greppable line here — there is no

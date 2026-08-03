@@ -551,6 +551,94 @@ def main_():
     ok("...and never calls title or embed", calls == [], calls)
     main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
 
+    print("\n--- D-17: a chat-turn provider error records its action, not "
+          "just 'chat' ---")
+    # `errorlog.LOG_PATH` is already redirected above. Each scenario snapshots
+    # the log before and after driving, and checks only the appended tail —
+    # the same before/after shape `test_private.py` uses — so one scenario's
+    # entry can't be mistaken for another's.
+
+    def log_tail():
+        return errorlog.LOG_PATH.read_text() if errorlog.LOG_PATH.exists() else ""
+
+    def raise_http(msg):
+        def _raiser(messages, model=None):
+            raise httpx.HTTPError(msg)
+        return _raiser
+
+    def raise_http_tools(msg):
+        def _raiser(prefix, history, model, conn, session_id, ctx=None,
+                    max_calls=None, touched=None, first_message=None,
+                    instruction=None):
+            raise httpx.HTTPError(msg)
+        return _raiser
+
+    print("  (streaming path: chat, swipe, continue, ooc)")
+    main.stream_response = raise_http("boom-chat")
+    before = log_tail()
+    chat_err_sid = dbmod.new_session(conn, title="(untitled)")
+    drive(conn, chat_err_sid, "/tools off\nhello\n/q\n")
+    new = log_tail()[len(before):]
+    ok("an ordinary send's error names both the chat origin and its action",
+       "chat" in new and "turn chat" in new, new)
+
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+    swipe_sid = dbmod.new_session(conn, title="(untitled)")
+    drive(conn, swipe_sid, "/tools off\nhello\n/q\n")
+    main.stream_response = raise_http("boom-swipe")
+    before = log_tail()
+    drive(conn, swipe_sid, "/tools off\n/swipe\n/q\n")
+    new = log_tail()[len(before):]
+    ok("a /swipe's error names both the chat origin and swipe",
+       "chat" in new and "turn swipe" in new, new)
+
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+    cont_err_sid = dbmod.new_session(conn, title="(untitled)")
+    drive(conn, cont_err_sid, "/tools off\nhello\n/q\n")
+    main.stream_response = raise_http("boom-continue")
+    before = log_tail()
+    drive(conn, cont_err_sid, "/tools off\n/continue\n/q\n")
+    new = log_tail()[len(before):]
+    ok("a /continue's error names both the chat origin and continue",
+       "chat" in new and "turn continue" in new, new)
+
+    main.stream_response = raise_http("boom-ooc")
+    before = log_tail()
+    ooc_err_sid = dbmod.new_session(conn, title="(untitled)")
+    drive(conn, ooc_err_sid, "/tools off\n((be gentler))\n/q\n")
+    new = log_tail()[len(before):]
+    ok("an OOC turn's error names both the chat origin and ooc",
+       "chat" in new and "turn ooc" in new, new)
+
+    print("  (tool path: the other exception site tags kind the same way)")
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+    agent.call_api = lambda messages, model=None, tools=None: {
+        "choices": [{"message": {"role": "assistant", "content": ANSWER}}],
+        "usage": dict(USAGE),
+    }
+    main.agent_turn = agent.agent_turn
+
+    main.agent_turn = raise_http_tools("boom-chat-tools")
+    before = log_tail()
+    chat_tool_sid = dbmod.new_session(conn, title="(untitled)")
+    drive(conn, chat_tool_sid, "hello\n/q\n")
+    new = log_tail()[len(before):]
+    ok("tool path: an ordinary send's error names chat and its action",
+       "chat" in new and "turn chat" in new, new)
+
+    main.agent_turn = lambda *a, **k: {"content": ANSWER}
+    swipe_tool_sid = dbmod.new_session(conn, title="(untitled)")
+    drive(conn, swipe_tool_sid, "hello\n/q\n")
+    main.agent_turn = raise_http_tools("boom-swipe-tools")
+    before = log_tail()
+    drive(conn, swipe_tool_sid, "/swipe\n/q\n")
+    new = log_tail()[len(before):]
+    ok("tool path: a /swipe's error names chat and swipe",
+       "chat" in new and "turn swipe" in new, new)
+
+    main.agent_turn = lambda *a, **k: {"content": ANSWER}
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
