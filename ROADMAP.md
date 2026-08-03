@@ -1,71 +1,9 @@
 # Roadmap
 
-What each version of cfc added, and what's coming. **This is the front office**:
-what a release does, in general terms. *Why* it was built that way is in
-`CHANGELOG.md` and `HANDOVER.md`; what's still owed is in `BACKLOG.md` and
-`BUGS.md`. Nothing is described twice — a fix gets one line here and its id.
-
-Cas's document. A session may *propose* changes, it doesn't make them. Every
-version ends with his note, written from use rather than from the plan, and that
-note is the point of numbering this at all.
-
-A shipped version gets its full entry. A version still ahead gets only its
-number and title; the planning behind it lives in `ROADMAP_PRIVATE.md`,
-gitignored, and moves over here the day it ships.
-
-## The shape of an entry, from v1.1
-
-**Everything up to and including v1.0 is in an older, longer shape and stays
-that way** — those entries record what was true when they were written, and
-restyling them would destroy the one property they have. From v1.1:
-
-```markdown
-## vX.Y — Title — YYYY-MM-DD
-
-Two or three sentences: what this version added, and what you can do now that
-you couldn't before.
-
-**Added**
-- one line per feature
-
-**Fixed**
-- one line per fix, patch-note style, carrying its tracker id (D-10)
-
-> *Note: Cas's, from use.*
-```
-
-A fix is **one line**. It is already described in `legacy/BUGS.md`, closed in
-`CHANGELOG.md` with its reasoning, and indexed in `TRACKER.md`; the id is how a
-reader reaches all three. The note stays at the bottom, where it reads as the
-signature on a release rather than a preamble to one.
-
-## What "feature complete" means here
-
-**`BUGS.md` is empty.** Every claim made up to and including that version does
-what it says. `BACKLOG.md` does *not* have to be empty — that file is, by its
-own definition, things that still work and are merely owed.
-
-It's a line in the sand rather than a promise to stop adding features. cfc has
-shipped features that weren't fully functional as intended; a feature-complete
-version is where that stops being true. Two are planned: **v1.0**, minimal cfc,
-and **v1.9**, cfc as wanted. **v2.0** rebuilds on what the first two taught.
-
-Past v1.0 the arc is planned but not committed to numbers, so it isn't stubbed
-here yet.
-
-## The vault is a separate project
-
-The Obsidian vault cfc reads and writes has its own repo and its own roadmap.
-The seam: **cfc ships the mechanism, the vault ships the words** — safe code
-defaults, gate text and chat mechanics here; templates, structure and
-walkthrough material there. The two are not worked on equally. When a version
-lines up with something on the vault side, its note says so.
-
----
-
-**Everything through v1.0 is archived in [`legacy/ROADMAP.md`](legacy/ROADMAP.md)**
-— frozen at the tag, in the older per-version shape those entries were written
-in. From here down is the shape described above.
+Cas's public version history: each shipped version says what cfc added and ends
+with his note from use; proposals stay in private roadmaps until release.
+Pre-1.0 entries are frozen in [`legacy/ROADMAP.md`](legacy/ROADMAP.md);
+change-level reasoning is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
@@ -426,4 +364,11 @@ request, that nothing reads back.
 - `/update db` on a hidden wiki now says the chat index still runs, in the
   same line that says the wiki re-import didn't (`D-1.6-03`)
 
-> *Note: Cas's, from use.*
+> *Note: what was meant as a v1.6.1 became a v1.7 became a v1.6.1 again, and now my git is weird*
+```
+   |\__/,|   (`\   'oh, no'
+   |o o  |__ _)
+ _.( T   )  `  /
+((_ `^--' /_<  \
+`` `-'(((/  (((/
+```
