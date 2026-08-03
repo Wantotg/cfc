@@ -40,6 +40,7 @@ you>
 chats · sessions · outbox
     /status                 what's active in this session
     /status prompt          print the attached prompt's text (or persona/trait)
+    /status request         show the actual request sent on the latest turn
     /config                 deployment settings
     /search word            search every message for 'word'
 
@@ -174,6 +175,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
+  Request         none sent
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you> No prompt attached.
@@ -195,6 +197,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
+  Request         none sent
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
@@ -246,6 +249,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
+  Request         none sent
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you> Tagged session #2 with 'python'.
@@ -302,6 +306,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
   Database        on
   Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
+  Request         none sent
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you> Preset cleared — provider default.
@@ -356,6 +361,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Database        on
   Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
+  Request         none sent
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
@@ -370,6 +376,7 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Database        on
   Context         8 tokens · limit unknown
   Last turn       0 in · 8 out
+  Request         none sent
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>

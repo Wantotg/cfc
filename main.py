@@ -68,7 +68,8 @@ import mainchat
 from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
 from api import (stream_response, generate_title, is_transient_status,
-                 EMPTY_COMPLETION_RETRIES, TitleGenerationError)
+                 EMPTY_COMPLETION_RETRIES, TitleGenerationError,
+                 capture_requests)
 from backup import safe_backup
 import errorlog
 import screens
@@ -323,6 +324,14 @@ def run_session(conn, session_id, *, auto_export, private=False,
     # Only *turn* interrupts count; a cancelled memory search never reached the
     # provider, so including it would dilute the one signal this exists for.
     turns_interrupted = 0
+    # W-1.6.4-04: what cfc actually sent on the latest attempted turn, for
+    # `/status request`. Reset to a fresh empty list at the start of every
+    # attempted turn (`_run_turn`) — including one refused before any
+    # provider call — never merely cleared in place, so a reference an
+    # earlier `/status request` render took stays that render's own snapshot.
+    # Process-local: never written to the db, an export or the error log,
+    # and gone the moment this function returns.
+    request_capture = []
     tools_on = True        # session toggle; the master switch still gates it
     # The active named sampling preset (v1.5), or None for provider default.
     # Session-local like `tools_on`: survives turns and swipes in this open
@@ -718,7 +727,14 @@ def run_session(conn, session_id, *, auto_export, private=False,
         the original send did. It shares `"chat"`'s title-eligibility count
         without titling: `_finish_turn` only titles `kind == "chat"`.
         """
-        nonlocal current_title, turns_interrupted, revert_model
+        nonlocal current_title, turns_interrupted, revert_model, request_capture
+
+        # W-1.6.4-04: a fresh sink for every attempted turn, before anything
+        # else below can refuse or send — so even a turn that never reaches a
+        # provider call (Main's broken-profile refusal, an oversize turn)
+        # correctly leaves `/status request` empty rather than showing the
+        # previous turn's calls.
+        request_capture = []
 
         # Main's system prompt/persona are read live, immediately before
         # every request (Concept.md) — never the session's own (always-None)
@@ -799,31 +815,37 @@ def run_session(conn, session_id, *, auto_export, private=False,
             # `agent_turn(..., instruction=)` shape still works when no
             # preset is active.
             agent_kwargs = {"params": turn_params} if turn_params else {}
-            while True:
-                try:
-                    final = agent_turn(prefix, history, current_model,
-                                       conn, session_id, ctx=chat_ctx,
-                                       first_message=first_message,
-                                       instruction=instruction,
-                                       **agent_kwargs)
-                except KeyboardInterrupt:
-                    console.print("\n[tool turn cancelled]\n")
-                    turns_interrupted += 1
-                    final = None
-                    break
-                except httpx.HTTPError as e:
-                    handle_turn_error(e, kind)
-                    final = None
-                    break
-                revert_model = None   # the model answered — it's real; disarm
-                if (final.get("content") or "").strip():
-                    break
-                retry, empty_attempts = empty_completion_decision(
-                    chat_ctx.interactive, empty_attempts,
-                    EMPTY_COMPLETION_RETRIES)
-                if not retry:
-                    final = None
-                    break
+            # W-1.6.4-04: one capture spans every re-roll of this turn, not
+            # just its first attempt — `agent_turn`'s own internal loop makes
+            # one `call_api` per iteration, and this context manager is what
+            # lets every one of them reach `request_capture`, in order,
+            # without `agent_turn` needing a parameter for it at all.
+            with capture_requests(request_capture):
+                while True:
+                    try:
+                        final = agent_turn(prefix, history, current_model,
+                                           conn, session_id, ctx=chat_ctx,
+                                           first_message=first_message,
+                                           instruction=instruction,
+                                           **agent_kwargs)
+                    except KeyboardInterrupt:
+                        console.print("\n[tool turn cancelled]\n")
+                        turns_interrupted += 1
+                        final = None
+                        break
+                    except httpx.HTTPError as e:
+                        handle_turn_error(e, kind)
+                        final = None
+                        break
+                    revert_model = None   # the model answered — it's real; disarm
+                    if (final.get("content") or "").strip():
+                        break
+                    retry, empty_attempts = empty_completion_decision(
+                        chat_ctx.interactive, empty_attempts,
+                        EMPTY_COMPLETION_RETRIES)
+                    if not retry:
+                        final = None
+                        break
             if final is None:
                 console.print()
                 return
@@ -843,50 +865,55 @@ def run_session(conn, session_id, *, auto_export, private=False,
         assistant = ""
         usage = None
         empty_attempts = 0
-        while True:
-            try:
-                # Conditional, not `params=turn_params` unconditionally: a
-                # caller (or test stub) written against the pre-1.5
-                # `stream_response(messages, model=)` shape still works when
-                # no preset is active, which is every turn except one with a
-                # selected preset.
-                stream_kwargs = {"params": turn_params} if turn_params else {}
-                assistant, usage, reasoning = stream_response(
-                    api_messages, model=current_model, **stream_kwargs
-                )
-            except KeyboardInterrupt:
-                console.print("\n[streaming cancelled]\n")
-                turns_interrupted += 1
-                assistant = ""
-                break
-            except httpx.HTTPError as e:
-                handle_turn_error(e, kind)
-                assistant = ""
-                break
-            revert_model = None   # a response came back — the model is real
+        # W-1.6.4-04: same reasoning as the tool path above — one capture
+        # spans every re-roll, via `capture_requests` rather than a parameter
+        # `stream_response` itself needs to know about.
+        with capture_requests(request_capture):
+            while True:
+                try:
+                    # Conditional, not `params=turn_params` unconditionally: a
+                    # caller (or test stub) written against the pre-1.5
+                    # `stream_response(messages, model=)` shape still works when
+                    # no preset is active, which is every turn except one with a
+                    # selected preset.
+                    stream_kwargs = {"params": turn_params} if turn_params else {}
+                    assistant, usage, reasoning = stream_response(
+                        api_messages, model=current_model, **stream_kwargs
+                    )
+                except KeyboardInterrupt:
+                    console.print("\n[streaming cancelled]\n")
+                    turns_interrupted += 1
+                    assistant = ""
+                    break
+                except httpx.HTTPError as e:
+                    handle_turn_error(e, kind)
+                    assistant = ""
+                    break
+                revert_model = None   # a response came back — the model is real
 
-            if assistant.strip():
+                if assistant.strip():
+                    break
+
+                # Empty completion. Thinking models (e.g. GLM-5.2:thinking) do
+                # this now and then — a provider-side hiccup, not a size
+                # limit. Say which kind it was; the same context usually
+                # answers on a re-roll.
+                if reasoning.strip():
+                    console.print(
+                        "\n[the model thought but returned no answer — "
+                        "provider hiccup, common on thinking models]")
+                else:
+                    console.print("\n[empty response]")
+
+                # The re-roll policy now lives in one place, shared with the
+                # tool path above. What stays here is the diagnosis: this path
+                # can see whether the model thought before returning nothing,
+                # which the tool path's provider hides behind a 400.
+                retry, empty_attempts = empty_completion_decision(
+                    chat_ctx.interactive, empty_attempts, EMPTY_COMPLETION_RETRIES)
+                if retry:
+                    continue
                 break
-
-            # Empty completion. Thinking models (e.g. GLM-5.2:thinking) do this
-            # now and then — a provider-side hiccup, not a size limit. Say which
-            # kind it was; the same context usually answers on a re-roll.
-            if reasoning.strip():
-                console.print(
-                    "\n[the model thought but returned no answer — "
-                    "provider hiccup, common on thinking models]")
-            else:
-                console.print("\n[empty response]")
-
-            # The re-roll policy now lives in one place, shared with the tool
-            # path above. What stays here is the diagnosis: this path can see
-            # whether the model thought before returning nothing, which the
-            # tool path's provider hides behind a 400.
-            retry, empty_attempts = empty_completion_decision(
-                chat_ctx.interactive, empty_attempts, EMPTY_COMPLETION_RETRIES)
-            if retry:
-                continue
-            break
 
         if not assistant.strip():
             console.print()
@@ -1654,7 +1681,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
                     persona_name=persona_name, trait_names=trait_names,
                     tools_on=tools_on, db_on=db_on, injected=injected,
                     kind=cmd.arg(0) or None, is_main=is_main,
-                    active_preset=active_preset)
+                    active_preset=active_preset, requests=request_capture)
 
     def h_list(cmd):
         show_list(conn, cmd.raw, current_model)

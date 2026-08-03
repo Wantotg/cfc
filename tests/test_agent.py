@@ -609,6 +609,77 @@ def main():
        all(m.get("content") != wrapped for m in dbmod.load_history(conn, 1)),
        dbmod.load_history(conn, 1))
 
+    print("\n--- W-1.6.4-04: capture_requests records the real wire payload, "
+          "not a reconstruction ---")
+    # The real call_api, restored, driving a real httpx.Client — faked one
+    # level lower than every other test in this file, at the boundary
+    # call_api itself hands the payload to. Proving the capture is the wire
+    # shape means never letting `call_api` be a stub in the first place.
+    import api as apimod
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+            self.is_error = False
+
+        def json(self):
+            return self._payload
+
+    class _FakeHTTPXClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            return _FakeResponse(_script.pop(0))
+
+    _script = [
+        reply(None, calls=[("list_dir", {"path": str(jail)})]),
+        reply("done — real payloads captured"),
+    ]
+    real_httpx_client = apimod.httpx.Client
+    apimod.httpx.Client = _FakeHTTPXClient
+    agent.call_api = real_call
+    capture = []
+    try:
+        with apimod.capture_requests(capture):
+            final2, _ = drive(
+                agent.agent_turn,
+                [{"role": "system", "content": "sys prompt"}],
+                [{"role": "user", "content": "please list the dir"}],
+                "m", conn, 1)
+    finally:
+        apimod.httpx.Client = real_httpx_client
+
+    ok("one capture per real provider call, in order",
+       len(capture) == 2, capture)
+    ok("both captured bodies carry the real wire shape",
+       all({"model", "messages", "stream"} <= set(c) for c in capture),
+       capture)
+    ok("the first call offers tools; the second (after the tool result) "
+       "still does",
+       all(c.get("tools") for c in capture), [c.get("tools") for c in capture])
+    ok("the final answer actually came from the faked provider",
+       final2["content"] == "done — real payloads captured", final2)
+
+    # The tool-call assistant message agent_turn appends to `history` carries
+    # content="" (never omitted — history keeps it for persistence/replay).
+    # The SECOND call's captured body is the one that replays it back to the
+    # provider, through wire_messages — proving the capture shows what
+    # actually went out, not `history` itself.
+    second_messages = capture[1]["messages"]
+    tool_call_msgs = [m for m in second_messages
+                     if m.get("role") == "assistant" and "tool_calls" in m]
+    ok("exactly one tool-call message replayed on the second call",
+       len(tool_call_msgs) == 1, second_messages)
+    ok("wire_messages dropped its empty content in the captured body",
+       "content" not in tool_call_msgs[0], tool_call_msgs[0])
+
     agent.call_api = real_call
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

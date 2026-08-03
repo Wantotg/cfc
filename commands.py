@@ -820,7 +820,7 @@ def print_session_header(conn, session_id, model, title,
 def show_status(conn, session_id, model, title, private=False,
                 system_prompt_name=None, persona_name=None, trait_names=(),
                 tools_on=True, db_on=True, injected=(), kind=None,
-                is_main=False, active_preset=None):
+                is_main=False, active_preset=None, requests=()):
     """`/status` — everything active in this session, on one screen.
 
     It absorbs eight bare commands (`/title`, `/tokens`, `/prompt`, `/persona`,
@@ -832,8 +832,23 @@ def show_status(conn, session_id, model, title, private=False,
     `kind` prints one layer's *body* instead of the screen — `/status prompt`.
     The bare `/prompt` used to be the only way to read an attached prompt
     without opening the file, and folding it into a names-only screen would
-    have quietly dropped that.
+    have quietly dropped that. `/status request` (`W-1.6.4-04`) is the same
+    shape: `requests` is `run_session`'s own process-local capture of the
+    latest attempted turn's actual provider request bodies, read back rather
+    than reconstructed here.
     """
+    if kind == "request":
+        if not requests:
+            console.print("\nNo provider request was sent for the latest "
+                          "turn.\n")
+            return
+        total = len(requests)
+        for i, body in enumerate(requests, 1):
+            console.print(f"\nCall {i} of {total}")
+            console.print("---")
+            console.print(json.dumps(body, indent=2, ensure_ascii=False))
+        console.print("---\n")
+        return
     if kind and is_main and kind in ("prompt", "persona"):
         # Main's prompt/persona are live vault text, never a pool item — read
         # straight off the same seam the header and the turn path use rather
@@ -989,6 +1004,12 @@ def show_status(conn, session_id, model, title, private=False,
         # W-0.9.1-09 finding — the row you'd actually want to read at a
         # glance was styled identically to the ones saying nothing is on.
         _header_row("Last turn", f"{tok_in:,} in · {tok_out:,} out")
+    # W-1.6.4-04: a compact pointer, not the bodies themselves — those are
+    # `/status request`'s job. "none sent" rather than a blank/absent row:
+    # the honest answer for an empty capture is a fact, not silence.
+    request_summary = (f"{len(requests)} captured — {PREFIX}status request"
+                       if requests else "none sent")
+    _header_row("Request", request_summary, "cyan" if requests else "dim")
 
     from notes import inventory as notes_inventory
     note_files, _has_sub = notes_inventory()
@@ -1190,6 +1211,7 @@ _ALL_COMMANDS = [
                          "routines · tags · chats · sessions · outbox"),
         (f"{PREFIX}status", "what's active in this session"),
         (f"{PREFIX}status prompt", "print the attached prompt's text (or persona/trait)"),
+        (f"{PREFIX}status request", "show the actual request sent on the latest turn"),
         (f"{PREFIX}config", "deployment settings"),
         (f"{PREFIX}search word", "search every message for 'word'"),
     ]),

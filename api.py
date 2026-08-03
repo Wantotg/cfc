@@ -25,6 +25,51 @@ except ImportError:
 
 from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
 
+# --- request capture (W-1.6.4-04) -------------------------------------------
+#
+# The interactive turn's own record of what cfc actually sent, for `/status
+# request`. Set only for the span of one turn's call(s) via `capture_requests`
+# below — never a parameter threaded through `call_api`/`stream_response`
+# themselves, which is what keeps every existing caller and every existing
+# test stub of either function unchanged: title generation, /recall and
+# routine execution all go through `call_api` too, from outside any
+# `capture_requests` block, so they never touch this and never need to say so.
+#
+# A plain module global, not a `contextvars.ContextVar`: cfc is single-
+# threaded and synchronous end to end — one turn, one blocking call, no
+# asyncio and no worker thread — so there is no concurrent call this could
+# leak across. `main.py`'s process-wide `_process_model` is the same shape
+# for the same reason.
+_capture_sink = None
+
+
+class capture_requests:
+    """Context manager: append every payload `call_api`/`stream_response`
+    send to `sink` for calls made inside the block.
+
+    Restores whatever sink was active before (usually `None`) rather than
+    assuming that, so this can never silently drop an outer capture if
+    something one day nests it. `sink` itself is the caller's — `run_session`
+    holds it, resets it to a fresh list at the start of each attempted turn,
+    and reads it back for `/status request`; this context manager only says
+    *when* it is live, never what it holds or how long it persists.
+    """
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def __enter__(self):
+        global _capture_sink
+        self._prev = _capture_sink
+        _capture_sink = self.sink
+        return self
+
+    def __exit__(self, *exc):
+        global _capture_sink
+        _capture_sink = self._prev
+        return False
+
+
 # Read timeout for the non-streaming path, in seconds.
 #
 # This is the one number that has to be generous, and a bare `timeout=N` is the
@@ -136,6 +181,8 @@ def call_api(messages, model=None, tools=None, read_timeout=None, params=None):
         payload.update(params)
     if read_timeout is None:
         read_timeout = API_READ_TIMEOUT
+    if _capture_sink is not None:
+        _capture_sink.append(dict(payload))
     with httpx.Client(timeout=_timeout(read_timeout)) as client:
         r = client.post(
             f"{API_BASE}/chat/completions",
@@ -243,6 +290,9 @@ def stream_response(messages, model=None, params=None):
         payload["stream_options"] = {"include_usage": True}
     if params:
         payload.update(params)
+
+    if _capture_sink is not None:
+        _capture_sink.append(dict(payload))
 
     # Read stays at 300 here and is a different quantity from the one above:
     # httpx resets the read clock on every chunk, so this is the gap *between*

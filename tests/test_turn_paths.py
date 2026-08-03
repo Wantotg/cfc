@@ -35,6 +35,7 @@ stub any higher up would be testing the stub. No API key, no network.
 """
 import contextlib
 import io
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -45,6 +46,7 @@ sys.path.insert(0, str(ROOT))
 sys.dont_write_bytecode = True
 
 import agent
+import api
 import commands
 import db as dbmod
 import errorlog
@@ -889,6 +891,186 @@ def main_():
            routine_calls == [], routine_calls)
     finally:
         _runner.run_routine = real_run_routine
+
+    print("\n--- W-1.6.4-04: /status request shows the real captured wire "
+          "bodies ---")
+    # The real stream_response/call_api, restored — every other scenario in
+    # this file stubs one or both away, which is exactly what would make the
+    # capture invisible: it fires inside api.py's own payload construction,
+    # immediately before handing it to httpx, never at the call_api/
+    # stream_response boundary a caller can replace. Faked one level lower
+    # instead, at httpx.Client itself, the same technique test_agent.py uses
+    # for the same reason.
+    real_stream_response, real_call_api = api.stream_response, api.call_api
+    real_generate_title = api.generate_title
+    # The D-17 section just above leaves `main.agent_turn` permanently
+    # stubbed (its last reassignment, line ~805) — restore the real one so
+    # the tool-turn scenario below actually reaches `agent.call_api`.
+    main.agent_turn = agent.agent_turn
+
+    class _FakeErrorResponse:
+        def __init__(self, status_code, body):
+            self.is_error = True
+            self.status_code = status_code
+            self.text = body
+            class _Req:
+                url = "http://fake.test/chat/completions"
+            self.request = _Req()
+
+        def json(self):
+            raise ValueError("not json")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            pass
+
+    class _FakeStreamResponse:
+        def __init__(self, content, prompt_tokens=10, completion_tokens=5):
+            self.is_error = False
+            self._lines = [
+                "data: " + json.dumps(
+                    {"choices": [{"delta": {"content": content}}]}),
+                "data: " + json.dumps({"usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens}}),
+                "data: [DONE]",
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_lines(self):
+            return iter(self._lines)
+
+        def read(self):
+            pass
+
+    _post_script = []
+    _stream_script = []
+
+    class _FakeHTTPXClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            item = _post_script.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        def stream(self, method, url, headers=None, json=None):
+            item = _stream_script.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+    def _reply(content=None, calls=None):
+        msg = {"role": "assistant", "content": content}
+        if calls:
+            msg["tool_calls"] = [
+                {"id": f"call_{i}", "type": "function",
+                 "function": {"name": n, "arguments": json.dumps(a)}}
+                for i, (n, a) in enumerate(calls)]
+        return type("R", (), {
+            "is_error": False,
+            "json": lambda self, msg=msg: {
+                "choices": [{"message": msg}], "usage": USAGE},
+        })()
+
+    main.stream_response = real_stream_response
+    agent.call_api = real_call_api
+    main.generate_title = real_generate_title
+    real_httpx_client = api.httpx.Client
+    api.httpx.Client = _FakeHTTPXClient
+    try:
+        print("  (streaming turn: one captured body, and a title attempt "
+              "right after it cannot replace it)")
+        stream_sid = dbmod.new_session(conn, title="(untitled)")
+        _post_script[:] = [_reply("A Title")]
+        _stream_script[:] = [_FakeStreamResponse("a real streamed answer")]
+        out, _ = drive(conn, stream_sid,
+                       "/tools off\nhello\n/status request\n/q\n")
+        ok("exactly one body captured for a plain streaming turn",
+           "Call 1 of 1" in out and "Call 2" not in out, out)
+        ok("the captured body is the real wire shape",
+           '"stream": true' in out and '"hello"' in out, out)
+        ok("the title's own call never joined the capture",
+           '"A Title"' not in out, out)
+
+        print("  (a second turn on the same session replaces the capture, "
+              "not adds to it)")
+        _post_script[:] = [_reply("Should Not Land As A New Title")]
+        _stream_script[:] = [_FakeStreamResponse("a second real answer")]
+        out, _ = drive(conn, stream_sid,
+                       "/tools off\nsecond message\n/status request\n/q\n")
+        # A growing conversation legitimately carries "hello" forward inside
+        # the second turn's own request `messages` — that's real history,
+        # not a leftover capture. What proves the *capture* was reset rather
+        # than appended to is the call count: one body, not two, even though
+        # this is the session's second attempted turn.
+        request_json = out.rsplit("Call 1 of 1", 1)[-1]
+        ok("exactly one body captured, replacing the first turn's",
+           out.count("Call 1 of 1") == 1 and "Call 2" not in out, out)
+        ok("the captured body is this turn's request",
+           '"second message"' in request_json, request_json)
+
+        print("  (a multi-call tool turn: order, and every body shown, not "
+              "a reconstructed final one)")
+        tool_sid = dbmod.new_session(conn, title="(untitled)")
+        _post_script[:] = [
+            _reply(None, calls=[("list_dir", {"path": "/tmp"})]),
+            _reply("done after one tool round trip"),
+        ]
+        out, _ = drive(conn, tool_sid,
+                       "please read the directory\n/status request\n/q\n")
+        ok("both calls captured", "Call 1 of 2" in out and "Call 2 of 2" in out,
+           out)
+        ok("...in order",
+           "Call 1 of 2" in out and "Call 2 of 2" in out
+           and out.index("Call 1 of 2") < out.index("Call 2 of 2"), out)
+        ok("both calls still offered tools (budget not spent)",
+           out.count('"tools":') == 2, out)
+        ok("the second call's messages carry the first call's tool result, "
+           "not just the final answer",
+           '"role": "tool"' in out, out)
+
+        print("  (an oversize refusal leaves the capture empty)")
+        oversize_sid = dbmod.new_session(conn, title="(untitled)")
+        saved_models = models.MODELS
+        models.MODELS = [models._spec(MODEL, tools=True, limit=1)]
+        try:
+            out, _ = drive(conn, oversize_sid,
+                           "a message that is now oversize\n"
+                           "/status request\n/q\n")
+        finally:
+            models.MODELS = saved_models
+        ok("no provider request was sent for an oversize-refused turn",
+           "No provider request was sent" in out, out)
+
+        print("  (a pre-network 400 still leaves the attempted request "
+              "inspectable)")
+        err_sid = dbmod.new_session(conn, title="(untitled)")
+        _stream_script[:] = [_FakeErrorResponse(400, "provider says no")]
+        out, _ = drive(conn, err_sid,
+                       "/tools off\nthis will 400\n/status request\n/q\n")
+        ok("the failed turn's own request is still shown",
+           "Call 1 of 1" in out and '"this will 400"' in out, out)
+    finally:
+        api.httpx.Client = real_httpx_client
 
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

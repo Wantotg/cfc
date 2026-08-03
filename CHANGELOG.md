@@ -27,6 +27,38 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Show what cfc actually sent on a turn (`W-1.6.4-04`)
+A provider 400 always arrived as one opaque `[error] HTTP 400` line, and
+nothing else in cfc could show what the request actually looked like —
+`api.wire_messages`' transform, an active preset, a tool budget note, tools
+being withdrawn, all invisible after the fact. `run_session` now keeps a
+process-local `request_capture` list, reset to empty at the start of every
+attempted turn (including one refused before any provider call, so an
+oversize turn or Main's broken-profile refusal correctly leaves it empty).
+`api.call_api` and `api.stream_response` append the real wire payload —
+model, `wire_messages`-transformed messages, stream fields, offered tools,
+active preset values — to a sink the moment before handing it to httpx,
+whenever one is live.
+
+The sink is set only via `api.capture_requests`, a context manager
+`run_session` wraps around the streaming and tool-call retry loops — never
+a parameter added to `call_api`/`stream_response`/`agent_turn` themselves,
+which is what let every existing caller (title generation, `/recall`,
+routine execution) and every existing test stub of either function stay
+completely unchanged. `agent_turn`'s own internal loop needs no parameter
+either: every iteration's `call_api` call happens inside the same context,
+so a multi-call tool turn captures every one of them, in order, automatically.
+
+`/status request` renders the capture as `Call N of M`, and a compact
+`/status` row says how many calls were captured or `none sent`. The capture
+is genuinely process-local — a plain list living in `run_session`'s own call
+frame, never a schema field, export field, or error-log field — so a
+private chat's request is visible in `/status request` while the session is
+alive and gone with it, the same way its messages are.
+- Files: api.py, main.py, commands.py, tests/test_agent.py, tests/test_turn_paths.py, tests/test_private.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-03 — Open a listed session as the provider kind it actually is (`W-1.6.4-05`)
 A wiki page and a routine transcript were listed by `/list sessions` but
 could never be opened — `db.resolve_open_target` refused any provider but
@@ -77,7 +109,7 @@ later — so a re-import can no longer walk a chatted-in wiki session's
 recency backwards over real conversation activity.
 - Files: main.py, db.py, hub.py, chunk.py, import_wiki.py, tests/test_hub.py, tests/test_schema.py, tests/test_screens.py, tests/test_turn_paths.py, tests/test_turn_repair.py, tests/test_private.py
 - Status: shipped
-- Commit: pending
+- Commit: 4e9b0b7
 
 ## 2026-08-03 — Name the post-turn work, and let it leave (`W-1.6.4-02`)
 `finishing turn` printed permanently after every non-private turn, whether or

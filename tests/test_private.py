@@ -544,6 +544,107 @@ def main_():
                "SELECT content FROM messages").fetchall()))
     priv7.close()
 
+    print("\n--- W-1.6.4-04: the request capture is private-session-local "
+          "too — visible while it's alive, absent from every escape path ---")
+    import api
+    import json as jsonmod
+
+    MARKER_REQ = "zx-request-capture-marker-9f3"
+
+    class _FakeStreamResponse:
+        def __init__(self, content):
+            self.is_error = False
+            self._lines = [
+                "data: " + jsonmod.dumps(
+                    {"choices": [{"delta": {"content": content}}]}),
+                "data: [DONE]",
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_lines(self):
+            return iter(self._lines)
+
+        def read(self):
+            pass
+
+    _stream_script = [_FakeStreamResponse("an ordinary private answer")]
+
+    class _FakeHTTPXClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None, json=None):
+            return _stream_script.pop(0)
+
+    # The real stream_response, restored — this file stubs it to a lambda at
+    # the top, which never reaches api.py's own payload construction and so
+    # never populates the capture at all. Faked one level lower, at
+    # httpx.Client, the same technique test_agent.py and test_turn_paths.py
+    # use for the same reason.
+    real_stream_response = api.stream_response
+    real_httpx_client = api.httpx.Client
+    main.stream_response = real_stream_response
+    api.httpx.Client = _FakeHTTPXClient
+    priv9 = dbmod.db(":memory:")
+    p9 = dbmod.new_session(priv9, title="(untitled)")
+    try:
+        out9 = drive(priv9, p9, private=True,
+                    keys=f"/tools off\n{MARKER_REQ}\n/status request\n/q\n")
+    finally:
+        api.httpx.Client = real_httpx_client
+    ok("the marker is visible in /status request while the session is alive",
+       MARKER_REQ in out9 and "Call 1 of 1" in out9, out9)
+
+    # The marker itself is the ordinary chat text of this turn, so it's
+    # *supposed* to land in the private connection's own messages row and in
+    # an explicit export of that same session (decision 10/15) — proving its
+    # absence there would be proving the wrong thing. What must never reach
+    # any of the four surfaces below is the *capture's own rendering* —
+    # "Call 1 of", the literal wire-shaped JSON dump `/status request`
+    # prints — since nothing else in cfc ever writes that phrase anywhere.
+    CAPTURE_MARK = "Call 1 of"
+    ok("...but the capture's own rendering never reached the real database",
+       CAPTURE_MARK not in " ".join(
+           r[0] or "" for r in real.execute(
+               "SELECT content FROM messages").fetchall()))
+    ok("...nor the private connection's own database (it's a process-local "
+       "list, not a row — even the session that produced it never got a "
+       "row for it)",
+       CAPTURE_MARK not in " ".join(
+           r[0] or "" for r in priv9.execute(
+               "SELECT content FROM messages").fetchall()))
+
+    vault_tmp9 = Path(tempfile.mkdtemp())
+    saved_vault9 = exportmod.CHAT_EXPORT_DIR
+    exportmod.CHAT_EXPORT_DIR = str(vault_tmp9)
+    try:
+        exportmod.export_session(priv9, p9, quiet=True)
+        exported9 = "\n".join(
+            p.read_text(encoding="utf-8") for p in vault_tmp9.glob("*.md"))
+        ok("the marker's own text does reach an explicit export — that "
+           "escape hatch is unaffected by this feature",
+           MARKER_REQ in exported9, exported9)
+        ok("...but the capture's own rendering never does",
+           CAPTURE_MARK not in exported9, exported9)
+    finally:
+        exportmod.CHAT_EXPORT_DIR = saved_vault9
+
+    ok("...nor the error log",
+       CAPTURE_MARK not in (errorlog.LOG_PATH.read_text()
+                            if errorlog.LOG_PATH.exists() else ""))
+    priv9.close()
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))
