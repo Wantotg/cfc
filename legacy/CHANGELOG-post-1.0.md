@@ -356,7 +356,7 @@ pointer the screen's own refusal already gives (`W-1.2.1-02`).
   tests/test_screens.py, tests/test_hub.py, tests/test_model_revert.py,
   tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 1a91f21
 
 ## 2026-07-31 — Honest model recovery and repairable advice (1.2.1)
 Three changes, all about a model config or a recovery path saying more than it
@@ -413,7 +413,7 @@ same way.
   tests/test_turn_paths.py, tests/test_routines.py, tests/test_connection.py,
   tests/test_hub.py, tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 4a522ac
 
 ## 2026-07-31 — The wiki screen stops telling you to type `/wiki` (B-1.2-01)
 The wiki screen printed `/wiki diff [all] | /wiki commit [all] <message>` and

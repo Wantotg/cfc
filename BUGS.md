@@ -152,3 +152,38 @@ recurs on an uninterrupted turn and becomes a new finding; or it **is not
 observed across the whole 0.9 → 1.0 window and closes on absence**. The third is
 accepted. It is a weaker claim than "fixed", and v1.0's note has to say which
 one happened rather than let an empty `BUGS.md` imply the stronger one.
+
+---
+
+## B-1.7-05 · An empty wiki id is filed twice and never indexed
+
+**Symptom:** A wiki-bound draft whose frontmatter contains an empty `id:` is
+filed successfully, but the resulting page has two `id` keys. The importer reads
+the later empty value and skips the page as if it had no id, so the filed page
+never reaches the wiki index.
+
+**Where:** `mover._ensure_id()` treats an empty id as missing, prepends the new
+id, then serializes the original empty key as well. `import_wiki._import_pages()`
+skips a page when the parsed id is `None`. The direct path reproduces two id
+lines and an imported id of `None`.
+
+**Leading hypothesis:** Replace or remove an empty existing id before writing the
+generated one. Add the regression at the filing/import boundary; the existing
+test only covers a draft with no id key at all.
+
+---
+
+## B-1.7-01 · Whitespace-only reasoning draws an empty panel
+
+**Symptom:** A thinking model that streams reasoning containing only whitespace
+causes the live streaming path to draw an `AI · reasoning` panel with nothing
+readable in it.
+
+**Where:** `api.stream_response()` appends any truthy reasoning delta and sends
+it to `_thinking_panel()`, which builds the panel without trimming it first. The
+non-streaming tool path already guards its equivalent in
+`agent._render_reasoning()` with `.strip()`, so this is a streaming-path gap.
+
+**Leading hypothesis:** Apply the same readable-content check before updating the
+live reasoning panel, while keeping the raw value available for the empty-
+completion diagnosis.
