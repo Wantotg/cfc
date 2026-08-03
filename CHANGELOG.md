@@ -34,7 +34,7 @@ actual vault key. Wording only: the function, its callers, and `export.py`'s
 intentional legacy `VAULT_PATH` fallback are untouched.
 - Files: ui.py
 - Status: shipped
-- Commit: pending
+- Commit: df2995c
 
 ---
 
@@ -51,7 +51,7 @@ private chat's refusal (at the write, before any of this) now also covers the
 new field.
 - Files: main.py, errorlog.py, tests/test_turn_paths.py, tests/test_private.py
 - Status: shipped
-- Commit: pending
+- Commit: e391ef7
 
 ---
 
@@ -65,7 +65,7 @@ chat-index pass still runs — this is diagnostic evidence, not a new fatal or
 repair path.
 - Files: import_wiki.py, commands.py, tests/test_memory_states.py
 - Status: shipped
-- Commit: pending
+- Commit: 64d995a
 
 ---
 

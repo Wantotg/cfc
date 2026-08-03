@@ -155,5 +155,114 @@ one happened rather than let an empty `BUGS.md` imply the stronger one.
 
 ---
 
+## B-1.6.3-01a · The tone direction gets answered as if the user had typed it
+
+**Found:** 2026-08-03, v1.6.3 playtest. Reproduced the same day.
+
+**Symptom:** a user turn with nothing in it to answer (`ok`) comes back as
+*"Understood. I have noted the direction regarding tone adjustments based on
+emotional cues in user messages. How can I help you today?"* — the model
+answering cfc's own governor instead of the conversation.
+
+**Cause: the direction's position, not the model.** Every ordinary turn appends
+one `user`-role message after the user's own line — the compiled
+`[cfc direction]`, v1.3's design (`governor.compile_messages`, `split` defaults
+to `len(history)`). The last message in the request is therefore an instruction
+addressed to the model, in the same role the user's typing uses. A model
+resolving "answer the last user message" resolves it to the instruction.
+
+**Measured, not inferred.** Session 950's exact envelope rebuilt and sent:
+`google/gemma-4-31b-it` returned the reported answer near word-for-word on the
+first try; `minimax-m3` and `glm-5.2` answered normally. Four variants narrow it:
+
+| | |
+|---|---|
+| bare chat, `ok` | leaks |
+| bare chat, a real question | clean — the question wins |
+| **system prompt present, `ok`** | **still leaks** |
+| `ok` with no direction (control) | clean |
+
+The control rules out the model simply being chatty. The third row is the scope:
+**a system prompt does not protect against it, so Main and persona chats are
+exposed too.**
+
+**Why nothing caught it.** v1.3 drove the governor against GLM-5.2:thinking and
+recorded that "the shape is accepted". True, and the wrong question — it proves
+the provider tolerates two consecutive `user` messages, not that a model knows
+which one to answer.
+
+**Remedy, measured 3/3 clean:** add a clause to `governor.TONE_INSTRUCTION`
+stating the direction is not part of the conversation and is not to be
+acknowledged, quoted or replied to. One constant, no envelope change; the trait
+reminder shares that message and inherits it. `/continue` needs nothing (its
+direction is meant to be obeyed) and OOC needs nothing (its direction is the
+user's own text).
+
+**The alternative is a designer's question.** Moving the direction in front of
+the user's last message (`compile_messages` already takes `split`) also measured
+3/3 clean, but changes the envelope both turn paths build every ordinary turn,
+and falsifies the instruction's own wording — *"the immediately preceding user
+message"* — the moment it moves.
+
+---
+
+## B-11 · A wiki page deleted from the vault stays in the recall index
+
+**Found:** 2026-08-03, by reading during the v1.6.3 triage. Live on the
+database when found.
+
+**Symptom:** none. That is the entry. `/recall` can return and cite a wiki page
+that no longer exists in the vault, and nothing anywhere says so.
+
+**Cause:** `import_wiki.run_import` only inserts and updates. It walks the wiki
+directory and writes a row per frontmatter id; there is no reverse direction.
+The only deletion path in the module is `--wipe`, which drops the whole corpus,
+and `/update db` never calls it. So a page deleted, renamed to a new id, or
+moved out of the top level keeps its `provider='wiki'` session, its message, its
+chunks and its vectors forever.
+
+**Three live examples**, all added during earlier playtests and later deleted or
+moved (each traceable in the vault's own git history), eight chunks and eight
+vectors between them:
+
+| id | title still in the index |
+|---|---|
+| `20260730113100` | cfc Silent Bug Catalogue (Scars) |
+| `20260731094644` | *(untitled)* |
+| `20260801140001` | CFC Splash Screen Architecture |
+
+**Nothing detects it, and the thing that looks like it would does not.**
+`/update db`'s stale-chunk check (`db.find_stale_chunks`) looks for chunks whose
+*message row* is gone or mis-attributed. Here the message row is healthy — only
+the file behind it is gone — so it sees nothing and `/update db prune` will not
+touch them. `backfill.clear_wiki_stale` only removes a marker file.
+
+Recall is wiki-only by standing decision 9, so these rows are not in a corpus
+nobody reads: they are in the one corpus `/recall` searches.
+
+**Shape of the remedy.** `_import_pages` already walks every live page, so it
+already knows the full set of ids that should exist — the same function
+`B-1.6.2-01a` taught to carry skipped filenames forward can carry the
+disappeared ids forward the same way, with `commands.do_updatedb` rendering
+them. It belongs there rather than in `db.find_stale_chunks`, which has no
+business knowing what a vault is.
+
+**One decision sits on top of it, unmade:** whether `/update db` removes those
+rows or only reports them, leaving `/update db prune` to remove them. The
+existing stale-chunk path already chose report-then-prune, and matching it is
+the conservative answer — a delete reaching the vector index is standing
+decision 14's territory, and doing it silently inside a routinely-run command is
+what this project writes scars about. Proposed, not settled.
+
+**Parked to v2.0 with `W-07`, deliberately.** This is chunk/vector-schema code
+that the DB-layer rework replaces, `HANDOVER.md` already says to treat that
+schema as in flux, and real `ON DELETE CASCADE` sits in *rejected designs* for
+the same reason. Nothing about the symptom is felt in use — the fix protects
+retrieval quality on a corpus that is being rebuilt.
+
+**The transferable half, which is why the entry exists at all:** an importer
+that only ever adds is a one-way sync, and a one-way sync accumulates rows for
+things that no longer exist without ever failing. That is true of whatever
+store replaces this one. Carry the sentence, not the patch.
 
 ---

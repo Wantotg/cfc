@@ -22,6 +22,46 @@ not the file.
 
 # Closed since the split
 
+## ~~D-14 · `ui.vault_relative`'s docstring names the retired export key~~ — CLOSED (v1.6.3, 2026-08-03)
+
+**Closed 2026-08-03**, v1.6.3 — the docstring now names `VAULT_ROOT`, the key
+its caller passes. `TRACKER.md`, `CHANGELOG.md`, `df2995c`.
+
+The entry as it stood:
+
+---
+
+## D-14 · `ui.vault_relative`'s docstring names the retired export key
+
+**Found:** 2026-07-31, during the v1.3.1 config-key rename. The docstring says
+`config.VAULT_PATH`, but the function's caller passes `VAULT_ROOT` and the
+function never reads config. The behaviour is correct; the one-word reference
+is stale after `CHAT_EXPORT_DIR` replaced the old export-destination name.
+
+**Owed:** correct the docstring when that file is next touched. No code change
+is needed for the current release.
+
+## ~~D-17 · `errorlog` records the turn's module, never its kind~~ — CLOSED (v1.6.3, 2026-08-03)
+
+**Closed 2026-08-03**, v1.6.3 — provider error records now include the chat
+turn kind for ordinary sends, `/swipe`, `/continue` and OOC turns, while title
+and routine failures keep their existing origins. `TRACKER.md`, `CHANGELOG.md`,
+`e391ef7`.
+
+The entry as it stood:
+
+---
+
+## D-17 · `errorlog` records the turn's module, never its kind
+
+**Found:** 2026-08-02, while answering whether `/swipe` is luckier than sending
+a second message. `errorlog` records a chat error as `chat`, but does not say
+whether the turn was a send, `/swipe`, `/continue`, or OOC turn, so the question
+cannot be counted from the log.
+
+**Owed:** pass the turn kind from `_run_turn` to `errorlog` at its call site,
+preserving the existing module context while making those paths measurable.
+
 ## ~~D-1.7-04 · `/move` and `/outbox` describe overlapping files as different things~~ — CLOSED (v1.6.2, 2026-08-03)
 
 **Closed 2026-08-03**, v1.6.2 — the two screens now name their different
