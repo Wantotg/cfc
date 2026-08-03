@@ -153,7 +153,7 @@ def vault_relative(path, root):
     in the vault; trimming it to look local would hide exactly the surprise
     worth seeing.
 
-    Takes the root as an argument rather than reading `config.VAULT_PATH`,
+    Takes the root as an argument rather than reading `config.VAULT_ROOT`,
     because this module imports no other cfc module and is the bottom of the
     dependency graph — see `format_ts` above, which takes the same shape for
     the same reason. Display only: never build a real path out of this.

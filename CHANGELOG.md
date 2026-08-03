@@ -27,6 +27,17 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Correct the stale vault-key reference (`D-14`)
+`ui.vault_relative`'s docstring still named `config.VAULT_PATH` as the thing
+it avoids reading — stale since the `W-0.9.1-01` rename made `VAULT_ROOT` the
+actual vault key. Wording only: the function, its callers, and `export.py`'s
+intentional legacy `VAULT_PATH` fallback are untouched.
+- Files: ui.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-03 — Record chat turn kind in provider errors (`D-17`)
 `errors.log`'s `chat` origin said a failure happened during a chat turn, but
 not which action — an ordinary send, `/swipe`, `/continue` or an OOC
