@@ -689,14 +689,6 @@ def pick_session(conn):
         console.print("'/list sessions' inside a session shows every "
                       "session, routine runs included.", style="dim")
 
-        # The ids actually on screen. An id that exists but isn't listed is
-        # refused rather than opened: the picker's rows are filtered to
-        # chats (`recent_chats`), so accepting any id would let a wiki page
-        # or a routine transcript be resumed as a conversation — and the
-        # number would have come from somewhere other than what the user was
-        # looking at.
-        listed = {row[0] for row in rows}
-
         redraw = False
         while not redraw:
             choice = input("\n> ").strip().lower()
@@ -729,8 +721,15 @@ def pick_session(conn):
                               + ", ".join(k[0] for k, _, _ in HUB_KEYS)
                               + "  ('h' explains them).")
                 continue
-            if idx in listed:
-                return idx
-            console.print("That isn't one of the IDs listed. "
-                          "'/list sessions' inside a session shows every "
-                          "one.")
+            # Resolved, not matched against the ten rows on screen
+            # (`B-1.6.4-01`). The table is a recency view; the id space is
+            # not, and `r` and `d` two keys along had always resolved any
+            # id. What the row check was really protecting — that a wiki
+            # page or a routine transcript is not a conversation to resume —
+            # is now the resolver's own refusal, which says which of those
+            # the id turned out to be.
+            from db import resolve_open_target, OpenTargetError
+            try:
+                return resolve_open_target(conn, idx)["id"]
+            except OpenTargetError as e:
+                console.print(str(e))

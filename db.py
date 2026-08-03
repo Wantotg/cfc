@@ -432,36 +432,84 @@ def resolve_delete_target(conn, token):
     }
 
 
-class RenameTargetError(Exception):
+class ChatTargetError(Exception):
+    """Why an ordinary-chat target could not be resolved — a missing id,
+    Main, or a row that exists but isn't a chat (a wiki page or routine
+    transcript). The two subclasses below say which verb was refused."""
+
+
+class RenameTargetError(ChatTargetError):
     """Why a rename target could not be resolved — a missing id, Main
     (whose title is fixed, not just usually left alone), or a row that
     exists but isn't an ordinary chat (a wiki page or routine transcript)."""
 
 
-def resolve_rename_target(conn, chat_id):
-    """An ordinary durable chat's (id, title), resolved by identity — never
-    Main, a wiki page or a routine transcript. `W-10`: the hub's `r` and
-    `/title <id> <new title>` both resolve through this before writing
-    anything, so a numeric id that isn't a renameable chat is refused
-    identically from either surface.
+class OpenTargetError(ChatTargetError):
+    """Why a chat could not be opened by id from the hub — same three
+    reasons, said as a refusal to open rather than to rename."""
 
-    Raises RenameTargetError, with a reason fit to show directly, when
-    nothing resolves or the row is real but not an ordinary chat. Unlike
-    `resolve_delete_target`, Main is refused rather than accepted — a
-    rename has no `is_main` branch to take.
+
+def _resolve_chat_target(conn, chat_id, error, main_reason, tail):
+    """An ordinary durable chat's (id, title), resolved by identity — never
+    Main, a wiki page or a routine transcript.
+
+    One resolver with two wordings rather than two resolvers, which is the
+    `lead`-argument shape standing decision 17 already settled on for
+    `commands.show_wiki_status`: the refusals differ only in which verb did
+    not happen, and a second copy of the provider check is a second thing to
+    keep true. `error` is the subclass to raise, `main_reason` the whole
+    sentence for Main (whose reason is not just a different verb), and
+    `tail` the clause that closes the not-a-chat refusal.
     """
     if not conn.execute(
         "SELECT 1 FROM sessions WHERE id=?", (chat_id,)
     ).fetchone():
-        raise RenameTargetError(f"No session #{chat_id}.")
+        raise error(f"No session #{chat_id}.")
     provider = get_session_provider(conn, chat_id)
     if provider == PROVIDER_MAIN:
-        raise RenameTargetError("Main can't be renamed — its title is fixed.")
+        raise error(main_reason)
     if provider != PROVIDER_CHAT:
-        raise RenameTargetError(
+        raise error(
             f"#{chat_id} isn't a chat (it's a {provider or 'unknown'} "
-            f"session) — nothing was renamed.")
+            f"session) — {tail}.")
     return {"id": chat_id, "title": get_session_title(conn, chat_id)}
+
+
+def resolve_rename_target(conn, chat_id):
+    """`W-10`: the hub's `r` and `/title <id> <new title>` both resolve
+    through this before writing anything, so a numeric id that isn't a
+    renameable chat is refused identically from either surface.
+
+    Raises RenameTargetError, with a reason fit to show directly. Unlike
+    `resolve_delete_target`, Main is refused rather than accepted — a
+    rename has no `is_main` branch to take.
+    """
+    return _resolve_chat_target(
+        conn, chat_id, RenameTargetError,
+        "Main can't be renamed — its title is fixed.",
+        "nothing was renamed")
+
+
+def resolve_open_target(conn, chat_id):
+    """`B-1.6.4-01`: the hub's picker resolves a typed id through this
+    instead of checking it against the ten rows it happened to print.
+
+    The picker used to accept only what was on screen, so a chat older than
+    the ten most recent could not be opened from the hub at all — while `r`
+    and `d`, two keys along, had always resolved any id. The reason recorded
+    for the restriction was that accepting any id would let a wiki page or a
+    routine transcript be resumed as a conversation; that reason survives
+    here, as a refusal that names what the row actually is, instead of as a
+    blanket rule that also refused ordinary chats.
+
+    Main is refused by id and pointed at `m`, which opens it through
+    `_open_main` — the path that loads its bundle. Reaching Main by id would
+    skip that.
+    """
+    return _resolve_chat_target(
+        conn, chat_id, OpenTargetError,
+        "Main is opened with 'm' at the hub, not by its id.",
+        "nothing was opened")
 
 
 # --- the last-turn repair boundary (Concept.md's "One latest ordinary turn") -

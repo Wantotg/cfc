@@ -115,12 +115,17 @@ def main():
     ok("a NULL provider still shows as a chat",
        "Provider is NULL" in titles, titles)
 
-    print("\n--- the picker returns the id you typed, and only a listed one ---")
+    print("\n--- the picker returns the id you typed, resolved not matched ---")
     # There is one numbering in the app now. The picker used to show 1..n, so a
     # row read as "3" was typed at `/delete chat 3`, where 3 is an id — and in
-    # this very fixture id 3 is the wiki page. Typing a real-but-unlisted id
-    # must be refused rather than resumed: `recent_chats` filtered it out, so
-    # opening it would resume something the user was not looking at.
+    # this very fixture id 3 is the wiki page.
+    #
+    # What it must refuse is a row that isn't a conversation (`B-1.6.4-01`).
+    # It used to refuse everything it hadn't just printed, which took ordinary
+    # chats older than the ten displayed rows with it — while `r` and `d`, two
+    # keys along, resolved any id. `resolve_open_target` is the one check now,
+    # and the wiki/routine cases below are the part of the old rule that was
+    # actually load-bearing.
     import builtins
     import contextlib
     import io
@@ -148,6 +153,29 @@ def main():
         ok("the routine run's id (2) is refused, not opened",
            pick("2", "1") == 1)
         ok("an id that doesn't exist is refused", pick("99", "1") == 1)
+
+        # The finding itself: a chat pushed off the ten displayed rows is
+        # still openable by id. Proven absent from `recent_chats` first, the
+        # same way `r`'s own coverage does it, so the test can't pass by the
+        # chat happening to be on screen.
+        conn.execute("INSERT INTO sessions (id,title,model,provider,"
+                     "updated_at) VALUES (4242,'older than the rows','m',"
+                     "'nano-gpt','2026-07-01T10:00')")
+        for n in range(hub.HUB_CHATS + 1):
+            conn.execute("INSERT INTO sessions (id,title,model,provider,"
+                         "updated_at) VALUES (?,'fresher','m','nano-gpt',?)",
+                         (5000 + n, f"2026-07-3{n % 10}T10:00"))
+        # Main, which has an id like anything else — reaching it by that id
+        # would skip `_open_main`, the path that loads its bundle.
+        conn.execute("INSERT INTO sessions (id,title,model,provider,"
+                     "updated_at) VALUES (7,'Main','m','main',"
+                     "'2026-07-15T10:00')")
+        conn.commit()
+        ok("the setup actually pushed the old chat off the displayed rows",
+           4242 not in {r[0] for r in hub.recent_chats(conn)})
+        ok("...and the picker opens it anyway", pick("4242") == 4242)
+        ok("Main's own id is refused, and points at 'm'",
+           pick("7", "q") == "quit")
         # 2 is a live session id, and under the old 1..n scheme "2" was a valid
         # row. It must no longer be read as "the second row".
         ok("a positional 1..n guess no longer selects by position",
