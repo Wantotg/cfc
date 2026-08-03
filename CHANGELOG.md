@@ -27,7 +27,7 @@ One line: what changed and why it mattered.
 
 ---
 
-## 2026-08-02 — v1.7 — Wiki reads refuse leftovers; the first model-context experiment (`B-1.6-01`, `D-1.6-03`)
+## 2026-08-02 — v1.6.1 — Wiki reads refuse leftovers; the first model-context experiment (`B-1.6-01`, `D-1.6-03`)
 Three contained changes. `/wiki diff` and `/wiki status` now refuse a
 remainder they cannot use, on both the chat quick form and the wiki screen,
 before any git call — a typo like `diff al;;` used to run against the default
@@ -55,7 +55,7 @@ unaffected — this is the one narrow boundary in `Concept.md`'s inventory.
 - Files: commands.py, screens.py, recall.py, tests/test_screens.py,
   tests/test_memory_states.py, tests/test_recall.py
 - Status: shipped
-- Commit: pending
+- Commit: 2c4df49
 
 ---
 

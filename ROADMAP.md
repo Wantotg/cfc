@@ -286,6 +286,35 @@ saying every way cfc puts words in front of the model.
 =^._.^= ∫ 'make them visible, make them scream!'
 ```
 
+## v1.5 — Conversation control *completed, 01/08*
+
+An answer you didn't like is no longer something you have to live with. You can
+ask for a different one, take your own message back and try a different turn,
+or change how adventurous the model is before you do either. Chats also stop
+choosing their own numbers: you pick the id, and you can delete one from the
+hub instead of from inside it.
+
+**Added**
+- `/swipe` — a different answer to the message you already sent, same
+  everything else
+- `/undo` — take back your last message and the answer it caused
+- `/preset <name>` — named sampling profiles (temperature, top_p), configured
+  per model and only ever sent to one that accepts them
+- `c` at the hub and `/new <id>` — create a chat at an id you choose; a taken
+  id refuses and never replaces (W-1.3-03)
+- `d` at the hub and `/delete chat [<id>|main]` — delete a chat from either
+  side, on one confirmation and one index-clean deletion (W-1.3-02, W-1.4-03)
+- the chat-start tips rewritten around the commands that now exist
+  (W-1.3.1-05)
+
+**Fixed**
+- `config.example.py` said `preset_params` takes preset names; it takes
+  parameter names, and following it stopped cfc launching (B-1.5-02)
+
+> *Note: the most useful new features so far: turn the tide against the 503's*
+```
+(ง •̀_•́)ง 'take that!'
+```
 ## v1.5.1 — Say the true thing *completed, 02/08*
 
 A patch about honesty rather than features. The hub stops answering a question
@@ -316,35 +345,6 @@ they mean.
  /\___/\
 ꒰ ˶• ༝ - ˶꒱ 'MOAR FIXES!'
 ./づᡕᠵ᠊ᡃ࡚ࠢ࠘ ⸝່ࠡࠣ᠊߯᠆ࠣ࠘ᡁࠣ࠘᠊᠊°.~♡︎
-```
-## v1.5 — Conversation control *completed, 01/08*
-
-An answer you didn't like is no longer something you have to live with. You can
-ask for a different one, take your own message back and try a different turn,
-or change how adventurous the model is before you do either. Chats also stop
-choosing their own numbers: you pick the id, and you can delete one from the
-hub instead of from inside it.
-
-**Added**
-- `/swipe` — a different answer to the message you already sent, same
-  everything else
-- `/undo` — take back your last message and the answer it caused
-- `/preset <name>` — named sampling profiles (temperature, top_p), configured
-  per model and only ever sent to one that accepts them
-- `c` at the hub and `/new <id>` — create a chat at an id you choose; a taken
-  id refuses and never replaces (W-1.3-03)
-- `d` at the hub and `/delete chat [<id>|main]` — delete a chat from either
-  side, on one confirmation and one index-clean deletion (W-1.3-02, W-1.4-03)
-- the chat-start tips rewritten around the commands that now exist
-  (W-1.3.1-05)
-
-**Fixed**
-- `config.example.py` said `preset_params` takes preset names; it takes
-  parameter names, and following it stopped cfc launching (B-1.5-02)
-
-> *Note: the most useful new features so far: turn the tide against the 503's*
-```
-(ง •̀_•́)ง 'take that!'
 ```
 
 ## v1.5.2 — Fail out loud *completed, 02/08*
@@ -402,3 +402,28 @@ that title next to the filename in every picker cfc owns, and `{{user}}` /
 ```
 ≽ ^⎚ ˕ ⎚^ ≼ 'All in all, it's just another brick in the wall'
 ```
+
+## v1.6.1 — Say what happened *completed, 03/08*
+
+A patch that finishes v1.6. Two commands stop being confidently wrong, and cfc
+starts — carefully, in one narrow place — sending the model less than it
+stores. `/wiki diff` and `/wiki status` now refuse words they don't understand
+instead of quietly answering a question you didn't ask, and `/update db` says
+both of the things it did rather than only the one it skipped. Behind that, the
+first experiment in trimming what goes to the model: blank space, in one
+request, that nothing reads back.
+
+**Added**
+- `/recall` collapses runs of blank lines in the excerpts it sends to the
+  model — only in that one request, never in what is stored, retrieved,
+  cited or printed. Anything code-shaped or structured is sent exactly as
+  it is, including a code fence that isn't closed.
+
+**Fixed**
+- `/wiki diff <typo>` and `/wiki status <anything>` refuse instead of
+  answering about the default corpus — in a chat and on the wiki screen, from
+  one shared decision, before git is consulted (`B-1.6-01`)
+- `/update db` on a hidden wiki now says the chat index still runs, in the
+  same line that says the wiki re-import didn't (`D-1.6-03`)
+
+> *Note: Cas's, from use.*
