@@ -52,7 +52,7 @@ shell deciding whether either ran was reachable only by typing. It now drives
 restoring the old behaviour and watching the typo archive again.
 - Files: commands.py, tests/test_notes.py
 - Status: shipped
-- Commit: pending
+- Commit: 362d4e1
 
 ## 2026-08-03 — Show what cfc actually sent on a turn (`W-1.6.4-04`)
 A provider 400 always arrived as one opaque `[error] HTTP 400` line, and
