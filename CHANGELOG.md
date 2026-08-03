@@ -27,6 +27,58 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-03 — Open a listed session as the provider kind it actually is (`W-1.6.4-05`)
+A wiki page and a routine transcript were listed by `/list sessions` but
+could never be opened — `db.resolve_open_target` refused any provider but
+an ordinary chat, on the reasoning that neither was a conversation to
+resume. That reasoning no longer holds once `run_session` can tell the two
+apart on its own: the resolver now refuses only a missing id and Main
+(whose fixed profile still only loads through `m`), and returns the row's
+own `provider` alongside its id and title. `run_session` derives
+`is_main`/`is_wiki`/`is_routine` once, at open, straight off the durable
+row — so a numeric hub resume, `m`, and the routines screen's `open <id>`
+all reach identical behaviour, and there is no second, caller-supplied flag
+carrying that identity between one `run_session` call and the next (the old
+`_Open` wrapper and its `routine_transcript` field are gone; a session id
+to open next is now a bare int).
+
+A wiki session now prints a settled notice on open — typing continues a
+conversation grounded in the imported page, never edits the vault page
+itself, and a later re-import may refresh its opening message but nothing
+typed after it. Both a wiki page and a routine transcript accept ordinary
+free text and persist it in their own session like any other chat; neither
+auto-titles (titling is now provider-based and ordinary-chat-only, closing
+a latent path that could have silently retitled Main, a wiki page or a
+routine transcript the first time someone chatted in one), and neither can
+ever rerun the routine or edit the vault — nothing in `main.py` imports
+`runner` at all. `/swipe` and `/undo` now refuse visibly on an open wiki or
+routine session, checked before any turn classification, since either would
+otherwise be able to delete part of the imported page or the routine's own
+audit record. `/title` and `/delete chat` already refused these providers
+and are unchanged.
+
+`/list sessions` gains a `Kind` column (`Chat`/`Main`/`Wiki`/`Routine`, off
+the same provider constants everywhere else uses) and a footer stating
+every non-Main id can be opened from the hub; an unrecognised provider
+reads as `Chat`, matching the picker's existing fail-open bias. The
+picker's own curated table is unchanged and carries no Kind column.
+
+`chunk.py`'s `chunk_new` and `import_wiki.py` now track wiki source
+identity at message level rather than session level: a wiki session's
+imported-page message is the only one that chunks as `source='wiki'` — a
+typed continuation chunks as ordinary chat — determined by the message's
+own `source_uuid` matching the session's, with the old provider-only rule
+kept as a fallback on a database that has never run an import (no
+`source_uuid` column to check, and therefore no wiki rows to misclassify
+either). Re-importing an edited page updates only the message carrying its
+frontmatter id, never a continuation row, and takes whichever of the page's
+own `updated` timestamp and the session's existing `updated_at` sorts
+later — so a re-import can no longer walk a chatted-in wiki session's
+recency backwards over real conversation activity.
+- Files: main.py, db.py, hub.py, chunk.py, import_wiki.py, tests/test_hub.py, tests/test_schema.py, tests/test_screens.py, tests/test_turn_paths.py, tests/test_turn_repair.py, tests/test_private.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-03 — Name the post-turn work, and let it leave (`W-1.6.4-02`)
 `finishing turn` printed permanently after every non-private turn, whether or
 not a title attempt or auto-embed was about to run, and never said when they
@@ -46,7 +98,7 @@ the wording by patching `console.status` itself to a recording no-op context
 manager rather than by reading captured text.
 - Files: main.py, tests/test_turn_paths.py
 - Status: shipped
-- Commit: pending
+- Commit: 674dc3d
 
 ## 2026-08-03 — Automatic export is an explicit decision, not a config read mid-session (`D-1.6.4-08`)
 `run_session` used to read `config.AUTO_EXPORT` itself at every automatic

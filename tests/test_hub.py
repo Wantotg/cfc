@@ -115,17 +115,62 @@ def main():
     ok("a NULL provider still shows as a chat",
        "Provider is NULL" in titles, titles)
 
+    print("\n--- /list sessions carries a Kind column; the picker's table "
+          "doesn't (W-1.6.4-05) ---")
+    import contextlib as _contextlib
+    import io as _io
+    from ui import console as _console
+
+    def _captured(fn, *a, **k):
+        buf = _io.StringIO()
+        real_file = hub.console.file
+        hub.console.file = buf
+        try:
+            with _contextlib.redirect_stdout(buf):
+                fn(*a, **k)
+        finally:
+            hub.console.file = real_file
+        return buf.getvalue()
+
+    # Driven at a width that fits (same reasoning as the ID-width section
+    # below): eight columns of fixed content don't all fit in an 80-col
+    # fallback terminal, and Rich shrinks below any single column's nominal
+    # `width=` rather than raise — which is a real, accepted degradation for
+    # a narrow terminal, not something this test should be fighting.
+    _saved_console_w = _console.width
+    _console.width = 120
+    try:
+        list_out = _captured(hub.list_sessions, conn)
+        picker_out = _captured(hub.show_recent_chats, conn)
+    finally:
+        _console.width = _saved_console_w
+    ok("the Kind column header is there", "Kind" in list_out, list_out)
+    ok("a routine row is labelled Routine", "Routine" in list_out, list_out)
+    ok("a wiki row is labelled Wiki", "Wiki" in list_out, list_out)
+    # Rendered by row, not just present anywhere in the table: a table with
+    # only one 'Chat' cell would still make the bare substring check above
+    # pass, which is exactly the kind of proof that isn't one.
+    kind_rows = {r[0]: hub._kind_label(r[10]) for r in
+                conn.execute(hub._SELECT + hub._ORDER).fetchall()}
+    ok("every row's Kind label matches its own provider",
+       kind_rows == {1: "Chat", 2: "Routine", 3: "Wiki", 4: "Chat",
+                    5: "Chat", 6: "Chat"}, kind_rows)
+    ok("the footer states every non-Main id can be opened from the hub",
+       "can be opened from the hub" in list_out, list_out)
+    ok("the picker's own table carries no Kind column",
+       "Kind" not in picker_out, picker_out)
+
     print("\n--- the picker returns the id you typed, resolved not matched ---")
     # There is one numbering in the app now. The picker used to show 1..n, so a
     # row read as "3" was typed at `/delete chat 3`, where 3 is an id — and in
     # this very fixture id 3 is the wiki page.
     #
-    # What it must refuse is a row that isn't a conversation (`B-1.6.4-01`).
-    # It used to refuse everything it hadn't just printed, which took ordinary
-    # chats older than the ten displayed rows with it — while `r` and `d`, two
-    # keys along, resolved any id. `resolve_open_target` is the one check now,
-    # and the wiki/routine cases below are the part of the old rule that was
-    # actually load-bearing.
+    # `resolve_open_target` is the one check now, and it refuses only a
+    # missing id and Main (`W-1.6.4-05`) — a wiki page and a routine
+    # transcript resolve and open, as the kind of session each actually is,
+    # rather than being refused outright the way `B-1.6.4-01` first fixed
+    # this resolver to do. `run_session` is what tells them apart once
+    # opened; this is only proving the hub hands their id through.
     import builtins
     import contextlib
     import io
@@ -148,10 +193,10 @@ def main():
     try:
         ok("typing a listed chat id resumes that id", pick("4") == 4)
         ok("the newest chat's id works too", pick("1") == 1)
-        ok("the wiki page's id (3) is refused, not opened",
-           pick("3", "1") == 1)
-        ok("the routine run's id (2) is refused, not opened",
-           pick("2", "1") == 1)
+        ok("the wiki page's id (3) opens — its own id, not refused",
+           pick("3") == 3)
+        ok("the routine run's id (2) opens — its own id, not refused",
+           pick("2") == 2)
         ok("an id that doesn't exist is refused", pick("99", "1") == 1)
 
         # The finding itself: a chat pushed off the ten displayed rows is
@@ -176,10 +221,13 @@ def main():
         ok("...and the picker opens it anyway", pick("4242") == 4242)
         ok("Main's own id is refused, and points at 'm'",
            pick("7", "q") == "quit")
-        # 2 is a live session id, and under the old 1..n scheme "2" was a valid
-        # row. It must no longer be read as "the second row".
+        # 2 is a live session id (the routine row) and, under the old 1..n
+        # scheme, "2" was read as "the second displayed row" — a different
+        # chat entirely, since routine runs are excluded from that table.
+        # Resolving it as an id opens session #2 itself, proving it is not
+        # being read positionally.
         ok("a positional 1..n guess no longer selects by position",
-           pick("2", "q") == "quit")
+           pick("2") == 2)
         ok("'n' still means new", pick("n") is None)
         ok("'p' still means private", pick("p") == "private")
         ok("'q' still quits", pick("q") == "quit")

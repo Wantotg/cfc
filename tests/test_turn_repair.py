@@ -442,6 +442,29 @@ def main_():
     real_conn.close()
     priv.close()
 
+    print("\n--- W-1.6.4-05: /swipe and /undo refuse on wiki and routine, "
+          "before any classification ---")
+    # Neither session needs an answered turn to prove the point — the guard
+    # fires before `classify_latest_turn` ever runs, so a bare user-role row
+    # (a wiki page's own imported message; a routine transcript's first
+    # line) is enough. What matters is that nothing about either row changes.
+    wiki_sid = dbmod.new_session(conn, title="A wiki page",
+                                 provider=dbmod.PROVIDER_WIKI)
+    dbmod.save_message(conn, wiki_sid, "user", "the imported page content")
+    routine_sid = dbmod.new_session(conn, title="routine: Nightly",
+                                    provider=dbmod.PROVIDER_ROUTINE)
+    dbmod.save_message(conn, routine_sid, "assistant", "the routine's own answer")
+
+    for sid, kind in ((wiki_sid, "wiki page"), (routine_sid, "routine transcript")):
+        before = all_rows(conn, sid)
+        out = drive(conn, sid, "/swipe\n/undo\n/q\n")
+        ok(f"{kind}: /swipe refuses, naming what it is",
+           f"Can't swipe — this is a {kind}" in out, out)
+        ok(f"{kind}: /undo refuses, naming what it is",
+           f"Can't undo — this is a {kind}" in out, out)
+        ok(f"{kind}: neither command changed a row",
+           all_rows(conn, sid) == before, (before, all_rows(conn, sid)))
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

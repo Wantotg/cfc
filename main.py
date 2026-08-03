@@ -52,7 +52,8 @@ from db import (
     get_context_info,
     get_session_title, set_session_title,
     set_session_model, get_session_provider,
-    PROVIDER_MAIN, get_or_create_main, main_session_id, MainCorruption,
+    PROVIDER_CHAT, PROVIDER_MAIN, PROVIDER_WIKI, PROVIDER_ROUTINE,
+    get_or_create_main, main_session_id, MainCorruption,
     add_tag, remove_tag,
     get_system_prompt, get_system_prompt_name,
     set_system_prompt, clear_system_prompt,
@@ -152,19 +153,12 @@ _LEAVE = object()
 
 
 # What run_session() hands back to repl(): either None (the plain "back to
-# the hub" it always meant) or an _Open naming a session to open next without
-# going through the picker — a routine transcript a screen requested. One
-# shape rather than a bare int, because the *next* run_session() call needs
-# to know whether to label that session as a routine transcript, and that
-# fact has to survive the hop between two separate calls, not just one.
-class _Open:
-    __slots__ = ("session_id", "routine_transcript")
-
-    def __init__(self, session_id, routine_transcript=False):
-        self.session_id = session_id
-        self.routine_transcript = routine_transcript
-
-
+# the hub" it always meant) or a session id to open next without going
+# through the picker — a routine transcript or wiki page a screen requested.
+# A bare id, not a wrapper: `run_session` now derives everything it needs to
+# know about the session it opens (Main/wiki/routine/chat) from the durable
+# row's own `provider` (`W-1.6.4-05`), so there is no second copy of that
+# identity left to carry alongside the id between one call and the next.
 def _open_main(conn):
     """`m` at the hub, resolved to a session id — or None on a bundle
     problem, already reported, that leaves the hub exactly where it was: no
@@ -208,9 +202,9 @@ def repl(session_id=None):
     session and, like a session, has exactly one way out: back to the hub, or
     — for the routines screen's `open <routine-id>/<run-number>` — a
     persisted routine transcript.
-    `run_session()`'s return value carries that; this loop is what turns an
-    `_Open` into the next `run_session()` call, so a screen never has to call
-    `run_session()` itself.
+    `run_session()`'s return value carries that session id; this loop is what
+    turns it into the next `run_session()` call, so a screen never has to
+    call `run_session()` itself.
     """
     conn = db()
     # Two completion front ends for two readers: prompt_toolkit on a real
@@ -219,10 +213,8 @@ def repl(session_id=None):
     install_completion()
     set_completer(make_completer())
 
-    transcript = False
     while True:
         if session_id is None:
-            transcript = False
             try:
                 result = pick_session(conn)
             except (EOFError, KeyboardInterrupt):
@@ -254,28 +246,22 @@ def repl(session_id=None):
                     priv.close()
                 if outcome is None:
                     continue    # session_id is still None → back to the hub
-                session_id = outcome.session_id
-                transcript = outcome.routine_transcript
+                session_id = outcome
                 # Falls through to the ordinary run_session() call below,
                 # opening what the private chat's screen asked for.
             else:
                 session_id = result if result is not None \
                     else new_session(conn)
 
-        outcome = run_session(conn, session_id, auto_export=AUTO_EXPORT,
-                              routine_transcript=transcript)
-        if outcome is None:
-            session_id = None
-        else:
-            session_id, transcript = outcome.session_id, outcome.routine_transcript
+        session_id = run_session(conn, session_id, auto_export=AUTO_EXPORT)
 
     conn.close()
 
 
 def run_session(conn, session_id, *, auto_export, private=False,
-                app_conn=None, routine_transcript=False):
+                app_conn=None):
     """One session's REPL loop. Returns None (repl() reads that as 'back to
-    the hub') or an `_Open` naming the session to open next.
+    the hub') or a session id to open next.
 
     `auto_export` is the one value every automatic export in this session
     obeys — on leaving (`/q`, Ctrl-D), on `/new`, and on entering a screen
@@ -298,16 +284,21 @@ def run_session(conn, session_id, *, auto_export, private=False,
     never `conn`, so it reads and writes global state and never the private
     connection or its history.
 
-    `routine_transcript` labels this session, in its header only, as a run a
-    routine already made — the routines screen's `open <id>` opens one of
-    these as an ordinary chat, and the label is what stops the first line
-    typed there reading as an unrelated new conversation.
+    The row's `provider` (`W-1.6.4-05`) selects everything about *which kind*
+    of session this is — never the key that opened it (a numeric hub resume
+    reaches the exact same behaviour `m` or the routines screen's `open <id>`
+    would). There is no separate flag naming a routine transcript or a wiki
+    page any more: `is_wiki`/`is_routine`, derived below alongside `is_main`,
+    are the one copy of that fact for this call.
     """
     app_conn = conn if app_conn is None else app_conn
-    # The row's provider kind selects Main behaviour, never the key that
-    # opened it (Concept.md) — checked here so a numeric resume of Main's id
-    # enters this exact path too, not only the hub's `m`.
-    is_main = get_session_provider(conn, session_id) == PROVIDER_MAIN
+    # The row's provider kind selects behaviour, never the key that opened it
+    # (Concept.md) — checked here so a numeric resume of any row enters this
+    # exact path too, not only 'm' or a screen's own open.
+    provider = get_session_provider(conn, session_id)
+    is_main = provider == PROVIDER_MAIN
+    is_wiki = provider == PROVIDER_WIKI
+    is_routine = provider == PROVIDER_ROUTINE
     if is_main and get_first_message(conn, session_id) is None:
         # A Main row without its frozen First Message is corruption, not an
         # inactive state — refuse to open it rather than silently reloading
@@ -429,7 +420,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
         # thing 1.3 persists on purpose, and it persists as session metadata,
         # not as a `messages` row).
         render_answer(first_message["text"])
-    if routine_transcript:
+    if is_routine:
         # State it, don't warn it — same voice as the private-chat notice
         # below, and for the same reason: the label is the only thing that
         # stops a free-text message here reading as an ordinary new chat.
@@ -437,6 +428,17 @@ def run_session(conn, session_id, *, auto_export, private=False,
             "[bold]Routine transcript[/] — this is the session a routine "
             "run wrote. Typing here sends an ordinary chat message; it "
             "does not run the routine again.",
+            style="cyan"))
+    if is_wiki:
+        # Same voice, same reason (`W-1.6.4-05`): a wiki session's one
+        # existing message is an imported vault page, and free text typed
+        # here reads as continuing a conversation about it unless this says
+        # otherwise up front.
+        console.print(Text.from_markup(
+            "[bold]Wiki page[/] — typing here continues a conversation "
+            "grounded in this imported page. It does not edit the vault "
+            "page itself; a later re-import may refresh its opening "
+            "message, but never anything you add after it.",
             style="cyan"))
     if private:
         # State it, don't warn it — this is a fact about the session, in the
@@ -657,8 +659,16 @@ def run_session(conn, session_id, *, auto_export, private=False,
             # there is nothing for a status to cover.
             console.print()
             return
-        will_title = (kind == "chat" and (turn_count == 1
-                       or count_chat_answers(conn, session_id) == 1))
+        # Provider-based and ordinary-chat-only (`W-1.6.4-05`): Main, a wiki
+        # page and a routine transcript are all openable and chattable now,
+        # and none of them owns an editable title the way an ordinary chat
+        # does — Main's is fixed, a wiki page's is the vault page's own, and
+        # a routine transcript's names the run. `kind == "chat"` alone once
+        # meant "ordinary chat" only because nothing else could reach a
+        # first turn at all; it no longer does.
+        will_title = (provider == PROVIDER_CHAT and kind == "chat"
+                     and (turn_count == 1
+                          or count_chat_answers(conn, session_id) == 1))
         will_embed = commands.AUTO_EMBED
         if will_title and will_embed:
             wording = "Titling chat and updating memory..."
@@ -916,8 +926,23 @@ def run_session(conn, session_id, *, auto_export, private=False,
         `keep_user=True` is /swipe — the user row survives so the send can be
         re-answered; `keep_user=False` is /undo — both go. Returns the
         pruned user row id on success, None on a refusal (already printed).
+
+        `W-1.6.4-05`: checked before any classification, not folded into one
+        of `classify_latest_turn`'s existing refusal states — a wiki page's
+        one message is the imported page itself and a routine transcript's
+        rows are its audit record, and pruning either would delete real,
+        durable material that this repair boundary was built to make safe
+        for ordinary chat only.
         """
         nonlocal history
+        if is_wiki or is_routine:
+            kind = "wiki page" if is_wiki else "routine transcript"
+            what = ("the imported page" if is_wiki
+                   else "the routine's audit record")
+            console.print(f"Can't {verb} — this is a {kind}; {verb} could "
+                          f"remove part of {what}, not just an ordinary "
+                          f"reply.", style="dim")
+            return None
         state, user_id, answer_ids = classify_latest_turn(conn, session_id)
         if state == TURN_NOTHING_SENT:
             console.print(f"Nothing to {verb} — no ordinary message sent "
@@ -1095,7 +1120,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
             safe_export(conn, session_id)
         result = screens.enter(app_conn, mode=target, chat_model=current_model)
         if result is not None:
-            outcome = _Open(result, routine_transcript=True)
+            outcome = result
         return _LEAVE
 
     def h_config(cmd):
@@ -1743,9 +1768,10 @@ def run_session(conn, session_id, *, auto_export, private=False,
             handler = HANDLERS.get(cmd.verb)
             if handler is not None:
                 if handler(cmd) is _LEAVE:
-                    # `outcome` may already carry an `_Open` — set by
-                    # `_enter_screens` or by `/new p` bubbling one up from a
-                    # nested private chat — or stay None, the plain "hub".
+                    # `outcome` may already carry a session id to open next —
+                    # set by `_enter_screens` or by `/new p` bubbling one up
+                    # from a nested private chat — or stay None, the plain
+                    # "hub".
                     break
                 continue
             # An unrecognised verb is not a command; it goes to the model,

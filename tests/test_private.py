@@ -432,8 +432,7 @@ def main_():
         finally:
             sys.stdin = real_stdin
         ok("the routines screen resolved the transcript on the durable db",
-           outcome is not None and outcome.session_id == routine_sid,
-           outcome)
+           outcome == routine_sid, outcome)
         durable_text = " ".join(
             r[0] for r in real.execute(
                 "SELECT content FROM messages").fetchall())

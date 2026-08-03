@@ -153,16 +153,20 @@ def main():
     after = conn.execute("SELECT id, provider FROM sessions ORDER BY id").fetchall()
     ok("the routine backfill is idempotent too", before == after)
 
-    # chunk.py derives a chunk's `source` from the session's provider. The rule
-    # is "wiki if provider == 'wiki' else chat", so a routine transcript indexes
-    # as source='chat' — the same as before the marker existed. Pinned because
-    # it is a coupling nobody would think to check when editing either file.
-    import inspect as _inspect
+    # chunk.py derives a chunk's `source` from the session's provider (plus,
+    # for a wiki session, the message's own source identity — W-1.6.4-05). A
+    # routine transcript's provider is never 'wiki', so it indexes as
+    # source='chat' regardless — the same as before the marker existed.
+    # Driven for real rather than grepped off chunk.py's source text: a
+    # literal pin on the implementation is exactly the hazard HANDOVER warns
+    # against, and it is what this assertion used to be.
     import chunk as chunkmod
-    src = _inspect.getsource(chunkmod)
-    ok("chunk.py still keys source off 'wiki' only, so routine -> 'chat'",
-       "'wiki' if provider == 'wiki' else 'chat'" in src
-       or '"wiki" if provider == "wiki" else "chat"' in src, src[:0])
+    dbmod.save_message(conn, rid, "assistant", "the routine's own answer")
+    chunkmod.chunk_new(conn)
+    routine_sources = {r[0] for r in conn.execute(
+        "SELECT source FROM chunks WHERE session_id=?", (rid,)).fetchall()}
+    ok("a routine transcript's chunks still index as source='chat'",
+       routine_sources == {"chat"}, routine_sources)
     conn.close()
 
     print("\n--- a marker written by the real code must parse here ---")
@@ -925,6 +929,88 @@ def main():
     ok("the imported wiki page's id ignores the chosen high one",
        wiki_row_id == 1, wiki_row_id)
     wc.close()
+
+    print("\n--- wiki source identity survives continuation and re-import "
+          "(W-1.6.4-05) ---")
+    wikidir2 = tmp / "wiki_src2"
+    wikidir2.mkdir()
+    page_path = wikidir2 / "cont.md"
+    page_path.write_text(
+        "---\nid: 20260102000000\ntitle: Continuable page\n"
+        "updated: 2026-01-01\n---\nOriginal page body.\n")
+    contdb = tmp / "wiki_continue.db"
+    dbmod.DB_PATH = contdb
+    seed2 = dbmod.db()
+    seed2.close()
+    stats2 = import_wiki.run_import(str(wikidir2), str(contdb))
+    ok("the continuation-page import created one new page",
+       stats2["pages_new"] == 1, dict(stats2))
+
+    wc2 = sqlite3.connect(contdb)
+    wiki_sid = wc2.execute(
+        "SELECT id FROM sessions WHERE provider='wiki'").fetchone()[0]
+    source_mid = wc2.execute(
+        "SELECT id FROM messages WHERE session_id=? AND source_uuid IS NOT NULL",
+        (wiki_sid,)).fetchone()[0]
+
+    # Simulate opening the page as a chat and continuing it — the real
+    # `save_message`, not a hand-built INSERT, so `updated_at` moves the exact
+    # way an actual turn leaves it (and lands well after the page's own
+    # 'updated: 2026-01-01').
+    dbmod.save_message(wc2, wiki_sid, "user", "a typed reply")
+    cont_mid = wc2.execute(
+        "SELECT id FROM messages WHERE session_id=? AND source_uuid IS NULL",
+        (wiki_sid,)).fetchone()[0]
+    conv_updated_at = wc2.execute(
+        "SELECT updated_at FROM sessions WHERE id=?", (wiki_sid,)).fetchone()[0]
+
+    import chunk as chunkmod2
+    chunkmod2.chunk_new(wc2)
+    source_sources = {r[0] for r in wc2.execute(
+        "SELECT source FROM chunks WHERE message_id=?", (source_mid,)).fetchall()}
+    cont_sources = {r[0] for r in wc2.execute(
+        "SELECT source FROM chunks WHERE message_id=?", (cont_mid,)).fetchall()}
+    ok("exactly the imported page's own message chunks as wiki material",
+       source_sources == {"wiki"}, source_sources)
+    ok("the typed continuation chunks as chat, not wiki",
+       cont_sources == {"chat"}, cont_sources)
+
+    # Re-import the same page, edited — must update only the source message,
+    # never touch the continuation row, and never walk updated_at backwards
+    # over the conversation that happened since.
+    before_msg_count = wc2.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id=?",
+        (wiki_sid,)).fetchone()[0]
+    wc2.close()
+    page_path.write_text(
+        "---\nid: 20260102000000\ntitle: Continuable page\n"
+        "updated: 2026-01-02\n---\nEdited page body.\n")
+    stats3 = import_wiki.run_import(str(wikidir2), str(contdb))
+    ok("the re-import updated the existing page, not a new one",
+       stats3["messages_updated"] == 1 and stats3.get("pages_new", 0) == 0,
+       dict(stats3))
+
+    wc3 = sqlite3.connect(contdb)
+    after_msg_count = wc3.execute(
+        "SELECT COUNT(*) FROM messages WHERE session_id=?",
+        (wiki_sid,)).fetchone()[0]
+    ok("the continuation row is still there — re-import added nothing, "
+       "deleted nothing",
+       after_msg_count == before_msg_count, (before_msg_count, after_msg_count))
+    cont_still = wc3.execute(
+        "SELECT content FROM messages WHERE id=?", (cont_mid,)).fetchone()[0]
+    ok("...and its content is untouched",
+       cont_still == "a typed reply", cont_still)
+    source_now = wc3.execute(
+        "SELECT content FROM messages WHERE id=?", (source_mid,)).fetchone()[0]
+    ok("...while the source message picked up the edit",
+       "Edited page body" in source_now, source_now)
+    new_updated_at = wc3.execute(
+        "SELECT updated_at FROM sessions WHERE id=?", (wiki_sid,)).fetchone()[0]
+    ok("updated_at did not move backwards over the conversation activity",
+       new_updated_at == conv_updated_at,
+       (conv_updated_at, new_updated_at))
+    wc3.close()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

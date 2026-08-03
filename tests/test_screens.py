@@ -1161,10 +1161,15 @@ def test_private_screen_uses_app_conn():
         finally:
             sys.stdin = real_stdin
         ok("the routines screen found the session on the durable conn",
-           outcome is not None and outcome.session_id == durable_sid,
-           outcome)
-        ok("...and labelled it a routine transcript",
-           outcome.routine_transcript is True)
+           outcome == durable_sid, outcome)
+        # There is no separate routine-transcript flag to check any more
+        # (`W-1.6.4-05`): whichever `run_session` call opens `outcome` next
+        # derives that label itself, off the row's own `provider` — proven
+        # directly in test_turn_paths.py. What this test owns is narrower:
+        # the id the routines screen resolved really is that routine row.
+        ok("...and it really is the routine row, not some other session",
+           dbmod.get_session_provider(durable, outcome)
+           == dbmod.PROVIDER_ROUTINE, outcome)
         priv.close()
         durable.close()
 

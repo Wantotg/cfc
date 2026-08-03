@@ -168,11 +168,12 @@ def _migrate_routine_sessions(conn):
 
     Note what this does to the memory index, because it is easy to change by
     accident: `chunk.py` derives a chunk's `source` from the session's
-    provider, and its rule is 'wiki' if provider == 'wiki' else 'chat'. So a
-    routine transcript keeps indexing as source='chat', exactly as it did
-    before this marker existed. That is the intended behaviour, not a
-    coincidence of the rule — a routine's transcript is chat-shaped, and recall
-    filters to the wiki anyway.
+    provider — plus, for a wiki session, whether the individual message
+    carries the imported page's own source identity (`W-1.6.4-05`) — and a
+    routine transcript's provider is never `'wiki'`, so it keeps indexing as
+    source='chat', exactly as it did before this marker existed. That is the
+    intended behaviour, not a coincidence of the rule — a routine's
+    transcript is chat-shaped, and recall filters to the wiki anyway.
 
     A plain `UPDATE` takes SQLite's write lock the moment it opens a write
     cursor, whether or not its `WHERE` matches anything — so this checks with
@@ -433,9 +434,10 @@ def resolve_delete_target(conn, token):
 
 
 class ChatTargetError(Exception):
-    """Why an ordinary-chat target could not be resolved — a missing id,
-    Main, or a row that exists but isn't a chat (a wiki page or routine
-    transcript). The two subclasses below say which verb was refused."""
+    """Why a target could not be resolved for a given verb — a missing id,
+    Main, or (rename only, since `W-1.6.4-05`) a row that exists but isn't
+    an ordinary chat. The two subclasses below say which verb was refused,
+    and no longer share the same refusal set."""
 
 
 class RenameTargetError(ChatTargetError):
@@ -445,8 +447,10 @@ class RenameTargetError(ChatTargetError):
 
 
 class OpenTargetError(ChatTargetError):
-    """Why a chat could not be opened by id from the hub — same three
-    reasons, said as a refusal to open rather than to rename."""
+    """Why a row could not be opened by id from the hub — a missing id, or
+    Main (whose fixed profile only loads through 'm'). A wiki page or a
+    routine transcript is not a refusal any more (`W-1.6.4-05`) — either
+    opens, as the kind of session it actually is."""
 
 
 def _resolve_chat_target(conn, chat_id, error, main_reason, tail):
@@ -491,25 +495,36 @@ def resolve_rename_target(conn, chat_id):
 
 
 def resolve_open_target(conn, chat_id):
-    """`B-1.6.4-01`: the hub's picker resolves a typed id through this
-    instead of checking it against the ten rows it happened to print.
+    """`B-1.6.4-01`, widened by `W-1.6.4-05`: the hub's picker resolves a
+    typed id through this instead of checking it against the ten rows it
+    happened to print.
 
     The picker used to accept only what was on screen, so a chat older than
     the ten most recent could not be opened from the hub at all — while `r`
-    and `d`, two keys along, had always resolved any id. The reason recorded
-    for the restriction was that accepting any id would let a wiki page or a
-    routine transcript be resumed as a conversation; that reason survives
-    here, as a refusal that names what the row actually is, instead of as a
-    blanket rule that also refused ordinary chats.
+    and `d`, two keys along, had always resolved any id. It then went
+    further and refused a wiki page or a routine transcript outright, on the
+    reasoning that neither was a conversation to resume — which stopped
+    being true the moment `run_session` learned to open either as the kind
+    of session it actually is. This resolver's job is narrower now: does the
+    id exist, and is it Main (whose fixed profile only loads through `m`,
+    never by id — reaching it here would skip `_open_main`'s bundle load).
+    Everything else, `run_session` derives itself from the row's `provider`.
 
-    Main is refused by id and pointed at `m`, which opens it through
-    `_open_main` — the path that loads its bundle. Reaching Main by id would
-    skip that.
+    Returns `{"id", "title", "provider"}` rather than refusing a non-chat
+    kind — the caller no longer needs to know *what* it is beyond Main to
+    decide whether to open it, only `run_session` does, and it reads the
+    row itself.
     """
-    return _resolve_chat_target(
-        conn, chat_id, OpenTargetError,
-        "Main is opened with 'm' at the hub, not by its id.",
-        "nothing was opened")
+    if not conn.execute(
+        "SELECT 1 FROM sessions WHERE id=?", (chat_id,)
+    ).fetchone():
+        raise OpenTargetError(f"No session #{chat_id}.")
+    provider = get_session_provider(conn, chat_id)
+    if provider == PROVIDER_MAIN:
+        raise OpenTargetError(
+            "Main is opened with 'm' at the hub, not by its id.")
+    return {"id": chat_id, "title": get_session_title(conn, chat_id),
+            "provider": provider}
 
 
 # --- the last-turn repair boundary (Concept.md's "One latest ordinary turn") -

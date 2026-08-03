@@ -843,6 +843,53 @@ def main_():
     ok("/title refuses a missing id the same way 'r' does",
        f"No session #{missing_id}." in out, out)
 
+    print("\n--- W-1.6.4-05: a wiki page and a routine transcript open "
+          "through the same run_session path, take a continuation, never "
+          "re-title and never rerun a routine ---")
+    import runner as _runner
+    routine_calls = []
+
+    def _spy_run_routine(*a, **k):
+        routine_calls.append((a, k))
+        raise AssertionError(
+            "run_routine must never be called from an opened chat turn")
+
+    real_run_routine = _runner.run_routine
+    _runner.run_routine = _spy_run_routine
+    try:
+        wiki_sid2 = dbmod.new_session(conn, title="a wiki page",
+                                      provider=dbmod.PROVIDER_WIKI)
+        dbmod.save_message(conn, wiki_sid2, "user", "the imported page content")
+        out, _ = drive(conn, wiki_sid2, "/tools off\na typed continuation\n/q\n")
+        ok("the wiki notice prints on open",
+           "Wiki page" in out and "does not edit the vault page" in out, out)
+        ok("the continuation persists as an ordinary reply",
+           any(r[1] == "a typed continuation" for r in
+               conn.execute("SELECT role, content FROM messages WHERE "
+                            "session_id=?", (wiki_sid2,)).fetchall()))
+        ok("opening and chatting in it never re-titles the page",
+           dbmod.get_session_title(conn, wiki_sid2) == "a wiki page",
+           dbmod.get_session_title(conn, wiki_sid2))
+
+        routine_sid2 = dbmod.new_session(conn, title="routine: Nightly",
+                                         provider=dbmod.PROVIDER_ROUTINE)
+        dbmod.save_message(conn, routine_sid2, "assistant", "the routine's own answer")
+        out, _ = drive(conn, routine_sid2, "/tools off\na typed continuation\n/q\n")
+        ok("the routine-transcript notice prints on open",
+           "Routine transcript" in out and "does not run the routine again" in out,
+           out)
+        ok("the continuation persists as an ordinary reply",
+           any(r[1] == "a typed continuation" for r in
+               conn.execute("SELECT role, content FROM messages WHERE "
+                            "session_id=?", (routine_sid2,)).fetchall()))
+        ok("opening and chatting in it never re-titles the transcript",
+           dbmod.get_session_title(conn, routine_sid2) == "routine: Nightly",
+           dbmod.get_session_title(conn, routine_sid2))
+        ok("neither session ever reached run_routine",
+           routine_calls == [], routine_calls)
+    finally:
+        _runner.run_routine = real_run_routine
+
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

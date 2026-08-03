@@ -24,7 +24,7 @@ from rich.table import Table
 from rich.text import Text
 
 import models
-from db import PROVIDER_MAIN, PROVIDER_ROUTINE, PROVIDER_WIKI
+from db import PROVIDER_CHAT, PROVIDER_MAIN, PROVIDER_ROUTINE, PROVIDER_WIKI
 from ui import (connection_light, CONNECTION_STYLE, console,
                 context_style, DISPLAY_NAME, format_ts)
 
@@ -80,7 +80,15 @@ def _strip_md(name):
     return name or ""
 
 
-def _widths(id_w=_ID_MIN):
+# The widest label `_kind_label` can print ("Routine"), plus the padding and
+# vertical rule one extra column costs — the same accounting `_CHROME`'s own
+# comment does for the other three fixed columns, kept separate because only
+# `list_sessions` pays it (`W-1.6.4-05`).
+_KIND_W = 7
+_KIND_CHROME = _KIND_W + 3
+
+
+def _widths(id_w=_ID_MIN, show_kind=False):
     """(title, prompt, persona) for the current terminal, given the width the
     ID column needs (`_id_width`).
 
@@ -96,7 +104,7 @@ def _widths(id_w=_ID_MIN):
     with 70 columns to spread over is mostly trailing space, while at width 8
     every prompt name reads 'medium …' and tells you nothing. Truncating the
     field that distinguishes rows is the more expensive mistake."""
-    avail = console.size.width - _CHROME - id_w
+    avail = console.size.width - _CHROME - id_w - (_KIND_CHROME if show_kind else 0)
     prompt = persona = _NAME_MIN
     title = max(_TITLE_MIN, avail - prompt - persona)
     if title > _TITLE_ENOUGH:
@@ -107,7 +115,7 @@ def _widths(id_w=_ID_MIN):
     return title, prompt, persona
 
 
-def _session_table(title, rows=()):
+def _session_table(title, rows=(), show_kind=False):
     """Both views are the same table at different limits; building them in one
     place is what stops them drifting apart again.
 
@@ -115,13 +123,19 @@ def _session_table(title, rows=()):
     because the ID column's width comes off them and the flexible three are
     divided up from whatever is left.
 
+    `show_kind` adds the Kind column `/list sessions` uses to say what a row
+    actually is (`W-1.6.4-05`) — the picker's curated table doesn't take it,
+    since it only ever shows chats and Main, already styled distinctly.
+
     Title is no_wrap + ellipsis rather than wrapping: a wrapped title stacked a
     single row four lines high and pushed the rest of the list off the screen,
     which is worse than a truncated one you can still read."""
     id_w = _id_width(rows)
-    title_w, prompt_w, persona_w = _widths(id_w)
+    title_w, prompt_w, persona_w = _widths(id_w, show_kind=show_kind)
     table = Table(title=title, border_style="dim")
     table.add_column("ID", style="cyan", justify="right", width=id_w)
+    if show_kind:
+        table.add_column("Kind", width=_KIND_W)
     table.add_column("Latest message", width=17)
     table.add_column("Messages", justify="right", width=8)
     table.add_column("Ctx", justify="right", width=7)
@@ -191,7 +205,26 @@ def _context_cell(model, tok_in, tok_out):
     return Text(f"{pct:.1f}%", style=context_style(pct))
 
 
-def _add_rows(table, rows):
+# The Kind column's labels, off the same provider constants that already
+# discriminate everywhere else (`W-1.6.4-05`) — never a second, hand-written
+# mapping that could name a kind the code doesn't actually check for.
+_KIND_LABELS = {
+    PROVIDER_CHAT: "Chat",
+    PROVIDER_MAIN: "Main",
+    PROVIDER_WIKI: "Wiki",
+    PROVIDER_ROUTINE: "Routine",
+}
+
+
+def _kind_label(provider):
+    """An unrecognised provider reads as an ordinary chat — the same
+    fail-open bias `recent_chats`' deny list already carries (module
+    docstring): a wrong extra 'Chat' label is a visible, correctable
+    mistake, and a blank Kind cell is not more honest than that."""
+    return _KIND_LABELS.get(provider, "Chat")
+
+
+def _add_rows(table, rows, show_kind=False):
     """Every view numbers by **session id**, and there is no second numbering.
 
     There used to be: `/list` showed ids, the picker showed 1..n against what
@@ -210,29 +243,41 @@ def _add_rows(table, rows):
         # key off `provider` rather than the string on screen.
         title_cell = (Text(title, style="bold cyan")
                      if provider == PROVIDER_MAIN else title)
-        table.add_row(
-            str(sid),
+        cells = [str(sid)]
+        if show_kind:
+            cells.append(_kind_label(provider))
+        cells.extend([
             format_ts(ts),
             str(msg_count + (1 if has_first_message else 0)),
             _context_cell(model, tok_in, tok_out),
             title_cell,
             _strip_md(prompt_name),
             _strip_md(persona_name),
-        )
+        ])
+        table.add_row(*cells)
 
 
 def list_sessions(conn):
     """Every session, routine runs and wiki pages included. This is the
     'show me everything' view — the picker is the curated one, and keeping
-    this unfiltered is what stops a routine transcript becoming unreachable."""
+    this unfiltered is what stops a routine transcript becoming unreachable.
+
+    Carries a Kind column (`W-1.6.4-05`) the picker's table doesn't: this is
+    the one place a wiki page or a routine transcript shows up at all, so
+    it's also the one place worth saying what each row actually is — and
+    that every non-Main id here can be opened from the hub by number, not
+    only the chats.
+    """
     rows = conn.execute(_SELECT + _ORDER).fetchall()
     if not rows:
         console.print("No sessions yet.")
         return
 
-    table = _session_table("Sessions", rows)
-    _add_rows(table, rows)
+    table = _session_table("Sessions", rows, show_kind=True)
+    _add_rows(table, rows, show_kind=True)
     console.print(table)
+    console.print("Every id above except Main can be opened from the hub "
+                  "by number.", style="dim")
     console.print()
 
 

@@ -127,18 +127,37 @@ def chunk_new(db):
     the CLI, by :updatedb, and by the per-turn auto-embed hook."""
     ensure_table(db, rebuild=False)
     done = {(r[0], r[1], r[2]) for r in db.execute("SELECT message_id, kind, ordinal FROM chunks")}
+    # A wiki session is chattable now (`W-1.6.4-05`), so its provider alone no
+    # longer says which of its messages is the imported page and which is an
+    # ordinary reply typed later — only the imported page's own message
+    # carries the frontmatter id as `source_uuid`, matching the session's own.
+    # `source_uuid` only exists once an import has run against this db at
+    # least once (import_wiki.migrate adds it standalone); a db that has
+    # never seen one has no wiki rows to misclassify either, so falling back
+    # to the old provider-only rule is exactly as correct there as it always
+    # was.
+    msg_cols = {r[1] for r in db.execute("PRAGMA table_info(messages)")}
+    has_source_uuid = "source_uuid" in msg_cols
+    uuid_select = "m.source_uuid, s.source_uuid" if has_source_uuid else "NULL, NULL"
     # LEFT JOIN so a message whose session row is missing still chunks (source
-    # falls back to 'chat'); provider drives the corpus tag.
-    rows = db.execute("""
-        SELECT m.id, m.session_id, m.content, s.provider
+    # falls back to 'chat'); provider (plus, for wiki, the source identity)
+    # drives the corpus tag.
+    rows = db.execute(f"""
+        SELECT m.id, m.session_id, m.content, s.provider, {uuid_select}
         FROM messages m LEFT JOIN sessions s ON s.id = m.session_id
         WHERE m.content IS NOT NULL
     """).fetchall()
 
     made = 0
     per_kind = {"message":0, "thinking":0}
-    for mid, sid, content, provider in rows:
-        source = "wiki" if provider == "wiki" else "chat"
+    for mid, sid, content, provider, msg_uuid, sess_uuid in rows:
+        if provider != "wiki":
+            source = "chat"
+        elif not has_source_uuid:
+            source = "wiki"   # no per-message identity to check — old rule
+        else:
+            source = "wiki" if msg_uuid is not None and msg_uuid == sess_uuid \
+                else "chat"
         ordinal = 0
         for kind, seg in split_kinds(content):
             for piece in slice_text(seg):

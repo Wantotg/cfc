@@ -170,12 +170,19 @@ def _import_pages(db, wiki_dir):
         created = str(fm.get("created") or "")
         updated = str(fm.get("updated") or created)
 
-        row = db.execute("SELECT id FROM sessions WHERE provider=? AND source_uuid=?",
+        row = db.execute("SELECT id, updated_at FROM sessions WHERE provider=? AND source_uuid=?",
                          (PROVIDER, wid)).fetchone()
         if row:
-            sid = row[0]
+            sid, existing_updated = row
+            # W-1.6.4-05: a wiki session is chattable now, so `updated_at`
+            # may already reflect real conversation activity newer than this
+            # page's own edit. A re-import must not walk it backwards —
+            # take whichever timestamp actually sorts later. Both are
+            # zero-padded, big-endian ISO dates/datetimes, so plain string
+            # comparison is chronological comparison.
+            new_updated = max(updated, existing_updated or "")
             db.execute("UPDATE sessions SET title=?, updated_at=? WHERE id=?",
-                       (title, updated, sid))
+                       (title, new_updated, sid))
         else:
             sid = alloc_session_id(db)
             db.execute(
