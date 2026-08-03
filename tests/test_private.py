@@ -79,7 +79,11 @@ def drive(conn, sid, private, keys):
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
-            main.run_session(conn, sid, private=private)
+            # auto_export=True always: the control (private=False) needs its
+            # export path armed to prove the spy can fire at all, and every
+            # private=True call needs it armed the same way to prove privacy's
+            # gate — not a False auto_export — is what's blocking it.
+            main.run_session(conn, sid, auto_export=True, private=private)
     finally:
         sys.stdin = real_stdin
     return out.getvalue()
@@ -104,7 +108,6 @@ def main_():
     main.generate_title = lambda *a, **k: "(untitled)"   # guarded out, no call
     main.auto_embed = lambda: embeds.append(1)
     main.safe_export = lambda *a, **k: exports.append(1)
-    main.AUTO_EXPORT = True   # force the control's export path on, deterministically
 
     script = "/tools off\nhello\n/q\n"
 
@@ -424,8 +427,8 @@ def main_():
         try:
             with contextlib.redirect_stdout(buf):
                 main.console.file = buf
-                outcome = main.run_session(priv6, p6, private=True,
-                                           app_conn=real)
+                outcome = main.run_session(priv6, p6, auto_export=False,
+                                           private=True, app_conn=real)
         finally:
             sys.stdin = real_stdin
         ok("the routines screen resolved the transcript on the durable db",

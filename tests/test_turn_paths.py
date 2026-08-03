@@ -95,7 +95,7 @@ def drive(conn, sid, keys):
             main.console.file = out
             commands.console.file = out
             agent.console.file = out
-            main.run_session(conn, sid, private=False)
+            main.run_session(conn, sid, auto_export=False, private=False)
     finally:
         sys.stdin = real_stdin
         main.print_context_bar = real_bar
@@ -443,7 +443,7 @@ def main_():
                 main.console.file = out
                 commands.console.file = out
                 agent.console.file = out
-                main.run_session(conn, sid, private=False)
+                main.run_session(conn, sid, auto_export=False, private=False)
         finally:
             sys.stdin = real_stdin
             main.generate_title = real_title

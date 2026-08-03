@@ -76,7 +76,7 @@ def main_():
         try:
             with contextlib.redirect_stdout(out):
                 main.console.file = out
-                main.run_session(conn, sid)
+                main.run_session(conn, sid, auto_export=False)
         finally:
             sys.stdin = real_stdin
             main.stream_response = real_stream

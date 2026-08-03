@@ -51,15 +51,15 @@ FIXTURE_TRAITS = HERE / "_fixture_traits"
 # ordinary case and the one worth pinning — the richer states are covered in
 # tests/test_pools.py and tests/test_first_message.py instead of faked here.
 FIXTURE_FIRST_MESSAGES = HERE / "_fixture_first_messages"
-# The script ends with :q, and :q honours AUTO_EXPORT — so every `check` used
-# to write the fixture session into Cas's real VAULT_PATH. Nothing was
-# corrupted (the files overwrite each other) but "the tests don't touch
-# anything real" is a load-bearing claim about how freely this suite gets run,
-# and it was false.
+# The script ends with :q, and this harness's own run_session() call passes
+# auto_export=True (D-1.6.4-08) — so every `check` used to write the fixture
+# session into Cas's real VAULT_PATH. Nothing was corrupted (the files
+# overwrite each other) but "the tests don't touch anything real" is a
+# load-bearing claim about how freely this suite gets run, and it was false.
 #
-# Redirected rather than disabled: switching AUTO_EXPORT off would fix the
-# side effect by making the export path untested, and this harness's whole job
-# is to notice when output changes. Now it runs for real, into here.
+# Redirected rather than passing auto_export=False: that would fix the side
+# effect by making the export path untested, and this harness's whole job is
+# to notice when output changes. Now it runs for real, into here.
 FIXTURE_VAULT = HERE / "_fixture_vault"
 FIXTURE_LOG = HERE / "_fixture_errors.log"
 
@@ -606,15 +606,6 @@ def capture():
             if hasattr(mod, "AI_DISPLAY_NAME"):
                 setattr(mod, "AI_DISPLAY_NAME", None)
 
-    # Pin AUTO_EXPORT on rather than reading it from config. The script's :q
-    # takes the export path only when it's true, so leaving it to config would
-    # mean the baseline covers a different amount of code on different
-    # machines — and `Auto-export: on` is a line :config prints into it.
-    for mod in list(sys.modules.values()):
-        if getattr(mod, "__file__", None) and str(ROOT) in str(mod.__file__):
-            if hasattr(mod, "AUTO_EXPORT"):
-                setattr(mod, "AUTO_EXPORT", True)
-
     # `D-01`: point the outbox at the fixture. **Patched at the seam, not in
     # config** — `mover._cfg` re-reads config on every call, so setting
     # `config.WRITE_ROOTS` would work today and stop working the moment
@@ -750,8 +741,13 @@ def capture():
             # run_session, not repl: repl() is now the outer hub loop, and a
             # :q returns to the hub rather than ending. This harness drives one
             # session's command output, which is exactly run_session.
+            #
+            # auto_export=True, not read from config (D-1.6.4-08): run_session
+            # takes no default any more, and this harness wants the auto-export
+            # path genuinely exercised — CHAT_EXPORT_DIR is already redirected
+            # to the fixture above, so True here still writes only to it.
             conn = chat.db()
-            chat.run_session(conn, session_id=1)
+            chat.run_session(conn, session_id=1, auto_export=True)
             conn.close()
     finally:
         sys.stdin = real_stdin

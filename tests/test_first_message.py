@@ -50,7 +50,7 @@ def drive(conn, sid, keys):
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
-            main.run_session(conn, sid, private=False)
+            main.run_session(conn, sid, auto_export=False, private=False)
     finally:
         sys.stdin = real_stdin
         main.console.file = sys.stdout
@@ -77,7 +77,6 @@ def main_():
         "an answer", {"prompt_tokens": 3, "completion_tokens": 2}, "")
     main.generate_title = lambda *a, **k: "(untitled)"
     main.auto_embed = lambda: None
-    main.AUTO_EXPORT = False
 
     try:
         print("--- attaching a persona with a companion opens with it ---")

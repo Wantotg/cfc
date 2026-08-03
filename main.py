@@ -245,6 +245,7 @@ def repl(session_id=None):
                 priv = db(":memory:")
                 try:
                     outcome = run_session(priv, new_session(priv),
+                                          auto_export=AUTO_EXPORT,
                                           private=True, app_conn=conn)
                 finally:
                     priv.close()
@@ -258,7 +259,8 @@ def repl(session_id=None):
                 session_id = result if result is not None \
                     else new_session(conn)
 
-        outcome = run_session(conn, session_id, routine_transcript=transcript)
+        outcome = run_session(conn, session_id, auto_export=AUTO_EXPORT,
+                              routine_transcript=transcript)
         if outcome is None:
             session_id = None
         else:
@@ -267,10 +269,17 @@ def repl(session_id=None):
     conn.close()
 
 
-def run_session(conn, session_id, private=False, app_conn=None,
-                routine_transcript=False):
+def run_session(conn, session_id, *, auto_export, private=False,
+                app_conn=None, routine_transcript=False):
     """One session's REPL loop. Returns None (repl() reads that as 'back to
     the hub') or an `_Open` naming the session to open next.
+
+    `auto_export` is the one value every automatic export in this session
+    obeys — on leaving (`/q`, Ctrl-D), on `/new`, and on entering a screen
+    (`D-1.6.4-08`). It has no default: a direct caller that forgets it fails
+    immediately instead of silently exporting (or silently not). `repl()` is
+    the production caller and always passes its configured `AUTO_EXPORT`;
+    explicit `/export` is a different code path and is never gated by this.
 
     `private` is not a per-call-site switch — the isolation is structural, in
     the in-memory `conn` repl() hands us, so every DB write is already a no-op
@@ -945,7 +954,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
         return target
 
     def h_quit(cmd):
-        if AUTO_EXPORT and history and not private:
+        if auto_export and history and not private:
             safe_export(conn, session_id)
         return _LEAVE
 
@@ -997,7 +1006,8 @@ def run_session(conn, session_id, private=False, app_conn=None,
                 # app_conn, not conn: a screen entered from *this* nested
                 # private chat must reach the same durable connection this
                 # session would hand it, never the private one.
-                result = run_session(priv, new_session(priv), private=True,
+                result = run_session(priv, new_session(priv),
+                                     auto_export=auto_export, private=True,
                                      app_conn=app_conn)
             finally:
                 priv.close()
@@ -1034,11 +1044,11 @@ def run_session(conn, session_id, private=False, app_conn=None,
             new_id = create_chat_with_id(conn, cmd.arg(0))
             if new_id is None:
                 return
-            if AUTO_EXPORT and history and not private:
+            if auto_export and history and not private:
                 safe_export(conn, session_id)
             _enter_fresh_chat(new_id)
             return
-        if AUTO_EXPORT and history and not private:
+        if auto_export and history and not private:
             safe_export(conn, session_id)
         _enter_fresh_chat(new_session(conn))
 
@@ -1050,7 +1060,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
         the routines screen opened.
         """
         nonlocal outcome
-        if AUTO_EXPORT and history and not private:
+        if auto_export and history and not private:
             safe_export(conn, session_id)
         result = screens.enter(app_conn, mode=target, chat_model=current_model)
         if result is not None:
@@ -1691,7 +1701,7 @@ def run_session(conn, session_id, private=False, app_conn=None,
             # Ctrl-D on an empty line leaves the session. Ctrl-C is handled
             # inside read_input (cancel line, stay) and never reaches here.
             console.print()
-            if AUTO_EXPORT and history and not private:
+            if auto_export and history and not private:
                 safe_export(conn, session_id)
             break
         if not user:

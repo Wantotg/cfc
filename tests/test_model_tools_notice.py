@@ -47,7 +47,7 @@ def drive(conn, sid, keys, model=None):
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
-            main.run_session(conn, sid, private=False)
+            main.run_session(conn, sid, auto_export=False, private=False)
     finally:
         sys.stdin = real_stdin
         main.console.file = sys.stdout

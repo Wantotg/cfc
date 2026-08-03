@@ -64,7 +64,7 @@ def drive(conn, sid, keys):
             main.console.file = out
             commands.console.file = out
             agent.console.file = out
-            main.run_session(conn, sid, private=False)
+            main.run_session(conn, sid, auto_export=False, private=False)
     finally:
         sys.stdin = real_stdin
         main.console.file = sys.stdout
@@ -82,7 +82,7 @@ def drive_private(conn, sid, keys):
             main.console.file = out
             commands.console.file = out
             agent.console.file = out
-            main.run_session(conn, sid, private=True)
+            main.run_session(conn, sid, auto_export=False, private=True)
     finally:
         sys.stdin = real_stdin
         main.console.file = sys.stdout

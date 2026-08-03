@@ -1155,7 +1155,8 @@ def test_private_screen_uses_app_conn():
         try:
             with contextlib.redirect_stdout(out):
                 chatmain.console.file = out
-                outcome = chatmain.run_session(priv, priv_sid, private=True,
+                outcome = chatmain.run_session(priv, priv_sid,
+                                               auto_export=False, private=True,
                                                app_conn=durable)
         finally:
             sys.stdin = real_stdin
