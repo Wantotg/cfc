@@ -27,6 +27,51 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-04 — One live search page, no browser
+v1.8 makes `web_search` do something: one approved call sends the model's
+query to `https://html.duckduckgo.com/html/` and returns up to five organic
+results — title, destination URL, snippet — already parsed and bounded.
+cfc never opens a result page, never impersonates a browser, and makes no
+automatic retry; one approval is one attempt.
+
+The v1.7 sandbox gains one changed guarantee: `--share-net` replaces the
+isolated network namespace, and three small host files (`resolv.conf`,
+`nsswitch.conf`, the CA bundle) are read-only-mounted so TLS actually works.
+Everything else — no home, vault, repo, `.cfc`, config or inherited
+environment; a fresh worker per approved call; the filesystem canaries — is
+unchanged and re-proven under the new mount. The destination limit is
+enforced in `search_worker.py`'s own code, not by the namespace: one literal
+request target, `curl` invoked directly (no shell, HTTPS only, redirects
+off, the query supplied over stdin so it never reaches argv or the URL), and
+a returned link is decoded as data, never requested.
+
+Protocol bumps to v2. `failure.stage` becomes `host | request | parse`
+(replacing the placeholder `search | fetch | extract`), `retryable` and the
+host-added `attempts` count are gone — v1.8 makes at most one attempt, so a
+retry-policy field would be fiction. Evidence bounds move from placeholders
+to the live source's own limits: five results, 600-character snippets.
+
+`ToolContext` gains `external_network`, a second fail-closed capability
+alongside `gated`. A private chat is gated exactly like an ordinary one
+(decision 15), so its `web_search` refusal couldn't be read off `gated` —
+it needed its own property. `chat_context(private=True)` is the one caller
+that sets it False; routines never get it either. `/tools` tells a private
+chat the real reason (`would send the query off the machine`) without
+sending anything itself.
+
+The tool trace is now inspectable rather than a count: the human sees every
+title, URL and snippet the model received, in the same order, never the raw
+protocol JSON.
+
+Deliberately not built: a domain firewall, a second search provider, result-
+page fetching, or a claim that DuckDuckGo's markup — or its terms — will
+still hold at the next look.
+
+- Files: search_protocol.py, search_worker.py, websearch.py, context.py,
+  tools.py, agent.py, commands.py, main.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-04 — A web-search boundary before web search
 v1.7 gives the chat model a fifth tool, `web_search`, that crosses a real
 process sandbox and always answers `unavailable` — there is no search

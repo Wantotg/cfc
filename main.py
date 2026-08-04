@@ -1649,7 +1649,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
             tools_on = False
             console.print("Tools off for this session.")
         elif not arg:
-            show_tools_state(current_model, tools_on)
+            show_tools_state(current_model, tools_on, private)
         else:
             console.print("Usage: /tools | /tools on | /tools off")
 

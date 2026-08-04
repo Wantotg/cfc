@@ -206,11 +206,14 @@ def _render_result(result, name=None):
     try:
         d = json.loads(result)
         if name == "web_search" and isinstance(d, dict) and "status" in d:
-            # The model reads the canonical JSON; the human reads one line
-            # built from it (Concept.md) — never the raw protocol dump, which
-            # for a real result carries excerpt text nobody asked to scroll
-            # through here.
+            # The model reads the canonical JSON; the human reads the same
+            # evidence rendered, not just a count (Concept.md: "the tool
+            # trace is inspectable rather than a count") — every title, URL
+            # and snippet the model received, in the same order, never the
+            # raw protocol dump.
             console.print(f"  ← {websearch.summarize(d)}", style="dim")
+            for line in websearch.evidence_lines(d):
+                console.print(f"    {line}", style="dim")
             return
         if isinstance(d, dict) and "error" in d:
             # **Dim, not dim red, and only for these two exact strings.** The

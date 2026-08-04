@@ -1,4 +1,4 @@
-# search_protocol.py — the v1.7 web-search wire format, owned once.
+# search_protocol.py — the v1.8 live web-search wire format, owned once.
 #
 # Stdlib-only, on purpose: this file is mounted read-only *inside* the
 # sandbox beside search_worker.py (which imports it) and imported normally by
@@ -19,32 +19,53 @@
 # fields rather than ignore them, because an ignored field is exactly what
 # lets a later, careless writer smuggle something extra past a reader that
 # never learned to look for it.
+#
+# v1.8 bumps the version rather than reusing it: a v1.7 host or worker must
+# never silently pair with a v1.8 counterpart and misread failure.stage or
+# expect a `retryable` field that no longer exists. `retryable` and the
+# host-added `attempts` field are gone outright — v1.8 makes at most one
+# curl request per approval, so a per-failure "try again" flag and a count of
+# tries would both be describing a policy that no longer exists (Concept.md).
 import json
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # --- field limits ------------------------------------------------------
 #
 # Bounds, not budgets: these exist so a malformed or hostile response cannot
 # make its way into conversation history at any size, not to tune result
-# quality. There is no search provider behind this yet to tune them against.
+# quality. MAX_EVIDENCE_ITEMS and MAX_EXCERPT_CHARS are tied to the live
+# source now — five organic results and DuckDuckGo's own snippet length —
+# where v1.7's offline stub had nothing to measure them against.
 MAX_QUERY_CHARS = 500
 MAX_TITLE_CHARS = 300
 MAX_URL_CHARS = 2000
-MAX_EXCERPT_CHARS = 2000
-MAX_EVIDENCE_ITEMS = 10
+MAX_EXCERPT_CHARS = 600
+MAX_EVIDENCE_ITEMS = 5
 MAX_FAILURES = 5
 MAX_CODE_CHARS = 100
 # The whole worker stdout payload, decoded text. Bounds a hostile or broken
 # worker's output before it is even handed to json.loads, not just the
-# fields inside a value that already parsed.
+# fields inside a value that already parsed. Separate from search_worker.py's
+# own MAX_HTML_BYTES, which bounds the *page* it reads before parsing it —
+# this bounds the *response* it prints afterward.
 MAX_RAW_CHARS = 65_536
 
 STATUSES = frozenset({"complete", "partial", "unavailable", "failed"})
-# Where in a (future, live) search a failure happened. Fixed and small on
-# purpose — an open string here is a field a later worker could use to smuggle
-# arbitrary text past validation one word at a time.
-STAGES = frozenset({"search", "fetch", "extract"})
+# Where in a live search a failure happened. Fixed and small on purpose — an
+# open string here is a field a later worker could use to smuggle arbitrary
+# text past validation one word at a time.
+#
+#   host    — Bubblewrap/worker lifecycle and host<->worker protocol
+#             validation (either direction of that wire, not the page).
+#   request — the one HTTPS search-page request: DNS/TLS/connect, the HTTP
+#             status DuckDuckGo answered with, or its content type.
+#   parse   — recognising and normalising whatever HTML came back.
+#
+# Replaces v1.7's `search | fetch | extract`, which were speculative names
+# for stages nothing yet produced. These three are what the live path
+# actually has.
+STAGES = frozenset({"host", "request", "parse"})
 
 
 class ProtocolError(Exception):
@@ -92,30 +113,29 @@ def _validate_evidence_item(item):
 def _validate_failure_item(item):
     if not isinstance(item, dict):
         raise ProtocolError("failure item must be an object")
-    _no_extra_fields(item, {"stage", "code", "retryable"}, "failure item")
+    _no_extra_fields(item, {"stage", "code"}, "failure item")
     stage = item["stage"]
     if stage not in STAGES:
         raise ProtocolError(
             f"failure.stage must be one of {sorted(STAGES)}, got {stage!r}")
     code = _bounded_str(item["code"], MAX_CODE_CHARS, "failure.code")
-    retryable = item["retryable"]
-    if not isinstance(retryable, bool):
-        raise ProtocolError("failure.retryable must be a boolean")
-    return {"stage": stage, "code": code, "retryable": retryable}
+    return {"stage": stage, "code": code}
 
 
 # --- responses -------------------------------------------------------------
 #
 # The state-combination rules are the point of this section, not the field
 # shapes above. `complete` may carry empty evidence — the search ran and
-# found nothing, a fact distinct from `unavailable` (could not even start).
-# `partial` requires both evidence and a failure — it is what "some of it
-# worked" looks like. `unavailable` and `failed` both carry no evidence:
-# `unavailable` is the boundary refusing to try (v1.7's only real case, and
-# the reason `sandbox_unavailable` and `not_available_yet` both live under
-# it); `failed` is an attempt that produced nothing usable. A response that
-# claims evidence *and* `failed`, or a failure-free `partial`, is not a state
-# for a reader to interpret — it's a protocol error, same as a bad type.
+# found nothing (DuckDuckGo's own explicit no-results page), a fact distinct
+# from `unavailable` (could not even start). `partial` requires both
+# evidence and a failure — it is what "some of it worked" looks like:
+# fewer than the requested results parsed cleanly, at least one did.
+# `unavailable` and `failed` both carry no evidence: `unavailable` is the
+# boundary refusing to try (Bubblewrap, curl, the resolver or the CA bundle
+# missing — nothing was sent); `failed` is an attempt that produced nothing
+# usable. A response that claims evidence *and* `failed`, or a failure-free
+# `partial`, is not a state for a reader to interpret — it's a protocol
+# error, same as a bad type.
 
 def validate_response(obj):
     """Validate an already-parsed response dict against every field limit

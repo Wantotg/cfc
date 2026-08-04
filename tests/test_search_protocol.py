@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_search_protocol.py — the v1.7 web-search wire format. No API calls, no
+test_search_protocol.py — the v1.8 web-search wire format. No API calls, no
 subprocess, no sandbox: this is the protocol module in isolation, proving the
 field limits and state-combination rules fire on their own before anything
 crosses a process boundary.
@@ -51,46 +51,51 @@ def main():
        ["status"] == "complete")
     ok("truthful complete-empty",
        proto.build_response("complete")["evidence"] == [])
-    ok("unavailable with a non-retryable failure",
+    ok("unavailable with a failure",
        proto.build_response(
            "unavailable",
-           failures=[{"stage": "search", "code": "not_available_yet",
-                     "retryable": False}])["status"] == "unavailable")
+           failures=[{"stage": "host", "code": "sandbox_unavailable"}])
+       ["status"] == "unavailable")
     ok("partial with both evidence and a failure",
        proto.build_response(
            "partial",
            evidence=[{"title": "A", "url": "http://x", "excerpt": "z"}],
-           failures=[{"stage": "fetch", "code": "upstream_503",
-                     "retryable": True}])["status"] == "partial")
+           failures=[{"stage": "parse", "code": "result_omitted"}])
+       ["status"] == "partial")
     ok("failed with a failure and no evidence",
        proto.build_response(
            "failed",
-           failures=[{"stage": "extract", "code": "no_usable_text",
-                     "retryable": False}])["status"] == "failed")
+           failures=[{"stage": "parse", "code": "markup_unrecognized"}])
+       ["status"] == "failed")
     ok("http url accepted",
        not rejects(proto.build_response, "complete",
                   evidence=[{"title": "A", "url": "http://x", "excerpt": "z"}]))
+    ok("no failure item carries a retryable field any more — v1.8 makes at "
+       "most one attempt, so there is nothing left to flag as retryable",
+       "retryable" not in proto.build_response(
+           "failed", failures=[{"stage": "request",
+                               "code": "connection_failed"}])["failures"][0])
 
     print("\n--- round trip: build -> dumps -> parse ---")
     dumped = proto.dumps_response(
         "partial",
         evidence=[{"title": "A", "url": "https://x", "excerpt": "e"}],
-        failures=[{"stage": "fetch", "code": "timeout", "retryable": True}])
+        failures=[{"stage": "parse", "code": "result_omitted"}])
     parsed, reason = proto.parse_response(dumped)
     ok("parses back to the same shape", parsed == proto.build_response(
         "partial",
         evidence=[{"title": "A", "url": "https://x", "excerpt": "e"}],
-        failures=[{"stage": "fetch", "code": "timeout", "retryable": True}]),
+        failures=[{"stage": "parse", "code": "result_omitted"}]),
        (parsed, reason))
     ok("reason is None on success", reason is None)
 
     print("\n--- unknown protocol version ---")
     ok("build_response rejects it",
        rejects(proto.validate_response,
-              {"protocol": 2, "status": "complete", "evidence": [],
+              {"protocol": 1, "status": "complete", "evidence": [],
                "failures": []}))
     ok("parse_response rejects it",
-       parse_rejects('{"protocol": 2, "status": "complete", "evidence": [], '
+       parse_rejects('{"protocol": 1, "status": "complete", "evidence": [], '
                     '"failures": []}'))
     ok("parse_response rejects a missing version",
        parse_rejects('{"status": "complete", "evidence": [], "failures": []}'))
@@ -98,75 +103,81 @@ def main():
     print("\n--- extra / missing fields ---")
     ok("an extra top-level field is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete", "evidence": [],
+              {"protocol": 2, "status": "complete", "evidence": [],
                "failures": [], "extra": "field"}))
     ok("a missing top-level field is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete", "evidence": []}))
+              {"protocol": 2, "status": "complete", "evidence": []}))
     ok("an extra evidence field is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete",
+              {"protocol": 2, "status": "complete",
                "evidence": [{"title": "A", "url": "http://x",
                              "excerpt": "z", "score": 9}],
                "failures": []}))
+    ok("a failure item still carrying 'retryable' is rejected — that field "
+       "left the wire in v1.8",
+       rejects(proto.validate_response,
+              {"protocol": 2, "status": "failed", "evidence": [],
+               "failures": [{"stage": "request", "code": "x",
+                             "retryable": False}]}))
     ok("an extra failure field is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "failed", "evidence": [],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": False, "raw": "trace"}]}))
+              {"protocol": 2, "status": "failed", "evidence": [],
+               "failures": [{"stage": "request", "code": "x",
+                             "raw": "trace"}]}))
 
     print("\n--- invalid types ---")
     ok("non-dict response is rejected",
        rejects(proto.validate_response, ["not", "a", "dict"]))
     ok("non-list evidence is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete", "evidence": "nope",
+              {"protocol": 2, "status": "complete", "evidence": "nope",
                "failures": []}))
-    ok("non-bool retryable is rejected",
-       rejects(proto.validate_response,
-              {"protocol": 1, "status": "failed", "evidence": [],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": "yes"}]}))
     ok("unknown stage is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "failed", "evidence": [],
-               "failures": [{"stage": "orbit", "code": "x",
-                             "retryable": False}]}))
+              {"protocol": 2, "status": "failed", "evidence": [],
+               "failures": [{"stage": "fetch", "code": "x"}]}))
+    ok("a retired v1.7 stage name is rejected",
+       rejects(proto.validate_response,
+              {"protocol": 2, "status": "failed", "evidence": [],
+               "failures": [{"stage": "search", "code": "x"}]}))
     ok("a url that isn't http(s) is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete",
+              {"protocol": 2, "status": "complete",
                "evidence": [{"title": "A", "url": "ftp://x",
                              "excerpt": "z"}],
                "failures": []}))
     ok("unknown status is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "pending", "evidence": [],
+              {"protocol": 2, "status": "pending", "evidence": [],
                "failures": []}))
 
-    print("\n--- oversized fields ---")
+    print("\n--- oversized fields, at v1.8's live limits ---")
     ok("an oversized title is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete",
+              {"protocol": 2, "status": "complete",
                "evidence": [{"title": "x" * (proto.MAX_TITLE_CHARS + 1),
                              "url": "http://x", "excerpt": "z"}],
                "failures": []}))
-    ok("an oversized excerpt is rejected",
+    ok("an oversized excerpt is rejected (600 chars — DuckDuckGo's own "
+       "snippet bound, not v1.7's placeholder 2000)",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete",
+              {"protocol": 2, "status": "complete",
                "evidence": [{"title": "A", "url": "http://x",
                              "excerpt": "x" * (proto.MAX_EXCERPT_CHARS + 1)}],
                "failures": []}))
-    ok("too many evidence items is rejected",
+    ok("more than five evidence items is rejected — v1.8 bounds evidence to "
+       "the first five organic results, not v1.7's placeholder ten",
+       proto.MAX_EVIDENCE_ITEMS == 5 and
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete",
+              {"protocol": 2, "status": "complete",
                "evidence": [{"title": "A", "url": "http://x", "excerpt": "z"}]
                             * (proto.MAX_EVIDENCE_ITEMS + 1),
                "failures": []}))
     ok("too many failures is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "failed", "evidence": [],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": False}]
+              {"protocol": 2, "status": "failed", "evidence": [],
+               "failures": [{"stage": "request", "code": "x"}]
                             * (proto.MAX_FAILURES + 1)}))
     ok("build_request rejects an oversized query",
        rejects(proto.build_request, "x" * (proto.MAX_QUERY_CHARS + 1)))
@@ -176,41 +187,37 @@ def main():
     print("\n--- invalid state combinations ---")
     ok("complete with a failure is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "complete", "evidence": [],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": False}]}))
+              {"protocol": 2, "status": "complete", "evidence": [],
+               "failures": [{"stage": "parse", "code": "x"}]}))
     ok("partial with no evidence is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "partial", "evidence": [],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": False}]}))
+              {"protocol": 2, "status": "partial", "evidence": [],
+               "failures": [{"stage": "parse", "code": "x"}]}))
     ok("partial with no failure is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "partial",
+              {"protocol": 2, "status": "partial",
                "evidence": [{"title": "A", "url": "http://x",
                              "excerpt": "z"}],
                "failures": []}))
     ok("unavailable with evidence is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "unavailable",
+              {"protocol": 2, "status": "unavailable",
                "evidence": [{"title": "A", "url": "http://x",
                              "excerpt": "z"}],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": False}]}))
+               "failures": [{"stage": "host", "code": "x"}]}))
     ok("unavailable with no failure is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "unavailable", "evidence": [],
+              {"protocol": 2, "status": "unavailable", "evidence": [],
                "failures": []}))
     ok("failed with evidence is rejected (that's partial, not failed)",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "failed",
+              {"protocol": 2, "status": "failed",
                "evidence": [{"title": "A", "url": "http://x",
                              "excerpt": "z"}],
-               "failures": [{"stage": "search", "code": "x",
-                             "retryable": False}]}))
+               "failures": [{"stage": "parse", "code": "x"}]}))
     ok("failed with no failure is rejected",
        rejects(proto.validate_response,
-              {"protocol": 1, "status": "failed", "evidence": [],
+              {"protocol": 2, "status": "failed", "evidence": [],
                "failures": []}))
 
     print("\n--- parse_response: malformed wire text never raises ---")
@@ -238,18 +245,18 @@ def main():
     q, err = proto.parse_request(proto.dumps_request("best cat food"))
     ok("parse_request round-trips a real request",
        q == "best cat food" and err is None, (q, err))
-    q, err = proto.parse_request('{"protocol": 2, "operation": "search", '
+    q, err = proto.parse_request('{"protocol": 1, "operation": "search", '
                                  '"query": "x"}')
-    ok("parse_request rejects the wrong version", q is None and err, err)
-    q, err = proto.parse_request('{"protocol": 1, "operation": "fetch", '
+    ok("parse_request rejects the wrong (v1.7) version", q is None and err, err)
+    q, err = proto.parse_request('{"protocol": 2, "operation": "fetch", '
                                  '"query": "x"}')
     ok("parse_request rejects the wrong operation", q is None and err, err)
-    q, err = proto.parse_request('{"protocol": 1, "operation": "search"}')
+    q, err = proto.parse_request('{"protocol": 2, "operation": "search"}')
     ok("parse_request rejects a missing query", q is None and err, err)
     q, err = proto.parse_request("not even json")
     ok("parse_request never raises on garbage", q is None and err, err)
     q, err = proto.parse_request(
-        f'{{"protocol": 1, "operation": "search", "query": "{"x" * (proto.MAX_QUERY_CHARS + 1)}"}}')
+        f'{{"protocol": 2, "operation": "search", "query": "{"x" * (proto.MAX_QUERY_CHARS + 1)}"}}')
     ok("parse_request rejects an oversized query", q is None and err, err)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

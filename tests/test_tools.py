@@ -12,7 +12,6 @@ the rest:
   - every path is guarded inside the dispatcher, so approval can't bypass it
 """
 import json
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -515,25 +514,29 @@ def main():
         ok(f"{f['name']} schema has description+params",
            bool(f.get("description")) and "properties" in f["parameters"])
 
-    print("\n--- v1.7: web_search, per-context schemas, the one registry ---")
+    print("\n--- v1.8: web_search, per-context schemas, the one registry ---")
     # web_search is deliberately not in TOOL_SCHEMAS (the assertion just
     # above still holds unchanged) — it lives in the one registry
-    # (tools.CHAT_ONLY_TOOLS / tools._ALL_SCHEMAS) that schemas_for(),
-    # _tool_allowed() and commands.show_tools_state's /tools row all read,
-    # so a tool added there and nowhere else is offered, dispatchable and
-    # listed together rather than drifting apart.
+    # (tools.CHAT_ONLY_TOOLS / tools.NETWORK_TOOLS / tools._ALL_SCHEMAS) that
+    # schemas_for(), _tool_allowed() and commands.show_tools_state's /tools
+    # row all read, so a tool added there and nowhere else is offered,
+    # dispatchable and listed together rather than drifting apart.
     chat_ctx = ToolContext.for_chat(read_roots=(jail,), write_roots=())
     priv_ctx = ToolContext.for_chat(read_roots=(jail,), write_roots=(),
-                                    interactive=True)
+                                    interactive=True, external_network=False)
     routine_ctx = ToolContext.for_routine("nightly", read_roots=(jail,))
 
     ok("web_search is offered to a normal chat context",
        "web_search" in {s["function"]["name"]
                         for s in tools.schemas_for(chat_ctx)})
-    ok("web_search is offered to a private chat context "
-       "(gated is what's checked, not a private flag)",
-       "web_search" in {s["function"]["name"]
-                        for s in tools.schemas_for(priv_ctx)})
+    ok("web_search is withheld from a private chat context (v1.8: gated "
+       "alone is no longer enough — it also needs external_network)",
+       "web_search" not in {s["function"]["name"]
+                            for s in tools.schemas_for(priv_ctx)})
+    ok("...but the four file tools are unaffected by that same private "
+       "context — external_network only ever narrows NETWORK_TOOLS",
+       {s["function"]["name"] for s in tools.schemas_for(priv_ctx)} ==
+       {"list_dir", "read_file", "grep", "write_file"})
     ok("web_search is withheld from a routine context",
        "web_search" not in {s["function"]["name"]
                             for s in tools.schemas_for(routine_ctx)})
@@ -550,6 +553,13 @@ def main():
        tools.precheck("web_search", '{"query": "x"}', routine_ctx) is not None
        and is_err(tools.precheck("web_search", '{"query": "x"}', routine_ctx),
                   "not available"))
+    ok("the dispatcher refuses web_search from a private context the same "
+       "way, for the same reason — a call the schema never offered still "
+       "can't reach the sandbox if one arrives anyway",
+       is_err(tools.dispatch("web_search", '{"query": "x"}', priv_ctx),
+             "not available")
+       and is_err(tools.precheck("web_search", '{"query": "x"}', priv_ctx),
+                 "not available"))
     ok("a routine's file tools are unaffected by the new registry",
        "readme.md" in tools.dispatch(
            "list_dir", json.dumps({"path": str(jail)}), routine_ctx))
@@ -561,22 +571,15 @@ def main():
 
     ok("dispatch requires 'query'",
        is_err(tools.dispatch("web_search", "{}", chat_ctx), "requires 'query'"))
-    ok("describe() shows the query and the offline-stub marker",
+    ok("describe() shows the query and the live-request marker",
        tools.describe("web_search", '{"query": "best cat food"}', chat_ctx) ==
-       ["query: 'best cat food'", "OFFLINE STUB — no network request"])
+       ["query: 'best cat food'",
+        "LIVE NETWORK REQUEST — sends this exact query to DuckDuckGo",
+        "one approval = one request attempt; no automatic retry"])
 
-    if shutil.which("bwrap"):
-        r = tools.dispatch("web_search", '{"query": "best cat food"}', chat_ctx)
-        d = json.loads(r)
-        ok("a real dispatched call returns the unavailable protocol shape",
-           d.get("status") == "unavailable" and d.get("protocol") == 1
-           and d.get("attempts") == 1, d)
-        ok("the failure names the honest reason and is not retryable",
-           d["failures"] == [{"stage": "search", "code": "not_available_yet",
-                              "retryable": False}], d)
-    else:
-        print("  (bwrap not on PATH — sandboxed dispatch skipped; "
-              "tests/test_websearch.py covers the sandbox itself)")
+    print("  (a real dispatched call is covered by tests/test_websearch.py "
+         "and tests/test_search_worker.py, not here — this file stays "
+         "network-independent)")
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

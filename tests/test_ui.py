@@ -88,6 +88,12 @@ _ALLOWLIST = {
     # the dim "Cooking for Cats -> tone check" label main.py prints
     # alongside it. Same exception as runner.py's SYSTEM, one line up.
     ("governor", "cfc control text"),
+    # search_worker.py: the HTTP User-Agent search_worker.py sends to
+    # DuckDuckGo (Concept.md's own "the honest user-agent
+    # `cfc-web-search/1.8`") — a wire-level identifier a third party reads,
+    # not prose shown to Cas. Same shape as context.py's "the cfc source
+    # tree": an identifier, not the program's name in conversation.
+    ("search_worker", "cfc-web-search/1.8"),
 }
 
 

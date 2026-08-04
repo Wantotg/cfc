@@ -287,7 +287,8 @@ Tools: inactive this turn
   max calls per turn: 25
   max tool output per turn: 120,000 chars
   available: list_dir, read_file, grep (read), write_file (write)
-  web_search: offline stub: ready (v1.7, no network; chat only, not routines)
+  web_search: live via DuckDuckGo HTML: ready (one approved attempt; not available to private chat
+or routines)
 
 you> Database is on for this session.
 you> Active preset: provider default

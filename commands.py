@@ -2075,9 +2075,9 @@ def gate(call, approval, ctx=None):
         return "allow"
 
     is_write = name in tools.WRITE_TOOLS
-    # Broader than is_write: v1.7's web_search crosses a process boundary
-    # without touching the filesystem, so it isn't a WRITE panel, but it
-    # still must never be swept up by "allow all this turn" — see
+    # Broader than is_write: web_search crosses a process and network
+    # boundary without touching the filesystem, so it isn't a WRITE panel,
+    # but it still must never be swept up by "allow all this turn" — see
     # tools.CONSEQUENTIAL_TOOLS.
     consequential = tools.is_consequential(name)
     body = "\n".join([name] + [f"  {l}" for l in tools.describe(name, args, ctx)])
@@ -2143,11 +2143,18 @@ def gate_and_dispatch(call, approval, ctx=None):
     return tools.dispatch(name, args, ctx)
 
 
-def show_tools_state(current_model, session_on):
+def show_tools_state(current_model, session_on, private=False):
     """/tools — why tools are or aren't available right now.
 
     Three switches have to line up (master, model, session), so the answer to
     "why isn't this working" should be one command, not three guesses.
+
+    `private` is the one thing this row can't read off `TOOLS_ENABLED` or the
+    session toggle: a private chat's web_search refusal is a fact about
+    `context.ToolContext.external_network` (v1.8), not about whether tools
+    are on. Opening `/tools` must never itself send traffic — this only ever
+    reports local state (config, sandbox readiness), never probes the network
+    to answer.
     """
     supported = models.supports_tools(current_model)
     active = TOOLS_ENABLED and supported and session_on
@@ -2182,11 +2189,18 @@ def show_tools_state(current_model, session_on):
     console.print(f"  available: {', '.join(reads)} (read), "
                   f"{', '.join(writes)} (write)")
     # web_search listed on its own row, not folded into the line above: it's
-    # neither a read nor a write tool (Concept.md), it's chat-only
-    # (tools.CHAT_ONLY_TOOLS), and its own readiness is a fact about the
-    # sandbox, not about TOOLS_ENABLED.
-    console.print(f"  web_search: offline stub: {websearch.sandbox_status()} "
-                  f"(v1.7, no network; chat only, not routines)")
+    # neither a read nor a write tool (Concept.md), it's chat-only and
+    # network-gated (tools.CHAT_ONLY_TOOLS / tools.NETWORK_TOOLS), and its
+    # own readiness is a fact about the sandbox, not about TOOLS_ENABLED.
+    if private:
+        console.print("  web_search: unavailable in a private chat — it "
+                      "would send the query off the machine (not available "
+                      "to routines either)")
+    else:
+        console.print(f"  web_search: live via DuckDuckGo HTML: "
+                      f"{websearch.sandbox_status()} "
+                      f"(one approved attempt; not available to private "
+                      f"chat or routines)")
     console.print()
 
 
