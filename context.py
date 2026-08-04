@@ -79,6 +79,13 @@ class ToolContext:
     # than quietly disarming the gate — the only way to an ungated context is
     # for_routine(), which forces you to declare a write scope while you're
     # there.
+    #
+    # v1.7 gives this a second reader: tools.schemas_for()/_tool_allowed()
+    # key a chat-only tool (web_search) off this same property, not a new
+    # field. The criterion for both questions is the same fact — is there a
+    # human on the other end who could answer an approval prompt — so a
+    # second field here would only be two names for one thing to keep in
+    # sync.
     @property
     def gated(self):
         return self._gated

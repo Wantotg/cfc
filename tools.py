@@ -29,6 +29,7 @@ from pathlib import Path
 from context import ToolContext, as_context
 from paths import path_guard, PathError, denial_reason, _as_roots
 import vault
+import websearch
 
 try:
     from config import TOOLS_ROOTS
@@ -229,6 +230,86 @@ TOOL_SCHEMAS = [
         },
     },
 ]
+
+# v1.7: an offline boundary, not working search — see websearch.py and
+# HANDOVER.md. Kept out of TOOL_SCHEMAS itself so the four-file-tool list
+# above stays exactly what it always was (tests/test_tools.py pins it), and
+# so a caller that only ever wanted the file tools doesn't have to filter a
+# fifth one back out.
+WEB_SEARCH_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": (
+            "Search the web. v1.7 is an offline boundary test: no internet "
+            "request is made and every call returns an 'unavailable' "
+            "result. Do not retry an unavailable result — it will not "
+            "become available by asking again."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "The thing to search for."},
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+# --- the tool registry -----------------------------------------------------
+#
+# One source, not four hand-maintained lists. schemas_for() (what a turn
+# offers the model), _tool_allowed() (what the dispatcher actually permits —
+# decision 5: the guard lives in the dispatcher, never only at the
+# schema-offering layer), and commands.show_tools_state's /tools row all
+# read CHAT_ONLY_TOOLS and _ALL_SCHEMAS. A tool added here and nowhere else
+# is offered, dispatchable and listed; a tool added to only one of those
+# surfaces is exactly the quiet omission this exists to close off.
+#
+# A tool in CHAT_ONLY_TOOLS is withheld from an ungated context — today, only
+# ToolContext.for_routine() produces one — at both layers: an unattended
+# routine has no human to answer the approval prompt these tools show, so it
+# never sees the schema, and the dispatcher refuses the call even if one
+# somehow arrived anyway.
+CHAT_ONLY_TOOLS = {"web_search"}
+_ALL_SCHEMAS = TOOL_SCHEMAS + [WEB_SEARCH_SCHEMA]
+
+# The approval gate's own broader set: never covered by "Allow all this
+# turn", regardless of whether the call touches the filesystem. WRITE_TOOLS
+# is about *what a call can do* (mutate disk); this is about *what a human
+# should never wave through in a batch* — a call that crosses a process or
+# network boundary belongs here even though v1.7's boundary phones nowhere
+# yet, precisely so approving it now never teaches a click-through habit
+# that becomes unsafe once a later version plugs the same tool into a real
+# network.
+CONSEQUENTIAL_TOOLS = WRITE_TOOLS | {"web_search"}
+
+
+def is_consequential(name):
+    return name in CONSEQUENTIAL_TOOLS
+
+
+def schemas_for(ctx):
+    """The schemas this context may be offered — the one place agent.py
+    reads instead of TOOL_SCHEMAS/_ALL_SCHEMAS directly, so a chat-only tool
+    added to the registry above is withheld from routines without agent.py
+    needing to know why."""
+    if bool(getattr(ctx, "gated", True)):
+        return _ALL_SCHEMAS
+    return [s for s in _ALL_SCHEMAS
+            if s["function"]["name"] not in CHAT_ONLY_TOOLS]
+
+
+def _tool_allowed(name, ctx):
+    """The dispatcher's own permission check, independent of what schema the
+    caller happened to be offered — see the registry comment above and
+    HANDOVER.md standing decision 5. Every tool not in CHAT_ONLY_TOOLS is
+    allowed everywhere; a chat-only tool additionally requires a gated
+    context."""
+    if name not in CHAT_ONLY_TOOLS:
+        return True
+    return bool(getattr(ctx, "gated", True))
 
 
 def _err(msg):
@@ -543,6 +624,24 @@ def written_path(name, result):
     return Path(m.group("path")) if m else None
 
 
+def web_search(query):
+    """v1.7's offline search boundary. Validates only the argument shape —
+    presence and type, the same class of check every other tool makes here —
+    and hands everything else to websearch.search(), including the query's
+    length limit, which is search_protocol's field to own. Always returns a
+    canonical JSON tool result, never a plain error string: the model always
+    sees the same protocol shape, whether the search "worked" (v1.7: never)
+    or the boundary itself failed.
+
+    Takes no `roots` and no `ctx` — unlike every other tool here, this one
+    touches no filesystem the jail governs. Its own boundary is the sandbox
+    websearch.py builds, not path_guard.
+    """
+    if not isinstance(query, str) or not query.strip():
+        return _err("web_search requires a non-empty 'query'")
+    return json.dumps(websearch.search(query))
+
+
 def _roots_for(name, ctx):
     """The root set this tool is guarded against: write tools get the write
     set, everything else the read set. This is the split — a tool cannot pick
@@ -576,6 +675,12 @@ def dispatch(name, arguments, ctx=None):
     if not isinstance(args, dict):
         return _err("could not parse arguments")
 
+    # The dispatcher's own permission check — decision 5. Ahead of the
+    # per-tool branches below so a disallowed call never reaches
+    # websearch.search() at all, whatever schema the caller was offered.
+    if not _tool_allowed(name, ctx):
+        return _err(f"{name} is not available in this context")
+
     try:
         if name == "list_dir":
             if "path" not in args:
@@ -597,6 +702,10 @@ def dispatch(name, arguments, ctx=None):
                 return _err("write_file requires 'content'")
             return write_file(args["path"], args["content"], roots,
                               bool(args.get("overwrite")))
+        if name == "web_search":
+            if "query" not in args:
+                return _err("web_search requires 'query'")
+            return web_search(args["query"])
         return _err(f"unknown tool: {name}")
     except Exception as e:
         # A tool bug must not take the agent loop down with it.
@@ -628,6 +737,13 @@ def precheck(name, arguments, ctx=None):
         args = arguments or {}
     if not isinstance(args, dict):
         return None
+
+    # Same reasoning as every other pre-filter below: a call the dispatcher
+    # will refuse regardless of the human's answer should never reach the
+    # prompt. This is the one check here that isn't about the filesystem —
+    # see _tool_allowed and the registry comment above it.
+    if not _tool_allowed(name, ctx):
+        return _err(f"{name} is not available in this context")
 
     # A write with no write scope configured can never succeed, so refuse it
     # here rather than prompting for something that will fail anyway.
@@ -687,6 +803,13 @@ def describe(name, arguments, ctx=None):
             p = None
     else:
         p = None
+
+    if name == "web_search":
+        # No path, no roots — the query is the whole call, and the marker is
+        # the one thing this panel exists to say plainly: v1.7 phones
+        # nowhere, whatever the schema's own wording already claims.
+        lines.insert(0, f"query: {args.get('query')!r}")
+        lines.append("OFFLINE STUB — no network request")
 
     if name == "grep":
         lines.insert(0, f"pattern: {args.get('pattern')!r}")

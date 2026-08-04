@@ -12,6 +12,7 @@ the rest:
   - every path is guarded inside the dispatcher, so approval can't bypass it
 """
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -513,6 +514,69 @@ def main():
         f = s["function"]
         ok(f"{f['name']} schema has description+params",
            bool(f.get("description")) and "properties" in f["parameters"])
+
+    print("\n--- v1.7: web_search, per-context schemas, the one registry ---")
+    # web_search is deliberately not in TOOL_SCHEMAS (the assertion just
+    # above still holds unchanged) — it lives in the one registry
+    # (tools.CHAT_ONLY_TOOLS / tools._ALL_SCHEMAS) that schemas_for(),
+    # _tool_allowed() and commands.show_tools_state's /tools row all read,
+    # so a tool added there and nowhere else is offered, dispatchable and
+    # listed together rather than drifting apart.
+    chat_ctx = ToolContext.for_chat(read_roots=(jail,), write_roots=())
+    priv_ctx = ToolContext.for_chat(read_roots=(jail,), write_roots=(),
+                                    interactive=True)
+    routine_ctx = ToolContext.for_routine("nightly", read_roots=(jail,))
+
+    ok("web_search is offered to a normal chat context",
+       "web_search" in {s["function"]["name"]
+                        for s in tools.schemas_for(chat_ctx)})
+    ok("web_search is offered to a private chat context "
+       "(gated is what's checked, not a private flag)",
+       "web_search" in {s["function"]["name"]
+                        for s in tools.schemas_for(priv_ctx)})
+    ok("web_search is withheld from a routine context",
+       "web_search" not in {s["function"]["name"]
+                            for s in tools.schemas_for(routine_ctx)})
+    ok("the four file tools are still offered to a routine",
+       {s["function"]["name"] for s in tools.schemas_for(routine_ctx)} ==
+       {"list_dir", "read_file", "grep", "write_file"})
+
+    ok("the dispatcher refuses web_search from a routine context even "
+       "though the schema was never offered — the guard is the dispatcher, "
+       "not the schema list (HANDOVER.md standing decision 5)",
+       is_err(tools.dispatch("web_search", '{"query": "x"}', routine_ctx),
+             "not available"))
+    ok("precheck refuses it too, before the gate would even ask",
+       tools.precheck("web_search", '{"query": "x"}', routine_ctx) is not None
+       and is_err(tools.precheck("web_search", '{"query": "x"}', routine_ctx),
+                  "not available"))
+    ok("a routine's file tools are unaffected by the new registry",
+       "readme.md" in tools.dispatch(
+           "list_dir", json.dumps({"path": str(jail)}), routine_ctx))
+
+    ok("web_search is consequential (never covered by 'allow all this turn')",
+       tools.is_consequential("web_search"))
+    ok("...but it is not a WRITE_TOOL — it touches no filesystem root",
+       "web_search" not in tools.WRITE_TOOLS)
+
+    ok("dispatch requires 'query'",
+       is_err(tools.dispatch("web_search", "{}", chat_ctx), "requires 'query'"))
+    ok("describe() shows the query and the offline-stub marker",
+       tools.describe("web_search", '{"query": "best cat food"}', chat_ctx) ==
+       ["query: 'best cat food'", "OFFLINE STUB — no network request"])
+
+    if shutil.which("bwrap"):
+        r = tools.dispatch("web_search", '{"query": "best cat food"}', chat_ctx)
+        d = json.loads(r)
+        ok("a real dispatched call returns the unavailable protocol shape",
+           d.get("status") == "unavailable" and d.get("protocol") == 1
+           and d.get("attempts") == 1, d)
+        ok("the failure names the honest reason and is not retryable",
+           d["failures"] == [{"stage": "search", "code": "not_available_yet",
+                              "retryable": False}], d)
+    else:
+        print("  (bwrap not on PATH — sandboxed dispatch skipped; "
+              "tests/test_websearch.py covers the sandbox itself)")
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

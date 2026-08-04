@@ -92,6 +92,7 @@ from pools import (pool, pool_dir, load as load_pool,
                    FM_NO_DIR, FM_NONE, FM_OK, FM_BROKEN)
 import tools
 import vault
+import websearch
 
 # How many chunks /recall and /remember pull. Also a diagnostic: if eight hits
 # come back and seven are the same dead end, that's the corpus talking.
@@ -2070,18 +2071,23 @@ def gate(call, approval, ctx=None):
     if ctx is not None and not getattr(ctx, "gated", True):
         return "allow"
 
-    if approval.allow_all and name not in tools.WRITE_TOOLS:
+    if approval.allow_all and not tools.is_consequential(name):
         return "allow"
 
     is_write = name in tools.WRITE_TOOLS
+    # Broader than is_write: v1.7's web_search crosses a process boundary
+    # without touching the filesystem, so it isn't a WRITE panel, but it
+    # still must never be swept up by "allow all this turn" — see
+    # tools.CONSEQUENTIAL_TOOLS.
+    consequential = tools.is_consequential(name)
     body = "\n".join([name] + [f"  {l}" for l in tools.describe(name, args, ctx)])
     console.print()
     console.print(Panel(body, title="Tool call — WRITE" if is_write
                         else "Tool call", title_align="left",
-                        border_style="red" if is_write else "yellow"))
-    if is_write:
-        # No [A] offered: allow-all does not cover writes, so don't advertise
-        # a key that won't apply to the next one anyway.
+                        border_style="red" if consequential else "yellow"))
+    if consequential:
+        # No [A] offered: allow-all does not cover a consequential call, so
+        # don't advertise a key that won't apply to the next one anyway.
         console.print("[a]llow  [d]eny  [s]kip")
     else:
         console.print("[a]llow  [d]eny  [A]llow all this turn  [s]kip")
@@ -2094,14 +2100,14 @@ def gate(call, approval, ctx=None):
             return "deny"
         if choice == "a":
             return "allow"
-        if choice == "A" and not is_write:
+        if choice == "A" and not consequential:
             approval.allow_all = True
             return "allow"
         if choice == "d":
             return "deny"
         if choice == "s":
             return "skip"
-        console.print("Type a, d or s." if is_write
+        console.print("Type a, d or s." if consequential
                       else "Type a, d, A or s.")
 
 
@@ -2166,8 +2172,21 @@ def show_tools_state(current_model, session_on):
     console.print(f"  max calls per turn: {TOOLS_MAX_CALLS_PER_TURN}")
     console.print(f"  max tool output per turn: "
                   f"{TOOLS_MAX_TURN_RESULT_CHARS:,} chars")
-    console.print(f"  available: list_dir, read_file, grep (read), "
-                  f"write_file (write)")
+    # Read straight off tools.TOOL_SCHEMAS rather than a hand-typed list — a
+    # fifth *file* tool would otherwise need this line remembered too. Kept
+    # separate from write_file only because that grouping ("read" vs
+    # "write") is what a human wants to see, not a second registry.
+    file_names = [s["function"]["name"] for s in tools.TOOL_SCHEMAS]
+    reads = [n for n in file_names if n not in tools.WRITE_TOOLS]
+    writes = [n for n in file_names if n in tools.WRITE_TOOLS]
+    console.print(f"  available: {', '.join(reads)} (read), "
+                  f"{', '.join(writes)} (write)")
+    # web_search listed on its own row, not folded into the line above: it's
+    # neither a read nor a write tool (Concept.md), it's chat-only
+    # (tools.CHAT_ONLY_TOOLS), and its own readiness is a fact about the
+    # sandbox, not about TOOLS_ENABLED.
+    console.print(f"  web_search: offline stub: {websearch.sandbox_status()} "
+                  f"(v1.7, no network; chat only, not routines)")
     console.print()
 
 

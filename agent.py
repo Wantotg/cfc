@@ -27,8 +27,10 @@ from api import call_api
 from commands import DENIED, SKIPPED, TurnApproval, gate_and_dispatch
 from db import save_message
 import governor
-from tools import TOOL_SCHEMAS, written_path
+import tools
+from tools import written_path
 from ui import SPINNER_COLOR, ai_answer_panel, ai_reasoning_panel, console
+import websearch
 
 try:
     from config import TOOLS_MAX_CALLS_PER_TURN
@@ -203,6 +205,13 @@ def _render_result(result, name=None):
     """
     try:
         d = json.loads(result)
+        if name == "web_search" and isinstance(d, dict) and "status" in d:
+            # The model reads the canonical JSON; the human reads one line
+            # built from it (Concept.md) — never the raw protocol dump, which
+            # for a real result carries excerpt text nobody asked to scroll
+            # through here.
+            console.print(f"  ← {websearch.summarize(d)}", style="dim")
+            return
         if isinstance(d, dict) and "error" in d:
             # **Dim, not dim red, and only for these two exact strings.** The
             # failure to design against is the inverse of the reported one: a
@@ -452,7 +461,12 @@ def agent_turn(prefix, history, model, conn, session_id, ctx=None,
         # request. The model then has to answer in prose, which ends the loop
         # in one more round trip with a real answer instead of a stub. This is
         # deliberately NOT how the call ceiling exits — see LIMIT_MESSAGE.
-        offer = None if result_chars >= TURN_RESULT_CHARS else TOOL_SCHEMAS
+        #
+        # tools.schemas_for(ctx), not a bare schema list: v1.7 added a
+        # chat-only tool (web_search), and per-context selection is what
+        # keeps a routine's ungated ctx from ever being offered it.
+        offer = None if result_chars >= TURN_RESULT_CHARS \
+            else tools.schemas_for(ctx)
 
         # call_api blocks with nothing on screen — the streaming path shows a
         # spinner here, so the tool path does too. Not streaming: the spinner

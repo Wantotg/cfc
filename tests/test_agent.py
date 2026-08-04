@@ -107,8 +107,11 @@ def main():
     agent.call_api = fake
     drive(agent.agent_turn, [], [{"role": "user", "content": "x"}], "m", conn, 1)
     names = {t["function"]["name"] for t in fake.seen[0]["tools"]}
+    # v1.7: a default ctx (agent_turn's own chat_context()) is gated, so
+    # web_search joins the four file tools here — tests/test_websearch.py
+    # covers the per-context split this schema list is drawn from.
     ok("schemas passed to call_api",
-       names == {"list_dir", "read_file", "grep", "write_file"},
+       names == {"list_dir", "read_file", "grep", "write_file", "web_search"},
        names)
 
     print("\n--- call -> approve -> result -> answer ---")

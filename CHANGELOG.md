@@ -27,6 +27,70 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-04 — A web-search boundary before web search
+v1.7 gives the chat model a fifth tool, `web_search`, that crosses a real
+process sandbox and always answers `unavailable` — there is no search
+provider yet, and this version deliberately stops at the first testable
+boundary rather than build one. The point is proving the boundary works
+before anything lives behind it.
+
+Three new modules. `search_protocol.py` (stdlib-only) owns protocol version
+1: request/response shapes, field limits, and the state-combination rules
+(`partial` needs both evidence and a failure; `complete` may be empty;
+`unavailable`/`failed` never carry evidence). `search_worker.py` is the
+worker itself — reads one request, answers `not_available_yet`, exits — and
+depends on nothing but the stdlib and the protocol module, because both are
+mounted read-only *inside* the sandbox `websearch.py` builds with
+Bubblewrap: fresh process/user/mount/network namespaces, an empty root
+holding only `/usr` (for a Python interpreter) plus the two mounted files, a
+tmpfs `/tmp`, a cleared environment, no route out of the network namespace,
+stdin/stdout as the only channel, and `die-with-parent` so a timeout, a
+crash or Ctrl-C during launch all still reap the child and return exactly
+one typed result. Bubblewrap missing, or the worker unmountable, is the
+typed result `sandbox_unavailable` — there is no fallback to a raw
+subprocess. The host owns a small bounded retry loop: only a failure typed
+retryable, and only when no evidence came back, is retried; `partial`
+returns at once rather than risking real evidence on a retry.
+
+Wiring touches `tools.py`, `context.py`, `agent.py` and `commands.py`. Schema
+offering, dispatcher permission and the `/tools` listing all read one
+registry (`tools.CHAT_ONLY_TOOLS` / `schemas_for()` / `_tool_allowed()`) —
+gated off `ToolContext.gated`, the same property that already distinguished
+an attended chat from an unattended routine, so a routine never sees or can
+reach `web_search` without a second field to keep in sync. The call is
+classed consequential (`tools.CONSEQUENTIAL_TOOLS`) and excluded from "allow
+all this turn"; its approval panel shows the exact query and `OFFLINE
+STUB — no network request`; the model gets the canonical JSON, the human
+gets one rendered line (`websearch.summarize`).
+
+Proof: `test_search_protocol.py` (field limits and state rules, no process
+involved), `test_websearch.py` (a new boundary suite — canaries planted
+under `/home`, the cfc source tree and a vault stand-in, all unreadable and
+unwritable from inside the sandbox; a real socket attempt blocked by the
+absent network namespace; `sandbox_unavailable` verified by disabling the
+`bwrap` guard; a real timeout, crash and simulated Ctrl-C each cleaned up
+with no orphan process; the retry budget exhausted against a real,
+stateless "always-503" worker; five malformed-response shapes each
+collapsing to one `protocol_error`; adversarial evidence text — a forged
+tool-call, injected system/XML/Markdown — proven to stay inert history
+content, never a second dispatched call; and a private-chat run proving the
+launcher writes nothing to disk), plus extensions to `test_tools.py` and
+`test_agent.py` for the per-context registry and the schema list a chat turn
+now offers. `tests/golden_baseline.txt` re-recorded for the new `/tools`
+row — a one-line diff, checked by hand before recording.
+
+What v1.7 does not claim: that web search is safe or working, that
+structured evidence text is inert against a live model reading it, or that
+any of this extends to routines. `ROADMAP_PRIVATE.md`'s current entry is
+stale against this scope (it still says "results come back") and was left
+untouched — that edit is Cas's, not this session's.
+- Files: agent.py, commands.py, context.py, tools.py, search_protocol.py
+  (new), search_worker.py (new), websearch.py (new), tests/test_agent.py,
+  tests/test_tools.py, tests/test_search_protocol.py (new),
+  tests/test_websearch.py (new), tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-03 — A confirmation prompt confirms only on Enter (`B-1.6.4-09b`)
 `/clear notes` and `/move` both printed `Enter to confirm, or 'back'` and then
 compared the typed line to `back` only, falling through to the action for
