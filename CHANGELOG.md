@@ -27,7 +27,7 @@ One line: what changed and why it mattered.
 
 ---
 
-## 2026-08-04 — One live search page, no browser
+## 2026-08-04 — The window is open
 v1.8 makes `web_search` do something: one approved call sends the model's
 query to `https://html.duckduckgo.com/html/` and returns up to five organic
 results — title, destination URL, snippet — already parsed and bounded.
@@ -79,7 +79,7 @@ still hold at the next look.
 - Files: search_protocol.py, search_worker.py, websearch.py, context.py,
   tools.py, agent.py, commands.py, main.py
 - Status: shipped
-- Commit: pending
+- Commit: 679828c
 
 ## 2026-08-04 — A web-search boundary before web search
 v1.7 gives the chat model a fifth tool, `web_search`, that crosses a real

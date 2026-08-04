@@ -460,3 +460,39 @@ the tool is not available to routines.
 ```
 ≽(◉˕ ◉ ≼マ 'LET ME OUT, LET ME OUT'
 ```
+
+## v1.8 — The window is open *completed, 04/08*
+
+`web_search` stops being a stub. One approved call sends the model's query to
+DuckDuckGo's no-JavaScript results page and brings back up to five results —
+title, link, snippet — already trimmed and bounded. cfc never opens those
+links, never pretends to be a browser, and never tries twice: one approval is
+one attempt, and you see every result the model sees.
+
+**Added**
+- `web_search` makes a real request, through the v1.7 sandbox with the network
+  turned back on and three small system files mounted so HTTPS works
+- the tool trace prints every title, URL and snippet the model received, in
+  the same order, instead of a count
+- `/tools` says whether live search is ready without sending anything
+
+**Fixed**
+- a missing Bubblewrap, `curl` or system file now says `unavailable` — the
+  attempt never started, so nothing left the machine. Only a request that
+  actually started can say `failed`
+- a result link carrying a password or a hidden text-direction character is
+  dropped rather than cleaned up
+- a page that ends halfway through a result counts it as missing instead of
+  quietly returning a shorter, tidier-looking answer
+
+**Settled**
+- DuckDuckGo refuses repeated searches from one address, at roughly four or
+  five in quick succession, with a bot-check page — and the refusal lasts a
+  quarter of an hour at least. cfc reports it and stops: no retry, no
+  disguise, no second engine. One search when you need one, not a research
+  tool (N-1.8-01)
+
+> *Note:WE HAVE WEB SEARCH! ACTUAL REAL RESULTS! now to make it better *
+```
+ᓚ₍⑅^..^₎♡ 'WEB SEARCH! WEB SEARHC! WEB SEARCH!'  (•˕ •マ.ᐟ
+```
