@@ -89,7 +89,7 @@ untouched — that edit is Cas's, not this session's.
   tests/test_tools.py, tests/test_search_protocol.py (new),
   tests/test_websearch.py (new), tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: 6e228cd
 
 ## 2026-08-03 — A confirmation prompt confirms only on Enter (`B-1.6.4-09b`)
 `/clear notes` and `/move` both printed `Enter to confirm, or 'back'` and then
