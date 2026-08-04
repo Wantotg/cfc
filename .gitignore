@@ -11,7 +11,7 @@ __pycache__/
 chat.db
 
 # Personal data
-claude_export/
+/personal/
 
 # Editor / OS cruft
 .vscode/
@@ -29,22 +29,7 @@ claude_export/
 
 # Update loop scratchpad.
 /scratchpad/
-
-# Superseded by the six specialist files above, kept locally for reference.
-legacy/LEGACY_CLAUDE.md
-legacy/BRAINSTORM CLAUDE.md
-legacy/CODER CLAUDE.md
-legacy/DESIGNER CLAUDE.md
-legacy/DRAFT CLAUDE.md
-legacy/DEBUG CLAUDE.md
-legacy/MANAGER CLAUDE.md
+/workspace/
 
 # golden harness scratch
 tests/_fixture.db
-
-# personal repo files
-WISHLIST.md
-ROADMAP_PRIVATE.md
-ROADMAP_BEYOND.md
-TRACKER.md
-Archive/CODEX_TOUR_REPORT.md
