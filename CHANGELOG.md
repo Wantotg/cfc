@@ -34,6 +34,15 @@ results — title, destination URL, snippet — already parsed and bounded.
 cfc never opens a result page, never impersonates a browser, and makes no
 automatic retry; one approval is one attempt.
 
+`unavailable` and `failed` split on whether the attempt itself ever started.
+A missing Bubblewrap, system Python, `curl`, either worker file, resolver/
+name-service support or the CA bundle — and Bubblewrap itself failing to
+start — is `unavailable / host/sandbox_unavailable`: no worker exists, no
+query was sent, no raw-subprocess fallback. Once Bubblewrap has been
+created, a worker timeout, crash or malformed reply is `failed` instead —
+cfc cannot know whether curl already reached DuckDuckGo, so the human sees
+a warning that the query may already have been sent.
+
 The v1.7 sandbox gains one changed guarantee: `--share-net` replaces the
 isolated network namespace, and three small host files (`resolv.conf`,
 `nsswitch.conf`, the CA bundle) are read-only-mounted so TLS actually works.

@@ -161,8 +161,20 @@ def _failure(code):
     # of what the worker printed. Codes the *worker* originates carry
     # "request" or "parse" instead, and arrive already built by
     # proto.parse_response — this function is never the one naming those.
+    #
+    # Never sandbox_unavailable — that code means the attempt never
+    # started, which is _unavailable()'s status, not this one's.
     return proto.build_response(
         "failed", failures=[{"stage": "host", "code": code}])
+
+
+def _unavailable(code):
+    # The pre-start state: nothing was launched, so nothing was sent.
+    # sandbox_unavailable is the only code that ever reaches this — a local
+    # prerequisite missing, or bwrap itself refusing to start (OSError from
+    # Popen) — never a worker that ran and then failed.
+    return proto.build_response(
+        "unavailable", failures=[{"stage": "host", "code": code}])
 
 
 def _launch_one(request_json, worker_path, protocol_path):
@@ -182,9 +194,10 @@ def _launch_one(request_json, worker_path, protocol_path):
             stderr=subprocess.PIPE, start_new_session=True)
     except OSError:
         # bwrap vanished between the pre-flight check and now, or refused to
-        # start. Same typed result as the pre-flight check finds — there is
-        # no fallback to a raw subprocess on either path.
-        return _failure("sandbox_unavailable")
+        # start. Nothing was launched, so this is the pre-start state, same
+        # as the pre-flight check finds — there is no fallback to a raw
+        # subprocess on either path.
+        return _unavailable("sandbox_unavailable")
 
     outcome = None
     try:
@@ -235,7 +248,7 @@ def search(query, worker_path=None, protocol_path=None):
 
     reason = _sandbox_reason(worker_path, protocol_path)
     if reason:
-        return _failure("sandbox_unavailable")
+        return _unavailable("sandbox_unavailable")
 
     try:
         request_json = proto.dumps_request(query)

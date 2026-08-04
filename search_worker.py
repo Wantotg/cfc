@@ -74,7 +74,14 @@ def _clean_url(href):
     redirect-through-us link, if the page ever serves one, by decoding the
     destination rather than requesting it — the whole point of the no-
     second-request rule (Concept.md) is that a returned link is data, never
-    a fetch instruction."""
+    a fetch instruction.
+
+    Validation runs on the final destination, after any `uddg` decoding: a
+    URL carrying login credentials (`user:pass@host`) or any of the same C0
+    control / bidi-override characters stripped from title and snippet text
+    is rejected outright rather than cleaned — this function never repairs
+    a bad URL into an apparently safe one, it only ever returns the
+    original or nothing."""
     if not href:
         return None
     href = href.strip()
@@ -90,7 +97,9 @@ def _clean_url(href):
         parsed = urlsplit(href)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None
-    if any(ord(c) < 0x20 for c in href):
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if any(ord(c) < 0x20 or ord(c) in _BIDI_STRIP for c in href):
         return None
     if len(href) > proto.MAX_URL_CHARS:
         return None
@@ -207,6 +216,15 @@ def _parse_page(html_text):
         parser.close()
     except Exception:
         return "failed", [], [{"stage": "parse", "code": "markup_unrecognized"}]
+
+    if parser._in_result:
+        # The HTML ended with a result container still open. HTMLParser
+        # never synthesizes the missing closing tag, so _close_result was
+        # never called for it — counted as omitted here instead,
+        # unconditionally, rather than through _close_result: a card that
+        # happens to look complete except for its missing closing tag is
+        # still truncated, not a small truthful complete.
+        parser.omitted += 1
 
     results = parser.results[:MAX_RESULTS]
     if len(results) >= MAX_RESULTS:

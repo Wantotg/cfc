@@ -161,10 +161,27 @@ def section_worker_protocol_boundary():
        "-b " not in src and "--cookie" not in src and "-c " not in src, src)
 
 
-# --- sandbox_unavailable, verified by disabling each guard in turn --------
+# --- unavailable/host/sandbox_unavailable, verified by disabling each -----
+# guard in turn. This is the pre-start state (Work Order v1.8): nothing was
+# launched, so it must be `unavailable`, never `failed` — `failed` is
+# reserved for an attempt that actually started and then went wrong.
+
+def _assert_unavailable(label):
+    ok(f"sandbox_status() now names the failure, not 'ready' ({label})",
+       websearch.sandbox_status() != "ready")
+    r = websearch.search("cats")
+    ok(f"search() returns unavailable/host/sandbox_unavailable ({label}) — "
+       "no fallback to a raw subprocess, no query sent, and never `failed` "
+       "since nothing was launched",
+       r["status"] == "unavailable"
+       and r["failures"] == [{"stage": "host",
+                              "code": "sandbox_unavailable"}], r)
+
 
 def section_sandbox_unavailable():
-    print("--- sandbox_unavailable: each guard, verified by disabling it ---")
+    print("--- unavailable/host/sandbox_unavailable: every local "
+         "prerequisite, verified by disabling it and driving search() all "
+         "the way through, not just sandbox_status() ---")
     if HAVE_BWRAP:
         ok("sandbox_status() reports ready with a real bwrap on PATH",
            websearch.sandbox_status() == "ready", websearch.sandbox_status())
@@ -172,47 +189,74 @@ def section_sandbox_unavailable():
     saved = websearch.BWRAP_BINARY
     websearch.BWRAP_BINARY = "bwrap-does-not-exist-xyz"
     try:
-        ok("sandbox_status() now names the failure, not 'ready'",
-           websearch.sandbox_status() != "ready")
-        r = websearch.search("cats")
-        ok("search() fails closed to sandbox_unavailable — no fallback to a "
-           "raw subprocess",
-           r["status"] == "failed"
-           and r["failures"] == [{"stage": "host",
-                                  "code": "sandbox_unavailable"}], r)
+        _assert_unavailable("missing bwrap")
     finally:
         websearch.BWRAP_BINARY = saved
     if HAVE_BWRAP:
         ok("restoring bwrap restores readiness",
            websearch.sandbox_status() == "ready")
 
+    saved_py = websearch.SANDBOX_PYTHON
+    websearch.SANDBOX_PYTHON = "/no/such/python3"
+    try:
+        _assert_unavailable("missing system python")
+    finally:
+        websearch.SANDBOX_PYTHON = saved_py
+    if HAVE_BWRAP:
+        ok("restoring the system python path restores readiness",
+           websearch.sandbox_status() == "ready")
+
     saved_curl = websearch.SANDBOX_CURL
     websearch.SANDBOX_CURL = "/no/such/curl"
     try:
-        ok("a missing curl binary is sandbox_unavailable too — v1.8 depends "
-           "on it as much as on bwrap and python3",
-           websearch.sandbox_status() != "ready")
+        _assert_unavailable("missing curl binary — v1.8 depends on it as "
+                            "much as on bwrap and python3")
     finally:
         websearch.SANDBOX_CURL = saved_curl
+    if HAVE_BWRAP:
+        ok("restoring curl restores readiness",
+           websearch.sandbox_status() == "ready")
 
     saved_mounts = websearch.RUNTIME_MOUNTS
     websearch.RUNTIME_MOUNTS = (Path("/no/such/resolv.conf"),)
     try:
-        ok("a missing runtime mount (resolver/nsswitch/CA bundle) is "
-           "sandbox_unavailable — readiness checks the host, not just the "
-           "sandbox's own files",
-           websearch.sandbox_status() != "ready")
+        _assert_unavailable("missing runtime mount (resolver/nsswitch/CA "
+                            "bundle) — readiness checks the host, not just "
+                            "the sandbox's own files")
     finally:
         websearch.RUNTIME_MOUNTS = saved_mounts
     if HAVE_BWRAP:
         ok("restoring every guard restores readiness",
            websearch.sandbox_status() == "ready")
 
-    print("\n--- sandbox_unavailable: a missing worker file ---")
+    print("\n--- unavailable: a missing worker or protocol file ---")
     r = websearch.search("cats", worker_path=ROOT / "no-such-worker.py")
-    ok("a missing worker path is the same typed result",
-       r["status"] == "failed"
+    ok("a missing worker path is the same typed unavailable result",
+       r["status"] == "unavailable"
        and r["failures"][0]["code"] == "sandbox_unavailable", r)
+    r = websearch.search("cats", protocol_path=ROOT / "no-such-protocol.py")
+    ok("a missing protocol path is the same typed unavailable result",
+       r["status"] == "unavailable"
+       and r["failures"][0]["code"] == "sandbox_unavailable", r)
+
+    print("\n--- unavailable: Bubblewrap process creation itself failing "
+         "(an OSError from subprocess.Popen, after every pre-flight check "
+         "already passed) ---")
+    real_popen = websearch.subprocess.Popen
+
+    def _raising_popen(*a, **k):
+        raise OSError("bwrap vanished between the check and the call")
+
+    websearch.subprocess.Popen = _raising_popen
+    try:
+        r = websearch.search("cats")
+        ok("an OSError creating Bubblewrap is unavailable/sandbox_unavailable "
+           "too, not failed — the attempt never actually started",
+           r["status"] == "unavailable"
+           and r["failures"] == [{"stage": "host",
+                                  "code": "sandbox_unavailable"}], r)
+    finally:
+        websearch.subprocess.Popen = real_popen
 
 
 # --- canaries: filesystem isolation holds; network is now legitimately ----
@@ -444,7 +488,7 @@ def section_no_retry():
        "nothing was ever attempted",
        "may already have been sent" not in websearch.summarize(
            proto.build_response(
-               "failed",
+               "unavailable",
                failures=[{"stage": "host", "code": "sandbox_unavailable"}])))
 
 
