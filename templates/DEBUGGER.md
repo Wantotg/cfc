@@ -28,7 +28,7 @@ place:
 | costs an answer, not a commit | a `Q-` id, closed when answered |
 | looked at, ruled out | an `N-` id, closed with its reason, and it stays |
 
-Each one gets a `TRACKER.md` row carrying the id from the report. **The row is
+Each one gets a `workspace/TRACKER.md` row carrying the id from the report. **The row is
 an index and may not explain anything.**
 
 **What blocks the tag is not "did this version cause it".** That is arguable
