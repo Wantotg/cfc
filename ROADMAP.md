@@ -429,3 +429,34 @@ real provider, which `/status request` is what made checkable at all.
     `-.-' \ )-`( , o o)
           `-    \`_`"'-
 ```
+
+## v1.7 — A web-search boundary before web search *pushed, 04/08*
+
+v1.7 gives the chat model a fifth tool, `web_search`, but deliberately stops
+before live search. The exact query crosses a fresh Bubblewrap process with no
+vault, home, project, inherited environment or network access, and the worker
+returns a typed `unavailable / not_available_yet` result.
+
+**Added**
+- a real process boundary for a non-file tool, with bounded queries and typed
+  protocol results for unavailable, empty, partial, timeout, crash and
+  malformed outcomes
+- an approval panel showing the exact query and `OFFLINE STUB — no network
+  request`, excluded from “allow all this turn”
+- per-caller tool selection and a shared registry, so routines never receive
+  `web_search` and the schema, dispatcher and `/tools` listing agree
+
+**Settled**
+- Bubblewrap is required; a missing sandbox fails closed instead of falling
+  back to an unsandboxed subprocess
+- the worker sees only its request and mounted protocol files; the host
+  validates every response before it enters history
+
+This version proves the boundary, not working web search. It makes no claim
+that structured evidence is safe against prompt injection in a live model, and
+the tool is not available to routines.
+
+> *Note: we're reaching out of the vault, but still on the local machine, next up: online!*
+```
+≽(◉˕ ◉ ≼マ 'LET ME OUT, LET ME OUT'
+```
