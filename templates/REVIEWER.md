@@ -26,8 +26,8 @@ Two deliverables, and neither is optional:
    - **Duplicated** — the same fact recorded twice, inside `HANDOVER.md` or
      spilled into another doc. One fact, one home is the rule this file states
      for everyone else, so it's the one worth checking here.
-   - **Doesn't belong** — content that's drifted into `BUGS.md`, `BACKLOG.md`,
-     or `CHANGELOG.md` territory per the ownership table this file itself
+   - **Doesn't belong** — content that's drifted into `development/BUGS.md`, `development/BACKLOG.md`,
+     or `development/CHANGELOG.md` territory per the ownership table this file itself
      keeps.
 
 2. **The structural call.** Compress in place, split into more than one file,

@@ -27,7 +27,7 @@ rather than a fresh eye.
 
 - A long-range roadmap — grouped, ordered ideas with no version numbers claimed.
 - A wishlist — your own scratchpad, unfiltered on purpose.
-- `BACKLOG.md` — what's owed. A direction that clears three backlog entries is a
+- `development/BACKLOG.md` — what's owed. A direction that clears three backlog entries is a
   different proposition from one that adds a fourth, and that is worth saying.
 
 ## When this session goes wrong

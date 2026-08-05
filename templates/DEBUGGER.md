@@ -22,8 +22,8 @@ place:
 | | |
 |---|---|
 | blocks the tag | it falsifies a claim in this version's `ROADMAP.md` entry. Fix, commit, push |
-| broken | `BUGS.md` |
-| works, and is owed | `BACKLOG.md` |
+| broken | `development/BUGS.md` |
+| works, and is owed | `development/BACKLOG.md` |
 | a feature | a roadmap version |
 | costs an answer, not a commit | a `Q-` id, closed when answered |
 | looked at, ruled out | an `N-` id, closed with its reason, and it stays |

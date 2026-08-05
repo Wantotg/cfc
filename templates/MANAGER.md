@@ -48,7 +48,7 @@ doing.
 
 **The public/private line is a decision, not a default.** Local paths and your own forward planning stay out of anything tracked. **`.gitignore` is not a
 changelog** — a comment there says what a pattern is for; the story goes in
-`CHANGELOG.md`.
+`development/CHANGELOG.md`.
 
 `ROADMAP.md` is yours, and so is every version note. Propose, don't edit — which
 applies with *more* force here than anywhere else, because restructuring a file
