@@ -297,6 +297,14 @@ def _run_curl(query):
             http_code = int(proc.stdout.decode("ascii", "replace").strip())
         except ValueError:
             return None, None, None, "connection_failed"
+        if not (proto.MIN_HTTP_STATUS <= http_code <= proto.MAX_HTTP_STATUS):
+            # curl prints 000 when the write-out never got a real status —
+            # the connection was reset, TLS failed, or the transfer never
+            # completed a response line at all. That's the same "nothing
+            # usable came back" as the transport failures above, not a
+            # status DuckDuckGo actually sent, so it stays a transport
+            # failure rather than becoming a refusal with http_status=0.
+            return None, None, None, "connection_failed"
 
         try:
             with open(body_path, "rb") as f:
@@ -338,8 +346,14 @@ def main():
 
     http_err = _http_failure_code(http_code)
     if http_err is not None:
-        print(proto.dumps_response(
-            "failed", failures=[{"stage": "request", "code": http_err}]))
+        # http_status rides only on source_refused (search_protocol.py's own
+        # rule) — a redirect's 3xx is real, but Concept.md's carried-status
+        # claim is specifically about a refusal, and _run_curl has already
+        # bounded http_code to 100-599 above.
+        failure = {"stage": "request", "code": http_err}
+        if http_err == "source_refused":
+            failure["http_status"] = http_code
+        print(proto.dumps_response("failed", failures=[failure]))
         return 0
 
     if not _content_type_ok(content_type):

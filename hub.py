@@ -533,6 +533,16 @@ HUB_KEYS = (
 # written beside it, so the two cannot disagree.
 _HUB_DISPATCH = {key: value for keys, value, _ in HUB_KEYS for key in keys}
 
+# Where the ids the picker's table leaves out are actually listed — one
+# wording, read by both the short hub hint (`pick_session`) and the fuller
+# `h` screen (`print_hub_help`) below. Two sentences saying the same thing
+# is exactly the shape that drifts: the short hint used to say "routine runs
+# included" and the `h` screen didn't mention wiki pages at all (v1.9).
+_OMITTED_SESSIONS = (
+    "'/list sessions' inside a chat shows the complete list, including the "
+    "wiki pages and routine transcripts the table above leaves out"
+)
+
 
 def print_hub_help():
     """`h` at the hub — what can be typed here, derived from what is accepted.
@@ -556,8 +566,17 @@ def print_hub_help():
         line.append(what, style="dim")
         console.print(line)
     line = Text(f"  {'<number>':<{width}}", style="cyan")
-    line.append("resume that chat — the ids in the table above", style="dim")
+    line.append("resume that chat by id", style="dim")
     console.print(line)
+    # Three facts a number on this screen can't say for itself: it works
+    # past the ten rows actually printed, where the rest are listed, and why
+    # Main is the one id that never works here at all — 'm' loads Main's
+    # vault bundle (system prompt, persona, First Message); opening it by
+    # number would skip that load and open a profile-less row.
+    console.print(f"    every non-Main id opens even when it's missing "
+                  f"from the table above — {_OMITTED_SESSIONS}. Main only "
+                  f"opens with 'm': by number it would skip the bundle "
+                  f"check that creates it.", style="dim")
 
     console.print()
     console.print("The connection light", style="bold")
@@ -641,7 +660,7 @@ def _hub_create(conn):
     the new id, or None on a blank/invalid id or a collision — the refusal
     is printed by `commands.create_chat_with_id`, which owns the one create
     operation this and `/new <id>` share."""
-    raw = input("New chat id (a positive number): ").strip()
+    raw = input("New chat id (a positive number, Enter to cancel): ").strip()
     if not raw:
         console.print("Cancelled.")
         return None
@@ -742,8 +761,7 @@ def pick_session(conn):
                       "for Main, 'p' for private, 'c' to create a chosen "
                       "id, 'r' to rename, 'd' to delete, 'h' for help, "
                       "'q' to quit.")
-        console.print("'/list sessions' inside a session shows every "
-                      "session, routine runs included.", style="dim")
+        console.print(f"{_OMITTED_SESSIONS}.", style="dim")
 
         redraw = False
         while not redraw:

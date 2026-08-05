@@ -26,9 +26,19 @@
 # host-added `attempts` field are gone outright — v1.8 makes at most one
 # curl request per approval, so a per-failure "try again" flag and a count of
 # tries would both be describing a policy that no longer exists (Concept.md).
+#
+# v1.9 bumps it again, for the same reason: a v1.8 host reading a v1.9
+# worker's reply (or the reverse) must fail closed rather than silently
+# accept a failure item shaped differently than it expects. The one change is
+# `http_status` on a failure item — present, and a real 100–599 integer,
+# only when `stage == "request"` and `code == "source_refused"`; forbidden on
+# every other failure. It carries the one number Concept.md asks to survive
+# a refused search end to end: the HTTP status DuckDuckGo actually answered
+# with, so `websearch.summarize()` can say the query was received rather
+# than merely refused before ever leaving the machine.
 import json
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 # --- field limits ------------------------------------------------------
 #
@@ -50,6 +60,12 @@ MAX_CODE_CHARS = 100
 # own MAX_HTML_BYTES, which bounds the *page* it reads before parsing it —
 # this bounds the *response* it prints afterward.
 MAX_RAW_CHARS = 65_536
+
+# The real range HTTP defines (informational through server error) — not a
+# claim about which codes DuckDuckGo could plausibly send, just the outer
+# bound a validator can hold a wire value to without interpreting it.
+MIN_HTTP_STATUS = 100
+MAX_HTTP_STATUS = 599
 
 STATUSES = frozenset({"complete", "partial", "unavailable", "failed"})
 # Where in a live search a failure happened. Fixed and small on purpose — an
@@ -111,15 +127,39 @@ def _validate_evidence_item(item):
 
 
 def _validate_failure_item(item):
+    """A failure item is `{stage, code}`, plus a conditional third field:
+    `http_status` is required on `stage == "request", code ==
+    "source_refused"` and forbidden everywhere else. The two-field shape is
+    what every other failure keeps (v1.9's own header) — `_no_extra_fields`
+    is handed the field set that applies to *this* item, so a refusal
+    missing `http_status` and a non-refusal carrying one both fail the same
+    "wrong fields" check, never a separate one.
+    """
     if not isinstance(item, dict):
         raise ProtocolError("failure item must be an object")
-    _no_extra_fields(item, {"stage", "code"}, "failure item")
+    is_refusal = (isinstance(item, dict) and item.get("stage") == "request"
+                 and item.get("code") == "source_refused")
+    allowed = {"stage", "code", "http_status"} if is_refusal \
+        else {"stage", "code"}
+    _no_extra_fields(item, allowed, "failure item")
     stage = item["stage"]
     if stage not in STAGES:
         raise ProtocolError(
             f"failure.stage must be one of {sorted(STAGES)}, got {stage!r}")
     code = _bounded_str(item["code"], MAX_CODE_CHARS, "failure.code")
-    return {"stage": stage, "code": code}
+    out = {"stage": stage, "code": code}
+    if is_refusal:
+        status = item["http_status"]
+        # bool is an int subclass — excluded explicitly, same discipline
+        # `_bounded_str` already applies to a stray non-string.
+        if isinstance(status, bool) or not isinstance(status, int):
+            raise ProtocolError("failure.http_status must be an integer")
+        if not (MIN_HTTP_STATUS <= status <= MAX_HTTP_STATUS):
+            raise ProtocolError(
+                f"failure.http_status must be {MIN_HTTP_STATUS}-"
+                f"{MAX_HTTP_STATUS}, got {status!r}")
+        out["http_status"] = status
+    return out
 
 
 # --- responses -------------------------------------------------------------

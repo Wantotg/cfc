@@ -1291,36 +1291,114 @@ def _atomic_delete(conn, do_work):
         raise
 
 
-def delete_session(conn, session_id):
-    """Delete a session, its messages, and everything indexing them.
+def _delete_session_cascade(conn, session_id):
+    """The shared cascade body: index rows first, while the messages that
+    identify them still exist, then session_tags, messages, sessions.
+    Chunks are also swept by `session_id` directly: a chunk whose message
+    was already deleted separately has no other way back to this session,
+    and leaving it is how the orphans in the first place happened.
 
-    The index rows go first, while the messages that identify them still
-    exist. Chunks are also swept by `session_id` directly: a chunk whose
-    message was already deleted separately has no other way back to this
-    session, and leaving it is how the orphans in the first place happened.
+    Shared by `delete_session` and `discard_provisional_chat` — both run it
+    inside their own `_atomic_delete`, which is what "the same transaction
+    as the existing complete delete_session cascade" (Work Order.md v1.9)
+    means: one cascade definition, not a second copy pinned to a chat that
+    happens to be empty.
     """
-    def _work(conn):
-        if _has_table(conn, "chunks"):
-            mids = [r[0] for r in conn.execute(
-                "SELECT id FROM messages WHERE session_id=?", (session_id,))]
-            ids = []
-            for mid in mids:
-                ids += [r[0] for r in conn.execute(
-                    "SELECT id FROM chunks WHERE message_id=?", (mid,))]
+    if _has_table(conn, "chunks"):
+        mids = [r[0] for r in conn.execute(
+            "SELECT id FROM messages WHERE session_id=?", (session_id,))]
+        ids = []
+        for mid in mids:
             ids += [r[0] for r in conn.execute(
-                "SELECT id FROM chunks WHERE session_id=?", (session_id,))]
-            drop_chunks(conn, sorted(set(ids)))
+                "SELECT id FROM chunks WHERE message_id=?", (mid,))]
+        ids += [r[0] for r in conn.execute(
+            "SELECT id FROM chunks WHERE session_id=?", (session_id,))]
+        drop_chunks(conn, sorted(set(ids)))
 
-        conn.execute(
-            "DELETE FROM session_tags WHERE session_id=?",
-            (session_id,),
-        )
-        conn.execute(
-            "DELETE FROM messages WHERE session_id=?",
-            (session_id,),
-        )
-        conn.execute(
-            "DELETE FROM sessions WHERE id=?", (session_id,)
-        )
+    conn.execute(
+        "DELETE FROM session_tags WHERE session_id=?",
+        (session_id,),
+    )
+    conn.execute(
+        "DELETE FROM messages WHERE session_id=?",
+        (session_id,),
+    )
+    conn.execute(
+        "DELETE FROM sessions WHERE id=?", (session_id,)
+    )
 
-    _atomic_delete(conn, _work)
+
+def delete_session(conn, session_id):
+    """Delete a session, its messages, and everything indexing them."""
+    _atomic_delete(conn, lambda c: _delete_session_cascade(c, session_id))
+
+
+# --- the provisional automatic chat (Work Order.md v1.9) -------------------
+#
+# "Discard only a known untouched automatic chat on its controlled exit."
+# `main.py` carries a process-local record — {"id", "title", "model",
+# "system_prompt_name", "persona_name", "traits"} — for the one ordinary row
+# created by hub 'n' or bare '/new', and asks `discard_provisional_chat` to
+# re-derive the truth from the row itself at every controlled departure from
+# that row's visit. Never trusts the caller's belief that nothing happened
+# (standing decision 1's discipline, one level up): a chosen id, a resumed
+# row, or a row that picked up a real turn or a customisation is refused
+# here regardless of what main.py's own bookkeeping still believes.
+
+
+def discard_provisional_chat(conn, session_id, opening):
+    """Discard `session_id` if it is still exactly the empty, unchanged row
+    `opening` describes — the process-local snapshot taken when it was
+    created. Returns True if it was discarded.
+
+    Proves, before touching anything: the row still exists and is still an
+    ordinary chat (PROVIDER_CHAT — covers both "already deleted" and "this
+    id now names something else", though nothing in this codebase ever
+    changes a row's provider after creation); it carries no message row of
+    any kind and no First Message; it has no tags; and its title, model,
+    system prompt name, persona name and traits all still match `opening`.
+
+    Any of those *not* holding is the ordinary outcome for a chat that was
+    actually used, resumed, or created at a chosen id — nothing is printed,
+    the row is kept, and this returns False silently. Only a row this
+    function has just proven empty and unchanged, and that *then* fails to
+    delete (an index or vector error), is the exceptional case: the partial
+    work is rolled back, the row is kept, and this prints a visible failure
+    instead — deleting through the index-aware cascade is not allowed to
+    fail silently just because the failure is rare.
+
+    Never touches `session_id_seq`: the cascade doesn't, and this function
+    adds nothing on top of it, so a discarded id is never freed for reuse.
+    """
+    if get_session_provider(conn, session_id) != PROVIDER_CHAT:
+        return False
+    if get_first_message(conn, session_id) is not None:
+        return False
+    if get_session_title(conn, session_id) != opening["title"]:
+        return False
+    if get_session_model(conn, session_id) != opening["model"]:
+        return False
+    if get_system_prompt_name(conn, session_id) != opening["system_prompt_name"]:
+        return False
+    if get_persona_name(conn, session_id) != opening["persona_name"]:
+        return False
+    if get_traits(conn, session_id) != opening["traits"]:
+        return False
+    if conn.execute(
+        "SELECT 1 FROM messages WHERE session_id=? LIMIT 1", (session_id,)
+    ).fetchone():
+        return False
+    if conn.execute(
+        "SELECT 1 FROM session_tags WHERE session_id=? LIMIT 1", (session_id,)
+    ).fetchone():
+        return False
+
+    try:
+        _atomic_delete(conn, lambda c: _delete_session_cascade(c, session_id))
+    except Exception as e:
+        console.print(
+            f"[cleanup failed — could not discard empty chat #{session_id}: "
+            f"{e}. The chat was kept.]", style="red")
+        return False
+    console.print(f"Discarded empty chat #{session_id}.")
+    return True

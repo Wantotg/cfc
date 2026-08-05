@@ -138,7 +138,8 @@ def section_worker_protocol_boundary():
     ok("stdout round-trips through the protocol module's own parser",
        parsed is not None, (p.stdout, reason))
     ok("...and is a typed host/protocol_error, not a crash",
-       parsed == {"protocol": 2, "status": "failed", "evidence": [],
+       parsed == {"protocol": proto.PROTOCOL_VERSION, "status": "failed",
+                  "evidence": [],
                   "failures": [{"stage": "host", "code": "protocol_error"}]},
        parsed)
 
@@ -492,6 +493,73 @@ def section_no_retry():
                failures=[{"stage": "host", "code": "sandbox_unavailable"}])))
 
 
+def section_summarize_v3_http_status():
+    print("--- v1.9: summarize() carries a refused search's real HTTP "
+          "status as a definite claim ---")
+    r = proto.build_response(
+        "failed", failures=[{"stage": "request", "code": "source_refused",
+                             "http_status": 403}])
+    line = websearch.summarize(r)
+    ok("the exact definite refusal line, with the real status",
+       line == "web_search failed — source_refused (HTTP 403; DuckDuckGo "
+               "received the query)", line)
+    ok("the integer itself is the model-visible field — rendering reads "
+       "it, never replaces it",
+       r["failures"][0]["http_status"] == 403, r)
+
+    r2 = proto.build_response(
+        "failed", failures=[{"stage": "request", "code": "source_refused",
+                             "http_status": 500}])
+    ok("a different status renders its own number, not a cached one",
+       websearch.summarize(r2)
+       == "web_search failed — source_refused (HTTP 500; DuckDuckGo "
+          "received the query)", websearch.summarize(r2))
+
+    ok("source_refused gets the definite claim instead of the weaker "
+       "'may already have been sent' hedge",
+       "may already have been sent" not in line, line)
+
+    print("  (every other state keeps its existing wording, unchanged)")
+    unavailable = proto.build_response(
+        "unavailable", failures=[{"stage": "host",
+                                  "code": "sandbox_unavailable"}])
+    ok("unavailable is unchanged",
+       websearch.summarize(unavailable)
+       == "web_search unavailable — sandbox_unavailable",
+       websearch.summarize(unavailable))
+
+    protocol_err = proto.build_response(
+        "failed", failures=[{"stage": "host", "code": "protocol_error"}])
+    ok("a host/protocol failure keeps its plain wording — no HTTP claim",
+       websearch.summarize(protocol_err)
+       == "web_search failed — protocol_error", websearch.summarize(protocol_err))
+
+    redirected = proto.build_response(
+        "failed", failures=[{"stage": "request",
+                             "code": "source_redirected"}])
+    ok("a redirect (a completed exchange, but not a refusal) keeps its "
+       "plain wording — the HTTP claim belongs to source_refused alone",
+       websearch.summarize(redirected)
+       == "web_search failed — source_redirected", websearch.summarize(redirected))
+
+    uncertain = proto.build_response(
+        "failed", failures=[{"stage": "request", "code": "connection_failed"}])
+    ok("an uncertain request failure keeps its weaker 'may have been "
+       "sent' hedge, unchanged",
+       websearch.summarize(uncertain)
+       == "web_search failed — connection_failed — the query may already "
+          "have been sent", websearch.summarize(uncertain))
+
+    partial = proto.build_response(
+        "partial",
+        evidence=[{"title": "A", "url": "http://x", "excerpt": "z"}],
+        failures=[{"stage": "parse", "code": "result_omitted"}])
+    ok("partial keeps its own wording, untouched",
+       websearch.summarize(partial)
+       == "web_search partial — 1 untrusted result(s) from DuckDuckGo, "
+          "result_omitted", websearch.summarize(partial))
+
+
 # --- malformed worker output: one canonical protocol_error, real bwrap ----
 
 def section_malformed():
@@ -508,8 +576,8 @@ def section_malformed():
                  "failures": []})),
             "invalid_json.py": _print_literal_worker("not json at all"),
             "extra_fields.py": _print_literal_worker(json.dumps(
-                {"protocol": 2, "status": "complete", "evidence": [],
-                 "failures": [], "bonus": True})),
+                {"protocol": proto.PROTOCOL_VERSION, "status": "complete",
+                 "evidence": [], "failures": [], "bonus": True})),
             "trailing_output.py": "\n".join([
                 "import sys", "import search_protocol as proto",
                 "sys.stdin.read()",
@@ -719,6 +787,8 @@ def main():
     section_timeout_crash_interrupt()
     print()
     section_no_retry()
+    print()
+    section_summarize_v3_http_status()
     print()
     section_malformed()
     print()

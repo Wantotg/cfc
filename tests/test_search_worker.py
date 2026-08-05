@@ -227,6 +227,29 @@ def main():
         ok(f"{code} is source_refused, not treated as success",
            worker._http_failure_code(code) == "source_refused")
 
+    print("\n--- _run_curl: an out-of-range or missing write-out is a "
+          "transport failure, never a status (000, blank, non-numeric, or "
+          "outside 100-599) ---")
+
+    class _FakeCompletedProcess:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout.encode("ascii")
+            self.stderr = b""
+
+    real_subprocess_run = worker.subprocess.run
+    for bad_stdout in ("000", "", "1", "999", "not-a-number"):
+        def _fake_run(*a, _stdout=bad_stdout, **k):
+            return _FakeCompletedProcess(0, _stdout)
+        worker.subprocess.run = _fake_run
+        try:
+            http_code, content_type, body, err = worker._run_curl("cats")
+        finally:
+            worker.subprocess.run = real_subprocess_run
+        ok(f"curl write-out {bad_stdout!r} never becomes a status",
+           http_code is None and err == "connection_failed",
+           (http_code, content_type, body, err))
+
     print("\n--- _parse_page: a normal page ---")
     page = _page(
         _card("https://en.wikipedia.org/wiki/Cat", "Cat - Wikipedia",
@@ -344,14 +367,14 @@ def main():
     parsed, reason = _drive_main("cats", _fake_curl(301, "text/html", ""))
     ok("a 300-399 status becomes failed/request/source_redirected through "
        "main()",
-       parsed == {"protocol": 2, "status": "failed", "evidence": [],
+       parsed == {"protocol": proto.PROTOCOL_VERSION, "status": "failed", "evidence": [],
                  "failures": [{"stage": "request",
                               "code": "source_redirected"}]},
        (parsed, reason))
 
     parsed, reason = _drive_main("cats", _fake_curl(399, "text/html", ""))
     ok("the top of the redirect range (399) is source_redirected too",
-       parsed == {"protocol": 2, "status": "failed", "evidence": [],
+       parsed == {"protocol": proto.PROTOCOL_VERSION, "status": "failed", "evidence": [],
                  "failures": [{"stage": "request",
                               "code": "source_redirected"}]},
        (parsed, reason))
@@ -359,10 +382,40 @@ def main():
     parsed, reason = _drive_main(
         "cats", _fake_curl(403, "text/html", "forbidden"))
     ok("a final non-200, non-redirect status becomes "
-       "failed/request/source_refused through main()",
-       parsed == {"protocol": 2, "status": "failed", "evidence": [],
-                 "failures": [{"stage": "request",
-                              "code": "source_refused"}]},
+       "failed/request/source_refused through main(), carrying its real "
+       "HTTP status",
+       parsed == {"protocol": proto.PROTOCOL_VERSION, "status": "failed",
+                 "evidence": [],
+                 "failures": [{"stage": "request", "code": "source_refused",
+                              "http_status": 403}]},
+       (parsed, reason))
+
+    print("\n--- main(): http_status rides only on source_refused, and "
+          "carries curl's own completed code exactly ---")
+    for code in (202, 403, 429, 500):
+        parsed, reason = _drive_main(
+            "cats", _fake_curl(code, "text/html", "refused"))
+        ok(f"HTTP {code} survives as failures[0].http_status through "
+           f"main()",
+           parsed is not None
+           and parsed["failures"] == [{"stage": "request",
+                                       "code": "source_refused",
+                                       "http_status": code}],
+           (parsed, reason))
+
+    parsed, reason = _drive_main("cats", _fake_curl(302, "text/html", ""))
+    ok("a redirect carries no http_status field at all",
+       parsed is not None
+       and parsed["failures"] == [{"stage": "request",
+                                   "code": "source_redirected"}],
+       (parsed, reason))
+
+    parsed, reason = _drive_main(
+        "cats", _fake_curl(200, "application/json", "{}"))
+    ok("an unexpected content type carries no http_status field",
+       parsed is not None
+       and parsed["failures"] == [{"stage": "request",
+                                   "code": "unexpected_content"}],
        (parsed, reason))
 
     parsed, reason = _drive_main(
@@ -373,7 +426,7 @@ def main():
     ok("an HTTP-200 text/html page matching neither known result markup "
        "nor the explicit no-results shape becomes "
        "failed/parse/markup_unrecognized through main()",
-       parsed == {"protocol": 2, "status": "failed", "evidence": [],
+       parsed == {"protocol": proto.PROTOCOL_VERSION, "status": "failed", "evidence": [],
                  "failures": [{"stage": "parse",
                               "code": "markup_unrecognized"}]},
        (parsed, reason))

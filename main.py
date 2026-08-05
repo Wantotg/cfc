@@ -63,6 +63,7 @@ from db import (
     count_chat_user_turns, count_chat_answers,
     classify_latest_turn, prune_turn, turn_tool_names,
     TURN_NOTHING_SENT, TURN_AMBIGUOUS,
+    discard_provisional_chat,
 )
 import mainchat
 from agent import agent_turn, render_answer, tools_guidance
@@ -136,6 +137,45 @@ def current_process_model():
 def set_process_model(model):
     global _process_model
     _process_model = model
+
+
+# --- the provisional automatic chat (Work Order.md v1.9) -------------------
+#
+# The one ordinary row this process most recently created by hub 'n' or bare
+# '/new' — {"id", "title", "model", "system_prompt_name", "persona_name",
+# "traits"}, or None. Process-local like `_process_model` and for the same
+# reason: it's true of the run, not of the database, so it lives here and
+# never in a column. A chosen id (`c`, `/new <id>`) or a resumed row is never
+# recorded — see `db.discard_provisional_chat` for what actually decides
+# whether the row it names is still safe to remove.
+_provisional = None
+
+
+def _mark_provisional(session_id, model):
+    """Record `session_id` as the row `_discard_if_provisional` may later
+    remove. Called only where a fresh, otherwise-untouched ordinary chat was
+    just created — hub 'n' and bare '/new' — so the snapshot is always the
+    row's known opening shape rather than something read back off it."""
+    global _provisional
+    _provisional = {
+        "id": session_id, "title": "(untitled)", "model": model,
+        "system_prompt_name": None, "persona_name": None, "traits": [],
+    }
+
+
+def _discard_if_provisional(conn, session_id, private):
+    """Ask `db.discard_provisional_chat` to remove `session_id` if it is
+    this process's recorded provisional row — a no-op otherwise, including
+    for a private chat (decision 10: nothing durable to discard) and for a
+    session that was never marked. Consumes the record either way once
+    checked: that row's visit has ended, so there is nothing left to retry
+    it against later.
+    """
+    global _provisional
+    if private or _provisional is None or _provisional["id"] != session_id:
+        return
+    opening, _provisional = _provisional, None
+    discard_provisional_chat(conn, session_id, opening)
 
 
 def _one_line(text, width=60):
@@ -250,9 +290,11 @@ def repl(session_id=None):
                 session_id = outcome
                 # Falls through to the ordinary run_session() call below,
                 # opening what the private chat's screen asked for.
+            elif result is not None:
+                session_id = result
             else:
-                session_id = result if result is not None \
-                    else new_session(conn)
+                session_id = new_session(conn)
+                _mark_provisional(session_id, current_process_model())
 
         session_id = run_session(conn, session_id, auto_export=AUTO_EXPORT)
 
@@ -1039,19 +1081,27 @@ def run_session(conn, session_id, *, auto_export, private=False,
     def h_quit(cmd):
         if auto_export and history and not private:
             safe_export(conn, session_id)
+        _discard_if_provisional(conn, session_id, private)
         return _LEAVE
 
     def h_help(cmd):
         print_help()
 
-    def _enter_fresh_chat(new_id):
+    def _enter_fresh_chat(new_id, mark_provisional):
         """Land on a freshly created ordinary chat — bare `/new`'s
         auto-id row or `/new <id>`'s chosen one. One reset shared by both,
         so a chosen id opens exactly the same way an auto-id one always has.
+
+        `mark_provisional` is true only for the auto-id row: a chosen id is
+        never a candidate for the automatic discard (Work Order.md v1.9), so
+        `/new <id>` passes False. Either way, the row this call is *leaving*
+        is checked first — replacing it is as much a controlled departure
+        from that visit as `/q` is.
         """
         nonlocal session_id, history, injected, turns_interrupted
         nonlocal current_title, is_main, system_prompt, system_prompt_name
         nonlocal persona, persona_name, trait_names
+        _discard_if_provisional(conn, session_id, private)
         session_id = new_id
         history = []
         injected = []
@@ -1069,6 +1119,8 @@ def run_session(conn, session_id, *, auto_export, private=False,
         persona = None
         persona_name = None
         trait_names = []
+        if mark_provisional and not private:
+            _mark_provisional(session_id, current_model)
         console.print(f"\nStarted session "
                       f"#{session_id}\n")
 
@@ -1099,6 +1151,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
                 # bubble that up as this session's own exit rather than
                 # silently discarding it and reprinting our own header.
                 outcome = result
+                _discard_if_provisional(conn, session_id, private)
                 return _LEAVE
             # The nested chat may have switched model — process-wide, so it
             # carries back into this session too (W-1.3.1-03).
@@ -1129,11 +1182,11 @@ def run_session(conn, session_id, *, auto_export, private=False,
                 return
             if auto_export and history and not private:
                 safe_export(conn, session_id)
-            _enter_fresh_chat(new_id)
+            _enter_fresh_chat(new_id, mark_provisional=False)
             return
         if auto_export and history and not private:
             safe_export(conn, session_id)
-        _enter_fresh_chat(new_session(conn))
+        _enter_fresh_chat(new_session(conn), mark_provisional=True)
 
     def _enter_screens(target):
         """Leave the chat loop for the shared screen controller — the same
@@ -1145,6 +1198,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
         nonlocal outcome
         if auto_export and history and not private:
             safe_export(conn, session_id)
+        _discard_if_provisional(conn, session_id, private)
         result = screens.enter(app_conn, mode=target, chat_model=current_model)
         if result is not None:
             outcome = result
@@ -1786,6 +1840,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
             console.print()
             if auto_export and history and not private:
                 safe_export(conn, session_id)
+            _discard_if_provisional(conn, session_id, private)
             break
         if not user:
             continue

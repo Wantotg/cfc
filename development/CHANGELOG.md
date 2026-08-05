@@ -27,6 +27,44 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-05 — The hub tells the truth about getting in and getting out
+v1.9 is three small honesty fixes bundled into one release.
+
+The hub's numeric help now says what a number actually does: any non-Main
+session id opens even when it's missing from *Recent chats* (`/list sessions`
+inside a chat shows the complete list, wiki pages and routine transcripts
+included), and Main only opens with 'm' because its numeric id would skip the
+bundle check that builds it. The short hub hint and the fuller `h` screen now
+share that one sentence instead of two that could drift, and the `c` prompt
+names Enter as its own cancellation.
+
+An ordinary chat created by hub 'n' or bare `/new` is now discarded if it's
+still empty and unchanged — no message of any kind, no First Message, no tag,
+no changed title/model/prompt/persona/traits — at the moment you leave it
+(`/q`, EOF, `/new` replacing it, entering a screen, or a nested private
+chat's screen bubbling a session id out). A chosen id (`c`, `/new <id>`) or a
+resumed row is never a candidate. `db.discard_provisional_chat` re-derives
+the predicate from the row itself rather than trusting a flag, and only a
+proven-empty row that then fails to delete gets a loud report — an ordinary
+chat you actually used is left alone, silently, exactly as before.
+
+`search_protocol.py` bumps to v3: a `source_refused` failure (DuckDuckGo
+answered with a non-redirect, non-200 status) now carries that real HTTP
+status end to end, from `search_worker.py`'s curl call through to
+`websearch.summarize()`'s human trace — `web_search failed — source_refused
+(HTTP 403; DuckDuckGo received the query)` — a definite claim rather than the
+weaker "may already have been sent" hedge every other request failure still
+gets. Every other failure keeps the plain two-field shape.
+
+- Files: hub.py, main.py, db.py, search_protocol.py, search_worker.py,
+  websearch.py, tests/test_hub.py, tests/test_turn_paths.py,
+  tests/test_search_protocol.py, tests/test_search_worker.py,
+  tests/test_websearch.py
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-04 — The window is open
 v1.8 makes `web_search` do something: one approved call sends the model's
 query to `https://html.duckduckgo.com/html/` and returns up to five organic

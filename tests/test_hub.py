@@ -784,12 +784,56 @@ def test_hub_help_is_derived():
         ok(f"...with its description", what[:20] in out, what)
     ok("a chat id is explained, since it isn't a key", "number" in out, out[:200])
 
+    # Whitespace collapsed before comparing: Rich wraps a long dim line to
+    # the console width, which can land a newline mid-phrase — the same
+    # reasoning the connection-legend check below already applies.
+    flat_out = " ".join(out.split())
+    ok("the h screen says a non-Main id opens even off the table",
+       "even when it's missing from the table above" in flat_out, flat_out)
+    ok("the h screen says why Main is the exception",
+       "bundle check" in flat_out, flat_out)
+
+    # The short hub hint (printed above the picker's own '> ' prompt) and
+    # this `h` screen must name the same place for what the table above
+    # leaves out — one wording (`hub._OMITTED_SESSIONS`), not two sentences
+    # free to drift (v1.9). Captured by actually driving pick_session with a
+    # single 'q', not by importing the constant and trusting it is used.
+    import builtins
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+    import db as _dbmod
+    import routines as _routinesmod
+
+    _tmp = _Path(_tempfile.mkdtemp())
+    _dbmod.DB_PATH = _tmp / "chat.db"
+    _conn = _dbmod.db()
+    _saved_routine_dir = _routinesmod.routine_dir
+    _routinesmod.routine_dir = lambda: _tmp / "no-routines"
+    hint_buf = io.StringIO()
+    real_input = builtins.input
+    builtins.input = lambda *a, **k: "q"
+    try:
+        with redirect_stdout(hint_buf):
+            hubmod.console.file = hint_buf
+            hubmod.pick_session(_conn)
+            hubmod.console.file = None
+    finally:
+        builtins.input = real_input
+        _routinesmod.routine_dir = _saved_routine_dir
+        _conn.close()
+    flat_hint = " ".join(hint_buf.getvalue().split())
+    ok("the short hint names /list sessions",
+       "/list sessions" in flat_hint, flat_hint)
+    ok("the short hint and the h screen share the omitted-sessions wording",
+       hubmod._OMITTED_SESSIONS in flat_hint
+       and hubmod._OMITTED_SESSIONS in flat_out,
+       (flat_hint, flat_out[:400]))
+
     # The light's legend comes from the same mapping the light renders, so a
     # new connection state cannot be missing from the help. Whitespace is
     # collapsed on both sides before comparing: Rich wraps a long advice
     # string (the v1.2.1 wording names both the chat and the config-screen
     # command) to the console width, which can land a newline mid-phrase.
-    flat_out = " ".join(out.split())
     for _, _, text in CONNECTION_STYLE.values():
         flat_text = " ".join(text.split())
         ok(f"the legend carries: {text[:28]}", flat_text in flat_out, text)
@@ -834,6 +878,29 @@ def test_hub_lifecycle():
                 return hubmod.pick_session(conn)
         finally:
             builtins.input = real_input
+
+    def pick_full(*typed):
+        """Like `pick`, but also returns the printed text and the exact
+        prompt strings `input()` was called with — what the wording checks
+        below need that a bare return value can't tell them."""
+        feed = iter(typed)
+        prompts = []
+        real_input = builtins.input
+
+        def fake_input(prompt=""):
+            prompts.append(prompt)
+            return next(feed)
+
+        builtins.input = fake_input
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                hubmod.console.file = buf
+                result = hubmod.pick_session(conn)
+                hubmod.console.file = None
+        finally:
+            builtins.input = real_input
+        return result, buf.getvalue(), prompts
 
     conn = dbmod.db(":memory:")
     dbmod.new_session(conn, title="an ordinary chat")
@@ -913,8 +980,33 @@ def test_hub_lifecycle():
                     (cid,)).fetchone()[0] == 0)
 
     print("\n--- cancelling create with a blank id redraws too ---")
-    ok("an empty id at 'c' cancels, and the hub comes back",
-       pick("c", "", "q") == "quit")
+    before = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    result, printed, prompts = pick_full("c", "", "q")
+    ok("an empty id at 'c' cancels, and the hub comes back", result == "quit")
+    create_prompt = prompts[1]  # prompts[0] is the hub's own "\n> "
+    ok("the create prompt names Enter as the way to cancel",
+       "Enter" in create_prompt and "cancel" in create_prompt.lower(),
+       prompts)
+    ok("cancelling prints 'Cancelled.'", "Cancelled." in printed, printed)
+    after = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    ok("no row was created by the cancelled create", after == before,
+       (before, after))
+
+    print("\n--- a non-number at 'c' is the shared chosen-id refusal, "
+          "never a hub key ---")
+    # 'q' is a hub key everywhere else on this screen — typed here, at the
+    # sub-prompt, it must still refuse as "not a whole number" rather than
+    # being read as quit. The second 'q' is what actually leaves: if the
+    # first one had quit instead, this pick_full would hang waiting on a
+    # third input that was never queued.
+    before2 = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    result2, printed2, _ = pick_full("c", "q", "q")
+    ok("'q' at the id prompt doesn't quit the hub", result2 == "quit")
+    ok("...it refuses through the shared chosen-id validation",
+       "isn't a whole number" in printed2, printed2)
+    after2 = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    ok("no row was created by the refused create", after2 == before2,
+       (before2, after2))
 
     conn.close()
 

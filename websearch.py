@@ -292,6 +292,15 @@ def summarize(result):
         return (f"web_search partial — {len(evidence)} untrusted "
                 f"result(s) from DuckDuckGo, {code}{note}")
     if status == "failed":
+        if code == "source_refused":
+            # The one failure code protocol v3 carries a real HTTP status
+            # on (search_protocol.py's own rule) — a definite claim, not
+            # the `_MAY_HAVE_SENT` hedge below: a refusal is a *completed*
+            # HTTP exchange, so cfc knows DuckDuckGo received the query
+            # rather than merely suspecting it might have.
+            http_status = failures[0].get("http_status")
+            return (f"web_search failed — source_refused (HTTP "
+                    f"{http_status}; DuckDuckGo received the query)")
         return f"web_search failed — {code or 'failed'}{note}"
     return f"web_search {status}"
 

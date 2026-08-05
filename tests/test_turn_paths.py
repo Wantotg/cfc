@@ -1072,6 +1072,227 @@ def main_():
     finally:
         api.httpx.Client = real_httpx_client
 
+    # --- Work Order.md v1.9: discard only a known untouched automatic ---
+    # --- chat on its controlled exit ------------------------------------
+    #
+    # `main._provisional` is process-local, so these tests drive it the same
+    # way hub 'n' and bare '/new' do — `main._mark_provisional` — rather than
+    # going through `main.repl()`'s hub loop, which nothing else in this file
+    # exercises either. `drive()` still runs the real `run_session` and the
+    # real `db.discard_provisional_chat` boundary; only the provider is ever
+    # stubbed (this file's own rule, stated at the top).
+    print("\n--- discard: a marked row is removed on its own controlled "
+          "exit ---")
+    # A fresh provider stub, un-scripted: every scenario below either sends
+    # no turn at all or is asserting that a real turn *blocks* the discard,
+    # never that one succeeds.
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+    main.set_process_model(MODEL)
+
+    def _fresh_provisional():
+        sid = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+        main._mark_provisional(sid, MODEL)
+        return sid
+
+    sid_q = _fresh_provisional()
+    out, _ = drive(conn, sid_q, "/q\n")
+    ok("/q discards an untouched marked row",
+       f"Discarded empty chat #{sid_q}." in out, out)
+    ok("...and it's really gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_q,)).fetchone()
+       is None)
+
+    sid_eof = _fresh_provisional()
+    out, _ = drive(conn, sid_eof, "")   # empty stdin: read_input hits EOF at once
+    ok("EOF discards an untouched marked row",
+       f"Discarded empty chat #{sid_eof}." in out, out)
+    ok("...and it's really gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_eof,)).fetchone()
+       is None)
+
+    print("\n--- discard: bare /new discards the row it replaces, and the "
+          "replacement becomes the next provisional row ---")
+    sid_a = _fresh_provisional()
+    # Only "/new\n" is scripted. Its own EOF right afterwards is not a second
+    # scenario stitched on for convenience — it's what proves B, not just A,
+    # is now marked: nothing but the provisional record makes an empty,
+    # unmodified row eligible for this, so B being gone by the end is B
+    # having been marked, not a coincidence of also being empty.
+    out, _ = drive(conn, sid_a, "/new\n")
+    ok("bare /new discards the row it replaces",
+       f"Discarded empty chat #{sid_a}." in out, out)
+    ok("...and it's really gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_a,)).fetchone()
+       is None)
+    started = out.rsplit("Started session #", 1)[-1].split()[0].rstrip(".")
+    sid_b = int(started)
+    ok("the replacement is a different row", sid_b != sid_a, (sid_a, sid_b))
+    ok("...and it was itself discarded at the EOF right after",
+       f"Discarded empty chat #{sid_b}." in out, out)
+    ok("...gone too",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_b,)).fetchone()
+       is None)
+
+    print("\n--- discard: entering a command screen discards first ---")
+    sid_screen = _fresh_provisional()
+    real_screens_enter = main.screens.enter
+    # The screen controller's own behaviour is screens.py's business (see
+    # tests/test_screens.py) — patched at the seam `_enter_screens` calls
+    # through, the same rule this file states for the provider ("Only the
+    # provider is stubbed"), applied to the one other subsystem a scenario
+    # here needs to cross without re-testing it.
+    main.screens.enter = lambda *a, **k: None
+    try:
+        out, _ = drive(conn, sid_screen, "/config\n")
+    finally:
+        main.screens.enter = real_screens_enter
+    ok("entering a screen discards the marked row first",
+       f"Discarded empty chat #{sid_screen}." in out, out)
+    ok("...and it's really gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_screen,)
+                    ).fetchone() is None)
+
+    print("\n--- discard: a nested private chat's screen bubbling a "
+          "session id counts as this row's own departure too ---")
+    sid_outer = _fresh_provisional()
+    real_screens_enter = main.screens.enter
+    # Any non-None return from screens.enter reads as "a screen asked to
+    # open this session id" to `_enter_screens` — the value itself is never
+    # opened by this test, so an arbitrary sentinel proves the plumbing
+    # without needing a real routine transcript to exist.
+    main.screens.enter = lambda *a, **k: 424242
+    try:
+        out, _ = drive(conn, sid_outer, "/new p\n/config\n")
+    finally:
+        main.screens.enter = real_screens_enter
+    ok("the outer row is discarded once the nested private chat's screen "
+       "bubbles an outcome up",
+       f"Discarded empty chat #{sid_outer}." in out, out)
+    ok("...and it's really gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_outer,)
+                    ).fetchone() is None)
+
+    print("\n--- discard: forcing an index-delete failure keeps the row, "
+          "rolls back, and reports loudly (verify the guard by disabling "
+          "it) ---")
+    sid_fail = _fresh_provisional()
+    import chunk as chunkmod
+    import sqlite_vec
+    chunkmod.ensure_table(conn, rebuild=False)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0("
+                "chunk_id integer primary key, embedding float[4])")
+    # A chunk with no message, pointed at this session directly — the same
+    # shape `_delete_session_cascade`'s own comment names as how an orphan
+    # first happens, used here on purpose so there is something in the
+    # index for the forced failure to leave behind.
+    cur = conn.execute(
+        "INSERT INTO chunks (message_id,session_id,kind,ordinal,text,"
+        "token_est,source) VALUES (NULL,?,'message',0,'ghost',1,'chat')",
+        (sid_fail,))
+    ghost_cid = cur.lastrowid
+    conn.execute("INSERT INTO vec_chunks (chunk_id,embedding) VALUES (?,?)",
+                (ghost_cid, sqlite_vec.serialize_float32([0.1, 0.2, 0.3, 0.4])))
+    conn.commit()
+    real_drop_chunks = dbmod.drop_chunks
+    dbmod.drop_chunks = lambda conn, ids: (_ for _ in ()).throw(
+        RuntimeError("simulated index failure"))
+    try:
+        out, _ = drive(conn, sid_fail, "/q\n")
+    finally:
+        dbmod.drop_chunks = real_drop_chunks
+    ok("a forced index failure never claims success",
+       f"Discarded empty chat #{sid_fail}." not in out, out)
+    ok("...and visibly reports the failure instead",
+       "cleanup failed" in out and str(sid_fail) in out, out)
+    ok("the session row survives — retained, not half-deleted",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_fail,)
+                    ).fetchone() is not None)
+    ok("the ghost chunk survives too — rolled back, not half-deleted",
+       conn.execute("SELECT 1 FROM chunks WHERE id=?", (ghost_cid,)
+                    ).fetchone() is not None)
+    ok("...and its vector",
+       conn.execute("SELECT 1 FROM vec_chunks WHERE chunk_id=?",
+                    (ghost_cid,)).fetchone() is not None)
+
+    print("\n--- keepers: a chosen id is never marked, even though it "
+          "still discards the provisional row it replaces ---")
+    sid_old = _fresh_provisional()
+    out, _ = drive(conn, sid_old, "/new 55501\n/q\n")
+    ok("the old provisional row is discarded when a chosen id replaces it",
+       f"Discarded empty chat #{sid_old}." in out, out)
+    ok("...and it's gone",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_old,)
+                    ).fetchone() is None)
+    ok("the chosen-id row itself is never discarded, empty or not",
+       "Discarded empty chat #55501" not in out, out)
+    ok("...it survives",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (55501,)
+                    ).fetchone() is not None)
+
+    print("\n--- keeper: a resumed row that was never marked is never "
+          "auto-discarded, even when it's empty ---")
+    main._provisional = None
+    sid_resumed = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+    out, _ = drive(conn, sid_resumed, "/q\n")
+    ok("no discard line for an unmarked, resumed row",
+       "Discarded empty chat" not in out, out)
+    ok("...it survives",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_resumed,)
+                    ).fetchone() is not None)
+
+    print("\n--- keepers: any one real difference from the opening "
+          "snapshot blocks the discard ---")
+
+    def _keeper(label, mutate):
+        sid = _fresh_provisional()
+        mutate(sid)
+        out, _ = drive(conn, sid, "/q\n")
+        ok(f"keeper — {label}: not discarded",
+           "Discarded empty chat" not in out, out)
+        ok(f"keeper — {label}: the row survives",
+           conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)
+                        ).fetchone() is not None)
+
+    _keeper("a chat message",
+            lambda sid: dbmod.save_message(conn, sid, "user", "hi",
+                                           kind="chat"))
+    _keeper("a non-chat message row (an attachment)",
+            lambda sid: dbmod.save_message(conn, sid, "user", "x",
+                                           kind="attachment"))
+    _keeper("a frozen First Message",
+            lambda sid: dbmod.set_first_message(conn, sid, "muse.md",
+                                                "Good morning."))
+    _keeper("a changed title",
+            lambda sid: dbmod.set_session_title(conn, sid, "renamed"))
+    _keeper("a tag",
+            lambda sid: dbmod.add_tag(conn, sid, "sometag"))
+    _keeper("an attached prompt",
+            lambda sid: dbmod.set_system_prompt(conn, sid, "body",
+                                                "formal.md"))
+    _keeper("an attached persona",
+            lambda sid: dbmod.set_persona(conn, sid, "body", "muse.md"))
+    _keeper("an attached trait",
+            lambda sid: dbmod.set_traits(conn, sid, ["relax"]))
+
+    # The model column is re-synced to the process selection on every open
+    # (`W-1.3.1-03`), so a direct write would be overwritten before the
+    # discard check ever ran — a real customisation here is a `/model`
+    # switch made *before* departure, exactly what this reproduces.
+    sid_model = _fresh_provisional()
+    main.set_process_model("a-model-the-snapshot-never-saw")
+    try:
+        out, _ = drive(conn, sid_model, "/q\n")
+    finally:
+        main.set_process_model(MODEL)
+    ok("keeper — a model switch before departure: not discarded",
+       "Discarded empty chat" not in out, out)
+    ok("keeper — a model switch before departure: the row survives",
+       conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid_model,)
+                    ).fetchone() is not None)
+
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
