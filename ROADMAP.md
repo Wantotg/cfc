@@ -205,7 +205,7 @@ it, terminal text is finally literal, and there is one checked document
 saying every way cfc puts words in front of the model.
 
 **Added**
-- `SYSTEM_INJECTIONS.md` — every system-layer injection seam, checked against
+- `documents/SYSTEM_INJECTIONS.md` — every system-layer injection seam, checked against
   the source by a test rather than maintained by hand (W-1.4-05)
 - `finishing turn` — a visible busy state covering titling and indexing
 

@@ -53,7 +53,7 @@ def ok(name, cond, detail=""):
         print(f"       {str(detail)[:300]}")
 
 
-DOC = ROOT / "SYSTEM_INJECTIONS.md"
+DOC = ROOT / "documents" / "SYSTEM_INJECTIONS.md"
 
 # Nothing tracked to check: config.py is gitignored and machine-specific,
 # config.example.py is a template of settings, not message construction.
