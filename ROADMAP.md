@@ -3,7 +3,7 @@
 Cas's public version history: each shipped version says what cfc added and ends
 with his note from use; proposals stay in private roadmaps until release.
 Pre-1.0 entries are frozen in [`legacy/ROADMAP.md`](legacy/ROADMAP.md);
-change-level reasoning is in [`CHANGELOG.md`](CHANGELOG.md).
+change-level reasoning is in [`CHANGELOG.md`](development/CHANGELOG.md).
 
 ---
 

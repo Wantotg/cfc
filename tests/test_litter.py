@@ -8,7 +8,7 @@ is_litter() decides which chunks get no embedding. Its regex hard-codes the
 marker strings written by commands.py (:remember) and import_anthropic.py
 (tool_use). Those have drifted before: the chat.py split moved the :remember
 marker and the "change this too" comment had to be chased by hand — exactly the
-failure it warned about (see BACKLOG.md).
+failure it warned about (see development/BACKLOG.md).
 
 This makes the coupling self-enforcing. A marker built the way the source
 builds it must still be recognised as litter, so a format change over there

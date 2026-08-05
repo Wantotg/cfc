@@ -7,7 +7,7 @@ runs unattended tasks against a narrow, declared slice of your filesystem.
 
 This file is how you use cooking for cats. The rest of the shelf:
 [`ROADMAP.md`](ROADMAP.md) is what each version added and what's next,
-[`CHANGELOG.md`](CHANGELOG.md) is the current change history and links to its
+[`CHANGELOG.md`](development/CHANGELOG.md) is the current change history and links to its
 frozen earlier entries, and
 [`HANDOVER.md`](HANDOVER.md) is why the code is shaped the way it is —
 invariants, rejected designs, and the non-obvious choices.

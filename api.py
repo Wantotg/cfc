@@ -119,7 +119,7 @@ def wire_messages(messages):
     """The conversation in the shape the provider is sent, not the shape we keep.
 
     **One transform today**, and it is the surviving suspect for the provider
-    400 on tool turns (`BUGS.md`). `agent.py` normalises a missing `content` to
+    400 on tool turns (`development/BUGS.md`). `agent.py` normalises a missing `content` to
     `""` on the assistant message that carries `tool_calls`, because our own
     `history`, `save_message` and the renderer all expect the key to exist.
     Some OpenAI-compatible providers want that field **absent** on a tool-call

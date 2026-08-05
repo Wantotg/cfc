@@ -10,7 +10,7 @@ idempotent and it must not disturb rows it doesn't understand.
 
 Also pins the coupling between commands.py (which writes the :remember marker)
 and db.py (which parses it). That pairing has broken silently once already —
-see BACKLOG.md.
+see development/BACKLOG.md.
 """
 import json
 import sqlite3

@@ -19,7 +19,7 @@ report gave it, unchanged thereafter, so this file, the report and
 
 ## When an entry closes
 
-**It moves to [`legacy/BUGS.md`](legacy/BUGS.md), whole, and leaves nothing
+**It moves to [`legacy/BUGS.md`](../legacy/BUGS.md), whole, and leaves nothing
 behind here.** This file holds open entries only. Why the archive is safe rather
 than lossy, and why it is tracked in git: `HANDOVER.md`, *Which file owns what*.
 

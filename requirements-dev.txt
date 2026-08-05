@@ -5,3 +5,6 @@
 # reason the format exists; keep Pillow out of requirements.txt so a clean
 # checkout proves it.
 pillow>=11.0
+
+# pytest — runs the tests/ suite.
+pytest

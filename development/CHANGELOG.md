@@ -1,9 +1,9 @@
 # Changelog
 
 What changed and when. Most recent at the top. **Entries through v1.0 are frozen
-in [`legacy/CHANGELOG-pre-1.0.md`](legacy/CHANGELOG-pre-1.0.md)**; entries older
+in [`legacy/CHANGELOG-pre-1.0.md`](../legacy/CHANGELOG-pre-1.0.md)**; entries older
 than the 2026-08-01 triage boundary are frozen in
-[`legacy/CHANGELOG-post-1.0.md`](legacy/CHANGELOG-post-1.0.md).
+[`legacy/CHANGELOG-post-1.0.md`](../legacy/CHANGELOG-post-1.0.md).
 
 One entry per change: the date, a title, what changed and why it mattered, the
 files touched, and status. The **commit** hash is the ID — it links straight to

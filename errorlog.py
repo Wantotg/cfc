@@ -1,7 +1,7 @@
 # errorlog.py — a durable record of provider errors, for a bug that only
 # reproduces by waiting.
 #
-# `BUGS.md`'s surviving entry — a provider 400 on tool turns — has no
+# `development/BUGS.md`'s surviving entry — a provider 400 on tool turns — has no
 # reproduction. It closes when the next occurrence's error line settles it, or
 # on absence across the 0.9 → 1.0 window. Both of those need the error line to
 # still exist when someone comes looking, and until now **the only place it
@@ -87,12 +87,12 @@ def log_error(err, *, session_id=None, model=None, interrupted=0,
 
     `err` is the exception (or any object): its `str()` is the whole error
     line, which on the tool path already carries `agent._request_shape`'s
-    rider. It is written verbatim and not summarised — the entry in `BUGS.md`
+    rider. It is written verbatim and not summarised — the entry in `development/BUGS.md`
     asks for the provider's own words, and a summariser is a thing that can be
     wrong about the one message nobody has seen yet.
 
     `interrupted` is the count of turns cancelled in this session so far, which
-    `BUGS.md` asks for and nothing tracked before. It is a count rather than a
+    `development/BUGS.md` asks for and nothing tracked before. It is a count rather than a
     flag because 'was anything interrupted' and 'how much' are the same cost to
     record and not the same finding.
 

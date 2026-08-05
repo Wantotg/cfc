@@ -82,7 +82,7 @@ LEGACY_CFG = SimpleNamespace(
 # `listed=False` here on purpose, to match what the legacy fixture produces;
 # a real migration can choose to list it, but that is a separate decision
 # from whether the two shapes describe the same models (see config.py's own
-# migration in CHANGELOG.md, which does choose to list every id).
+# migration in development/CHANGELOG.md, which does choose to list every id).
 NEW_CFG = SimpleNamespace(MODELS=[
     dict(id="vendor/glm:thinking", tools=True, limit=1_000_000),
     dict(id="vendor/deepseek:thinking", tools=True, limit=1_000_000),

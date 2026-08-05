@@ -554,7 +554,7 @@ def run_routine(key, conn, model=None, interactive=False, on_event=None):
         # from "provider errors" into "things that killed a turn", and the file
         # is only worth reading if what is *not* in it means something.
         #
-        # Routines are included at all because `BUGS.md`'s entry is a
+        # Routines are included at all because `development/BUGS.md`'s entry is a
         # **tool-turn** bug and routines are the heaviest tool users in the
         # system, running unattended on a schedule. An absence-watch with a
         # hole exactly where the tool turns happen is not a watch. A routine is

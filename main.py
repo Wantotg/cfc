@@ -317,7 +317,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
     # asks anyone anything.
     chat_ctx = chat_context(private=private)
     injected = []          # blocks added by /remember, newest last
-    # Turns cancelled in this session. `BUGS.md` asks whether anything was
+    # Turns cancelled in this session. `development/BUGS.md` asks whether anything was
     # interrupted when a provider 400 fires — the surviving theory for that bug
     # is an interrupt mid-batch — and nothing tracked it before. Counted rather
     # than flagged: same cost, and "three" and "one" are not the same finding.
@@ -561,7 +561,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
 
         `revert_bad_model()` prints `provider rejected 'X' — switched back to Y`
         **instead of** the provider's words, so before this existed the one
-        error line `BUGS.md` asks to be captured was discarded exactly when a
+        error line `development/BUGS.md` asks to be captured was discarded exactly when a
         model switch preceded it — and "I switched model and the next turn
         400ed" is an ordinary session, not an exotic one. Two things that are
         each correct alone; the log records what happened and the console

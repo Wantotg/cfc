@@ -8,7 +8,7 @@ gave it, unchanged thereafter.
 
 ## When an entry closes
 
-**It moves to [`legacy/BACKLOG.md`](legacy/BACKLOG.md), whole, and leaves
+**It moves to [`legacy/BACKLOG.md`](../legacy/BACKLOG.md), whole, and leaves
 nothing behind here.** This file holds open entries only. The reasoning is in
 `HANDOVER.md`, *Which file owns what*.
 

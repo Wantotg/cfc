@@ -2,7 +2,7 @@
 """test_wire.py — the shape sent to the provider, and the shape we keep.
 
 `api.wire_messages` is the surviving suspect for the provider 400 on tool turns
-(`BUGS.md`): `agent.py` normalises a missing `content` to `""` on the assistant
+(`development/BUGS.md`): `agent.py` normalises a missing `content` to `""` on the assistant
 message carrying `tool_calls`, and some OpenAI-compatible providers want that
 field absent and reject the replay on the next request.
 
@@ -16,7 +16,7 @@ Two things are pinned, and the second matters more than the first.
      would edit the record of the conversation to satisfy a provider.
 
 There is no test here that the fix *works*, because that cannot be written: the
-bug has no reproduction. This pins the change, not the cure — see `BUGS.md`.
+bug has no reproduction. This pins the change, not the cure — see `development/BUGS.md`.
 
 No network, no API key.
 """
