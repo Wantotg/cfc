@@ -89,6 +89,7 @@ from commands import (
     do_updatedb, auto_embed,
     do_attach, show_attachments, do_detach,
     show_tools_state, show_status, show_list, tools_unsupported_reason,
+    wiki_source_display,
     resolve_layer, resolve_attached, load_pool_file,
     create_routine, do_routine,
     show_outbox, do_file, do_move, do_clear,
@@ -480,6 +481,12 @@ def run_session(conn, session_id, *, auto_export, private=False,
             "run wrote. Typing here sends an ordinary chat message; it "
             "does not run the routine again.",
             style="cyan"))
+    # None for every session that isn't a wiki page. Resolved once, here, so
+    # this notice and `/status`'s Wiki source row (`h_status` below) print
+    # the same call's result rather than each parsing the vault again
+    # (W-1.9-01c) — `/config` stays the place that shows the *configured*
+    # directory, this is what the id inside it currently resolves to.
+    wiki_source = None
     if is_wiki:
         # Same voice, same reason (`W-1.6.4-05`): a wiki session's one
         # existing message is an imported vault page, and free text typed
@@ -491,6 +498,10 @@ def run_session(conn, session_id, *, auto_export, private=False,
             "page itself; a later re-import may refresh its opening "
             "message, but never anything you add after it.",
             style="cyan"))
+        wiki_source = wiki_source_display(conn, session_id)
+        line = Text("  source: ")
+        line.append(*wiki_source)
+        console.print(line)
     if private:
         # State it, don't warn it — this is a fact about the session, in the
         # same voice as the header. It is the user's only signal that the usual
@@ -1735,7 +1746,8 @@ def run_session(conn, session_id, *, auto_export, private=False,
                     persona_name=persona_name, trait_names=trait_names,
                     tools_on=tools_on, db_on=db_on, injected=injected,
                     kind=cmd.arg(0) or None, is_main=is_main,
-                    active_preset=active_preset, requests=request_capture)
+                    active_preset=active_preset, requests=request_capture,
+                    wiki_source=wiki_source)
 
     def h_list(cmd):
         show_list(conn, cmd.raw, current_model)

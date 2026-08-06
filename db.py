@@ -983,6 +983,29 @@ def get_session_provider(conn, session_id):
     return row[0] if row else None
 
 
+def get_wiki_source_uuid(conn, session_id):
+    """The frontmatter id (`source_uuid`) a wiki session was imported under,
+    or None if this isn't a wiki session. Read-only — the column and the
+    identity it carries are still import_wiki's to write, at import time
+    only; this just exposes what's already there for a display lookup
+    (`import_wiki.resolve_wiki_source`).
+
+    `source_uuid` is added by `import_wiki.migrate`/`import_anthropic`, not
+    by this module's own schema (`db()`'s CREATE TABLE), so a database that
+    has never imported anything may not carry the column at all — no wiki
+    session can exist in that case either, but the query is guarded rather
+    than assuming the two facts can't drift apart.
+    """
+    try:
+        row = conn.execute(
+            "SELECT source_uuid FROM sessions WHERE id=? AND provider=?",
+            (session_id, PROVIDER_WIKI),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return row[0] if row else None
+
+
 def set_session_title(conn, session_id, title):
     conn.execute(
         "UPDATE sessions SET title=? WHERE id=?",

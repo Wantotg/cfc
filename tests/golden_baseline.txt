@@ -38,6 +38,7 @@ you>
     /help                   this list
     /list <kind>            what exists: prompts · personas · traits · models · routines · tags ·
 chats · sessions · outbox
+    /list outbox contents   every file in the outbox, not just the filing proposals
     /status                 what's active in this session
     /status prompt          print the attached prompt's text (or persona/trait)
     /status request         show the actual request sent on the latest turn
@@ -382,8 +383,8 @@ Session #1  ·  glm-5.2  ·  Renamed By Golden
   Notes inbox     2 notes — available to routines; archive when you're finished (/clear notes)
 
 you>
-Outbox — Markdown filing proposals (<ROOT>/tests/_fixture_outbox)
-  top level, plus the wiki/ and journal/ proposal folders
+Outbox — pending filing proposals (<ROOT>/tests/_fixture_outbox)
+  top level, plus the wiki/ and journal/ proposal folders inside the root above
   a top-level Markdown file may also show under /move — /file follows its proposed destination,
 /move lets you pick one yourself
   1. filable-note.md  —  A Filable Note
@@ -393,6 +394,12 @@ Outbox — Markdown filing proposals (<ROOT>/tests/_fixture_outbox)
 
   1 of 2 can be filed
   /file <n> | /file <title> | /file all | /file <n> decline [why]
+
+you>
+Outbox contents — every file, folder and link under each configured root
+  <ROOT>/tests/_fixture_outbox
+    filable-note.md
+    no-destination.md
 
 you>
 Found 2 match(es) in 1 session(s):

@@ -818,10 +818,40 @@ def print_session_header(conn, session_id, model, title,
     _footer_rows(conn, session_id, model)
 
 
+def wiki_source_display(conn, session_id):
+    """(text, style) naming which vault file a wiki session's frontmatter id
+    resolves to right now — `import_wiki.resolve_wiki_source`'s result,
+    formatted. Only ever called for a session already known to be a wiki
+    page (`main.py`'s `is_wiki`); `main.py`'s opening notice and this
+    module's `/status` row both print the *same* call's result rather than
+    each resolving it themselves, so they can't ever name two different
+    files for the same session.
+
+    A lookup failure is visible, styled the same as the other non-clean
+    states, but is display-only — see `resolve_wiki_source`'s own docstring
+    for why nothing here may act on an ambiguous or missing id."""
+    from db import get_wiki_source_uuid
+    import import_wiki
+    import wikigit
+    wid = get_wiki_source_uuid(conn, session_id)
+    if wid is None:
+        return "unavailable — no source id recorded for this session", "yellow"
+    result = import_wiki.resolve_wiki_source(wid, wikigit.wiki_dir())
+    if result.status == import_wiki.WS_FOUND:
+        return result.filename, "dim"
+    if result.status == import_wiki.WS_MISSING:
+        return "no page in the wiki still carries this id", "yellow"
+    if result.status == import_wiki.WS_DUPLICATE:
+        return (f"{len(result.filenames)} pages carry this id — "
+                f"{', '.join(result.filenames)}"), "yellow"
+    return f"unavailable — {result.reason}", "yellow"
+
+
 def show_status(conn, session_id, model, title, private=False,
                 system_prompt_name=None, persona_name=None, trait_names=(),
                 tools_on=True, db_on=True, injected=(), kind=None,
-                is_main=False, active_preset=None, requests=()):
+                is_main=False, active_preset=None, requests=(),
+                wiki_source=None):
     """`/status` — everything active in this session, on one screen.
 
     It absorbs eight bare commands (`/title`, `/tokens`, `/prompt`, `/persona`,
@@ -837,6 +867,11 @@ def show_status(conn, session_id, model, title, private=False,
     shape: `requests` is `run_session`'s own process-local capture of the
     latest attempted turn's actual provider request bodies, read back rather
     than reconstructed here.
+
+    `wiki_source` is `(text, style)` from `wiki_source_display`, or None for
+    every session that isn't a wiki page — `run_session` resolves it once at
+    open and passes the same pair here that its own opening notice printed
+    (W-1.9-01c).
     """
     if kind == "request":
         if not requests:
@@ -925,6 +960,9 @@ def show_status(conn, session_id, model, title, private=False,
         heading.append(f"  ·  {short_model(model)}  ·  ", style="dim")
         heading.append(title or "(untitled)")
         console.print(heading)
+
+    if wiki_source is not None:
+        _header_row("Wiki source", *wiki_source)
 
     if not is_main:
         _header_row("System prompt", _strip_md(system_prompt_name) or "not set",
@@ -1175,6 +1213,8 @@ def show_list(conn, what, current_model):
         list_sessions(conn)
     elif what in ("outbox",):
         show_outbox()
+    elif what in ("outbox contents",):
+        show_outbox_contents()
     else:
         console.print(f"Don't know how to list '{what}'. One of:")
         console.print(f"  {' · '.join(LISTABLE)}")
@@ -1210,6 +1250,8 @@ _ALL_COMMANDS = [
         (f"{PREFIX}help", "this list"),
         (f"{PREFIX}list <kind>", "what exists: prompts · personas · traits · models · "
                          "routines · tags · chats · sessions · outbox"),
+        (f"{PREFIX}list outbox contents", "every file in the outbox, not "
+         "just the filing proposals"),
         (f"{PREFIX}status", "what's active in this session"),
         (f"{PREFIX}status prompt", "print the attached prompt's text (or persona/trait)"),
         (f"{PREFIX}status request", "show the actual request sent on the latest turn"),
@@ -2602,15 +2644,19 @@ def do_routine(conn, arg, model=None):
 
 
 def show_outbox():
-    """/list outbox — pending proposals and what would happen to each."""
-    from mover import list_proposals, outbox_roots
+    """/list outbox — pending filing proposals and what would happen to
+    each. This is the proposal subset, not the whole outbox — `/list outbox
+    contents` (`show_outbox_contents`, D-1.7-02b) is the honest, bounded
+    inventory of everything else sitting in it.
+    """
+    from mover import list_proposals, outbox_inventory, outbox_roots
 
     proposals = list_proposals()
     console.print()
     roots = ", ".join(str(r) for r in outbox_roots()) or "(none configured)"
-    console.print(f"Outbox — Markdown filing proposals ({roots})")
-    console.print("  top level, plus the wiki/ and journal/ proposal folders",
-                  style="dim")
+    console.print(f"Outbox — pending filing proposals ({roots})")
+    console.print("  top level, plus the wiki/ and journal/ proposal "
+                  "folders inside the root above", style="dim")
     # D-1.7-04: a top-level Markdown file can be listed here AND by /move —
     # they're not disagreeing about what's in the outbox, they answer two
     # different questions about the same file. Said once, here, rather than
@@ -2620,7 +2666,8 @@ def show_outbox():
                   "pick one yourself", style="dim")
     _print_wiki_stale()
     if not proposals:
-        console.print("  (nothing pending)", style="dim")
+        console.print("  (no filing proposals pending)", style="dim")
+        _print_outbox_contents_pointer(proposals)
         console.print()
         return proposals
 
@@ -2648,8 +2695,74 @@ def show_outbox():
     console.print(f"  {filable} of {len(proposals)} can be filed", style="dim")
     console.print("  /file <n> | /file <title> | /file all | "
                   "/file <n> decline [why]", style="dim")
+    _print_outbox_contents_pointer(proposals)
     console.print()
     return proposals
+
+
+def _print_outbox_contents_pointer(proposals):
+    """One dim line pointing at `/list outbox contents`, only when the
+    bounded, uncapped inventory (`mover.outbox_inventory`) actually holds
+    more than the proposals just listed — so the pointer doesn't fire over
+    an outbox that genuinely has nothing else in it. D-1.7-02b: this screen
+    handles filing proposals; the pointer is how it admits, honestly, that
+    it isn't the whole outbox.
+    """
+    from mover import INV_OK, outbox_inventory
+
+    configured, roots = outbox_inventory()
+    if not configured:
+        return
+    total = sum(r.total for r in roots if r.status == INV_OK)
+    if total > len(proposals):
+        console.print(f"  {total} entries in the outbox in total — see "
+                      f"{PREFIX}list outbox contents", style="dim")
+
+
+def show_outbox_contents():
+    """`/list outbox contents` (D-1.7-02b, W-1.7-02c) — a bounded, read-only
+    inventory of every configured outbox root: every file, directory and
+    symlink, not just the filing proposals `/list outbox` shows. Grouped by
+    root, since each root's own state — missing, unreadable, or walked —
+    is a fact about that root and must not be folded into the others.
+
+    Inspection only. No open, preview, filter, search, refresh, delete,
+    destination, model or approval path reaches from here — this is not a
+    third action surface beside `/file` and `/move`, only a truer list.
+    """
+    from mover import (DIR, INV_MISSING, INV_OK, INV_UNREADABLE,
+                       INVENTORY_CAP, SYMLINK, outbox_inventory)
+
+    console.print()
+    configured, roots = outbox_inventory()
+    console.print("Outbox contents — every file, folder and link under "
+                  "each configured root")
+    if not configured:
+        console.print("  no outbox root is configured", style="dim")
+        console.print()
+        return
+    for r in roots:
+        console.print(f"  {r.root}", style="bold")
+        if r.status == INV_MISSING:
+            console.print("    missing — nothing exists at this path",
+                          style="red")
+            continue
+        if r.status == INV_UNREADABLE:
+            console.print("    unreadable — this root cannot be listed",
+                          style="red")
+            continue
+        if not r.entries:
+            console.print("    (empty)", style="dim")
+            continue
+        for e in r.entries:
+            marker = ("/" if e.kind == DIR else
+                      "@" if e.kind == SYMLINK else "")
+            console.print(f"    {e.relpath}{marker}")
+        if r.omitted:
+            console.print(f"    …{r.omitted} more not shown (showing the "
+                          f"first {INVENTORY_CAP} of {r.total})",
+                          style="dim")
+    console.print()
 
 
 def _proposal_label(p):
@@ -2700,7 +2813,9 @@ def do_file(arg):
 
     proposals = list_proposals()
     if not proposals:
-        console.print("Nothing in the outbox.")
+        console.print("No filing proposals are pending — "
+                      f"{PREFIX}list outbox contents shows everything else "
+                      "in the outbox.")
         return
 
     parts = (arg or "").split()
@@ -2895,7 +3010,9 @@ def do_move():
     console.print()
     files = loose_files()
     if not files:
-        console.print("No outbox files are available to move.", style="dim")
+        console.print("No loose top-level files are available to move — "
+                      f"{PREFIX}list outbox contents shows everything else "
+                      "in the outbox.", style="dim")
         console.print()
         return
 

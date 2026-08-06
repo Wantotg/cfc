@@ -224,6 +224,7 @@ SCRIPT = [
     f"{PREFIX}tokens",
     f"{PREFIX}attached",
     f"{PREFIX}outbox",
+    f"{PREFIX}list outbox contents",
     f"{PREFIX}grep vector",
     f"{PREFIX}forget",
     # Both guided flows, driven read-only — 'back' cancels at the first

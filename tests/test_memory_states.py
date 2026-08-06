@@ -20,6 +20,7 @@ improves a sentence. That test is what stops it coming back.
 
 No network, no API key, no LM Studio.
 """
+import os
 import sqlite3
 import sys
 import tempfile
@@ -28,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import embed
+import import_wiki
 import search
 
 
@@ -319,6 +321,86 @@ def test_missing_id_wiki_warning_names_files():
           row is not None and row[0] == "Eligible Page", True)
 
 
+def test_resolve_wiki_source():
+    """W-1.9-01c: `import_wiki.resolve_wiki_source` — where a wiki session's
+    frontmatter id currently lives, at the same top-level `*.md` boundary
+    `_import_pages` reads. Direct coverage of the resolver itself; the wiring
+    that threads its result through a real session's opening notice and
+    bare `/status` is `test_turn_paths.py`'s job, driven end to end.
+
+    A fifth kind of nothing, alongside the three this file is named for:
+    'no page has this id any more' and 'the directory can't be read' must
+    stay distinguishable, for the same reason `why_empty` splits an empty
+    index from a real miss — a resolver that quietly reports the wrong one
+    of the two turns an unreadable WIKI_DIR into a confident 'page deleted'.
+    """
+    print("resolve_wiki_source: found, missing, duplicate, unavailable, "
+          "top-level-only")
+
+    def page(path, wid, title="T"):
+        path.write_text(f"---\nid: {wid}\ntitle: {title}\n---\nbody\n",
+                        encoding="utf-8")
+
+    vroot = Path(tempfile.mkdtemp(prefix="wiki-source-"))
+    page(vroot / "renamed-now.md", "111")
+    page(vroot / "other.md", "222")
+    dup_a, dup_b = vroot / "dup-a.md", vroot / "dup-b.md"
+    page(dup_a, "333")
+    page(dup_b, "333")
+    # A page one level down shares an id with nothing at the top level — the
+    # importer never reads it either (only *.md directly under wiki_dir).
+    sub = vroot / "sources"
+    sub.mkdir()
+    page(sub / "buried.md", "444")
+
+    check("a page found under a different name than it was imported under "
+          "still resolves — identity survives a rename",
+          import_wiki.resolve_wiki_source("111", str(vroot)),
+          import_wiki.WikiSource(import_wiki.WS_FOUND, "renamed-now.md",
+                                 None, None))
+    check("an id with no page anywhere reports missing",
+          import_wiki.resolve_wiki_source("999", str(vroot)).status,
+          import_wiki.WS_MISSING)
+
+    dup = import_wiki.resolve_wiki_source("333", str(vroot))
+    check("two pages sharing an id report duplicate", dup.status,
+          import_wiki.WS_DUPLICATE)
+    check("...naming both, sorted, never picking one",
+          dup.filenames, ["dup-a.md", "dup-b.md"])
+
+    check("a page that only exists one level down (sources/) is out of "
+          "scope, same as import — reports missing, not found",
+          import_wiki.resolve_wiki_source("444", str(vroot)).status,
+          import_wiki.WS_MISSING)
+
+    check("an unconfigured directory (falsy) is unavailable, not missing",
+          import_wiki.resolve_wiki_source("111", "").status,
+          import_wiki.WS_UNAVAILABLE)
+    check("a directory that doesn't exist is unavailable",
+          import_wiki.resolve_wiki_source(
+              "111", str(vroot / "nowhere")).status,
+          import_wiki.WS_UNAVAILABLE)
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        print("  skip  unreadable-directory case (running as root)")
+    else:
+        unreadable = Path(tempfile.mkdtemp(prefix="wiki-unreadable-"))
+        page(unreadable / "a.md", "111")
+        os.chmod(unreadable, 0o000)
+        try:
+            # glob.glob degrades a permission error to an empty result
+            # rather than raising it — indistinguishable from "nothing has
+            # this id" unless checked for, which is exactly the false
+            # WS_MISSING this guards against.
+            check("an unreadable directory is unavailable, not a false "
+                  "missing",
+                  import_wiki.resolve_wiki_source(
+                      "111", str(unreadable)).status,
+                  import_wiki.WS_UNAVAILABLE)
+        finally:
+            os.chmod(unreadable, 0o755)
+
+
 if __name__ == "__main__":
     test_exception_types()
     test_branches_on_type_not_text()
@@ -326,4 +408,5 @@ if __name__ == "__main__":
     test_recall_returns_none_not_a_sentence()
     test_wiki_scope_gating()
     test_missing_id_wiki_warning_names_files()
+    test_resolve_wiki_source()
     print("\nall memory-state tests passed")

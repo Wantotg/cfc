@@ -16,6 +16,7 @@ one has to come back as a refusal with a reason.
 Everything runs against temp directories — config's real vault paths are
 patched out, so this never touches the real outbox or vault.
 """
+import os
 import subprocess
 import sys
 import tempfile
@@ -893,6 +894,312 @@ def main():
            result.read_text(encoding="utf-8") == "new content")
         ok("...and the source left the outbox", not loose_rep.exists())
         v.commit_all("area: replace-me done")
+
+    print("\n--- outbox_inventory: a bounded, read-only listing "
+          "(D-1.7-02b / W-1.7-02c) ---")
+    with tempfile.TemporaryDirectory() as tmp, Vault(tmp) as v:
+        second_root = Path(tmp) / "second-outbox"
+        second_root.mkdir()
+        saved_roots = mover.outbox_roots
+        mover.outbox_roots = lambda: (v.outbox.resolve(), second_root.resolve())
+        try:
+            (v.outbox / "loose-a.md").write_text("A", encoding="utf-8")
+            (v.outbox / "99 readme.md").write_text("doc", encoding="utf-8")
+            (v.wiki_out / "wdraft.md").write_text("x", encoding="utf-8")
+            logs = v.outbox / "routine logs" / "2026-08"
+            logs.mkdir(parents=True)
+            (logs / "run.md").write_text("x", encoding="utf-8")
+            (v.outbox / "empty-dir").mkdir()
+            symlink_supported = True
+            try:
+                (v.outbox / "escape-link").symlink_to(
+                    v.outside, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                symlink_supported = False
+            (second_root / "other.md").write_text("y", encoding="utf-8")
+
+            configured, roots = mover.outbox_inventory()
+            ok("configured is True once a root exists", configured is True)
+            ok("both roots come back, never folded into one",
+               len(roots) == 2, roots)
+
+            first = next(r for r in roots if r.root == v.outbox.resolve())
+            second = next(r for r in roots if r.root == second_root.resolve())
+            names = {e.relpath for e in first.entries}
+            kinds = {e.relpath: e.kind for e in first.entries}
+
+            ok("an ordinary top-level file is listed",
+               "loose-a.md" in names, names)
+            ok("the outbox's own readme is listed too — this is not the "
+               "proposal filter", "99 readme.md" in names, names)
+            ok("a proposal-folder file is listed, with its folder prefix",
+               "wiki/wdraft.md" in names, names)
+            ok("a nested routine log is listed at its full relative depth",
+               "routine logs/2026-08/run.md" in names, names)
+            ok("its parent directories are listed too, marked as directories",
+               kinds.get("routine logs") == mover.DIR
+               and kinds.get("routine logs/2026-08") == mover.DIR, kinds)
+            ok("an empty directory is included",
+               "empty-dir" in names and kinds["empty-dir"] == mover.DIR, kinds)
+            ok("a plain file is marked FILE",
+               kinds.get("loose-a.md") == mover.FILE, kinds)
+
+            if symlink_supported:
+                ok("the outward symlink is listed as a symlink, never "
+                   "resolved to what it points at",
+                   kinds.get("escape-link") == mover.SYMLINK, kinds)
+                ok("...and nothing beyond it is listed — it was never "
+                   "followed", not any(r.startswith("escape-link/")
+                                       for r in names), names)
+
+            ok("every displayed path stays relative to its own root",
+               all(not e.relpath.startswith("/") for e in first.entries),
+               first.entries)
+            ok("the second root's file is listed under it, not merged "
+               "into the first",
+               {e.relpath for e in second.entries} == {"other.md"},
+               second.entries)
+
+            order = [e.relpath for e in first.entries]
+            ok("entries come back sorted case-insensitively, deterministically",
+               order == sorted(order, key=lambda s: (s.lower(), s)), order)
+
+            print("\n--- capping: at most 200 shown, the real count and "
+                  "the omission both named ---")
+            big_root = Path(tmp) / "big-outbox"
+            big_root.mkdir()
+            for i in range(215):
+                (big_root / f"file-{i:03d}.md").write_text("x", encoding="utf-8")
+            mover.outbox_roots = lambda: (big_root.resolve(),)
+            _, big_roots = mover.outbox_inventory()
+            big = big_roots[0]
+            ok("215 real entries, all counted", big.total == 215, big.total)
+            ok("display is capped at 200", len(big.entries) == 200,
+               len(big.entries))
+            ok("omitted names exactly what the cap left out",
+               big.omitted == 15, big.omitted)
+
+            print("\n--- a missing root and an unreadable root each get "
+                  "their own row; neither erases the working root's "
+                  "entries ---")
+            missing_root = Path(tmp) / "does-not-exist"
+            unreadable_root = Path(tmp) / "unreadable-outbox"
+            unreadable_root.mkdir()
+            (unreadable_root / "hidden.md").write_text("x", encoding="utf-8")
+            mover.outbox_roots = lambda: (
+                v.outbox.resolve(), missing_root, unreadable_root.resolve())
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                print("  skip  unreadable-root case (running as root)")
+            else:
+                os.chmod(unreadable_root, 0o000)
+                try:
+                    _, roots3 = mover.outbox_inventory()
+                finally:
+                    os.chmod(unreadable_root, 0o755)
+                by_root = {r.root: r for r in roots3}
+                ok("three rows for three configured roots",
+                   len(roots3) == 3, roots3)
+                ok("the missing root is reported missing, not dropped",
+                   by_root[missing_root].status == mover.INV_MISSING, roots3)
+                ok("the unreadable root is reported unreadable",
+                   by_root[unreadable_root.resolve()].status
+                   == mover.INV_UNREADABLE, roots3)
+                ok("...with no entries leaked from a chmod'd directory",
+                   by_root[unreadable_root.resolve()].entries == [], roots3)
+                ok("the working root's own entries survive both "
+                   "neighbours failing",
+                   len(by_root[v.outbox.resolve()].entries) > 0, roots3)
+
+            print("\n--- a subdirectory that turns unreadable mid-walk "
+                  "keeps its siblings, and its own listing, but loses its "
+                  "own contents ---")
+            partial_root = Path(tmp) / "partial-outbox"
+            partial_root.mkdir()
+            (partial_root / "ok-sibling.md").write_text("x", encoding="utf-8")
+            blocked = partial_root / "blocked"
+            blocked.mkdir()
+            (blocked / "inside.md").write_text("x", encoding="utf-8")
+            mover.outbox_roots = lambda: (partial_root.resolve(),)
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                print("  skip  subdirectory-turns-unreadable case "
+                      "(running as root)")
+            else:
+                os.chmod(blocked, 0o000)
+                try:
+                    _, roots4 = mover.outbox_inventory()
+                finally:
+                    os.chmod(blocked, 0o755)
+                partial = roots4[0]
+                entries4 = {e.relpath for e in partial.entries}
+                ok("the root itself is still walked whole (status ok)",
+                   partial.status == mover.INV_OK, partial.status)
+                ok("the sibling at the top level survives",
+                   "ok-sibling.md" in entries4, entries4)
+                ok("the blocked directory itself is still listed — its "
+                   "own stat, from the parent, succeeded",
+                   "blocked" in entries4, entries4)
+                ok("...but nothing inside it is, since scanning it failed",
+                   "blocked/inside.md" not in entries4, entries4)
+
+            print("\n--- an entry that vanishes between being listed and "
+                  "being stat'd costs only itself ---")
+            vanish_root = Path(tmp) / "vanish-outbox"
+            vanish_root.mkdir()
+            (vanish_root / "keeps.md").write_text("x", encoding="utf-8")
+            (vanish_root / "vanishes.md").write_text("x", encoding="utf-8")
+
+            class _VanishingEntry:
+                def __init__(self, real):
+                    self._real = real
+                    self.name = real.name
+                    self.path = real.path
+
+                def is_symlink(self):
+                    if self.name == "vanishes.md":
+                        raise FileNotFoundError(self.name)
+                    return self._real.is_symlink()
+
+                def is_dir(self, follow_symlinks=True):
+                    return self._real.is_dir(follow_symlinks=follow_symlinks)
+
+            real_scandir = mover.os.scandir
+
+            def fake_scandir(path):
+                class _Ctx:
+                    def __enter__(self_):
+                        return [_VanishingEntry(e) for e in real_scandir(path)]
+
+                    def __exit__(self_, *exc):
+                        return False
+                return _Ctx()
+
+            mover.os.scandir = fake_scandir
+            try:
+                vanish_entries = mover._walk_root(vanish_root)
+            finally:
+                mover.os.scandir = real_scandir
+            vanish_names = {e.relpath for e in vanish_entries}
+            ok("the entry that raised mid-stat is simply absent, not a crash",
+               "vanishes.md" not in vanish_names, vanish_names)
+            ok("...its sibling still made it through",
+               "keeps.md" in vanish_names, vanish_names)
+        finally:
+            mover.outbox_roots = saved_roots
+
+        print("\n--- unconfigured: no WRITE_ROOTS at all ---")
+        mover.outbox_roots = lambda: ()
+        try:
+            configured, roots = mover.outbox_inventory()
+            ok("configured is False with no roots", configured is False,
+               configured)
+            ok("...and no rows to reconcile with it", roots == [], roots)
+        finally:
+            mover.outbox_roots = saved_roots
+
+    print("\n--- /list outbox, /list outbox contents, /file and /move drive "
+          "the command layer honestly, and none of them reaches an action "
+          "path (D-1.7-02b / W-1.7-02c) ---")
+    with tempfile.TemporaryDirectory() as tmp, Vault(tmp) as v:
+        import contextlib
+        import io
+        import commands
+        import mover as movermod
+
+        def captured(fn, *a, **k):
+            out = io.StringIO()
+            real_file = commands.console.file
+            commands.console.file = out
+            try:
+                with contextlib.redirect_stdout(out):
+                    fn(*a, **k)
+            finally:
+                commands.console.file = real_file
+            return out.getvalue()
+
+        # The guard: neither an inventory screen nor a "nothing to do" refusal
+        # is an action surface. Verified by disabling every write path mover
+        # exposes and asserting none of them fires — the same discipline
+        # HANDOVER.md's testing notes ask for ("verify a guard by disabling
+        # it"), applied to "this screen never writes" instead of a permission
+        # check.
+        def _boom(*a, **k):
+            raise AssertionError(
+                "a /list outbox / /file / /move refusal reached a write path")
+        saved_writes = (movermod.commit, movermod.decline, movermod.commit_move)
+        movermod.commit = movermod.decline = movermod.commit_move = _boom
+        saved_outbox_roots = movermod.outbox_roots
+
+        try:
+            print("\n--- no-proposal/other-content: nothing filable, but "
+                  "the outbox isn't empty ---")
+            (v.outbox / "99 readme.md").write_text("doc", encoding="utf-8")
+            (v.outbox / "loose.txt").write_text("x", encoding="utf-8")
+            out = captured(commands.show_outbox)
+            ok("no filing proposals pending is stated plainly",
+               "no filing proposals pending" in out, out)
+            ok("...and points at the contents screen for the rest",
+               f"{PREFIX}list outbox contents" in out, out)
+            out = captured(commands.do_file, "")
+            ok("/file with nothing to file says so, not 'the outbox is "
+               "empty'", "No filing proposals are pending" in out, out)
+            ok("...and points at the contents command too",
+               f"{PREFIX}list outbox contents" in out, out)
+            (v.outbox / "loose.txt").unlink()
+            (v.outbox / "99 readme.md").unlink()
+
+            print("\n--- only-nested-content: nothing at the top level "
+                  "either, just a nested routine log ---")
+            logs = v.outbox / "routine logs" / "2026-08"
+            logs.mkdir(parents=True)
+            (logs / "run.md").write_text("x", encoding="utf-8")
+            out = captured(commands.show_outbox_contents)
+            ok("the nested log is listed at its full relative depth",
+               "routine logs/2026-08/run.md" in out, out)
+            ok("its parent directories render with the / marker",
+               "routine logs/" in out, out)
+            out2 = captured(commands.do_move)
+            ok("/move with nothing loose names that subset, not 'no "
+               "outbox files'",
+               "No loose top-level files are available to move" in out2,
+               out2)
+            ok("...and points at the contents command too",
+               f"{PREFIX}list outbox contents" in out2, out2)
+
+            print("\n--- multiple-root partial failure: one root's "
+                  "failure doesn't erase another's rows ---")
+            second_root = Path(tmp) / "second-outbox"
+            second_root.mkdir()
+            (second_root / "extra.md").write_text("x", encoding="utf-8")
+            missing_root = Path(tmp) / "missing-outbox"
+            movermod.outbox_roots = lambda: (
+                v.outbox.resolve(), missing_root, second_root.resolve())
+            try:
+                out = captured(commands.show_outbox_contents)
+            finally:
+                movermod.outbox_roots = saved_outbox_roots
+            ok("the working first root's own entries still render",
+               "routine logs/2026-08/run.md" in out, out)
+            ok("the missing root is named, not silently skipped",
+               "missing" in out and str(missing_root) in out, out)
+            ok("the second, working root's entry still renders alongside it",
+               "extra.md" in out, out)
+
+            print("\n--- capped-inventory: the screen names the cap and "
+                  "the real total, never a silent truncation ---")
+            big_root = Path(tmp) / "big-outbox"
+            big_root.mkdir()
+            for i in range(215):
+                (big_root / f"f-{i:03d}.md").write_text("x", encoding="utf-8")
+            movermod.outbox_roots = lambda: (big_root.resolve(),)
+            try:
+                out = captured(commands.show_outbox_contents)
+            finally:
+                movermod.outbox_roots = saved_outbox_roots
+            ok("the omission names both what was left out and the real total",
+               "15 more not shown" in out and "215" in out, out)
+        finally:
+            movermod.commit, movermod.decline, movermod.commit_move = saved_writes
+            movermod.outbox_roots = saved_outbox_roots
 
     print("\n--- the real filing-to-import boundary (B-1.7-05) ---")
     # An empty `id:` used to survive the write as a second, empty id line,

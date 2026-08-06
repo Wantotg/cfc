@@ -27,6 +27,42 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-06 — Every existing door tells the truth
+v1.9's second small honesty pass: three more places where a screen already
+said something that wasn't quite the whole story.
+
+Recent chats already excluded routine transcripts from the picker by
+`provider` alone, never by what the messages looked like — pinned now, so a
+routine session someone kept chatting in can never quietly read as an
+ordinary continued chat.
+
+A wiki session's opening notice and its bare `/status` now resolve where the
+imported page actually lives on disk right now, not just what it was
+imported as: found under its current filename (even after a rename that left
+the frontmatter id untouched), missing, ambiguous between several pages
+sharing an id, or the wiki directory itself unreadable/unconfigured — the
+same one resolved value both screens print, never a second parse.
+`import_wiki.resolve_wiki_source` is read-only: it never imports, writes, or
+picks a winner among duplicates.
+
+The outbox's three surfaces now each say which subset of it they handle.
+`/list outbox` is the filing-proposal screen and says so in its own heading;
+a new `/list outbox contents` is a bounded, read-only inventory of
+everything under every configured root — every file, directory and symlink,
+capped at 200 displayed per root with the real count and the omission named,
+grouped by root so one root's failure never erases another's. `/file` and
+`/move`'s empty states now name what they're actually missing ("no filing
+proposals pending" / "no loose top-level files") instead of claiming the
+outbox itself is empty, and both point at the new contents command.
+
+- Files: commands.py, db.py, import_wiki.py, main.py, mover.py,
+  tests/test_hub.py, tests/test_memory_states.py, tests/test_mover.py,
+  tests/test_turn_paths.py, tests/golden.py, tests/golden_baseline.txt
+- Status: shipped
+- Commit: pending
+
+---
+
 ## 2026-08-05 — The hub tells the truth about getting in and getting out
 v1.9 is three small honesty fixes bundled into one release.
 

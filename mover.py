@@ -29,6 +29,7 @@ import datetime
 import os
 import re
 import shutil
+from collections import namedtuple
 from pathlib import Path
 
 import yaml
@@ -753,6 +754,110 @@ def loose_files():
                 continue
             out.append(f)
     return out
+
+
+# --- a bounded, read-only inventory of everything in the outbox -----------
+#
+# D-1.7-02b / W-1.7-02c: `/list outbox` shows filing *proposals*, and
+# `loose_files()` above shows what `/move` can pick up — both are narrow by
+# design, and neither ever claimed to be the whole outbox. This is the third,
+# honest answer to "what is actually in there": every file, directory and
+# symlink under each configured root, walked without reading a single byte
+# of content and without ever following a symlink (a symlinked directory is
+# listed, never descended into). Inspection only — nothing here plans a
+# move, stamps a wiki id, or touches a database.
+
+INV_OK = "ok"                 # the root exists, is readable, and was walked
+INV_MISSING = "missing"       # configured, but nothing exists at that path
+INV_UNREADABLE = "unreadable"  # exists, but cannot be listed
+
+FILE = "file"
+DIR = "dir"
+SYMLINK = "symlink"
+
+INVENTORY_CAP = 200   # display entries per root; the count itself is never capped
+
+InventoryEntry = namedtuple("InventoryEntry", "relpath kind")
+RootInventory = namedtuple(
+    "RootInventory", "root status entries total omitted")
+
+
+def _walk_root(root):
+    """Every entry under `root`, as `InventoryEntry(relpath, kind)`, in no
+    particular order (the caller sorts). Never opens a file and never
+    resolves a symlink's target — `DirEntry.is_symlink()` is checked first
+    and a symlink is recorded and left alone whether it points at a file, a
+    directory, or nowhere at all.
+
+    A directory that turns unreadable or disappears between being listed by
+    its parent and being scanned here loses only its own subtree: the
+    `try/except` sits around each `scandir`, not around the walk as a whole,
+    so one bad corner never costs a sibling its entries — the same rule
+    `outbox_inventory` applies one level up, for one root against another.
+    """
+    entries = []
+
+    def walk(dir_path, rel_prefix):
+        try:
+            with os.scandir(dir_path) as it:
+                children = list(it)
+        except OSError:
+            return
+        for entry in children:
+            rel = f"{rel_prefix}{entry.name}"
+            try:
+                is_link = entry.is_symlink()
+            except OSError:
+                continue   # vanished between scandir and this stat
+            if is_link:
+                entries.append(InventoryEntry(rel, SYMLINK))
+                continue
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                entries.append(InventoryEntry(rel, DIR))
+                walk(entry.path, f"{rel}/")
+            else:
+                entries.append(InventoryEntry(rel, FILE))
+
+    walk(root, "")
+    return entries
+
+
+def outbox_inventory():
+    """`(configured, [RootInventory, ...])` for every configured outbox root.
+
+    `configured` is False only when `WRITE_ROOTS` itself is empty — there is
+    nothing to report on at all. An individual root that *is* configured but
+    missing or unreadable still gets its own `RootInventory`, marked
+    accordingly, appended exactly where an `INV_OK` one would be: one root's
+    failure is a row, never a reason to drop the roots around it.
+
+    Each `RootInventory.entries` is capped at `INVENTORY_CAP`, sorted
+    case-insensitively (with the exact string as a tiebreaker, so the order
+    is fixed even between two names differing only in case); `.total` is the
+    real, uncapped count and `.omitted` is what the cap left out.
+    """
+    roots = outbox_roots()
+    if not roots:
+        return False, []
+    out = []
+    for root in roots:
+        if not root.is_dir():
+            out.append(RootInventory(root, INV_MISSING, [], 0, 0))
+            continue
+        if not os.access(root, os.R_OK | os.X_OK):
+            out.append(RootInventory(root, INV_UNREADABLE, [], 0, 0))
+            continue
+        entries = sorted(_walk_root(root),
+                         key=lambda e: (e.relpath.lower(), e.relpath))
+        total = len(entries)
+        shown = entries[:INVENTORY_CAP]
+        out.append(RootInventory(root, INV_OK, shown, total,
+                                 total - len(shown)))
+    return True, out
 
 
 def _in_outbox_top(path):

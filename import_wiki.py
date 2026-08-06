@@ -20,7 +20,7 @@ chunk.py consumes. Only the top-level *.md are pages; sources/ is provenance,
 files without an `id` (e.g. CLAUDE.md) and type: index are skipped.
 """
 import json, sqlite3, sys, os, re, glob
-from collections import Counter
+from collections import Counter, namedtuple
 import yaml
 
 # Q-1.6-02: a wiki session's id is a durable session id like any other, so
@@ -73,6 +73,67 @@ def split_frontmatter(text):
     except yaml.YAMLError:
         return {}, text
     return (fm if isinstance(fm, dict) else {}), parts[2]
+
+
+# --- resolving a session's live source file (display only) ----------------
+#
+# W-1.9-01c: a wiki session is keyed by its frontmatter id forever (standing
+# decision 9), but the *file* that id lives in can be renamed under it at
+# any time. This answers "which file, right now" without touching the
+# stored session at all — main.py's opening notice and commands.show_status
+# thread the one result through rather than asking twice.
+
+WS_FOUND = "found"               # exactly one top-level page carries this id
+WS_MISSING = "missing"           # no top-level page carries it any more
+WS_DUPLICATE = "duplicate"       # more than one does; filenames lists all
+WS_UNAVAILABLE = "unavailable"   # unreadable or unconfigured; reason says why
+
+WikiSource = namedtuple("WikiSource", "status filename filenames reason")
+
+
+def resolve_wiki_source(source_uuid, wiki_dir):
+    """Where the frontmatter id `source_uuid` currently lives, at the same
+    top-level `*.md` boundary `_import_pages` reads — `sources/` and every
+    other subdirectory are out of scope here exactly as they are for import.
+
+    Read-only and structured: never imports, writes, persists a pathname, or
+    picks a winner among duplicates. An ambiguous or missing id is the
+    caller's to explain, not this function's to resolve on its behalf.
+
+    `glob.glob` degrades a permission error to an empty list rather than
+    raising it — indistinguishable, unless checked for, from a directory
+    that genuinely has nothing in it. `os.access` is checked first so an
+    unreadable directory reports WS_UNAVAILABLE rather than the false
+    WS_MISSING that would otherwise look like the id was simply gone.
+    """
+    if not wiki_dir:
+        return WikiSource(WS_UNAVAILABLE, None, None,
+                          "the wiki directory isn't configured")
+    wiki_dir = os.path.expanduser(str(wiki_dir))
+    if not os.path.isdir(wiki_dir):
+        return WikiSource(WS_UNAVAILABLE, None, None,
+                          f"not a directory: {wiki_dir}")
+    if not os.access(wiki_dir, os.R_OK | os.X_OK):
+        return WikiSource(WS_UNAVAILABLE, None, None,
+                          f"cannot read directory: {wiki_dir}")
+
+    wid = str(source_uuid)
+    matches = []
+    for path in sorted(glob.glob(os.path.join(wiki_dir, "*.md"))):
+        try:
+            raw = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        fm, _ = split_frontmatter(raw)
+        if "id" in fm and str(fm["id"]) == wid:
+            matches.append(os.path.relpath(path, wiki_dir))
+    matches.sort()
+
+    if not matches:
+        return WikiSource(WS_MISSING, None, None, None)
+    if len(matches) > 1:
+        return WikiSource(WS_DUPLICATE, None, matches, None)
+    return WikiSource(WS_FOUND, matches[0], None, None)
 
 
 def extract_content(body):

@@ -52,9 +52,11 @@ import db as dbmod
 import errorlog
 import governor
 import httpx
+import import_wiki
 import main
 import models
 import pools
+import wikigit
 
 PASS, FAIL = [], []
 
@@ -891,6 +893,42 @@ def main_():
            routine_calls == [], routine_calls)
     finally:
         _runner.run_routine = real_run_routine
+
+    print("\n--- W-1.9-01c: a wiki session's opening notice and bare "
+          "/status name the same resolved source file, live rather than "
+          "stored ---")
+    wiki_dir = Path(tempfile.mkdtemp(prefix="wiki-source-live-"))
+    (wiki_dir / "original-name.md").write_text(
+        "---\nid: 20260101000099\ntitle: Live Source Test\n---\n"
+        "some real content, long enough to import.\n", encoding="utf-8")
+    import_wiki.run_import(str(wiki_dir), str(dbmod.DB_PATH))
+    live_wiki_sid = conn.execute(
+        "SELECT id FROM sessions WHERE provider=? AND source_uuid=?",
+        (dbmod.PROVIDER_WIKI, "20260101000099")).fetchone()[0]
+
+    real_wiki_dir_fn = wikigit.wiki_dir
+    wikigit.wiki_dir = lambda: wiki_dir
+    try:
+        out, _ = drive(conn, live_wiki_sid, "/status\n/q\n")
+        ok("the opening notice names the file it was actually imported "
+           "under", "original-name.md" in out, out)
+        ok("...and bare /status's Wiki source row names the same file, "
+           "not a second, disagreeing parse",
+           out.count("original-name.md") >= 2, out)
+
+        # The identity is the frontmatter id (standing decision 9), not the
+        # filename — renaming the file on disk with the id untouched must
+        # still resolve, live, to the new name on the *next* open, without
+        # anything having been written back to the stored session.
+        (wiki_dir / "original-name.md").rename(wiki_dir / "renamed-name.md")
+        out2, _ = drive(conn, live_wiki_sid, "/status\n/q\n")
+        ok("a rename with no id change is picked up live on reopen",
+           "renamed-name.md" in out2 and "original-name.md" not in out2,
+           out2)
+        ok("...named identically by the notice and by /status",
+           out2.count("renamed-name.md") >= 2, out2)
+    finally:
+        wikigit.wiki_dir = real_wiki_dir_fn
 
     print("\n--- W-1.6.4-04: /status request shows the real captured wire "
           "bodies ---")

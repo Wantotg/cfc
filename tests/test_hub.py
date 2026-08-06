@@ -642,6 +642,7 @@ def main():
     test_format_date_localises()
     test_hub_help_is_derived()
     test_first_message_counts()
+    test_routine_session_stays_out_of_recent_chats()
     test_hub_lifecycle()
     test_hub_rename()
 
@@ -692,6 +693,49 @@ def test_first_message_counts():
        t_plain.last[2] == "2", t_plain.last)
     ok("...and raw+1 for a session with a First Message",
        t_opened.last[2] == "3", t_opened.last)
+    conn.close()
+
+
+def test_routine_session_stays_out_of_recent_chats():
+    """W-1.7-01c: a routine session that later carries ordinary user/
+    assistant turns is still a routine transcript, not a chat someone
+    continued. `recent_chats` filters on `provider` alone (module
+    docstring's deny list), never on what the messages look like, so
+    appending chat-shaped content after the run must not smuggle it onto
+    the picker. `/list sessions` and the routines screen stay its routes —
+    proven here as the raw row `list_sessions` renders from, since both
+    already read off the same `provider` column this pins."""
+    print("\n--- W-1.7-01c: later chat turns don't turn a routine session "
+          "into a chat ---")
+    import db as dbmod
+    import hub as hubmod
+
+    tmp = Path(tempfile.mkdtemp())
+    dbmod.DB_PATH = tmp / "chat.db"
+    conn = dbmod.db()
+
+    rid = dbmod.new_session(
+        conn, title="routine: Heartbeat — 2026-08-01 03:00",
+        provider=dbmod.PROVIDER_ROUTINE)
+    dbmod.save_message(conn, rid, "user", "run the heartbeat task")
+    dbmod.save_message(conn, rid, "assistant", "done: wrote today's entry")
+    # Continued as if someone opened the transcript afterwards and kept
+    # chatting in it — ordinary user/assistant content, no different in
+    # shape from a real conversation.
+    dbmod.save_message(conn, rid, "user", "can you also check X")
+    dbmod.save_message(conn, rid, "assistant", "sure, checked X")
+
+    ok("the routine session is excluded from recent_chats despite the "
+       "later chat-shaped turns",
+       rid not in {r[0] for r in hubmod.recent_chats(conn)})
+
+    everything = {r[0]: r for r in
+                 conn.execute(hubmod._SELECT + hubmod._ORDER).fetchall()}
+    ok("the unfiltered query /list sessions renders from still carries it",
+       rid in everything)
+    ok("...labelled Routine there, not Chat",
+       hubmod._kind_label(everything[rid][10]) == "Routine")
+
     conn.close()
 
 
