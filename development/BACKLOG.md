@@ -14,51 +14,6 @@ nothing behind here.** This file holds open entries only. The reasoning is in
 
 ---
 
-## D-1.7-01b · The hub's one hand-written help line under-describes what the hub accepts
-
-**Found:** 2026-08-04, v1.7 playtest, while trying to get back to a routine
-transcript that had been continued as a chat.
-
-`print_hub_help` generates everything from `HUB_KEYS` and `ui.CONNECTION_STYLE`
-on purpose — a help screen is the artefact nobody re-reads, so the only safe
-kind is one that cannot be wrong. The exception is one hand-written line:
-`<number>` → *resume that chat — the ids in the table above*.
-
-Two later changes made it stale. `B-1.6.4-01` made the hub resolve any chat id
-rather than matching against the ten printed rows. `W-1.6.4-05` made wiki pages
-and routine transcripts openable from the hub by id — and the picker excludes
-both by design (`hub._NON_CHAT`), so the ids that most need saying are exactly
-the ones not in the table above.
-
-**Leading hypothesis:** one line, saying any session id works and that
-`/list sessions` is where the ones the picker doesn't show are listed. It
-cannot be generated from `HUB_KEYS` — it is a fact about the numeric branch,
-not a key — so it stays hand-written and stays exposed to this. Worth a note
-in the docstring saying which two changes bit it.
-
----
-
-## D-1.7-01d · An abandoned empty chat holds a picker row forever
-
-**Found:** 2026-08-04, v1.7 playtest.
-
-Opening a new chat and leaving without typing creates a session row that never
-goes away: 0 messages, `(untitled)`, at the top of *Recent chats* because the
-picker orders by `updated_at`. Four of the live database's 50 chat sessions are
-in this state. The `Latest message` cell shows the creation time, since that
-column renders `updated_at` and there is no message to describe.
-
-Nothing is wrong — `d` at the hub deletes one — but the picker is 10 rows and
-this is the table you choose a conversation from.
-
-**Leading hypothesis, ranked:** delete the session on the way out when it has
-no messages and no title (cheap, matches what abandoned means); or don't create
-the row until the first message (cleaner, but the id has to exist before then
-for `/title`, `/tags` and the rest); or filter 0-message rows out of the picker
-(cheapest, and worst — the row still exists and now nothing shows it at all).
-
----
-
 ## D-1.7-02b · Three outbox screens describe the same folder three ways, and one of them says something false
 
 **Found:** 2026-08-04, v1.7 playtest, with 24 files in the outbox and 0 pending

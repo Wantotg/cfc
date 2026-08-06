@@ -61,7 +61,7 @@ gets. Every other failure keeps the plain two-field shape.
   tests/test_search_protocol.py, tests/test_search_worker.py,
   tests/test_websearch.py
 - Status: shipped
-- Commit: pending
+- Commit: 2fc9914
 
 ---
 
