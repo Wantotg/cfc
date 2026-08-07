@@ -2701,17 +2701,28 @@ def show_outbox():
 
 
 def _print_outbox_contents_pointer(proposals):
-    """One dim line pointing at `/list outbox contents`, only when the
-    bounded, uncapped inventory (`mover.outbox_inventory`) actually holds
-    more than the proposals just listed — so the pointer doesn't fire over
-    an outbox that genuinely has nothing else in it. D-1.7-02b: this screen
-    handles filing proposals; the pointer is how it admits, honestly, that
-    it isn't the whole outbox.
+    """One dim line pointing at `/list outbox contents`. Ordinarily this only
+    fires when the bounded, uncapped inventory (`mover.outbox_inventory`)
+    actually holds more than the proposals just listed — so the pointer
+    doesn't fire over an outbox that genuinely has nothing else in it.
+    D-1.7-02b: this screen handles filing proposals; the pointer is how it
+    admits, honestly, that it isn't the whole outbox.
+
+    D-21: a missing or unreadable root makes the *readable* total meaningless
+    as a claim about the whole outbox — including when that readable total is
+    zero, which used to read as "empty" rather than "unknown". Any such root
+    forces the incomplete-count pointer instead of the counted one; the
+    detailed per-root failure stays exclusively in `/list outbox contents`.
     """
     from mover import INV_OK, outbox_inventory
 
     configured, roots = outbox_inventory()
     if not configured:
+        return
+    if any(r.status != INV_OK for r in roots):
+        console.print("  Outbox count is incomplete — one or more configured "
+                      "roots could not be inspected; see "
+                      f"{PREFIX}list outbox contents", style="dim")
         return
     total = sum(r.total for r in roots if r.status == INV_OK)
     if total > len(proposals):

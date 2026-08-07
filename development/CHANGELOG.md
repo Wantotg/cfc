@@ -27,6 +27,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-07 — An uncertain outbox count says it is uncertain
+`D-21`: `/list outbox`'s "N entries in total" pointer summed only the readable
+roots, so a root that was missing or unreadable just dropped out of the
+total — including reading as a clean, empty outbox when the one configured
+root couldn't be inspected at all. Now any failed root forces "Outbox count
+is incomplete — one or more configured roots could not be inspected", even
+when the readable roots' own total is zero; an all-readable outbox keeps its
+existing total-and-pointer behaviour. The detailed per-root failure stays
+exclusively in `/list outbox contents`; this is a projection change only,
+no new filesystem walk.
+- Files: commands.py, tests/test_mover.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-07 — A test capture restores the console it found, not sys.stdout
 `D-19`: twelve test files finished a shared-console capture with
 `console.file = sys.stdout` instead of restoring the object they found there.

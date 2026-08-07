@@ -1199,6 +1199,80 @@ def main():
                 movermod.outbox_roots = saved_outbox_roots
             ok("the omission names both what was left out and the real total",
                "15 more not shown" in out and "215" in out, out)
+
+            print("\n--- D-21: a failed root makes /list outbox's count say "
+                  "so, never a silent zero ---")
+            missing_root = Path(tmp) / "d21-missing"
+            movermod.outbox_roots = lambda: (missing_root,)
+            try:
+                out = captured(commands.show_outbox)
+            finally:
+                movermod.outbox_roots = saved_outbox_roots
+            ok("a missing root with no proposals still says the count is "
+               "incomplete, not that the outbox is simply empty",
+               "Outbox count is incomplete" in out, out)
+            ok("...and points at the per-root contents view",
+               f"{PREFIX}list outbox contents" in out, out)
+            ok("...never the counted-total wording, which would claim a "
+               "known number", "entries in the outbox in total" not in out, out)
+
+            unreadable_root = Path(tmp) / "d21-unreadable"
+            unreadable_root.mkdir()
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                print("  skip  unreadable-root case (running as root)")
+            else:
+                movermod.outbox_roots = lambda: (unreadable_root.resolve(),)
+                os.chmod(unreadable_root, 0o000)
+                try:
+                    out = captured(commands.show_outbox)
+                finally:
+                    os.chmod(unreadable_root, 0o755)
+                    movermod.outbox_roots = saved_outbox_roots
+                ok("an unreadable root reads exactly the same as a missing "
+                   "one from this screen — both are 'could not be inspected'",
+                   "Outbox count is incomplete" in out, out)
+
+            print("\n--- D-21: one readable-empty root plus one failed root "
+                  "still says incomplete, not zero ---")
+            readable_empty = Path(tmp) / "d21-readable-empty"
+            readable_empty.mkdir()
+            movermod.outbox_roots = lambda: (
+                readable_empty.resolve(), missing_root)
+            try:
+                out = captured(commands.show_outbox)
+            finally:
+                movermod.outbox_roots = saved_outbox_roots
+            ok("a zero readable total does not mask the other root's failure",
+               "Outbox count is incomplete" in out, out)
+
+            print("\n--- D-21: every root readable and empty keeps the "
+                  "existing quiet behaviour — no pointer at all ---")
+            movermod.outbox_roots = lambda: (readable_empty.resolve(),)
+            try:
+                out = captured(commands.show_outbox)
+            finally:
+                movermod.outbox_roots = saved_outbox_roots
+            ok("no failure and nothing to add beyond the proposal list: "
+               "neither pointer wording appears",
+               "Outbox count is incomplete" not in out
+               and "entries in the outbox in total" not in out, out)
+
+            print("\n--- D-21: every root readable, more entries than "
+                  "proposals: the existing counted pointer still fires ---")
+            counted_root = Path(tmp) / "d21-counted"
+            counted_root.mkdir()
+            (counted_root / "a-proposal.md").write_text("x", encoding="utf-8")
+            (counted_root / "not-a-proposal.txt").write_text("x",
+                                                              encoding="utf-8")
+            movermod.outbox_roots = lambda: (counted_root.resolve(),)
+            try:
+                out = captured(commands.show_outbox)
+            finally:
+                movermod.outbox_roots = saved_outbox_roots
+            ok("an all-readable outbox with extra content keeps the counted "
+               "pointer, not the incomplete one",
+               "entries in the outbox in total" in out
+               and "Outbox count is incomplete" not in out, out)
         finally:
             movermod.commit, movermod.decline, movermod.commit_move = saved_writes
             movermod.outbox_roots = saved_outbox_roots
