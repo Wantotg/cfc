@@ -177,6 +177,55 @@ def main():
     ok("off-cadence turns carry tone only, no trait at all",
        labels == ["tone check"], labels)
 
+    print("\n--- W-1.6.3-01b: GOVERNOR_TONE_CHECK gates tone alone ---")
+    saved_tone_check = governor.GOVERNOR_TONE_CHECK
+    try:
+        governor.GOVERNOR_TONE_CHECK = False
+
+        instr, labels = governor.ordinary_instruction([], 1, {})
+        ok("off-cadence, tone off: no instruction, no label at all",
+           instr == "" and labels == [], (instr, labels))
+
+        instr, labels = governor.ordinary_instruction(
+            ["relax"], 6, {"relax": "Be calm."})
+        ok("cadence turn, tone off: the trait reminder rides alone",
+           "Be calm." in instr and governor.TONE_INSTRUCTION not in instr,
+           instr)
+        ok("...and the boundary sentence does not ride with it either",
+           BOUNDARY not in instr, instr)
+        ok("labels name only the trait, never tone check",
+           labels == ["trait: relax"], labels)
+
+        instr, labels = governor.ordinary_instruction(
+            ["relax"], 6, {"relax": None})
+        ok("cadence turn, tone off, trait body missing: truly nothing to send",
+           instr == "", instr)
+        ok("...but the miss is still named",
+           labels == ["trait: relax (missing)"], labels)
+
+        instr, labels = governor.ordinary_instruction(
+            ["relax"], 5, {"relax": "Be calm."})
+        ok("off-cadence, tone off: still nothing, regardless of trait_names",
+           instr == "" and labels == [], (instr, labels))
+    finally:
+        governor.GOVERNOR_TONE_CHECK = saved_tone_check
+
+    print("\n--- W-1.6.3-01b: tone on reproduces every case above byte for "
+          "byte (the default an existing config.py keeps) ---")
+    ok("GOVERNOR_TONE_CHECK defaults True",
+       governor.GOVERNOR_TONE_CHECK is True, governor.GOVERNOR_TONE_CHECK)
+    instr, labels = governor.ordinary_instruction([], 1, {})
+    ok("tone-only request is unchanged from the pre-switch behaviour",
+       instr == governor.TONE_INSTRUCTION and labels == ["tone check"],
+       (instr, labels))
+    instr, labels = governor.ordinary_instruction(
+        ["relax"], 6, {"relax": "Be calm."})
+    ok("tone-plus-trait request is unchanged from the pre-switch behaviour",
+       instr == governor.TONE_INSTRUCTION + "\n\n"
+       "trait reminder — stay in character for the trait 'relax':\n\n"
+       "Be calm." and labels == ["tone check", "trait: relax"],
+       (instr, labels))
+
     print("\n--- /continue and OOC suppress the automatic sources ---")
     instr, labels = governor.continue_instruction()
     ok("/continue's instruction names nothing about tone or traits",

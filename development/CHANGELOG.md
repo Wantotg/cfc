@@ -27,6 +27,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-07 — Tone is a deployment choice, traits stay independent
+`W-1.6.3-01b`: `governor.ordinary_instruction()` sent the automatic tone cue
+on every ordinary turn unconditionally, with a due trait riding alongside
+when one was owed. New `GOVERNOR_TONE_CHECK` config switch (default True,
+matching every existing install) turns the tone cue off without touching the
+trait reminder, an explicit OOC direction, `/continue`, or `/swipe`'s own
+cadence — the function now composes zero, one or two automatic sources
+instead of assuming tone is always the first one. Off-cadence with tone off
+sends no instruction and prints no governor label at all.
+- Files: governor.py, config.example.py, tests/test_governor.py,
+  tests/test_turn_paths.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-07 — An uncertain outbox count says it is uncertain
 `D-21`: `/list outbox`'s "N entries in total" pointer summed only the readable
 roots, so a root that was missing or unreadable just dropped out of the

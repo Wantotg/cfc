@@ -34,6 +34,17 @@ try:
 except ImportError:
     GOVERNOR_TRAIT_INTERVAL = 6
 
+# W-1.6.3-01b: whether the automatic tone cue rides an ordinary turn at all.
+# Default True so an existing config.py without the name keeps today's
+# behaviour — the same import-fallback shape as GOVERNOR_TRAIT_INTERVAL,
+# just above. This is a deployment policy, not a runtime command: it does
+# not touch trait system messages, the periodic trait reminder, OOC or
+# /continue, all of which carry their own, independent direction.
+try:
+    from config import GOVERNOR_TONE_CHECK
+except ImportError:
+    GOVERNOR_TONE_CHECK = True
+
 
 # Bounded on purpose — see Concept.md's "Tone becomes diagnosis" failure mode.
 # It tells the model to use its own judgement under ambiguity rather than
@@ -122,19 +133,26 @@ def ordinary_instruction(trait_names, turn_count, trait_bodies=None,
                           interval=None):
     """The automatic direction for an ordinary chat turn.
 
-    Tone applies to every ordinary turn, unconditionally. A trait reminder
-    joins it on a cadence turn — never a second direction message, one
-    combined instruction, per Concept.md's "the governor piles on" failure
-    mode. `trait_bodies` maps name -> body-or-None; a name whose body is None
-    (its file has gone since it was attached) is named as missing in the
-    returned labels and contributes no text — a missing trait must not be
-    replaced by an empty instruction.
+    Tone and the due trait are two independent automatic sources, composed
+    rather than assumed: `GOVERNOR_TONE_CHECK` (default True) gates the tone
+    cue alone, and a cadence trait joins it on a cadence turn regardless of
+    that switch — never a second direction message, one combined
+    instruction, per Concept.md's "the governor piles on" failure mode.
+    `trait_bodies` maps name -> body-or-None; a name whose body is None (its
+    file has gone since it was attached) is named as missing in the returned
+    labels and contributes no text — a missing trait must not be replaced by
+    an empty instruction.
 
-    Returns `(instruction, labels)`. `labels` is what main.py prints as the
-    dim `cfc -> ...` line; always at least `["tone check"]`.
+    Returns `(instruction, labels)`. With tone on, `labels` starts with
+    `"tone check"` exactly as before; with it off, an off-cadence turn
+    returns `("", [])` — no instruction, no printed label — and a cadence
+    turn returns the trait reminder alone.
     """
-    parts = [TONE_INSTRUCTION]
-    labels = ["tone check"]
+    parts = []
+    labels = []
+    if GOVERNOR_TONE_CHECK:
+        parts.append(TONE_INSTRUCTION)
+        labels.append("tone check")
     name = trait_refresh(trait_names, turn_count, interval)
     if name is not None:
         body = (trait_bodies or {}).get(name)

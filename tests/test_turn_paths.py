@@ -112,6 +112,25 @@ def drive(conn, sid, keys):
     return out.getvalue(), seen
 
 
+def drive_private(conn, sid, keys):
+    """Same idiom as `drive`, against a private chat — decision 15's "chat
+    means both chats", so W-1.6.3-01b needs its own proof against a session
+    that runs on `db(':memory:')` rather than assuming the normal-chat proof
+    above covers it."""
+    out = io.StringIO()
+    real_stdin = sys.stdin
+    sys.stdin = io.StringIO(keys)
+    saved_main_file = main.console.file
+    try:
+        with contextlib.redirect_stdout(out):
+            main.console.file = out
+            main.run_session(conn, sid, auto_export=False, private=True)
+    finally:
+        sys.stdin = real_stdin
+        main.console.file = saved_main_file
+    return out.getvalue()
+
+
 def assistant_row(conn, sid):
     """The turn as it was persisted. Behaviour, not schema: four values a
     caller actually reads back, not the shape of the table holding them."""
@@ -336,6 +355,102 @@ def main_():
     out, _ = drive(conn, dbmod.new_session(conn, title="gov-line", model=MODEL),
                    "/tools off\nhi again\n/q\n")
     ok("an ordinary turn prints 'Cooking for Cats -> tone check'",
+       "Cooking for Cats -> tone check" in out, out)
+
+    print("\n--- W-1.6.3-01b: GOVERNOR_TONE_CHECK off — tone and trait ride "
+          "independently ---")
+    saved_tone_check = governor.GOVERNOR_TONE_CHECK
+    try:
+        governor.GOVERNOR_TONE_CHECK = False
+
+        stream_calls.clear()
+        off_sid = dbmod.new_session(conn, title="tone-off", model=MODEL)
+        out, _ = drive(conn, off_sid, "/tools off\nhello\n/q\n")
+        ok("off-cadence, tone off: no governor label at all",
+           "Cooking for Cats ->" not in out, out)
+        ok("...and no direction message rides in the request",
+           not any(m.get("content", "").startswith(governor.DIRECTION_OPEN)
+                   for m in stream_calls[-1]), stream_calls[-1])
+
+        pools.POOLS["trait"].configured = str(trait_dir)
+        stream_calls.clear()
+        cadence_sid = dbmod.new_session(conn, title="tone-off-cadence",
+                                        model=MODEL)
+        out, _ = drive(conn, cadence_sid,
+                       "/tools off\n/add trait relax\nhi\nhi\nhi\nhi\nhi\nhi\n/q\n")
+        last_req = stream_calls[-1]
+        directions = [m for m in last_req
+                     if m.get("content", "").startswith(governor.DIRECTION_OPEN)]
+        ok("cadence turn, tone off: exactly one direction, the trait alone",
+           len(directions) == 1 and "Be calm." in directions[0]["content"],
+           directions)
+        ok("...with no tone boundary riding alongside it",
+           bool(directions) and boundary not in directions[0]["content"],
+           directions)
+        ok("the dim line names only the trait, never tone check",
+           "trait: relax" in out and "tone check" not in out, out)
+        pools.POOLS["trait"].configured = ""
+
+        print("\n--- W-1.6.3-01b: OOC, /continue and /swipe are unaffected "
+              "by the switch ---")
+        local_ooc_wrapped = "[cfc direction]\nbe gentler\n[/cfc direction]"
+        local_continue_wrapped = (f"[cfc direction]\n"
+                                  f"{governor.CONTINUE_INSTRUCTION}\n"
+                                  f"[/cfc direction]")
+
+        stream_calls.clear()
+        ooc_off_sid = dbmod.new_session(conn, title="ooc-tone-off", model=MODEL)
+        out, _ = drive(conn, ooc_off_sid, "/tools off\n((be gentler))\n/q\n")
+        ok("OOC still sends its own direction with tone off",
+           any(m.get("content") == local_ooc_wrapped for m in stream_calls[0]),
+           stream_calls[0])
+        ok("the dim line still names 'ooc', not a governor label",
+           "Cooking for Cats -> ooc" in out, out)
+
+        stream_calls.clear()
+        cont_off_sid = dbmod.new_session(conn, title="continue-tone-off",
+                                         model=MODEL)
+        drive(conn, cont_off_sid, "/tools off\nhello\n/q\n")
+        stream_calls.clear()
+        out, _ = drive(conn, cont_off_sid, "/tools off\n/continue\n/q\n")
+        ok("/continue still sends its own direction with tone off",
+           any(m.get("content") == local_continue_wrapped
+               for m in stream_calls[0]),
+           stream_calls[0])
+        ok("the dim line still names 'continue'",
+           "Cooking for Cats -> continue" in out, out)
+
+        stream_calls.clear()
+        swipe_off_sid = dbmod.new_session(conn, title="swipe-tone-off",
+                                          model=MODEL)
+        drive(conn, swipe_off_sid, "/tools off\nhello\n/q\n")
+        stream_calls.clear()
+        out, _ = drive(conn, swipe_off_sid, "/tools off\n/swipe\n/q\n")
+        ok("/swipe on an off-cadence turn with tone off: no governor label "
+           "either — it earns the same ordinary cadence as a fresh send",
+           "Cooking for Cats ->" not in out, out)
+        ok("...and no direction rides in the regenerated request",
+           not any(m.get("content", "").startswith(governor.DIRECTION_OPEN)
+                   for m in stream_calls[-1]), stream_calls[-1])
+
+        print("\n--- W-1.6.3-01b: the switch applies identically in a "
+              "private chat (decision 15) ---")
+        stream_calls.clear()
+        priv_conn = dbmod.db(":memory:")
+        priv_sid = dbmod.new_session(priv_conn, title="(untitled)")
+        priv_out = drive_private(priv_conn, priv_sid, "/tools off\nhello\n/q\n")
+        ok("private chat, tone off, off-cadence: no governor label either",
+           "Cooking for Cats ->" not in priv_out, priv_out)
+        priv_conn.close()
+    finally:
+        governor.GOVERNOR_TONE_CHECK = saved_tone_check
+
+    print("\n--- W-1.6.3-01b: tone-on compatibility — restoring the switch "
+          "restores the exact original line ---")
+    out, _ = drive(conn, dbmod.new_session(conn, title="tone-restored",
+                                           model=MODEL),
+                   "/tools off\nhello\n/q\n")
+    ok("with the switch back on, the tone-check label reappears unchanged",
        "Cooking for Cats -> tone check" in out, out)
 
     print("\n--- /continue: usage, refusal, and a real directed turn ---")

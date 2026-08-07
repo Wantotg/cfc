@@ -266,6 +266,15 @@ ROUTINE_MAX_CALLS_PER_TURN = 30
 # request as system messages either way).
 GOVERNOR_TRAIT_INTERVAL = 6
 
+# Whether the governor's automatic tone cue rides an ordinary chat turn
+# (W-1.6.3-01b). This disables only that one cue — never traits, which still
+# ride every request as system messages and still get their periodic
+# reminder on GOVERNOR_TRAIT_INTERVAL's own cadence, and never an explicit
+# OOC direction or /continue, both of which carry their own instruction
+# regardless of this switch. True (the default, and what an existing
+# config.py without this name keeps) matches today's behaviour.
+GOVERNOR_TONE_CHECK = True
+
 # --- routines --------------------------------------------------------------
 # A routine is a task the model runs on demand (/routine <name>) or on a
 # schedule. One markdown file per routine: frontmatter for the fields, a
