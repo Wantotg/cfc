@@ -795,6 +795,81 @@ def test_wiki_review():
            "wiki_review" not in table.state, table.state)
 
 
+def test_wiki_diff_file_untracked():
+    """D-1.6.2-02: the per-file diff picker expands an untracked directory
+    to its leaf files, previews a chosen one as a synthetic no-index diff
+    — every line an addition — through the same Rich Syntax path a tracked
+    per-file diff uses, and still offers the separate, explicit per-file
+    commit suggestion. Review grants no trust: the preview alone changes
+    nothing, and committing stays a second, deliberate command."""
+    import builtins
+    import commands
+    import io
+    import wikigit
+
+    def captured(fn):
+        buf = io.StringIO()
+        saved_file = screens.console.file
+        screens.console.file = buf
+        try:
+            fn()
+        finally:
+            screens.console.file = saved_file
+        return buf.getvalue()
+
+    def scripted_input(*answers):
+        it = iter(answers)
+
+        def _fn(*a, **k):
+            return next(it, "")
+        return _fn
+
+    print("\n--- D-1.6.2-02: a leaf inside a new directory previews as a "
+          "full addition, and a later explicit commit still works ---")
+    with tempfile.TemporaryDirectory() as tmp, WikiRepo(tmp) as repo:
+        nested = repo.root / "attachments" / "sub"
+        nested.mkdir(parents=True)
+        (nested / "leaf.md").write_text("first line\nsecond line\n",
+                                        encoding="utf-8")
+
+        real_input = builtins.input
+        builtins.input = scripted_input("1")
+        try:
+            out = captured(lambda: commands.show_wiki_diff(
+                "wiki file", lead="/wiki "))
+        finally:
+            builtins.input = real_input
+
+        ok("the leaf is offered at its real nested path, not the "
+           "directory itself",
+           "attachments/sub/leaf.md" in out, out)
+        ok("the whole file renders as additions through the diff view",
+           "+first line" in out and "+second line" in out, out)
+        ok("it is named a new, untracked file",
+           "not yet tracked" in out, out)
+        ok("the separate per-file commit suggestion is still offered",
+           "commit just this one" in out, out)
+
+        status_before_commit = git(repo.root, "status", "--porcelain")
+        ok("the preview alone left the file untracked, not staged",
+           "?? attachments/" in status_before_commit, status_before_commit)
+
+        real_input = builtins.input
+        builtins.input = scripted_input(
+            "1", "leafed the aquarium attachment")
+        try:
+            out2 = captured(lambda: commands.do_wiki_commit(
+                "file", lead="/wiki "))
+        finally:
+            builtins.input = real_input
+        ok("the explicit follow-up commit still works, naming the one file",
+           "attachments/sub/leaf.md" in out2, out2)
+        head_files = set(git(repo.root, "show", "--name-only", "--pretty=",
+                             "HEAD").strip().splitlines())
+        ok("the new commit contains only the one leaf, nothing wider",
+           head_files == {"attachments/sub/leaf.md"}, head_files)
+
+
 def test_wiki_quick_forms_unaffected():
     """The existing chat quick forms (`/wiki diff ...`, `/wiki commit ...`)
     call straight into commands.py and never touch screens.py at all — this
@@ -1225,6 +1300,7 @@ def main():
     test_screens_never_print_chat_syntax()
     test_wiki_read_argument_refusal()
     test_wiki_review()
+    test_wiki_diff_file_untracked()
     test_wiki_quick_forms_unaffected()
     test_routines_show_history_open()
     test_routines_run_and_new()

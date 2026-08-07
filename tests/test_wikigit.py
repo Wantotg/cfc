@@ -330,6 +330,127 @@ def main():
             ok("a per-file commit returns hash and subject",
                len(short) >= 7 and subject == "just A", (short, subject))
 
+    print("\n--- D-1.6.2-02: an untracked directory expands to its leaves ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Repo(tmp) as r:
+            nested = r.wiki / "attachments" / "sub"
+            nested.mkdir(parents=True)
+            (nested / "leaf.md").write_text("first line\nsecond line\n")
+            (r.wiki / "attachments" / "top.md").write_text("top level\n")
+            (r.wiki / "loose.md").write_text("a plain new file\n")
+
+            changes = wikigit.status()
+            dir_change = next(c for c in changes if c.path.endswith(
+                "attachments/"))
+            ok("the untracked directory shows as one entry before expansion",
+               dir_change.untracked, dir_change)
+
+            expanded = wikigit.expand_for_picker(changes, r.root)
+            paths = {c.path for c in expanded}
+            ok("the directory entry itself is gone after expansion",
+               not any(p.endswith("attachments/") for p in paths), paths)
+            ok("both leaves are offered, at their real nested paths",
+               "03 resources/wiki db/attachments/top.md" in paths
+               and "03 resources/wiki db/attachments/sub/leaf.md" in paths,
+               paths)
+            ok("a plain untracked file (not a directory) passes through "
+               "unchanged", "03 resources/wiki db/loose.md" in paths, paths)
+            ok("every expanded leaf is still marked untracked",
+               all(c.untracked for c in expanded
+                  if "attachments" in c.path), expanded)
+            ok("a tracked change is untouched by expansion",
+               wikigit.expand_for_picker(
+                   [wikigit.Change("M", "x.md")], r.root
+               )[0].path == "x.md")
+
+    print("\n--- D-1.6.2-02: diff_untracked_file — full addition-only "
+          "output, revalidated, never mutating ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        with Repo(tmp) as r:
+            nested = r.wiki / "attachments"
+            nested.mkdir()
+            leaf_rel = "03 resources/wiki db/attachments/leaf.md"
+            (nested / "leaf.md").write_text("first line\nsecond line\n")
+            (nested / "sibling.md").write_text("a different new file\n")
+
+            before = git(r.root, "status", "--porcelain")
+            text = wikigit.diff_untracked_file(wikigit.WIKI, leaf_rel)
+            after = git(r.root, "status", "--porcelain")
+            ok("looking does not stage or otherwise change git's view",
+               before == after, (before, after))
+
+            # Every real content line is a '+' addition; the only '-' lines
+            # allowed are the '---' old-file header, which git always shows
+            # as /dev/null for a brand-new file and is not a deletion.
+            body = [l for l in text.splitlines() if not l.startswith("---")]
+            ok("the whole file previews as additions, nothing as context "
+               "or deletion",
+               any(l == "+first line" for l in body)
+               and any(l == "+second line" for l in body)
+               and not any(l.startswith("-") for l in body), text)
+            ok("it is presented as a brand new file",
+               "new file mode" in text, text)
+
+            print("  (revalidation refuses what the picker can no longer "
+                  "trust)")
+            missing_rel = "03 resources/wiki db/attachments/ghost.md"
+            try:
+                wikigit.diff_untracked_file(wikigit.WIKI, missing_rel)
+                ok("a vanished path is refused", False)
+            except wikigit.GitError as e:
+                ok("a vanished path is refused", "no longer exists" in str(e),
+                   e)
+
+            try:
+                wikigit.diff_untracked_file(
+                    wikigit.WIKI, "03 resources/wiki db/attachments")
+                ok("a directory itself is refused, not treated as a file",
+                   False)
+            except wikigit.GitError as e:
+                ok("a directory itself is refused, not treated as a file",
+                   "directory" in str(e), e)
+
+            symlink_supported = True
+            escaping = nested / "escape.md"
+            try:
+                escaping.symlink_to(r.areas / "medical notes.md")
+            except (OSError, NotImplementedError):
+                symlink_supported = False
+            if symlink_supported:
+                escape_rel = "03 resources/wiki db/attachments/escape.md"
+                try:
+                    wikigit.diff_untracked_file(wikigit.WIKI, escape_rel)
+                    ok("a symlink resolving outside the wiki scope is "
+                       "refused", False)
+                except wikigit.GitError as e:
+                    ok("a symlink resolving outside the wiki scope is "
+                       "refused", "symlink" in str(e), e)
+
+                # A symlink resolving *inside* the same scope is not an
+                # escape — the containment refusal never fires, and git's
+                # own presentation of a symlink (its target path, as the
+                # blob content git actually tracks) is left alone; this
+                # module doesn't resolve it into the target file's content.
+                inside_link = nested / "inside.md"
+                inside_link.symlink_to(r.wiki / "20260101000000.md")
+                inside_rel = "03 resources/wiki db/attachments/inside.md"
+                inside_text = wikigit.diff_untracked_file(
+                    wikigit.WIKI, inside_rel)
+                ok("a symlink resolving inside the same scope previews "
+                   "without being refused",
+                   "new file mode 120000" in inside_text, inside_text)
+
+            print("  (review grants no trust: a later explicit commit is "
+                  "still a separate step)")
+            short, subject = wikigit.commit(
+                "add the leaf", wikigit.WIKI, paths=[leaf_rel])
+            files = r.files_in_head()
+            ok("the explicit per-file commit still works after the preview",
+               leaf_rel in files, files)
+            ok("...and only that one leaf landed, not its sibling",
+               "03 resources/wiki db/attachments/sibling.md" not in files,
+               files)
+
     print("\n--- there is no push ---")
     # Read off the AST rather than grepping the source, so the assertion is
     # about the git subcommands the module can actually issue and not about

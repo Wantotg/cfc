@@ -37,6 +37,7 @@
 # than what the repo has. Teaching it to push is a design decision, not a
 # tidy-up — and it would need to answer what a failed push does to a commit
 # that already succeeded.
+import os
 import subprocess
 from pathlib import Path
 
@@ -105,12 +106,16 @@ def scope_dir(scope):
     raise GitError(f"unknown scope: {scope!r}")
 
 
-def _git(repo, *args, check=True):
+def _git(repo, *args, check=True, ok_codes=(0,)):
     """Run one git command in `repo`. Returns stdout.
 
     Arguments are a list and there is no shell, so a path containing a space,
     a quote or a semicolon is an argument and can never become syntax. Every
     caller that passes a path passes it after `--` as well; see `_pathspec`.
+
+    `ok_codes` widens what counts as success — `git diff --no-index` (see
+    `diff_untracked_file`) exits 1 whenever it finds a difference, which for
+    a brand-new file is *every* time, not a failure to report.
     """
     try:
         proc = subprocess.run(
@@ -121,7 +126,7 @@ def _git(repo, *args, check=True):
         raise GitError("git is not installed, or not on PATH")
     except subprocess.TimeoutExpired:
         raise GitError(f"git timed out after {_TIMEOUT}s — is /mnt/c awake?")
-    if check and proc.returncode != 0:
+    if check and proc.returncode not in ok_codes:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
         raise GitError(detail[0] if detail else f"git exited {proc.returncode}")
     return proc.stdout
@@ -291,6 +296,100 @@ def diff(scope=WIKI, paths=None):
     # A vault edited from Obsidian is never staged, but a half-finished
     # terminal session can leave it that way and the diff must still be true.
     return _git(root, "diff", "HEAD", *spec)
+
+
+def _walk_untracked_dir(root, rel_dir):
+    """Every leaf under an untracked directory, repo-relative — `rel_dir`
+    itself never included, since a directory has no diff of its own.
+
+    A manual `os.scandir` walk rather than `Path.rglob`, and a symlink is
+    recorded as a leaf and never followed to recurse into it — the same
+    discipline `mover.py`'s `_walk_root` uses, for the same reason: this
+    finds real content inside a directory the model or Obsidian just
+    created, and a symlink cycle or an escape through a symlinked
+    subdirectory must not turn a status listing into an unbounded walk.
+    """
+    out = []
+
+    def walk(dir_path, rel_prefix):
+        try:
+            with os.scandir(dir_path) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            return
+        for entry in entries:
+            rel = f"{rel_prefix}{entry.name}"
+            try:
+                is_link = entry.is_symlink()
+            except OSError:
+                continue
+            if is_link:
+                out.append(rel)
+                continue
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                walk(entry.path, f"{rel}/")
+            else:
+                out.append(rel)
+
+    walk(str(Path(root) / rel_dir), rel_dir)
+    return out
+
+
+def expand_for_picker(changes, root):
+    """`changes` with every untracked *directory* replaced by one Change per
+    leaf file inside it (D-1.6.2-02) — what the per-file picker offers,
+    since "the directory changed" is not something a diff can show. Tracked
+    changes, and untracked regular files, pass through unchanged. Folder-
+    wide status/diff are untouched by this — it exists only for the picker.
+    """
+    out = []
+    for c in changes:
+        if c.untracked and (Path(root) / c.path).is_dir():
+            out.extend(Change("??", rel)
+                      for rel in _walk_untracked_dir(root, c.path))
+        else:
+            out.append(c)
+    return out
+
+
+def diff_untracked_file(scope, rel_path):
+    """A synthetic no-index diff for one currently-untracked file: every
+    line an addition, exactly what the next commit would introduce.
+
+    `git diff --no-index` never touches the index — unlike `git add
+    --intent-to-add`, which was rejected for exactly the reason `paths.py`'s
+    write jail exists: looking at something must not change what state it's
+    in. Its exit code is 1 whenever a difference is found, which for a new
+    file is always, so `_git` is told that is success here, not a failure.
+
+    Revalidated immediately before the git call, against the *chosen scope*
+    rather than only the repo root — `scope_dir` returns the wiki/journal
+    boundary, or None for vault/all, in which case the repo root is the
+    boundary. A vanished path, a directory, or a symlink resolving outside
+    that boundary is a GitError, never a fallback to reading the file
+    directly — Git owns text/binary presentation, this module does not.
+    """
+    root = repo_root()
+    boundary = scope_dir(scope) or root
+    abs_path = root / rel_path
+    if not abs_path.exists():
+        raise GitError(f"{rel_path} no longer exists")
+    if abs_path.is_symlink():
+        try:
+            abs_path.resolve().relative_to(boundary.resolve())
+        except ValueError:
+            raise GitError(f"{rel_path} is a symlink resolving outside "
+                          f"{boundary} — refused")
+    if abs_path.is_dir():
+        raise GitError(f"{rel_path} is a directory, not a file")
+    if not abs_path.is_file():
+        raise GitError(f"{rel_path} is not a regular file")
+    return _git(root, "diff", "--no-index", "--", os.devnull, rel_path,
+               ok_codes=(0, 1))
 
 
 def tracked_count(scope=WIKI):

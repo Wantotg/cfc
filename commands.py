@@ -3319,12 +3319,20 @@ def _pick_change(changes):
     git (status/diff/commit paths); the title is decoration only, so a
     resolve failure (deleted file, no wiki repo) is swallowed rather than
     blanking the picker.
+
+    D-1.6.2-02: an untracked *directory* is expanded to its leaf files here,
+    before numbering — "the directory changed" is not something a diff can
+    show, so the picker offers what is actually inside it instead. Falls
+    back to the unexpanded list if `root` couldn't be resolved, the same
+    degradation the title lookup below already allows.
     """
+    import wikigit
     try:
-        import wikigit
         root = wikigit.repo_root()
     except Exception:                             # noqa: BLE001
         root = None
+    if root is not None:
+        changes = wikigit.expand_for_picker(changes, root)
     for i, c in enumerate(changes, 1):
         shown = c.path
         if root is not None:
@@ -3521,9 +3529,23 @@ def _wiki_diff_file(scope, lead="/wiki "):
 
     console.print()
     if pick.untracked:
+        # D-1.6.2-02: a synthetic no-index diff, not a "no diff to show"
+        # dead end — the whole file, as the addition it would make, without
+        # trusting or staging it. `pick.path` may be a leaf `_pick_change`
+        # found inside what git reported as one untracked directory; either
+        # way it is revalidated immediately before this call.
+        try:
+            text = wikigit.diff_untracked_file(scope, pick.path)
+        except wikigit.GitError as e:
+            console.print(f"  {e}", style="red")
+            console.print()
+            return
         console.print(f"  {pick.path}", style="bold")
-        console.print("  new file, not yet tracked — no diff to show",
-                      style="green")
+        console.print("  new file, not yet tracked — shown as the addition "
+                      "it would make", style="green")
+        if text.strip():
+            console.print(Syntax(text, "diff", theme="ansi_dark",
+                                 word_wrap=False, background_color="default"))
     else:
         try:
             text = wikigit.diff(scope, paths=[pick.path])

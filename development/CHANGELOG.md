@@ -27,7 +27,22 @@ One line: what changed and why it mattered.
 
 ---
 
-## 2026-08-07 — A 5xx is a provider failure, not a raw-body puzzle
+## 2026-08-07 — An untracked wiki file previews as the addition it would make
+`D-1.6.2-02`: `/wiki diff [scope] file`'s per-file picker used to offer a
+brand-new untracked *directory* as a single, undiffable row ("no diff to
+show"). `wikigit.expand_for_picker` now expands an untracked directory to its
+leaf files at pick time; choosing one runs `wikigit.diff_untracked_file`, a
+read-only `git diff --no-index` against `/dev/null` — every line an addition,
+never `git add --intent-to-add`, never touching the index. Revalidated
+immediately before the git call: a vanished path, a directory, or a symlink
+resolving outside the chosen scope is a refusal, not a fallback to reading
+the file directly. `commands._wiki_diff_file` renders it through the same
+Rich `Syntax` path tracked diffs use and keeps the separate, explicit
+per-file commit suggestion — review grants no trust, and folder-wide diff is
+unchanged (tracked text plus untracked names, nothing new dumped).
+- Files: wikigit.py, commands.py, tests/test_wikigit.py, tests/test_screens.py
+- Status: shipped
+- Commit: pending
 `W-1.1-02`: `api._provider_error` now gives status 500–599 alone a cfc-owned
 message — `Provider failed this request (HTTP <status>). Try again; if it
 keeps happening, check the provider's status.` — used by streaming, tool
