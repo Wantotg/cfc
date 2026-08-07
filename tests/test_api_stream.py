@@ -112,7 +112,67 @@ def _run_stream(deltas):
     return full_text, reasoning, len(calls)
 
 
+class _FakeErrorResponse:
+    """Just enough of an httpx.Response for `_provider_error`/`_error_detail`
+    to read: a status, a request url (for the non-5xx detail line) and a
+    JSON-or-text body."""
+
+    def __init__(self, status_code, body="", url="https://x/v1/chat"):
+        self.status_code = status_code
+        self.text = body
+        self.request = type("R", (), {"url": url})()
+
+    def json(self):
+        import json as _json
+        return _json.loads(self.text)
+
+
 def main():
+    print("\n--- W-1.1-02: a 5xx becomes cfc's own provider-failure line ---")
+    for status in (500, 503, 599):
+        e = apimod._provider_error(_FakeErrorResponse(
+            status, '{"error": "upstream on fire"}'))
+        ok(f"{status}: the message is cfc-owned",
+           str(e) == f"Provider failed this request (HTTP {status}). Try "
+                    "again; if it keeps happening, check the provider's "
+                    "status.", str(e))
+        ok(f"{status}: the raw provider body never leaks into the message",
+           "upstream on fire" not in str(e), str(e))
+        ok(f"{status}: status_code is still attached as data",
+           e.status_code == status, e.status_code)
+
+    print("\n--- non-5xx keeps the provider's own detail, unchanged ---")
+    for status in (400, 401, 403, 429):
+        e = apimod._provider_error(_FakeErrorResponse(
+            status, '{"error": "context length exceeded"}'))
+        ok(f"{status}: the provider's own detail survives",
+           "context length exceeded" in str(e), str(e))
+        ok(f"{status}: no cfc-owned rewording appears",
+           "Provider failed this request" not in str(e), str(e))
+        ok(f"{status}: status_code is still attached",
+           e.status_code == status, e.status_code)
+
+    print("\n--- is_server_failure: broader than is_transient_status on "
+          "purpose ---")
+    def _err(status):
+        e = apimod.httpx.HTTPError("x")
+        e.status_code = status
+        return e
+    ok("500 is a server failure but not a transient one",
+       apimod.is_server_failure(_err(500)) is True
+       and apimod.is_transient_status(_err(500)) is False)
+    ok("503 is both", apimod.is_server_failure(_err(503)) is True
+       and apimod.is_transient_status(_err(503)) is True)
+    ok("400 is neither", apimod.is_server_failure(_err(400)) is False
+       and apimod.is_transient_status(_err(400)) is False)
+    ok("429 is transient but not a server failure (still a client-side code)",
+       apimod.is_transient_status(_err(429)) is True
+       and apimod.is_server_failure(_err(429)) is False)
+    transport_err = apimod.httpx.HTTPError("connection reset")
+    ok("a transport error with no status_code at all is neither",
+       apimod.is_server_failure(transport_err) is False
+       and apimod.is_transient_status(transport_err) is False)
+
     print("\n--- whitespace-only reasoning draws no panel ---")
     full_text, reasoning, panel_calls = _run_stream([
         {"reasoning": "   "},

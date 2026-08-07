@@ -27,6 +27,26 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-07 — A 5xx is a provider failure, not a raw-body puzzle
+`W-1.1-02`: `api._provider_error` now gives status 500–599 alone a cfc-owned
+message — `Provider failed this request (HTTP <status>). Try again; if it
+keeps happening, check the provider's status.` — used by streaming, tool
+chat, titles and routines alike, since both API paths build their error at
+that one boundary. 400 keeps the provider's own detail (where a malformed
+message, context overflow or bad model id is actually distinguished);
+401/403/429 and transport failures are untouched. New `api.is_server_failure`
+widens `main.handle_turn_error`'s non-revert treatment from the four
+`TRANSIENT_STATUS_CODES` to every 5xx: a 500 isn't retried automatically, but
+it's no more evidence a newly switched model is bad than a 503 is, so it
+leaves an armed revert in place and never enters the rejected-models set. A
+later, real 400 still reverts normally. Retry policy itself is unchanged —
+`TRANSIENT_STATUS_CODES` and `runner.py`'s retry set are exactly what they
+were.
+- Files: api.py, main.py, tests/test_api_stream.py, tests/test_turn_paths.py,
+  tests/test_model_revert.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-07 — A suspicious model id is marked, not judged
 `W-08`: a configured model id with more than one `/` — the shape left behind
 when two adjacent quoted ids in `config.py`'s `MODELS` list are missing a

@@ -69,8 +69,8 @@ import mainchat
 from agent import agent_turn, render_answer, tools_guidance
 from context import chat_context
 from api import (stream_response, generate_title, is_transient_status,
-                 EMPTY_COMPLETION_RETRIES, TitleGenerationError,
-                 capture_requests)
+                 is_server_failure, EMPTY_COMPLETION_RETRIES,
+                 TitleGenerationError, capture_requests)
 from backup import safe_backup
 import errorlog
 import screens
@@ -633,6 +633,13 @@ def run_session(conn, session_id, *, auto_export, private=False,
         line. Anything else — a rejection, or an error with no transient status
         — still reverts as before.
 
+        `api.is_server_failure` widens that same non-revert treatment to
+        every 5xx (`W-1.1-02`), not only the four in `TRANSIENT_STATUS_CODES`:
+        a 500 is not retried automatically, but it is no more evidence the
+        model id is bad than a 503 is, so it must not poison an armed switch
+        or the rejected-models set either. A later, non-5xx rejection (a real
+        400) still reverts normally.
+
         **`rejected_models` is recorded here, before any of that** (`B-1.2-04`):
         exactly HTTP 400, never a transient or a transport failure with no
         status at all — a 400 is the provider naming this id unsupported, and
@@ -645,7 +652,7 @@ def run_session(conn, session_id, *, auto_export, private=False,
                            kind=kind)
         if getattr(e, "status_code", None) == 400:
             rejected_models.add(current_model)
-        if revert_model and is_transient_status(e):
+        if revert_model and (is_transient_status(e) or is_server_failure(e)):
             console.print(f"\n[error] {e}\n")
             return
         if not revert_bad_model():

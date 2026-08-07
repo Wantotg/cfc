@@ -248,10 +248,41 @@ def is_transient_status(error):
     return getattr(error, "status_code", None) in TRANSIENT_STATUS_CODES
 
 
+def is_server_failure(error):
+    """Whether a provider response was a 5xx — the provider's own side
+    breaking, not evidence that a request or a newly selected model id is
+    bad (`W-1.1-02`). Deliberately broader than `is_transient_status`: 500
+    isn't in `TRANSIENT_STATUS_CODES` (a routine won't retry it), but it
+    must still not poison an armed model-revert or the rejected-models set
+    the same way a genuine 400 does. Presentation and retry/revert policy
+    answer different questions and must not be collapsed merely because
+    both read the same status.
+    """
+    status = getattr(error, "status_code", None)
+    return isinstance(status, int) and 500 <= status <= 599
+
+
 def _provider_error(response):
-    """An HTTPError that keeps the provider status as data, not prose."""
-    error = httpx.HTTPError(_error_detail(response))
-    error.status_code = response.status_code
+    """An HTTPError that keeps the provider status as data, not prose.
+
+    W-1.1-02: for the 500-599 class the human-facing message is cfc's own —
+    a raw provider body is a diagnosis exercise for a status that means "the
+    provider broke," not "something is wrong with this request." 400 keeps
+    the provider's own detail, since that is where a malformed message,
+    context overflow or unsupported model id gets distinguished; 401/403/429
+    and transport failures never reach this function at all. `status_code`
+    is attached either way and is the only thing retry/revert logic reads —
+    never text parsed back out of the message.
+    """
+    status = response.status_code
+    if 500 <= status <= 599:
+        message = (f"Provider failed this request (HTTP {status}). Try "
+                  "again; if it keeps happening, check the provider's "
+                  "status.")
+    else:
+        message = _error_detail(response)
+    error = httpx.HTTPError(message)
+    error.status_code = status
     return error
 
 

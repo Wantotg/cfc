@@ -392,6 +392,37 @@ def main_():
        "provider rejected 'flaky-d' — switched back to flaky-c" in text13,
        text13)
 
+    print("\n--- W-1.1-02: a 500 doesn't poison the set either, even "
+          "though it isn't in TRANSIENT_STATUS_CODES ---")
+    # 'flaky-e' 500s — not one of the four transient codes, so a routine
+    # would not retry it — but it is still the provider's own failure, not
+    # evidence the id is bad, so it must behave exactly like flaky-c's 503
+    # above: no revert, and the armed switch survives for a real 400 later.
+    def server_error_e_then_reject_f(messages, model=None):
+        if model == "flaky-e":
+            e = httpx.HTTPError("upstream 500")
+            e.status_code = 500
+            raise e
+        if model == "flaky-f":
+            e = httpx.HTTPError("no such model: flaky-f")
+            e.status_code = 400
+            raise e
+        return ("an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
+    main.stream_response = server_error_e_then_reject_f
+
+    sid13b = dbmod.new_session(conn, title="t13b", model="good-model")
+    text13b = drive(conn, sid13b,
+                    "/tools off\n/model flaky-e\nhello\n/model flaky-f\n"
+                    "hello\n/q\n", model="good-model")
+    ok("switching onto flaky-e and it 500ing does not revert",
+       "upstream 500" in text13b.split("flaky-f")[0], text13b)
+    ok("...and does not print 'provider rejected' either",
+       "provider rejected 'flaky-e'" not in text13b, text13b)
+    ok("flaky-f's 400 reverts cleanly onto flaky-e — the 500 never "
+       "poisoned it, same as the transient case above",
+       "provider rejected 'flaky-f' — switched back to flaky-e" in text13b,
+       text13b)
+
     print("\n--- W-08: a suspicious multiple-slash id arms and reverts "
           "exactly like any other — the warning is cosmetic ---")
     def raise_for_suspicious(messages, model=None):

@@ -1014,6 +1014,116 @@ def main_():
     main.agent_turn = lambda *a, **k: {"content": ANSWER}
     main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
 
+    print("\n--- W-1.1-02: a 5xx is a cfc-owned provider failure, on both "
+          "turn paths, and it never poisons an armed model switch ---")
+
+    class _FakeErrorResponse:
+        """Just enough of an httpx.Response for the real `api._provider_error`
+        to read — driving the actual message-rewriting logic under test,
+        rather than a hand-built exception that would bypass it."""
+        def __init__(self, status_code, body=""):
+            self.status_code = status_code
+            self.text = body
+            self.request = type("R", (), {"url": "https://x/v1/chat"})()
+
+        def json(self):
+            raise ValueError("not json")
+
+    def raise_status(status, body=""):
+        def _raiser(messages, model=None):
+            raise api._provider_error(_FakeErrorResponse(status, body))
+        return _raiser
+
+    def raise_status_tools(status, body=""):
+        def _raiser(prefix, history, model, conn, session_id, ctx=None,
+                    max_calls=None, touched=None, first_message=None,
+                    instruction=None):
+            raise api._provider_error(_FakeErrorResponse(status, body))
+        return _raiser
+
+    def shows_cfc_owned(out, status):
+        """Rich wraps a long line at the console width, so the exact
+        sentence can arrive with a newline where a space was — collapse
+        whitespace before matching, the same idiom other tests in this
+        file use for wrapped panel text."""
+        collapsed = " ".join(out.split())
+        return (f"Provider failed this request (HTTP {status}). Try again; "
+               "if it keeps happening, check the provider's status."
+               ) in collapsed
+
+    for status in (500, 503):
+        main.stream_response = raise_status(status, f"upstream body {status}")
+        s_sid = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+        out, _ = drive(conn, s_sid, "/tools off\nhello\n/q\n")
+        ok(f"streaming, {status}: shows the cfc-owned next step",
+           shows_cfc_owned(out, status), out)
+        ok(f"streaming, {status}: never shows the raw provider body",
+           f"upstream body {status}" not in out, out)
+
+        main.agent_turn = raise_status_tools(status, f"upstream body {status}")
+        t_sid = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+        out, _ = drive(conn, t_sid, "hello\n/q\n")
+        ok(f"tools, {status}: shows the same cfc-owned next step",
+           shows_cfc_owned(out, status), out)
+        ok(f"tools, {status}: never shows the raw provider body",
+           f"upstream body {status}" not in out, out)
+
+    main.agent_turn = lambda *a, **k: {"content": ANSWER}
+
+    print("  (a 400 and a transport error keep their own diagnostic detail)")
+    main.stream_response = raise_status(400, "model rejected: too many tokens")
+    bad400_sid = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+    out, _ = drive(conn, bad400_sid, "/tools off\nhello\n/q\n")
+    ok("400 still shows the provider's own detail",
+       "model rejected: too many tokens" in out, out)
+    ok("...not the cfc-owned 5xx rewording",
+       "Provider failed this request" not in out, out)
+
+    def raise_transport(messages, model=None):
+        raise httpx.HTTPError("connection reset by peer")
+    main.stream_response = raise_transport
+    transport_sid = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+    out, _ = drive(conn, transport_sid, "/tools off\nhello\n/q\n")
+    ok("a transport error (no status at all) keeps its own message",
+       "connection reset by peer" in out, out)
+    ok("...not the cfc-owned 5xx rewording either",
+       "Provider failed this request" not in out, out)
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+
+    print("  (neither 500 nor 503 poisons an armed model switch, unlike a "
+          "real rejection)")
+    saved_models_508 = models.MODELS
+    try:
+        for status in (500, 503):
+            other_id = f"other-{status}"
+            models.MODELS = saved_models_508 + [
+                models._spec(other_id, tools=False)]
+
+            def raise_only_for_switch(messages, model=None, _oid=other_id,
+                                      _status=status):
+                if model == _oid:
+                    raise api._provider_error(
+                        _FakeErrorResponse(_status, f"upstream {_status}"))
+                return (ANSWER, dict(USAGE), "")
+            main.stream_response = raise_only_for_switch
+
+            arm_sid = dbmod.new_session(conn, title="(untitled)", model=MODEL)
+            out, _ = drive(conn, arm_sid,
+                           f"/tools off\n/model {other_id}\nhello\n/q\n")
+            ok(f"{status} on an armed switch: no 'provider rejected' revert "
+               "line", "provider rejected" not in out, out)
+            ok(f"{status} on an armed switch: the cfc-owned message shows "
+               "instead", shows_cfc_owned(out, status), out)
+    finally:
+        models.MODELS = saved_models_508
+        # `/model other-{status}` is a real, process-wide switch (main.py:
+        # "the switch that got armed was process-wide, so the revert is
+        # too") — restore the tool-capable default so later sections that
+        # open a session with no explicit model don't inherit a
+        # tools=False id and silently take the streaming path instead.
+        main.set_process_model(MODEL)
+    main.stream_response = lambda messages, model=None: (ANSWER, dict(USAGE), "")
+
     print("\n--- W-10: /title <id> <new title> shares commands.rename_chat "
           "with the hub's 'r' ---")
     driver_sid = dbmod.new_session(conn, title="driver")
