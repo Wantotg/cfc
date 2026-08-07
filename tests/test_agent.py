@@ -66,6 +66,8 @@ def drive(fn, *a, keys="", **kw):
     out = io.StringIO()
     real = sys.stdin
     sys.stdin = io.StringIO(keys)
+    saved_agent_file = agent.console.file
+    saved_commands_file = commands.console.file
     try:
         with contextlib.redirect_stdout(out):
             agent.console.file = out
@@ -73,6 +75,8 @@ def drive(fn, *a, keys="", **kw):
             r = fn(*a, **kw)
     finally:
         sys.stdin = real
+        agent.console.file = saved_agent_file
+        commands.console.file = saved_commands_file
     return r, out.getvalue()
 
 
@@ -206,9 +210,10 @@ def main():
         result, out = drive(commands.gate_and_dispatch, call, approval,
                             ToolContext.for_chat(read_roots=(jail,)), keys=f"{key}\n")
         shown = io.StringIO()
+        saved_agent_file = agent.console.file
         agent.console.file = shown
         agent._render_result(result, "read_file")
-        agent.console.file = sys.stdout
+        agent.console.file = saved_agent_file
         ok(f"'{key}' -> the model reads an error",
            json.loads(result).get("error"), result)
         ok(f"...and you read a decision", "error" not in shown.getvalue(),

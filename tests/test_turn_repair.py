@@ -59,6 +59,9 @@ def drive(conn, sid, keys):
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
+    saved_main_file = main.console.file
+    saved_commands_file = commands.console.file
+    saved_agent_file = agent.console.file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
@@ -67,9 +70,9 @@ def drive(conn, sid, keys):
             main.run_session(conn, sid, auto_export=False, private=False)
     finally:
         sys.stdin = real_stdin
-        main.console.file = sys.stdout
-        commands.console.file = sys.stdout
-        agent.console.file = sys.stdout
+        main.console.file = saved_main_file
+        commands.console.file = saved_commands_file
+        agent.console.file = saved_agent_file
     return out.getvalue()
 
 
@@ -77,6 +80,9 @@ def drive_private(conn, sid, keys):
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
+    saved_main_file = main.console.file
+    saved_commands_file = commands.console.file
+    saved_agent_file = agent.console.file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
@@ -85,9 +91,9 @@ def drive_private(conn, sid, keys):
             main.run_session(conn, sid, auto_export=False, private=True)
     finally:
         sys.stdin = real_stdin
-        main.console.file = sys.stdout
-        commands.console.file = sys.stdout
-        agent.console.file = sys.stdout
+        main.console.file = saved_main_file
+        commands.console.file = saved_commands_file
+        agent.console.file = saved_agent_file
     return out.getvalue()
 
 

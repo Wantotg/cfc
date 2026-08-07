@@ -203,9 +203,12 @@ def test_help_matches_dispatch():
     for mode in ("config", "wiki", "routine"):
         table = screens.build_table(mode)
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        screens._print_help(table)
-        screens.console.file = sys.stdout
+        try:
+            screens._print_help(table)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
 
         for name, aliases, help_text, handler in table.entries:
@@ -303,9 +306,12 @@ def test_config_render():
 
     def rendered():
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        screens._render_config()
-        screens.console.file = sys.stdout
+        try:
+            screens._render_config()
+        finally:
+            screens.console.file = saved_file
         return buf.getvalue()
 
     print("\n--- config: the API key never appears ---")
@@ -401,9 +407,12 @@ def test_config_scopes_and_names():
 
     def rendered(fn, *a):
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        fn(*a)
-        screens.console.file = sys.stdout
+        try:
+            fn(*a)
+        finally:
+            screens.console.file = saved_file
         return buf.getvalue()
 
     tmp = tempfile.mkdtemp()
@@ -489,9 +498,12 @@ def test_config_paths_and_connect():
         conn = dbmod.db(":memory:")
         table = screens.build_table("config")
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        table.dispatch["paths"]("", conn, table)
-        screens.console.file = sys.stdout
+        try:
+            table.dispatch["paths"]("", conn, table)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
         ok("the routine store shows up", "Routine definitions" in out, out)
         ok("an unconfigured path says so", "not configured" in out, out)
@@ -541,13 +553,14 @@ def test_screens_never_print_chat_syntax():
         import and every module shares that one object (decision 6), so the
         capture has to go through it."""
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
         try:
             fn()
         except Exception:
             pass
         finally:
-            screens.console.file = sys.stdout
+            screens.console.file = saved_file
         return buf.getvalue()
 
     def leaks(mode, answers, conn):
@@ -608,11 +621,12 @@ def test_wiki_read_argument_refusal():
 
     def captured(fn):
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
         try:
             fn()
         finally:
-            screens.console.file = sys.stdout
+            screens.console.file = saved_file
         return buf.getvalue()
 
     class NoGit:
@@ -825,9 +839,12 @@ def test_routines_show_history_open():
 
         import io
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        table.dispatch["show"]("nightly", conn, table)
-        screens.console.file = sys.stdout
+        try:
+            table.dispatch["show"]("nightly", conn, table)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
         ok("show prints the full detail, model included",
            "nightly" in out and "id" in out and "valid" in out, out)
@@ -838,9 +855,12 @@ def test_routines_show_history_open():
            "schedule" in out and "runs only from /routine" in out, out)
 
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        table.dispatch["history"]("nightly", conn, table)
-        screens.console.file = sys.stdout
+        try:
+            table.dispatch["history"]("nightly", conn, table)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
         # W-0.9.1-07: a routine-run reference, never a session number.
         ok("history names the routine-run reference, not a session number",
@@ -898,9 +918,12 @@ def test_routines_show_history_open():
             encoding="utf-8")
         routines.append_log("legacy-and-new", "ok", "the current one")
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        table.dispatch["history"]("legacy-and-new", conn, table)
-        screens.console.file = sys.stdout
+        try:
+            table.dispatch["history"]("legacy-and-new", conn, table)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
         lines = [l.strip() for l in out.splitlines()
                 if l.strip().startswith("20")]
@@ -934,10 +957,13 @@ def test_routines_run_and_new():
         import io
         buf = io.StringIO()
         import commands
+        saved_file = commands.console.file
         commands.console.file = buf
-        with scripted([]):   # nothing typed -> Ctrl-C on the first prompt
-            table.dispatch["new"]("", conn, table)
-        commands.console.file = sys.stdout
+        try:
+            with scripted([]):   # nothing typed -> Ctrl-C on the first prompt
+                table.dispatch["new"]("", conn, table)
+        finally:
+            commands.console.file = saved_file
         out = buf.getvalue()
         ok("an abandoned 'new' from the screen names the screen, not chat",
            "back in routines" in out, out)
@@ -984,9 +1010,12 @@ def test_chat_model_threading():
         table = screens.build_table("config")
         import io
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        screens.render(table, conn)
-        screens.console.file = sys.stdout
+        try:
+            screens.render(table, conn)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
         ok("the config screen names 'help' on the way in, unprompted",
            "help" in out.lower(), out)
@@ -1025,9 +1054,12 @@ def test_routines_narrow_and_wide():
             for width in (80, 140):
                 screens.console.width = width
                 buf = io.StringIO()
+                saved_file = screens.console.file
                 screens.console.file = buf
-                screens._render_routines(conn)
-                screens.console.file = sys.stdout
+                try:
+                    screens._render_routines(conn)
+                finally:
+                    screens.console.file = saved_file
                 out = buf.getvalue()
                 ok(f"width {width}: the full model id survives",
                    long_model in out, out)
@@ -1092,14 +1124,17 @@ def test_routines_schedule_column():
             for width, label in ((80, "narrow"), (140, "wide")):
                 screens.console.width = width
                 buf = io.StringIO()
+                saved_file = screens.console.file
                 screens.console.file = buf
                 # Captured right at the render boundary: proves the row's
                 # Schedule cell is the real assessment computed for this
                 # moment, not a string this test invented independently of
                 # what the screen actually asks schedule.assess() for.
                 now = datetime.datetime.now()
-                screens._render_routines(conn)
-                screens.console.file = sys.stdout
+                try:
+                    screens._render_routines(conn)
+                finally:
+                    screens.console.file = saved_file
                 out = buf.getvalue()
 
                 for r, expected_label in (
@@ -1123,9 +1158,12 @@ def test_routines_schedule_column():
         table = screens.build_table("routine")
         import io
         buf = io.StringIO()
+        saved_file = screens.console.file
         screens.console.file = buf
-        screens._routine_show("manual", conn2, table)
-        screens.console.file = sys.stdout
+        try:
+            screens._routine_show("manual", conn2, table)
+        finally:
+            screens.console.file = saved_file
         out = buf.getvalue()
         ok("the full reason sentence is there, not the compact word alone",
            "runs only from /routine" in out, out)
@@ -1152,6 +1190,7 @@ def test_private_screen_uses_app_conn():
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO(script)
+        saved_file = chatmain.console.file
         try:
             with contextlib.redirect_stdout(out):
                 chatmain.console.file = out
@@ -1160,6 +1199,7 @@ def test_private_screen_uses_app_conn():
                                                app_conn=durable)
         finally:
             sys.stdin = real_stdin
+            chatmain.console.file = saved_file
         ok("the routines screen found the session on the durable conn",
            outcome == durable_sid, outcome)
         # There is no separate routine-transcript flag to check any more

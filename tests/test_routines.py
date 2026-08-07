@@ -170,10 +170,13 @@ def test_creation_flow():
             import contextlib
             buf = io.StringIO()
             typed(["Fourth routine", "1", "", "n"])   # runs out -> Ctrl-C
+            saved_file = commands.console.file
             commands.console.file = buf
-            with contextlib.redirect_stdout(buf):
-                commands.create_routine()
-            commands.console.file = sys.stdout
+            try:
+                with contextlib.redirect_stdout(buf):
+                    commands.create_routine()
+            finally:
+                commands.console.file = saved_file
             ok("an abandoned flow says it has ended",
                "back in the chat" in buf.getvalue(), buf.getvalue()[-200:])
     finally:
@@ -1350,10 +1353,13 @@ def main():
                 runner_mod.run_routine = lambda *a, **kw: (
                     outcome_status, summary, 42, 7)
                 buf = io.StringIO()
-                with redirect_stdout(buf):
-                    commands.console.file = buf
-                    commands.do_routine(conn2, "rr")
-                commands.console.file = sys.stdout
+                saved_file = commands.console.file
+                try:
+                    with redirect_stdout(buf):
+                        commands.console.file = buf
+                        commands.do_routine(conn2, "rr")
+                finally:
+                    commands.console.file = saved_file
                 return buf.getvalue()
             finally:
                 runner_mod.run_routine = saved_run
@@ -1387,10 +1393,13 @@ def main():
     print("\n--- show_routines: every state is visible, not swallowed (W-02) ---")
     with tempfile.TemporaryDirectory() as tmp3, Store(tmp3):
         buf = io.StringIO()
+        saved_file = commands.console.file
         commands.console.file = buf
-        with redirect_stdout(buf):
-            commands.show_routines()
-        commands.console.file = sys.stdout
+        try:
+            with redirect_stdout(buf):
+                commands.show_routines()
+        finally:
+            commands.console.file = saved_file
         out_empty = buf.getvalue()
         ok("an empty store says so, not silently nothing",
            "none yet" in out_empty, out_empty)
@@ -1411,10 +1420,13 @@ def main():
         routines.append_log("healthy", "ok", "wrote the digest")
 
         buf = io.StringIO()
+        saved_file = commands.console.file
         commands.console.file = buf
-        with redirect_stdout(buf):
-            commands.show_routines()
-        commands.console.file = sys.stdout
+        try:
+            with redirect_stdout(buf):
+                commands.show_routines()
+        finally:
+            commands.console.file = saved_file
         out_mixed = buf.getvalue()
 
         ok("a healthy routine is listed with its last run",

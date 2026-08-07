@@ -215,11 +215,12 @@ def test_wiki_scope_gating():
         backfill.update_index = fake_update_index
         import io
         buf = io.StringIO()
+        saved_file = commands.console.file
         commands.console.file = buf
         try:
             commands.do_updatedb()
         finally:
-            commands.console.file = sys.stdout
+            commands.console.file = saved_file
             backfill.update_index = real_update_index
             if real_import is not None:
                 import_wiki.run_import = real_import
@@ -292,11 +293,12 @@ def test_missing_id_wiki_warning_names_files():
 
     import io
     buf = io.StringIO()
+    saved_file = commands.console.file
     commands.console.file = buf
     try:
         commands.do_updatedb()
     finally:
-        commands.console.file = sys.stdout
+        commands.console.file = saved_file
         backfill.update_index = real_update_index
         commands._config.WIKI_DIR = saved_wiki_dir
         vault.VAULT_ROOT, vault.VAULT_SCOPES = saved_root, saved_scopes

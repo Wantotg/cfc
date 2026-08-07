@@ -58,13 +58,14 @@ def drive(conn, sid, keys, model=None):
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
+    saved_file = main.console.file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
             main.run_session(conn, sid, auto_export=False, private=False)
     finally:
         sys.stdin = real_stdin
-        main.console.file = sys.stdout
+        main.console.file = saved_file
     return out.getvalue()
 
 

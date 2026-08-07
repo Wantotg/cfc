@@ -27,6 +27,25 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-07 — A test capture restores the console it found, not sys.stdout
+`D-19`: twelve test files finished a shared-console capture with
+`console.file = sys.stdout` instead of restoring the object they found there.
+Harmless in a one-file run, since process exit hides it — but pin the console
+to a stale destination and a later, unrelated capture in the same process
+loses everything printed after that point, invisible to the test that
+actually asserts on it. Fixed to save-then-restore in all twelve; added a
+same-process test proving the mechanism directly (an inner capture that
+restores `sys.stdout` drops the outer capture's later output; one that
+restores the saved object does not).
+- Files: tests/test_agent.py, tests/test_first_message.py,
+  tests/test_mainchat_turns.py, tests/test_memory_states.py,
+  tests/test_model_revert.py, tests/test_model_tools_notice.py,
+  tests/test_mover.py, tests/test_process_model.py, tests/test_routines.py,
+  tests/test_screens.py, tests/test_turn_paths.py, tests/test_turn_repair.py,
+  tests/test_ui.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-06 — Every existing door tells the truth
 v1.9's second small honesty pass: three more places where a screen already
 said something that wasn't quite the whole story.

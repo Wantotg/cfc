@@ -59,6 +59,7 @@ def drive(conn, sid, keys, private=False, app_conn=None):
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
+    saved_file = main.console.file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
@@ -66,7 +67,7 @@ def drive(conn, sid, keys, private=False, app_conn=None):
                                        private=private, app_conn=app_conn)
     finally:
         sys.stdin = real_stdin
-        main.console.file = sys.stdout
+        main.console.file = saved_file
     return out.getvalue(), outcome
 
 
@@ -100,10 +101,13 @@ def main_():
         print("--- 'm' refuses when the bundle is unconfigured ---")
         mainchat.MAIN_CHAT_DIR = ""
         out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            main.console.file = out
-            result = main._open_main(conn)
-        main.console.file = sys.stdout
+        saved_file = main.console.file
+        try:
+            with contextlib.redirect_stdout(out):
+                main.console.file = out
+                result = main._open_main(conn)
+        finally:
+            main.console.file = saved_file
         ok("no session id is returned", result is None)
         ok("no Main row was created", dbmod.main_session_id(conn) is None)
         ok("the problem names MAIN_CHAT_DIR",
@@ -115,10 +119,13 @@ def main_():
         (bdir / mainchat.FIRST_MESSAGE_FILE).unlink()
         mainchat.MAIN_CHAT_DIR = str(bdir)
         out2 = io.StringIO()
-        with contextlib.redirect_stdout(out2):
-            main.console.file = out2
-            result2 = main._open_main(conn)
-        main.console.file = sys.stdout
+        saved_file = main.console.file
+        try:
+            with contextlib.redirect_stdout(out2):
+                main.console.file = out2
+                result2 = main._open_main(conn)
+        finally:
+            main.console.file = saved_file
         ok("still no session id", result2 is None)
         ok("still no Main row", dbmod.main_session_id(conn) is None)
         ok("names first message.md",

@@ -617,13 +617,14 @@ def main():
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO("1\n")
+        saved_file = commands.console.file
         try:
             with contextlib.redirect_stdout(out):
                 commands.console.file = out
                 picked = commands._pick_change(changes)
         finally:
             sys.stdin = real_stdin
-            commands.console.file = sys.stdout
+            commands.console.file = saved_file
         shown = " ".join(out.getvalue().split())
         ok("the picker shows the title beside the path",
            "Aquarium Nitrogen Cycle" in shown, shown)
@@ -663,13 +664,14 @@ def main():
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO("\n")  # blank line at the file prompt: cancel
+        saved_file = commands.console.file
         try:
             with contextlib.redirect_stdout(out):
                 commands.console.file = out
                 commands.do_move()
         finally:
             sys.stdin = real_stdin
-            commands.console.file = sys.stdout
+            commands.console.file = saved_file
         shown = out.getvalue()
         ok("the loose-file picker shows the title beside the filename",
            "titled-loose.md  —  A Loose Draft" in shown, shown)

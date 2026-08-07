@@ -218,6 +218,72 @@ def test_display_name_sweep():
        schedule.USAGE.startswith(DISPLAY_NAME), schedule.USAGE[:40])
 
 
+def test_capture_restore_preserves_nested_capture():
+    """D-19: a capture that finishes by restoring the *file it found* keeps a
+    surrounding capture intact; one that finishes with `console.file =
+    sys.stdout` does not, because the outer capture's real destination was
+    never `sys.stdout` in the first place — it was set directly on
+    `console.file`, the same way every one of the repaired twelve test files
+    captures output. `sys.stdout` itself is untouched by that, so restoring
+    it silently redirects the console back to the real terminal, and the
+    outer capture's own buffer stops receiving anything from that point on —
+    invisible in a one-file run because the process exits before anyone
+    reads the buffer again, live within a shared process because a later,
+    unrelated capture is what actually notices the missing line."""
+    print("\n--- D-19: restore the file found, not sys.stdout ---")
+    saved = console.file
+    try:
+        outer = io.StringIO()
+        console.file = outer
+        console.print("outer before")
+
+        # The now-repaired idiom: save what's there, restore that exact object.
+        inner = io.StringIO()
+        inner_saved = console.file
+        console.file = inner
+        console.print("inner line")
+        console.file = inner_saved
+
+        console.print("outer after")
+        ok("restoring the saved file keeps the outer capture intact",
+           "outer before" in outer.getvalue() and "outer after" in outer.getvalue(),
+           outer.getvalue())
+        ok("...and the inner capture still got its own line",
+           "inner line" in inner.getvalue(), inner.getvalue())
+    finally:
+        console.file = saved
+
+    saved = console.file
+    try:
+        outer = io.StringIO()
+        console.file = outer
+        console.print("outer before")
+
+        # The bug this row repairs: restoring to sys.stdout instead of the
+        # saved object.
+        inner = io.StringIO()
+        console.file = inner
+        console.print("inner line")
+        console.file = sys.stdout
+
+        console.print("outer after")
+        ok("disabling the fix reproduces the leak: the outer capture loses "
+           "everything printed after the inner one restores to sys.stdout",
+           "outer after" not in outer.getvalue(), outer.getvalue())
+    finally:
+        console.file = saved
+
+    print("\n--- ...and a later, unrelated capture receives a real line ---")
+    later = io.StringIO()
+    console.file = later
+    try:
+        console.print("a later capture")
+    finally:
+        console.file = saved
+    ok("a fresh capture after the above still receives real Rich output",
+       "a later capture" in later.getvalue(), later.getvalue())
+
+
 def main_():
     print("\n--- rich shortcodes survive literally ---")
     out = rendered("run :new:")
@@ -243,6 +309,7 @@ def main_():
        "[dim]recall cancelled.[/dim]" in out, out)
 
     test_display_name_sweep()
+    test_capture_restore_preserves_nested_capture()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
