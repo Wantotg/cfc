@@ -27,6 +27,20 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-07 — The slash prefix becomes an owned command boundary
+`W-1.4.1-02`: an unrecognised `/`-addressed line used to fall through to the
+model as ordinary chat — standing decision 13's fallthrough, now deliberately
+closed. After parsing and alias expansion, `main.run_session` refuses a bare
+`/` ("Empty command — nothing after '/'.") and any verb that survives
+expansion but still isn't in the handler table ("Unknown command '/<verb>' —
+/help lists the commands"), before OOC or a chat turn — no message row,
+request capture, title attempt, memory action or provider call. Ordinary
+prose and the retired `:` prefix are unaffected; no fuzzy correction, no
+alias revival.
+- Files: main.py, tests/test_parse.py, tests/test_turn_paths.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-07 — Tone is a deployment choice, traits stay independent
 `W-1.6.3-01b`: `governor.ordinary_instruction()` sent the automatic tone cue
 on every ordinary turn unconditionally, with a due trait riding alongside

@@ -55,6 +55,7 @@ import httpx
 import import_wiki
 import main
 import models
+import parse
 import pools
 import wikigit
 
@@ -526,6 +527,90 @@ def main_():
     ok("an empty OOC marker refuses without a provider call",
        "Empty OOC direction" in out, out)
     ok("...and really makes no call", stream_calls == [])
+
+    print("\n--- W-1.4.1-02: the slash prefix is an owned command boundary "
+          "— a bare '/', an unknown verb and a double-slash-shaped unknown "
+          "are all refused before OOC or chat ---")
+    real_title, real_embed = main.generate_title, main.auto_embed
+    title_calls, embed_calls = [], []
+    main.generate_title = lambda user_text: title_calls.append(user_text) or "X"
+    main.auto_embed = lambda: embed_calls.append(True)
+    try:
+        for label, typed, expect in (
+            ("a bare slash", "/",
+             "Empty command — nothing after '/'."),
+            ("an unknown verb", "/frobnicate",
+             f"Unknown command '{parse.PREFIX}frobnicate' — "
+             f"{parse.PREFIX}help lists the commands"),
+            ("a double-slash-shaped unknown", "//frobnicate",
+             f"Unknown command '{parse.PREFIX}/frobnicate' — "
+             f"{parse.PREFIX}help lists the commands"),
+        ):
+            sid = dbmod.new_session(conn, title="(untitled)")
+            before_rows = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id=?",
+                (sid,)).fetchone()[0]
+            stream_calls.clear()
+            title_calls.clear()
+            embed_calls.clear()
+            out, _ = drive(conn, sid,
+                           f"/tools off\n{typed}\n/status\n/q\n")
+            after_rows = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id=?",
+                (sid,)).fetchone()[0]
+            ok(f"{label}: refused with the expected wording",
+               expect in out, out)
+            ok(f"{label}: creates no message row",
+               after_rows == before_rows, (before_rows, after_rows))
+            ok(f"{label}: makes no provider call", stream_calls == [], out)
+            ok(f"{label}: /status shows no request was captured",
+               "none sent" in out, out)
+            ok(f"{label}: attempts no title", title_calls == [], title_calls)
+            ok(f"{label}: attempts no memory action",
+               embed_calls == [], embed_calls)
+
+        print("  (identically in a private chat — decision 15)")
+        for label, typed, expect in (
+            ("a bare slash", "/",
+             "Empty command — nothing after '/'."),
+            ("an unknown verb", "/frobnicate",
+             f"Unknown command '{parse.PREFIX}frobnicate' — "
+             f"{parse.PREFIX}help lists the commands"),
+        ):
+            priv_conn = dbmod.db(":memory:")
+            priv_sid = dbmod.new_session(priv_conn, title="(untitled)")
+            title_calls.clear()
+            embed_calls.clear()
+            priv_out = drive_private(priv_conn, priv_sid,
+                                     f"/tools off\n{typed}\n/status\n/q\n")
+            ok(f"private, {label}: refused with the expected wording",
+               expect in priv_out, priv_out)
+            ok(f"private, {label}: /status shows no request was captured",
+               "none sent" in priv_out, priv_out)
+            ok(f"private, {label}: attempts no title or memory action",
+               title_calls == [] and embed_calls == [],
+               (title_calls, embed_calls))
+            priv_conn.close()
+
+        print("  (ordinary prose and the retired ':' prefix still reach "
+              "chat, unaffected by the slash claim)")
+        stream_calls.clear()
+        prose_sid = dbmod.new_session(conn, title="(untitled)")
+        drive(conn, prose_sid, "/tools off\nhello there\n/q\n")
+        ok("ordinary prose still reaches chat and gets a provider call",
+           len(stream_calls) == 1, stream_calls)
+
+        stream_calls.clear()
+        colon_sid = dbmod.new_session(conn, title="(untitled)")
+        drive(conn, colon_sid, "/tools off\n:add relax\n/q\n")
+        ok("a retired ':'-prefixed line is still ordinary chat input, not "
+           "a refused command",
+           len(stream_calls) == 1
+           and any(m.get("content") == ":add relax" for m in stream_calls[0]),
+           stream_calls)
+    finally:
+        main.generate_title = real_title
+        main.auto_embed = real_embed
 
     print("\n--- W-1.6.4-02: one shared finisher — transient status, order, "
           "titling (B-1.3.1-02, D-13) ---")

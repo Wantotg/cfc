@@ -1868,9 +1868,22 @@ def run_session(conn, session_id, *, auto_export, private=False,
                     # "hub".
                     break
                 continue
-            # An unrecognised verb is not a command; it goes to the model,
-            # exactly as an unmatched startswith did. cfc does not claim the
-            # whole prefix namespace.
+            # W-1.4.1-02: the slash prefix is now the whole claim — a verb
+            # that survives alias expansion but still isn't in HANDLERS is
+            # addressed to cfc and refused here, before OOC or chat, rather
+            # than falling through to a provider call and a confused answer
+            # (decision 13's remaining gap, closed deliberately). No fuzzy
+            # correction and no alias revival: /help is the one pointer.
+            console.print(f"Unknown command '{PREFIX}{cmd.verb}' — "
+                          f"{PREFIX}help lists the commands", style="dim")
+            continue
+        if user.startswith(PREFIX):
+            # A bare '/' (or '/' plus only whitespace) parses to None the
+            # same way ordinary prose does, but the prefix alone still
+            # addresses it to cfc — refused as an empty command, not sent
+            # as an empty chat message.
+            console.print("Empty command — nothing after '/'.", style="dim")
+            continue
 
         # OOC: checked before falling to chat, same way a command is —
         # exactly one grammar (parse.parse_ooc), never a second dialect

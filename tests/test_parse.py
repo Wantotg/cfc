@@ -192,6 +192,23 @@ def main():
     ok("a phrase alias puts its own words first",
        (c.verb, c.args) == ("list", ("prompts", "extra")), (c.verb, c.args))
 
+    print("\n--- W-1.4.1-02: what main.py's slash boundary refusal relies "
+          "on ---")
+    # main.run_session refuses a bare '/' and a slash-addressed unrecognised
+    # verb before OOC or chat (standing decision 13's remaining fallthrough,
+    # deliberately closed). Nothing in parse.py changed to make that
+    # possible — these three shapes already parsed this way; this pins the
+    # boundary the refusal logic depends on rather than leaving it implicit.
+    ok("a bare prefix still parses to None — main.py reads that as 'empty "
+       "command', not as prose", p("/") is None)
+    ok("an unknown verb still parses to a Cmd whose verb has no handler",
+       p("/frobnicate").verb == "frobnicate"
+       and "frobnicate" not in VERBS, p("/frobnicate"))
+    ok("a double-slash-shaped unknown parses too — the verb simply carries "
+       "the extra slash, and is still not a real verb",
+       p("//frobnicate").verb == "/frobnicate"
+       and "/frobnicate" not in VERBS, p("//frobnicate"))
+
     print("\n--- OOC: one grammar, exact positive and near-miss cases ---")
     ok("a plain marker is OOC", parse_ooc("((be gentler))") == "be gentler")
     ok("surrounding whitespace is trimmed",
