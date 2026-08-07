@@ -392,6 +392,24 @@ def main_():
        "provider rejected 'flaky-d' — switched back to flaky-c" in text13,
        text13)
 
+    print("\n--- W-08: a suspicious multiple-slash id arms and reverts "
+          "exactly like any other — the warning is cosmetic ---")
+    def raise_for_suspicious(messages, model=None):
+        if model == "vendor/typo/concatenated":
+            raise httpx.HTTPError("no such model: vendor/typo/concatenated")
+        return ("an answer", {"prompt_tokens": 1, "completion_tokens": 1}, "")
+    main.stream_response = raise_for_suspicious
+    sid14 = dbmod.new_session(conn, title="t14", model="good-model")
+    text14 = drive(conn, sid14,
+                   "/tools off\n/model vendor/typo/concatenated\nhello\n"
+                   "/model\n/q\n", model="good-model")
+    ok("the suspicious-shaped id is accepted by the switch, not refused",
+       "provider rejected 'vendor/typo/concatenated'" in text14
+       and "switched back to" in text14 and "good-model" in text14, text14)
+    ok("the session ends back on the known-good model",
+       dbmod.get_session_model(conn, sid14) == "good-model",
+       dbmod.get_session_model(conn, sid14))
+
     conn.close()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

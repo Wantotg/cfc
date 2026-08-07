@@ -330,6 +330,58 @@ def main():
     ok("switching onto a partially-compatible model clears it",
        models.preset_compatible("temp-only", active) is False)
 
+    print("\n--- W-08: a suspicious multiple-slash id is marked, never "
+          "judged ---")
+    ok("a plain single-slash id is not suspicious",
+       models.has_suspicious_slashes("vendor/model") is False)
+    ok("no slash at all is not suspicious",
+       models.has_suspicious_slashes("plainmodel") is False)
+    ok("exactly two slashes is suspicious",
+       models.has_suspicious_slashes("vendor/model/extra") is True)
+    ok("three slashes is suspicious too — the rule is 'more than one', "
+       "not 'exactly two'",
+       models.has_suspicious_slashes("a/b/c/d") is True)
+
+    saved_models, saved_startup = models.MODELS, models._startup_warnings
+    try:
+        models.MODELS = [
+            models._spec("vendor/ok-model", tools=True, limit=10),
+            models._spec("vendor/typo/concatenated", tools=True,
+                        routine=True, limit=10),
+        ]
+        models._startup_warnings = []
+        warnings = models.startup_warnings()
+        ok("the suspicious id is named in startup_warnings()",
+           any("vendor/typo/concatenated" in w for w in warnings), warnings)
+        ok("the clean id is not", not any("vendor/ok-model" in w
+                                          for w in warnings), warnings)
+        ok("the wording says it *may* be a typo, never that it's invalid",
+           any("may be a typo" in w for w in warnings), warnings)
+        ok("startup_warnings recomputes live from the current MODELS, not "
+           "a snapshot taken at import",
+           len(warnings) == 1, warnings)
+
+        models._startup_warnings = ["config.py's MODELS is still a plain "
+                                    "list — see config.example.py"]
+        combined = models.startup_warnings()
+        ok("the legacy-shape notice and the slash warning coexist",
+           len(combined) == 2, combined)
+
+        print("\n--- W-08: the predicate never touches selection or "
+              "capability paths ---")
+        ok("a suspicious id still supports tools if it's declared to",
+           models.supports_tools("vendor/typo/concatenated") is True)
+        ok("...and is still routine-vetted",
+           models.is_routine_vetted("vendor/typo/concatenated") is True)
+        ok("...and is still known and listed",
+           "vendor/typo/concatenated" in models.known_ids()
+           and "vendor/typo/concatenated" in models.listed_ids())
+        ok("...and by_id still returns its real record",
+           models.by_id("vendor/typo/concatenated").tools is True)
+    finally:
+        models.MODELS = saved_models
+        models._startup_warnings = saved_startup
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

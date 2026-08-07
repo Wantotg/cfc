@@ -236,6 +236,41 @@ def main():
     finally:
         models.MODELS = saved_models
 
+    print("\n--- W-08: /list models marks a suspicious id, and it stays "
+          "fully selectable ---")
+    saved_models = models.MODELS
+    saved_file = commands.console.file
+    try:
+        suspicious_pool = POOL + ["vendor/typo/concatenated"]
+        models.MODELS = _specs(suspicious_pool)
+        out = io.StringIO()
+        commands.console.file = out
+        try:
+            with redirect_stdout(out):
+                commands.list_models(POOL[0])
+        finally:
+            commands.console.file = saved_file
+        rendered = out.getvalue()
+        ok("the suspicious row is marked in the Status column",
+           "check id — multiple '/' characters" in rendered, rendered)
+        ok("...next to the id itself", "vendor/typo/concatenated" in rendered
+           and "check id" in rendered.split("vendor/typo/concatenated")[1][:60],
+           rendered)
+        ok("an ordinary row carries no such marker",
+           rendered.count("check id — multiple '/' characters") == 1,
+           rendered)
+
+        res, _ = run_select("vendor/typo/concatenated", suspicious_pool, [])
+        ok("exact-name selection still switches to the marked id",
+           res == "vendor/typo/concatenated", res)
+        n = suspicious_pool.index("vendor/typo/concatenated") + 1
+        ok("numbered selection still reaches it too",
+           commands.model_by_number(n) == "vendor/typo/concatenated",
+           commands.model_by_number(n))
+    finally:
+        models.MODELS = saved_models
+        commands.console.file = saved_file
+
     print("\n--- select_model: no configured models, no fuss ---")
     res, out = run_select("anything/at-all", [], [])
     ok("an empty pool passes the query through untouched",

@@ -243,14 +243,33 @@ MODELS = load(warn=_startup_warnings.append)
 PARAMETER_PRESETS = load_presets()
 
 
+def has_suspicious_slashes(model_id):
+    """W-08: more than one '/' in a configured id is often two ids
+    concatenated by a missing comma — adjacent quoted strings in a Python
+    list literal, `"a/b" "c/d"`, silently join into one. But a provider may
+    legitimately define a deeper identifier tomorrow, so this is a
+    heuristic warning, never a validation rule: it must never raise
+    `ModelConfigError`, change the record, drop an id from a list, or block
+    a switch. One pure predicate, read by both `startup_warnings()` and
+    `/list models`'s Status column, so the two renderings cannot disagree
+    about which ids deserve the warning."""
+    return model_id.count("/") > 1
+
+
 def startup_warnings():
-    """Anything noticed while loading `MODELS` — currently only the
-    legacy-shape notice. Collected rather than printed at import time so a
-    caller can show it at the right moment (main.py prints these after the
-    splash, same timing the old per-collection typo warning used), and so
-    importing this module has no console side effect for anything that
-    imports it early, like the golden harness."""
-    return list(_startup_warnings)
+    """Anything worth a human's attention once, after the splash: the
+    legacy-shape notice, fixed at import, plus any currently configured id
+    with the multiple-slash shape. The second half is recomputed from
+    `MODELS` on every call rather than cached at import — the same list a
+    test replaces to drive `/list models` is what this reads too, so
+    startup and the list can't drift onto two different snapshots."""
+    out = list(_startup_warnings)
+    for id in (m.id for m in MODELS if has_suspicious_slashes(m.id)):
+        out.append(
+            f"model id {id!r} contains more than one '/' — this may be a "
+            "typo: adjacent quoted ids without a comma between them can "
+            "concatenate into one string")
+    return out
 
 
 def by_id(model_id):

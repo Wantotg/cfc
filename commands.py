@@ -572,10 +572,14 @@ def list_models(current_model):
     table.add_column("Model", style="cyan")
     table.add_column("Status")
     for i, m in enumerate(listed, 1):
-        if m == current_model:
-            table.add_row(str(i), m, "<-- current")
-        else:
-            table.add_row(str(i), m, "")
+        # W-08: the same predicate startup_warnings() uses, so this row and
+        # the post-splash notice can never disagree about which ids look
+        # like a typo. A marked id is still fully selectable — this is a
+        # warning, not a validation rule.
+        status = ["<-- current"] if m == current_model else []
+        if models.has_suspicious_slashes(m):
+            status.append("check id — multiple '/' characters")
+        table.add_row(str(i), m, "  ".join(status))
     console.print(table)
     console.print()
 

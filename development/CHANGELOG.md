@@ -27,6 +27,22 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-07 — A suspicious model id is marked, not judged
+`W-08`: a configured model id with more than one `/` — the shape left behind
+when two adjacent quoted ids in `config.py`'s `MODELS` list are missing a
+comma and silently concatenate into one string — went unremarked until it
+400ed at a provider. New `models.has_suspicious_slashes()` predicate feeds
+both the post-splash `startup_warnings()` notice and `/list models`'s Status
+column, so the two can't disagree about which ids look like a typo. It never
+raises, never changes the record, and never removes an id from a list or
+blocks a switch — exact and numbered selection, tool support, routine
+vetting, presets and auto-revert all still accept a marked id exactly as
+before.
+- Files: models.py, commands.py, tests/test_models.py, tests/test_model.py,
+  tests/test_model_revert.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-07 — The slash prefix becomes an owned command boundary
 `W-1.4.1-02`: an unrecognised `/`-addressed line used to fall through to the
 model as ordinary chat — standing decision 13's fallthrough, now deliberately
