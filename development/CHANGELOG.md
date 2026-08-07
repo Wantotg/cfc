@@ -59,7 +59,7 @@ outbox itself is empty, and both point at the new contents command.
   tests/test_hub.py, tests/test_memory_states.py, tests/test_mover.py,
   tests/test_turn_paths.py, tests/golden.py, tests/golden_baseline.txt
 - Status: shipped
-- Commit: pending
+- Commit: ef2f3ad
 
 ---
 

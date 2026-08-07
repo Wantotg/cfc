@@ -7,6 +7,59 @@ change-level reasoning is in [`CHANGELOG.md`](development/CHANGELOG.md).
 
 ---
 
+## v1.9 - Every existing door tells the truth *completed, 07/08*
+The plateau before the refactor: no new feature, seven places where a screen
+already said something that wasn't quite the whole story. The hub stops
+claiming a number only works for the chats it printed, a wiki session names the
+vault file behind it, and the outbox stops calling itself empty when it holds 48
+files.
+
+**Added**
+- an ordinary chat made by 'n' or `/new` is discarded when you leave it, if
+  it's still completely untouched — no message, no title, no tag, no persona.
+  A chosen id (`c`, `/new <id>`) and a resumed chat are never candidates
+  (D-1.7-01d)
+- a wiki session names its source file on open and on `/status`, resolved
+  live from the frontmatter id — so a page renamed in the vault is followed
+  without a migration, and two same-titled pages are finally told apart. A
+  missing id says so, a duplicated one names every file carrying it, and an
+  unreadable wiki directory says that instead of guessing (W-1.9-01c)
+- `/list outbox contents` — a read-only inventory of everything under each
+  configured outbox root, files, folders and links, grouped by root and
+  capped at 200 shown per root with the real total named. It never opens a file
+  and never follows a link (W-1.7-02c)
+
+**Fixed**
+- the hub's `<number>` help says what a number actually does: any non-Main id
+  opens, even one missing from Recent chats, and `/list sessions` shows the
+  complete list including wiki pages and routine transcripts. Main still only
+  opens with 'm' (D-1.7-01b)
+- the hub hint and the `h` screen now share one sentence about where the
+  omitted sessions are listed, instead of two that could drift
+- the `c` prompt names Enter as its cancellation, and a non-number is refused
+  as an id rather than read as a hub key (W-1.5.1-02)
+- a refused search says which status came back — `web_search failed —
+  source_refused (HTTP 403; DuckDuckGo received the query)` — a definite claim,
+  where every other failure still says the query *may* have been sent (W-1.8-02)
+- `/file` and `/move` name what they're actually missing — no filing
+  proposals pending, no loose top-level files — instead of claiming the outbox
+  itself is empty, and both point at the new contents command (D-1.7-02b)
+
+**Settled**
+- a wiki page's identity is its frontmatter `id`, so a copy of a page with a
+  new id is a second page, on purpose. Opening one continues a conversation
+  about it and never edits the vault; what you type there stays out of the
+  recall corpus (N-1.9-01a, N-1.9-01b)
+- a routine transcript stays out of Recent chats however much you type in it.
+  Where a session came from is a fact about the session, and reading intent
+  off its messages would need a second classification that doesn't exist.
+  The routines screen is still the way to any run (W-1.7-01c)
+
+> *35th tag for a work in progress! last tag for a while: work continues on v1.9's known issues and how to progress beyond that.*
+```
+ᓚ₍⑅^- .-^₎ -ᶻ 𝗓 𐰁
+```
+
 ## v1.1 - Name it, don't count it *completed, 30/07*
 Three commands close three pieces of workflow that were number-only or manual.
 You can file a proposal by typing its title instead of counting rows, walk one

@@ -14,31 +14,39 @@ nothing behind here.** This file holds open entries only. The reasoning is in
 
 ---
 
-## D-1.7-02b · Three outbox screens describe the same folder three ways, and one of them says something false
+## D-21 · An unreadable outbox root leaves the proposal screen silent
 
-**Found:** 2026-08-04, v1.7 playtest, with 24 files in the outbox and 0 pending
-proposals.
+**Found:** 2026-08-06, v1.9 loop 2 debugger pass.
 
-`/file`'s empty state prints `Nothing in the outbox.` The outbox held 15 notes,
-9 routine logs and a readme. The sentence means *no pending proposals*; what it
-says is wider and false, and the wider claim is what sends someone looking for
-a bug.
+`_print_outbox_contents_pointer` counts only roots whose status is `INV_OK`.
+With every configured root unreadable or missing, the total is 0, the pointer
+stays silent, and bare `/list outbox` prints `(no filing proposals pending)`
+with nothing after it — the screen implies an empty outbox at the one moment it
+cannot know. The contents view renders this state correctly, per root, in red.
 
-Two neighbours share the shape. `/move`'s `No outbox files are available to
-move` drops the *top-level* that `D-1.7-04` exists to teach (already recorded as
-`N-06`, which judged the omission harmless — this entry is the reason to revisit
-that, since the three strings are being read together, not separately). And
-`/list outbox`'s header — *top level, plus the wiki/ and journal/ proposal
-folders* — doesn't say those folders are inside the outbox path printed one line
-above, which is ambiguous against cfc's own vocabulary, where *the wiki* is the
-corpus `/wiki` acts on.
+**Owed:** when a root is not `OK`, say that the count is partial and point at the
+contents command. A sentence, not a design.
 
-**Leading hypothesis:** all three in one pass, since the defect is that they are
-read as a set. `/file` names proposals rather than the outbox; `/move` gets its
-adjective back; the header says *inside*. Third time this family has come up
-(`D-1.7-04`, `N-06`, this) — worth asking whether the three empty states should
-share one function the way `commands.confirm_or_back` closed the three
-confirmation prompts.
+---
+
+## D-19 · Twelve test suites pin the shared console, and the damage is silent
+
+**Found:** 2026-08-06, v1.9 loop 2 debugger pass. The pattern predates this
+loop: `N-1.6.4-10` fixed it in one test, but the eleven other files were never
+swept.
+
+Twelve files under `tests/` end a capture with `console.file = sys.stdout`
+instead of restoring what was there. `ui.console` is one shared Rich console,
+and assigning `sys.stdout` pins it. Every later `redirect_stdout` in the same
+process then captures an empty string while still looking like it worked.
+
+The house runner is one process per file, which hides the problem. Running the
+whole suite in one process reproduces it: `test_empty_retry.py` fails while
+pytest's own captured stdout shows the line was printed. Four collected suites
+reproduce it individually.
+
+**Owed:** restore the saved console file, or restore `None`, at all twelve sites.
+This is a bounded v1.9.1 maintenance row.
 
 ---
 

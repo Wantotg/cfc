@@ -22,6 +22,44 @@ not the file.
 
 # Closed since the split
 
+## ~~D-1.7-02b · Three outbox screens describe the same folder three ways, and one of them says something false~~ — CLOSED (v1.9, 2026-08-07)
+
+**Closed 2026-08-07**, v1.9 — `/file`, `/move` and `/list outbox` now name the
+subset each surface handles, and `/list outbox contents` shows the rest.
+`TRACKER.md`, `CHANGELOG.md`, `ef2f3ad`.
+
+The entry as it stood:
+
+---
+
+## D-1.7-02b · Three outbox screens describe the same folder three ways, and one of them says something false
+
+**Found:** 2026-08-04, v1.7 playtest, with 24 files in the outbox and 0 pending
+proposals.
+
+`/file`'s empty state prints `Nothing in the outbox.` The outbox held 15 notes,
+9 routine logs and a readme. The sentence means *no pending proposals*; what it
+says is wider and false, and the wider claim is what sends someone looking for
+a bug.
+
+Two neighbours share the shape. `/move`'s `No outbox files are available to
+move` drops the *top-level* that `D-1.7-04` exists to teach (already recorded as
+`N-06`, which judged the omission harmless — this entry is the reason to revisit
+that, since the three strings are being read together, not separately). And
+`/list outbox`'s header — *top level, plus the wiki/ and journal/ proposal
+folders* — doesn't say those folders are inside the outbox path printed one line
+above, which is ambiguous against cfc's own vocabulary, where *the wiki* is the
+corpus `/wiki` acts on.
+
+**Leading hypothesis:** all three in one pass, since the defect is that they are
+read as a set. `/file` names proposals rather than the outbox; `/move` gets its
+adjective back; the header says *inside*. Third time this family has come up
+(`D-1.7-04`, `N-06`, this) — worth asking whether the three empty states should
+share one function the way `commands.confirm_or_back` closed the three
+confirmation prompts.
+
+---
+
 ## ~~D-1.7-01b · The hub's one hand-written help line under-describes what the hub accepts~~ — CLOSED (v1.9, 2026-08-06)
 
 **Closed 2026-08-06**, v1.9 — the numeric help now says any non-Main session
