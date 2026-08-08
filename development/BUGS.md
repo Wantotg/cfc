@@ -19,9 +19,10 @@ report gave it, unchanged thereafter, so this file, the report and
 
 ## When an entry closes
 
-**It moves to [`legacy/BUGS.md`](../legacy/BUGS.md), whole, and leaves nothing
-behind here.** This file holds open entries only. Why the archive is safe rather
-than lossy, and why it is tracked in git: `HANDOVER.md`, *Which file owns what*.
+**Delete it whole and leave nothing behind here.** This file holds open entries
+only. `workspace/TRACKER.md` keeps the resolution, `development/CHANGELOG.md`
+records a shipped change, and Git history retains the deleted body. The
+reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 

@@ -49,9 +49,8 @@ ALIASES = {
     "?": "help",
     "db": "database",
     # Plurals the hand types by reflex, because the command lists several of
-    # them. An unrecognised verb is not an error — it falls through to the
-    # model (see run_session) — so a missing line here is an API call, not a
-    # "no such command".
+    # them. A missing line is visibly refused, so these deserve to stay as
+    # live aliases rather than becoming an unexpected dead end.
     "routines": "routine",
     "models": "list models",
     "prompts": "list prompts",
@@ -95,7 +94,7 @@ ALIASES = {
 # `HANDOVER.md` names as a recurring hazard — so they are checked, not
 # maintained by hand. `RETIRED` was the third until v0.9; its live entries
 # moved into `ALIASES` above rather than simply going away, because a deleted
-# correction is a word that falls through to the model.
+# correction becomes a visible refusal.
 VERBS = (
     "help", "list", "status", "config", "search",     # ask
     "add", "remove",                                  # context
@@ -161,9 +160,9 @@ class Cmd:
 def parse(line, prefix=PREFIX):
     """A `Cmd`, or None if this line isn't a command.
 
-    None means "not addressed to us" — the caller sends it to the model. A
-    bare prefix with nothing after it is also None: `/` on its own is a typo,
-    and treating it as a verb named "" would need a special case in the table.
+    None means this parser found no command. A line without the prefix goes to
+    the model; a bare prefix is visibly refused by the caller as an empty
+    command, rather than becoming a verb named "" in the table.
 
     The `:` prefix is gone as of v0.9 — a `:` line is prose and goes to the
     model, which is what it was before v0.8 and what the migration promised.

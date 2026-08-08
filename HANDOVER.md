@@ -5,9 +5,6 @@ You have the repo. Read it. This file is only for what reading it won't tell you
 **If this file and the code disagree, the code is right and this file is stale.**
 Say so rather than working around it.
 
-Its predecessor, `legacy/HANDOVER.md`, is frozen at v0.8 and no longer updated. It was written for a model working *without* the source, so it re-describes
-things you can just go and look at — but it holds the long-form reasoning behind most of what is summarised here. Go there when a one-liner below isn't enough.
-
 ## Which file owns what
 
 **Every fact has one home; everywhere else names its `TRACKER.md` id and stops.**
@@ -17,14 +14,13 @@ in prose.
 | | owns | must not carry |
 |---|---|---|
 | `README.md` | how a human uses it. Coupled to this file — rewrite one, rewrite the other | internal reasoning |
-| `CHANGELOG.md` | what changed, when, and why it mattered. Newest first, logged in the same commit | reasoning that outlives the change |
+| `development/CHANGELOG.md` | what changed, when, and why it mattered. Newest first, logged in the same commit | reasoning that outlives the change |
 | this file | why the code is shaped as it is: decisions, rejected designs, provenance, scars | history |
-| `BACKLOG.md` | what's owed and still working. **Read it before touching the memory layer** | anything closed |
-| `BUGS.md` | what's broken and known | anything closed |
-| `legacy/` | closed entries of both, frozen whole with the original report; the pre-1.0 and post-1.0 changelog archives and roadmap | stubs |
+| `development/BACKLOG.md` | what's owed and still working. **Read it before touching the memory layer** | anything closed |
+| `development/BUGS.md` | what's broken and known | anything closed |
 | `ROADMAP.md` | what each version added, in Cas's words. His file — propose, don't edit | bugs, backlog, design detail |
-| `ROADMAP_PRIVATE.md` · `ROADMAP_BEYOND.md` | gitignored. The forward plan, below and above 2.0 | |
-| `TRACKER.md` | gitignored. One line per open issue and the version it's assigned to | any explanation at all |
+| `workspace/ROADMAP_PRIVATE.md` · `workspace/ROADMAP_BEYOND.md` | gitignored. The forward plan, below and above 2.0 | |
+| `workspace/TRACKER.md` | gitignored. One line per issue and the version it's assigned to; closed rows keep their resolution | open-issue explanations |
 
 **The test between here and `CHANGELOG.md`: will it still be true in three
 versions?** If yes it belongs here. If it is about one change it belongs there — a changelog entry may state a decision and its reason in a sentence, but it does not argue it.
@@ -36,13 +32,13 @@ versions?** If yes it belongs here. If it is about one change it belongs there �
 **Name the failure, not the person.** These files record decisions, false
 assumptions and what they cost — that is why they are worth reading. They are not a narrative about how the mistakes came to be made. Retelling one past the point it teaches something spends tokens, distracts the reader and the model, and buries the finding it is wrapped around.
 
-**Records are frozen; rules are maintained.** A version note, a changelog entry, a `legacy/` file and a scar below record what was true when they were written, and restyling them to a convention invented afterwards destroys the one property they have. That covers the reasoning, not just the prose: *"we used to do it the other way, and here is what it cost"* is the half most projects delete and the half worth keeping. A **rule** is a live instruction with no such claim — edit it freely, and this section was rewritten under exactly that licence (2026-07-29). Correcting something factually wrong is allowed in either; say which one you are doing.
+**Records are frozen; rules are maintained.** A version note, a changelog entry and a scar below record what was true when they were written, and restyling them to a convention invented afterwards destroys the one property they have. That covers the reasoning, not just the prose: *"we used to do it the other way, and here is what it cost"* is the half most projects delete and the half worth keeping. A **rule** is a live instruction with no such claim — edit it freely, and this section was rewritten under exactly that licence (2026-07-29). Correcting something factually wrong is allowed in either; say which one you are doing.
 
 ### Two files with a rule of their own
 
 **`TRACKER.md`'s ids are permanent and its closed rows stay.** An id comes from the playtest report and is never reallocated — `B-0.9.1-01` is finding 01 of the v0.9.1 pass, forever, so the report, the tracker row, the `BUGS.md` entry and the changelog line name the same thing with nothing to reconcile. Closed rows keeptheir reason and stay, *nothing owed* included: without that, the same note comes back next playtest looking new. A session transcript is not a record. The reports it consumes are in `<vault>/00 inbox`, one file per playtest.
 
-**`legacy/` takes a closed entry whole and leaves no stub.** Struck-through stubs are why `BUGS.md` and `BACKLOG.md` once reached 283 and 897 lines with eight liveentries between them. Two things make the deletion safe: `CHANGELOG.md` is the index, so *was this fixed, and why that way* never needs the archive; and the archive keeps the **original report**, which the changelog never carried and whose wrong premise is sometimes the finding (`MAX_DISTANCE`, below). It is tracked in git rather than gitignored — a gitignored archive is invisible to clones, outside every backup, and destroyed by a fresh checkout, which is the same argument that killed `inbox/` at the repo root.
+**Closed entries leave `development/BUGS.md` and `development/BACKLOG.md` whole, with no stub.** Struck-through stubs are why those files once reached 283 and 897 lines with eight live entries between them. `workspace/TRACKER.md` keeps the resolution, `development/CHANGELOG.md` records the shipped change, and Git history retains the deleted body. The original playtest report remains in the vault inbox. No second archive copy is maintained.
 
 ## Versions and releases
 
@@ -208,21 +204,21 @@ Settled. Argue with them only with a reason, and say that you are.
     entry is Thursday, so write Friday" — is self-consistent and therefore
     silently wrong forever after one missed run.
 13. **The command surface is two lists that must agree**, checked rather than
-    maintained: `run_session` asserts its handler table equals `parse.VERBS`. An
-    unrecognised verb falls through **to the model**, so a verb that is
-    documented but missing from the table isn't an error message — it's an API
-    call and a confused answer. **Retiring a word therefore means aliasing it,
-    not deleting it.** An `ALIASES` value may be a *phrase* (`models` → `list
-    models`) precisely so a retired word can map to a command that takes
-    arguments. The only word ever let go is `detach`, whose replacement
+    maintained: `run_session` asserts its handler table equals `parse.VERBS`. A
+    slash-addressed line that does not resolve to a handler is visibly refused,
+    never sent to the model. **Retiring a word therefore still means aliasing
+    it, not deleting it:** otherwise a familiar spelling becomes a refusal
+    rather than the intended command. An `ALIASES` value may be a *phrase*
+    (`models` → `list models`) precisely so a retired word can map to a command
+    that takes arguments. The only word ever let go is `detach`, whose replacement
     `/remove #<n>` changes the argument's *shape* — that is the bar.
 
     **Retiring a verb also means grepping `config.example.py`** (`B-0.9.1-02`).
     It is the only shipped file that *instructs a human*, it is not code, and
     nothing checks it — it carried twelve retired `:` commands across three
     releases. The failure is this decision's own: the reader types what their
-    config file told them, and an unrecognised verb is an API call rather than
-    an error. Write the **canonical** verb, never the alias — `/list models`,
+    config file told them, and an unrecognised verb is a refusal rather than
+    the requested action. Write the **canonical** verb, never the alias — `/list models`,
     not `/models`, or the retired word is re-taught one generation later.
 
     **The hub's keys are one table too.** `hub.HUB_KEYS` is the dispatch *and*
@@ -316,8 +312,7 @@ Settled. Argue with them only with a reason, and say that you are.
     just removed. So dim means *cannot be owed a run*, which puts `command` and
     a malformed trigger in one cell — `D-10`, not something this colour can fix.
 
-    **The dim conflation is the least of `D-10`** — three tiers, body in
-    `legacy/BACKLOG.md`. The colour is not lying about what it measures — *is a run
+    **The dim conflation is the least of `D-10`** — three tiers. The colour is not lying about what it measures — *is a run
     owed* — and that is the trap: the panel is read as *is this still working*,
     and the two questions agree on every routine except a broken one.
 17. **Typing can only reach a model from a chat mode** (v1.2, config/wiki/routine
@@ -394,7 +389,7 @@ they lose. Reopening one needs a new argument, not a fresh eye.
 - **Widening `WRITE_ROOTS` so the mover can reach the vault.** The mover validates against its own `MOVE_ROOTS` precisely because it is not the model. The separation is the design; the two tuples are independent.
 - **~~Starting LM Studio from WSL~~ — not a rejected design; it works.** Written
   up as impossible on three failures in one afternoon, then done first time from
-  a cold machine (`legacy/BUGS.md`). Kept here as the standing caution: **this
+  a cold machine. Kept here as the standing caution: **this
   section stops people trying things, so an entry needs to have earned that.**
   Three failures are not proof of impossibility about something observed working.
 - **Tightening the retrieval floor.** See the constants below. The signal isn't there.

@@ -405,9 +405,8 @@ def ensure(say=_say, fix=True):
     # working** — the early return removed a capability Cas relied on, and he
     # noticed within the hour.
     #
-    # Why the direct invocation failed is still unexplained (see `legacy/BUGS.md`
-    # for what was tried). It does not block anything: the path a user takes is
-    # this one, and this one works.
+    # Why the direct invocation failed is still unexplained. It does not block
+    # anything: the path a user takes is this one, and this one works.
     if state == NOT_RUNNING:
         say("warn", "LM Studio is not running — starting it. This is the slow "
                     "path; give it up to a minute.")

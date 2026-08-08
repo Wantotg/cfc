@@ -2,7 +2,7 @@
 
 Cas's public version history: each shipped version says what cfc added and ends
 with his note from use; proposals stay in private roadmaps until release.
-Pre-1.0 entries are frozen in [`legacy/ROADMAP.md`](legacy/ROADMAP.md);
+Older entries removed from the current checkout remain in Git history;
 change-level reasoning is in [`CHANGELOG.md`](development/CHANGELOG.md).
 
 ---
@@ -548,4 +548,18 @@ one attempt, and you see every result the model sees.
 > *Note:WE HAVE WEB SEARCH! ACTUAL REAL RESULTS! now to make it better *
 ```
 ᓚ₍⑅^..^₎♡ 'WEB SEARCH! WEB SEARHC! WEB SEARCH!'  (•˕ •マ.ᐟ
+```
+
+## v1.9.1 — Honest, controllable 1.x surfaces *completed, 08/08*
+
+The final repair pass before the 2.0 rewrite makes the slash command boundary
+explicit, turns tone checking into a deployment choice, gives 5xx failures a
+useful cfc-owned message, marks suspicious model ids, and tells the truth when
+an outbox count is incomplete. It also lets `/wiki diff` preview an untracked
+file and repairs the shared-console test capture that had made later assertions
+silently read empty.
+
+> *Note: final set of fixes for this version of the app, up next: rewrite*
+```
+—ฅ/ᐠ. ̫ .ᐟ\ฅ — `REROLL!`
 ```

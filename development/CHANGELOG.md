@@ -1,9 +1,7 @@
 # Changelog
 
-What changed and when. Most recent at the top. **Entries through v1.0 are frozen
-in [`legacy/CHANGELOG-pre-1.0.md`](../legacy/CHANGELOG-pre-1.0.md)**; entries older
-than the 2026-08-01 triage boundary are frozen in
-[`legacy/CHANGELOG-post-1.0.md`](../legacy/CHANGELOG-post-1.0.md).
+What changed and when. Most recent at the top. Older entries removed from the
+current checkout remain available in Git history.
 
 One entry per change: the date, a title, what changed and why it mattered, the
 files touched, and status. The **commit** hash is the ID — it links straight to
@@ -53,6 +51,22 @@ the first pass proved. Verified by disabling: putting `console.file` back in
   tests/test_screens.py, tests/test_turn_paths.py, tests/test_turn_repair.py,
   tests/test_ui.py
 - Status: shipped
+- Commit: 8614d32
+
+## 2026-08-07 — Remove duplicate workflow copies and archives
+
+Removed the public specialist templates and the checked-out legacy records.
+The private specialist files are the only maintained workflow instructions;
+closed issue bodies leave the live BUGS and BACKLOG files, while the tracker,
+this changelog, and Git history preserve what happened. Removed the empty
+`workflow/` placeholder and kept `workspace/` as the one private planning area.
+
+- Files: `templates/` and `legacy/` (removed), `HANDOVER.md`, `ROADMAP.md`,
+  `development/BACKLOG.md`, `development/BUGS.md`, `development/CHANGELOG.md`,
+  `preflight.py`, `CLAUDE.md`, `agents/MANAGER.md`,
+  `agents/MANAGERS_HANDBOOK.md`, `agents/OVERSEERS_HANDBOOK.md`,
+  `workspace/TRACKER.md`
+- Status: shipped
 - Commit: pending
 
 ## 2026-08-07 — An untracked wiki file previews as the addition it would make
@@ -70,7 +84,9 @@ per-file commit suggestion — review grants no trust, and folder-wide diff is
 unchanged (tracked text plus untracked names, nothing new dumped).
 - Files: wikigit.py, commands.py, tests/test_wikigit.py, tests/test_screens.py
 - Status: shipped
-- Commit: pending
+- Commit: c9091d6
+
+## 2026-08-07 — A 5xx is a provider failure, not a raw-body puzzle
 `W-1.1-02`: `api._provider_error` now gives status 500–599 alone a cfc-owned
 message — `Provider failed this request (HTTP <status>). Try again; if it
 keeps happening, check the provider's status.` — used by streaming, tool
@@ -88,7 +104,7 @@ were.
 - Files: api.py, main.py, tests/test_api_stream.py, tests/test_turn_paths.py,
   tests/test_model_revert.py
 - Status: shipped
-- Commit: pending
+- Commit: 8df6924
 
 ## 2026-08-07 — A suspicious model id is marked, not judged
 `W-08`: a configured model id with more than one `/` — the shape left behind
@@ -104,7 +120,7 @@ before.
 - Files: models.py, commands.py, tests/test_models.py, tests/test_model.py,
   tests/test_model_revert.py
 - Status: shipped
-- Commit: pending
+- Commit: f66cc76
 
 ## 2026-08-07 — The slash prefix becomes an owned command boundary
 `W-1.4.1-02`: an unrecognised `/`-addressed line used to fall through to the
@@ -118,7 +134,7 @@ prose and the retired `:` prefix are unaffected; no fuzzy correction, no
 alias revival.
 - Files: main.py, tests/test_parse.py, tests/test_turn_paths.py
 - Status: shipped
-- Commit: pending
+- Commit: cddc7af
 
 ## 2026-08-07 — Tone is a deployment choice, traits stay independent
 `W-1.6.3-01b`: `governor.ordinary_instruction()` sent the automatic tone cue
@@ -132,7 +148,7 @@ sends no instruction and prints no governor label at all.
 - Files: governor.py, config.example.py, tests/test_governor.py,
   tests/test_turn_paths.py
 - Status: shipped
-- Commit: pending
+- Commit: 05044bf
 
 ## 2026-08-07 — An uncertain outbox count says it is uncertain
 `D-21`: `/list outbox`'s "N entries in total" pointer summed only the readable
@@ -146,7 +162,7 @@ exclusively in `/list outbox contents`; this is a projection change only,
 no new filesystem walk.
 - Files: commands.py, tests/test_mover.py
 - Status: shipped
-- Commit: pending
+- Commit: ad95082
 
 ## 2026-08-07 — A test capture restores the console it found, not sys.stdout
 `D-19`: twelve test files finished a shared-console capture with
@@ -165,7 +181,7 @@ restores the saved object does not).
   tests/test_screens.py, tests/test_turn_paths.py, tests/test_turn_repair.py,
   tests/test_ui.py
 - Status: shipped
-- Commit: pending
+- Commit: f05602f
 
 ## 2026-08-06 — Every existing door tells the truth
 v1.9's second small honesty pass: three more places where a screen already

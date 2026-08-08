@@ -1801,10 +1801,10 @@ def run_session(conn, session_id, *, auto_export, private=False,
                 "  scope: wiki (default) | journal | vault    "
                 "granularity: folder (default) | file", style="dim")
 
-    # The command surface: twenty-four verbs, in one place. A verb that isn't
-    # here is not a command — it falls through to the model, exactly as an
-    # unmatched `startswith` did. Aliases (`h`, `?`, `db`) and retired verbs
-    # are the parser's business, so this table holds live, canonical verbs only.
+    # The command surface: twenty-four verbs, in one place. A slash-addressed
+    # line is either dispatched from here after alias expansion or visibly
+    # refused. Aliases (`h`, `?`, `db`) and retired verbs are the parser's
+    # business, so this table holds live, canonical verbs only.
     HANDLERS = {
         # ask
         "help": h_help,
