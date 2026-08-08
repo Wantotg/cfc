@@ -51,9 +51,10 @@ The release proves three foundations:
    and operational records, and Qdrant for rebuildable retrieval
    representations.
 
-2.0 restores ordinary chat, Main chat, private chat, the vault, routines, and
-controlled tools under these contracts. It replaces old recall with a smaller,
-honest retrieval proof. It does not promise old module names, schemas,
+2.0 restores ordinary chat, Main chat, private chat, the vault, and controlled
+tools under these contracts. It replaces old recall with a smaller, honest
+retrieval proof. Routines and scheduling are 2.1 operational-depth work. It
+does not promise old module names, schemas,
 commands, layouts, test files, database compatibility, browser control,
 messaging, desktop action, automatic memory, or a finished TUI.
 
@@ -79,9 +80,10 @@ is planned.
 5. **Turn paths share an ending contract.** Streaming, tool-using, and later
    paths agree on completion, cancellation, stored history, usage evidence,
    and failure even when they render differently.
-6. **Routines are reconstructable and validated twice.** A durable definition
-   contains the information needed to reconstruct and validate it. Creation
-   gives early feedback; save and load remain authoritative.
+6. **Routines are reconstructable and validated twice when they return in
+   2.1.** A durable definition contains the information needed to reconstruct
+   and validate it. Creation gives early feedback; save and load remain
+   authoritative.
 7. **Private chat is locally ephemeral by structure.** cfc persists no private
    conversation, request, error, tool history, retrieval activity, or automatic
    export. SQLite and Qdrant are unavailable to it. A provider or explicitly
@@ -199,8 +201,10 @@ tests or implementations:
 
 - interruption cannot leave malformed tool or conversation history;
 - deletion cannot leave stale retrievable knowledge;
-- a routine that did no useful work cannot report uncomplicated success;
-- scheduled execution chooses model and time inputs explicitly;
+- when 2.1 restores routines, one that did no useful work cannot report
+  uncomplicated success;
+- when 2.1 restores scheduling, execution chooses model and time inputs
+  explicitly;
 - tests do not touch personal configuration or live data;
 - chunk boundaries preserve indexed text;
 - generated names and identities advance under collisions;
@@ -219,9 +223,10 @@ proof disappears.
 
 A fresh clone reaches ordinary chat with supported Python and dependencies, a
 local configuration derived from the example, one usable chat provider, and a
-new compatible SQLite database. Vault, embedding endpoint, Qdrant, routines,
-tools, Git integration, and scheduling configure independently and disable
-their own surface with a visible explanation when unavailable.
+new compatible SQLite database. Vault, embedding endpoint, Qdrant, tools, and
+Git integration configure independently and disable their own surface with a
+visible explanation when unavailable. Routines and scheduling are not 2.0
+surfaces; their configuration begins with the 2.1 operational-depth work.
 
 `config.py` remains private and ignored. `config.example.py` documents each
 supported field and safe default without exposing paths or credentials. Git

@@ -13,6 +13,7 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| W-12 | the loop tags a version because the loop ended, not because it is finished | deliberately closed at the 2.0 entry gate: the installed workflow separates a completed loop from a release, so the finding's required destination is already present before the first 2.0 code loop | 2026-08-08 |
 | B-01 | provider 400 on tool turns, cause unestablished | deliberately closed at the 2.0 entry gate: the symptom did not recur from v0.5 through v1.9.1 and no actionable experiment remains. This is an unresolved observation, not a solved cause; a recurrence opens a new linked finding with current typed evidence | 2026-08-08 |
 | D-22 | five test files set the shared console and never restore it at all | deliberately closed at the 2.0 entry gate: the old scripts are not repaired solely for the abandoned implementation. Any retained or rewritten 2.0 proof must isolate and restore shared output state; the exact Rich-console mechanism is not carried forward | 2026-08-08 |
 | N-1.6.4-09 | the ID column still shrinks with every other column on a terminal too narrow for the table | already closed in the current tracker; retained here as a historical closed record | 2026-08-08 |
