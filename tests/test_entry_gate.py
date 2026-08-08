@@ -112,6 +112,12 @@ def run_child(cmd: list[str], timeout: float, path: str | None = None) -> ChildR
     """Run `cmd` as its own process from the repository root, the way a
     developer would run a legacy script by hand. No shell, no guessed
     entry-point callable: the executable script is the preserved interface.
+
+    The environment is inherited, deliberately: the repository-root
+    `conftest.py` pins `COLUMNS`/`LINES` before pytest imports anything, and
+    inheritance is what carries that pin into every child here. Without it,
+    these suites render at the width of whichever terminal invoked
+    `python -m pytest` and fail on wrapped output. See `conftest.py`.
     """
     display_path = path if path is not None else cmd[-1]
     try:

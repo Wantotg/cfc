@@ -162,6 +162,13 @@ golden characterization check together. `python tests/golden.py record`
 re-baselines the characterization check; it is an exceptional, deliberate
 operation, never a routine one — inspect its diff before trusting it.
 
+Many of these suites check console output by searching the rendered text for
+a phrase, so the terminal's width decides where a line wraps and whether the
+phrase survives. `conftest.py` pins the render width to 80 columns for the
+whole run, which is why the result is the same on any terminal. It also
+bounds the claim: the check proves the rendering at 80 columns and nothing
+about any other width.
+
 Focused suites cover the path jail and approval gate in `tests/test_paths.py`
 and `tests/test_gate.py`. Real provider turns, retrieval quality, and terminal
 rendering still need practical verification — `python -m pytest` passing is

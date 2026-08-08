@@ -25,6 +25,39 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-08 — Pin the gate's render width so its result is not the terminal's
+v2.0 Stage 1, loop one triage. The entry gate shipped green and stayed green
+on the machine that built it, then failed two suites on Cas's first run. The
+cause was the same one the gate's own build had already found in
+`tests/golden.py`, in a second place: Rich reads `COLUMNS`/`LINES` when it
+constructs a `Console` and falls back to 80x25 for non-terminal output when
+neither is set. Nothing the gate runs is a terminal — pytest captures the
+native suite, and every legacy suite is a child process writing to a pipe —
+so the render width came from whoever ran the command. The legacy suites
+check their output by searching the rendered text for a phrase, and a
+different width wraps the line somewhere else and splits the phrase.
+
+The gate's result was therefore a property of the terminal. Same command,
+same checkout, width alone changed: 116 passed at 80, 5 failures at 100, 2 at
+111, 4 at 140, 1 at 200, 10 at 60. Eleven suites are sensitive, and it
+reaches the native half too — `test_memory_states.py::test_wiki_scope_gating`
+fails in-process at 100 and 140. The 111 that produced the reported failures
+was a VS Code panel, which changes width when its owner drags it.
+
+Fixed by a repository-root `conftest.py` pinning `COLUMNS=80`/`LINES=25` —
+Rich's own fallback, and the width every one of these assertions was written
+against. It goes there because a root `conftest.py` is imported before any
+test module, so the pin lands before the first `import ui` constructs the
+shared `Console`, and because child processes inherit `os.environ`, so one
+pin covers both halves of the gate. Verified across 60, 100, 111, 140, 200
+and an unset environment: 116 passed in all six, against 2 and 10 failures at
+111 and 60 before the change. What this buys is a reproducible gate, and the
+documentation now says what it does not buy: the check proves the rendering
+at 80 columns and nothing about any other width.
+- Files: conftest.py, tests/test_entry_gate.py, documents/OPERATIONS AND SECURITY.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-08 — `python -m pytest` is the one v1.9.1 preservation gate
 v2.0 Stage 1, loop one. Before any 2.0 application code, `python -m pytest`
 had to become the single complete check: the native suite, all 52 retained
