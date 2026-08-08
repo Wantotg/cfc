@@ -25,6 +25,45 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-08 — `python -m pytest` is the one v1.9.1 preservation gate
+v2.0 Stage 1, loop one. Before any 2.0 application code, `python -m pytest`
+had to become the single complete check: the native suite, all 52 retained
+legacy direct-script suites, and the golden characterization check, run as
+one command instead of three separately-remembered ones. `pytest.ini` pins
+`testpaths = tests` so the root command needs no remembered path.
+`tests/test_entry_gate.py` owns a frozen, sorted list of the 52 legacy paths,
+cross-checked every run against which `tests/test_*.py` files actually carry
+a `__main__` guard, then runs each one — and `tests/golden.py check` — in its
+own subprocess exactly as a developer would by hand, no shell, no guessed
+entry point. Two controlled child scripts (a failing exit, a timeout) prove
+the gate's own diagnostics without touching a real suite to make it fail.
+
+Building the gate surfaced a live bug in `tests/golden.py`, not a test-writing
+one: `os.environ["COLUMNS"] = "100"` was set inside `capture()`, but
+`REAL_VAULT = _real_vault()` at module level already imports `ui` (via
+`export.py`) before `capture()` ever runs. Rich's `Console` reads `COLUMNS`
+once, at construction, and bakes it into a fixed width — so the pin was
+already too late whenever the ambient environment (this sandbox, likely any
+CI runner) exports `COLUMNS`/`LINES` itself, which most interactive shells
+don't. `check` then rendered at the ambient width instead of the pinned one
+and reliably failed under `python -m pytest`, though never by hand in an
+ordinary terminal. Fixed by moving the pin to module scope, guarded on
+`__name__ == "__main__"` so merely importing `golden` — which
+`tests/test_golden_fixture.py` already does — can't leak it into whichever
+process did the importing.
+
+`workspace/2.0 the refactor and beyond/2.0 Entry Gate Inventory.md` records
+where every current capability and protected failure class goes before its
+v1.9.1 implementation or proof may be removed — reviewed against the settled
+2.0 contracts, `archive/HANDOVER v1.9.1.md`, and `workspace/TRACKER.md`, zero
+rows incomplete or blocked. `documents/OPERATIONS AND SECURITY.md` now
+documents `python -m pytest` as the one check; `golden.py record` stays
+documented only as the exceptional, deliberate baseline operation.
+- Files: pytest.ini, tests/test_entry_gate.py, tests/golden.py,
+  documents/OPERATIONS AND SECURITY.md
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-08 — A capture hands an unset console back unset
 `D-19`, second pass, from the v1.9.1 triage. The first pass had every capture
 helper save `console.file` and restore that exact object. Rich's `file` getter

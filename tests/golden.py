@@ -22,6 +22,27 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
+# Rich's Console reads COLUMNS/LINES at construction and, when they parse as
+# digits, bakes them into fixed width/height for the life of the object — so
+# this has to land before the *first* import of anything that constructs
+# `ui.console`, not just before `import main` in capture() below. REAL_VAULT
+# a few lines down already does that (via export.py), so pinning inside
+# capture() was too late whenever the ambient environment (a CI runner, this
+# harness's own subprocess environment) exports COLUMNS/LINES itself: the
+# console had already cached the ambient width before capture() ever ran, and
+# the pin silently did nothing. Unset ambient values are why this "worked" in
+# an ordinary interactive shell, which usually doesn't export either variable.
+#
+# Guarded on __main__, not applied unconditionally: test_golden_fixture.py
+# (and anything else that merely `import golden`s for its helpers) runs in
+# the same process as the rest of the native suite, and a bare module-level
+# assignment here would leak COLUMNS=100/TERM=dumb into every test that runs
+# after it in that process. Only the `python3 tests/golden.py` invocation
+# capture() actually runs under needs the pin.
+if __name__ == "__main__":
+    os.environ["COLUMNS"] = "100"
+    os.environ["TERM"] = "dumb"
+
 # Python validates a .pyc on (mtime, size). Two versions of a file that differ
 # only in the case of a word are the same size, and an edit landing in the same
 # second as the last compile keeps the mtime — so stale bytecode gets reused and
@@ -505,10 +526,8 @@ def capture():
     build_prompt_fixtures()
     build_outbox_fixture()
     build_notes_fixture()
-    # Rich reads width at construction, so pin it before importing anything
-    # that builds a Console at import time.
-    os.environ["COLUMNS"] = "100"
-    os.environ["TERM"] = "dumb"
+    # COLUMNS/TERM are pinned at module import time, above REAL_VAULT — see
+    # the comment there for why this had to move out of this function.
 
     import main as chat
 

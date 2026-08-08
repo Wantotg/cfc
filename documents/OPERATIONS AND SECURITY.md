@@ -151,15 +151,21 @@ still diagnosable.
 
 ## Tests and source map
 
-The no-API characterization check is:
+The complete check, one command, no API key needed:
 
 ```bash
-python tests/golden.py check
+python -m pytest
 ```
+
+This runs the native test collection, every retained legacy suite, and the
+golden characterization check together. `python tests/golden.py record`
+re-baselines the characterization check; it is an exceptional, deliberate
+operation, never a routine one — inspect its diff before trusting it.
 
 Focused suites cover the path jail and approval gate in `tests/test_paths.py`
 and `tests/test_gate.py`. Real provider turns, retrieval quality, and terminal
-rendering still need practical verification.
+rendering still need practical verification — `python -m pytest` passing is
+not evidence of any of those three.
 
 The main seams are `main.py` (REPL), `parse.py` (grammar), `commands.py`
 (commands), `agent.py` (tool-calling turn), `paths.py` (path jail), `db.py`
