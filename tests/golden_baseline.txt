@@ -315,7 +315,7 @@ Session #1  ·  glm-5.2  ·  Golden session one
 you> Preset cleared — provider default.
 you> Usage: /continue   (no arguments)
 you> Unknown connection 'nonsense'. Available connections: embedding
-you>   embedder: http://localhost:1233/v1
+you>   embedder: https://embed.example.invalid/v1
   ✗ hosted embedder unreachable — golden harness stub
     check your connection, EMBED_BASE/EMBED_KEY in config.py, and the provider's status, then run
 /connect embedding in a chat (or connect embedding in config) to retry.

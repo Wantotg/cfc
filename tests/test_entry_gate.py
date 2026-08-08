@@ -19,13 +19,15 @@ have to carve out its own name.
 """
 from __future__ import annotations
 
-import re
+import ast
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+import entry_gate_bootstrap
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -158,24 +160,54 @@ def failure_reason(result: ChildResult) -> str | None:
     )
 
 
-# --- discovery: recognising the guard, not a substring ---------------------
+# --- discovery: recognising the guard structurally, not textually ----------
 
-# The conventional guard as a real statement line: start-of-line (allowing
-# indentation), `if __name__`, ordinary spacing around `==`, either quote
-# style, and a closing colon. Deliberately narrow — this is not a parser for
+# D-2.0-05: a line-anchored regex still matches guard-shaped text inside a
+# triple-quoted string, since triple-quoted content still "starts a line" as
+# far as a regex is concerned. `ast.parse` cannot produce an `ast.If` from
+# string contents, a comment, or an assertion — only a real statement has
+# this shape — so recognition here is structural: walk every `ast.If` in the
+# module and check whether its test compares `__name__` to the literal
+# `"__main__"`, either order. Deliberately narrow — this is not a parser for
 # every syntactically valid entry point, only the one spelling the legacy
 # suites use.
-MAIN_GUARD_RE = re.compile(
-    r'''^[ \t]*if[ \t]+__name__[ \t]*==[ \t]*(['"])__main__\1[ \t]*:''',
-    re.MULTILINE,
-)
-
-
 def has_main_guard(text: str) -> bool:
-    """True only for a real `if __name__ == "__main__":` statement line, not
-    a comment, docstring, assertion, or other prose mention of `__main__`.
+    """True only when `text` parses as Python and contains a real
+    `if __name__ == "__main__":` statement — not a comment, docstring,
+    assertion, string literal, or other prose mention of `__main__`, and not
+    text that fails to parse at all.
     """
-    return MAIN_GUARD_RE.search(text) is not None
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    return any(
+        _is_main_guard_test(node.test)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+    )
+
+
+def _is_main_guard_test(test: ast.expr) -> bool:
+    if not isinstance(test, ast.Compare):
+        return False
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    if len(test.comparators) != 1:
+        return False
+    left, right = test.left, test.comparators[0]
+    return (
+        (_is_dunder_name(left) and _is_main_string(right))
+        or (_is_dunder_name(right) and _is_main_string(left))
+    )
+
+
+def _is_dunder_name(node: ast.expr) -> bool:
+    return isinstance(node, ast.Name) and node.id == "__name__"
+
+
+def _is_main_string(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value == "__main__"
 
 
 # --- inventory: the frozen list is the actual list -------------------------
@@ -194,6 +226,70 @@ def test_frozen_list_matches_discovered_legacy_scripts():
     )
     assert discovered == LEGACY_SUITE_PATHS
     assert len(LEGACY_SUITE_PATHS) == 52
+
+
+# --- provenance: the loaded config is the fixture, not Cas's root file -----
+#
+# D-2.0-04. `conftest.py` installs `entry_gate_bootstrap`'s synthetic
+# `config` before any test module is collected, for the native process; the
+# same module's `sitecustomize.py` half does it for every child. Neither
+# reads, renames, writes, or shadows the root `config.py` — the mechanism
+# plants an answer in `sys.modules` before anything goes looking, so what
+# happens to sit at the repository root is irrelevant. These three tests
+# prove that from three different angles rather than asserting it once.
+
+def test_native_process_config_provenance_is_the_fixture():
+    """The pytest process itself — the one collecting this very module —
+    must resolve `import config` to the synthetic fixture.
+    """
+    import config
+    resolved = Path(config.__file__).resolve()
+    assert resolved == entry_gate_bootstrap.FIXTURE_PATH.resolve()
+    assert resolved != (ROOT / "config.py").resolve()
+
+
+def test_representative_child_process_config_provenance_is_the_fixture(tmp_path):
+    """A representative child process — inserting the repository root onto
+    `sys.path` and importing `config`, exactly as every legacy suite does —
+    must resolve to the same fixture. The child reports what it actually
+    imported rather than this test assuming the mechanism worked.
+    """
+    script = tmp_path / "report_config_provenance.py"
+    script.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(ROOT)!r})\n"
+        "import config\n"
+        "print(config.__file__)\n",
+        encoding="utf-8",
+    )
+    cmd = [sys.executable, str(script)]
+    result = run_child(cmd, LEGACY_SUITE_TIMEOUT_SECONDS)
+    reason = failure_reason(result)
+    assert reason is None, reason
+    reported = Path(result.stdout.strip()).resolve()
+    assert reported == entry_gate_bootstrap.FIXTURE_PATH.resolve()
+    assert reported != (ROOT / "config.py").resolve()
+
+
+def test_child_process_config_resolves_without_repository_root_on_path(tmp_path):
+    """D-2.0-04's actual failure mode without touching the real file: a
+    child that never adds the repository root to `sys.path` at all, so
+    Cas's `config.py` — present or absent — is unreachable by construction.
+    `import config` must still succeed, because a missing personal
+    `config.py` cannot be the reason the gate fails.
+    """
+    script = tmp_path / "report_config_without_root.py"
+    script.write_text(
+        "import config\n"
+        "print(config.__file__)\n",
+        encoding="utf-8",
+    )
+    cmd = [sys.executable, str(script)]
+    result = run_child(cmd, LEGACY_SUITE_TIMEOUT_SECONDS)
+    reason = failure_reason(result)
+    assert reason is None, reason
+    reported = Path(result.stdout.strip()).resolve()
+    assert reported == entry_gate_bootstrap.FIXTURE_PATH.resolve()
 
 
 # --- proof: prose mentioning __main__ is not a guard ------------------------
@@ -237,23 +333,44 @@ def test_discovery_seam_accepts_conventional_guard(tmp_path):
         "if __name__ == '__main__':",
         "if __name__=='__main__':",
         "if __name__   ==   '__main__' :",
-        "    if __name__ == '__main__':",
-        "\tif __name__ == \"__main__\":",
     ],
-    ids=[
-        "double-quotes",
-        "single-quotes",
-        "no-spacing",
-        "wide-spacing",
-        "indented-spaces",
-        "indented-tab",
-    ],
+    ids=["double-quotes", "single-quotes", "no-spacing", "wide-spacing"],
 )
-def test_guard_formatting_boundary_is_accepted(line):
-    """The accepted formatting boundary: indentation, spacing around `==`,
-    and either quote style all still qualify as the conventional guard.
+def test_guard_formatting_boundary_is_accepted_at_top_level(line):
+    """The accepted formatting boundary at module top level, unindented —
+    the shape every retained legacy suite actually uses: spacing around `==`
+    and either quote style still qualify as the conventional guard.
     """
     assert has_main_guard(f"{line}\n    pass\n") is True
+
+
+@pytest.mark.parametrize("indent", ["    ", "\t"],
+                          ids=["indented-spaces", "indented-tab"])
+def test_guard_formatting_boundary_is_accepted_when_nested(indent):
+    """The guard still qualifies nested inside a real block — the ast walk
+    is not limited to the module's top level. Standalone indentation with no
+    enclosing block is not valid Python at all (`ast.parse` would raise), so
+    this nests the guard inside one rather than asserting on syntax that
+    could never occur in a real file.
+    """
+    source = f"if True:\n{indent}if __name__ == '__main__':\n{indent}    pass\n"
+    assert has_main_guard(source) is True
+
+
+def test_discovery_seam_rejects_guard_shaped_triple_quoted_string():
+    """D-2.0-05. The old line-anchored regex matched this: a guard-shaped
+    line inside a triple-quoted string still "starts a line". `ast.parse`
+    cannot produce an `ast.If` from string contents, so a candidate whose
+    only guard-shaped text is fixture data inside a string literal must not
+    qualify.
+    """
+    text = (
+        'SRC = """\n'
+        'if __name__ == "__main__":\n'
+        '    main()\n'
+        '"""\n'
+    )
+    assert has_main_guard(text) is False
 
 
 @pytest.mark.parametrize(

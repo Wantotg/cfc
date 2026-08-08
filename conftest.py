@@ -28,8 +28,25 @@ Narrow- and wide-terminal rendering stays playtest work.
 `tests/golden.py` still pins its own width under its `__main__` guard. That
 pin is for the developer running `python3 tests/golden.py check` by hand,
 where this file is not loaded at all.
+
+**Second job: the native process installs the synthetic `config` fixture
+before anything else imports it.** `tests/fixtures/entry_gate_bootstrap.py`
+has the full account of why `import config` needs redirecting at all and how
+both halves of the gate share the mechanism. This is the native half; it also
+sets `PYTHONPATH`/the fixture env var on `os.environ` itself, inherited by
+every child `run_child` in `tests/test_entry_gate.py` spawns, which is the
+other half.
 """
 import os
+import sys
+from pathlib import Path
 
 os.environ["COLUMNS"] = "80"
 os.environ["LINES"] = "25"
+
+_FIXTURES_DIR = Path(__file__).resolve().parent / "tests" / "fixtures"
+sys.path.insert(0, str(_FIXTURES_DIR))
+import entry_gate_bootstrap  # noqa: E402
+
+entry_gate_bootstrap.install()
+os.environ.update(entry_gate_bootstrap.child_env())

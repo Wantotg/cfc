@@ -25,6 +25,124 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-08 — Make the entry gate independent of Cas's config.py, and structural about the guard
+v2.0 Stage 2, loop one, part one. D-2.0-04: every retained flat module that
+`import config`s made the entry gate depend on Cas's own ignored, personal
+`config.py` — absent, 28 test modules failed collection and `python -m
+pytest` ran nothing, so the one command claiming to be the complete v1.9.1
+preservation gate was not usable from a fresh clone.
+
+Added a tracked synthetic fixture (`tests/fixtures/entry_gate_synthetic_config.py`)
+and a shared installer (`tests/fixtures/entry_gate_bootstrap.py`) that plants
+it in `sys.modules["config"]` before anything imports that name — for the
+native pytest process directly, via `conftest.py`, and for each of the 52
+legacy child processes via `tests/fixtures/sitecustomize.py`, which Python's
+`site` module imports automatically at interpreter start (before the child
+script's own `sys.path.insert(0, ROOT)` runs), triggered only when
+`conftest.py`'s environment carries the fixture path. Neither half reads,
+renames, writes, or shadows the root `config.py` — the mechanism answers
+`import config` before anything goes looking for the real file, so its
+presence or absence is irrelevant. Three new tests in
+`tests/test_entry_gate.py` prove provenance from three angles: the native
+process, a representative child that inserts the real repository root onto
+`sys.path` exactly like every legacy suite does, and a child that never adds
+the root at all (the actual missing-`config.py` case, proven without
+touching Cas's real file). Verified end to end by renaming `config.py` aside
+and running the complete `python -m pytest` — 134 passed with no personal
+configuration reachable by the test process at all, then restored.
+
+That surfaced a second, unrelated coupling in `tests/golden.py`: its
+characterisation baseline already pins most config-derived values (MODEL,
+API_BASE, API_KEY, the model lists, ...) to fixture constants for exactly
+this reason, but `TOOLS_ENABLED` and `EMBED_BASE` had never been exercised
+against a config that disagreed with the machine that recorded the baseline,
+so they leaked straight from Cas's real config.py into a baseline meant to
+be a property of the source. Pinned both the same way as everything else on
+that page; `EMBED_BASE` needed the baseline's one `embedder: ...` line
+re-recorded to a fixture value, `TOOLS_ENABLED` needed no baseline change
+since it pins to the value already captured.
+
+D-2.0-05, same seam while it was open: the regex from the guard-recognition
+change (2026-08-08, below) still matched a guard-shaped line inside a
+triple-quoted string, since triple-quoted content still "starts a line" as
+far as a line-anchored regex is concerned. Replaced `has_main_guard` with a
+structural check — `ast.parse` plus a walk for an `ast.If` whose test
+compares `__name__` to the literal `"__main__"` — which cannot be satisfied
+by string contents, a comment, or an assertion. Added the exact triple-quoted
+case from the backlog entry as a regression, and split the formatting-
+boundary test into a top-level group and a nested one (an indented guard
+with no enclosing block is not valid Python at all, so the old bare
+"indented line" cases could never occur in a real file).
+- Files: conftest.py, tests/test_entry_gate.py, tests/golden.py,
+  tests/golden_baseline.txt, tests/fixtures/entry_gate_synthetic_config.py,
+  tests/fixtures/entry_gate_bootstrap.py, tests/fixtures/sitecustomize.py
+- Status: shipped
+- Commit: pending
+
+## 2026-08-08 — Add the cfc/ bootstrap core and python -m cfc doctor
+v2.0 Stage 2, loop one, part two. The first parallel 2.0 boundary: a
+standard-library-only `cfc/` package whose only useful command is
+`python -m cfc doctor`. It reads the trusted repository-root `config.py`
+once, validates the settings 2.0 cannot boot without, and reports required
+readiness plus deliberately unavailable optional capabilities — without
+opening a database, creating a directory, touching a configured path, or
+contacting a service. The v1.9.1 flat application and `launch.sh` are
+unchanged and remain the daily-use route.
+
+`cfc/entry.py` checks the interpreter (3.10 floor — not required by anything
+in cfc yet, set as a deliberate floor rather than left undecided) before
+`cfc/__main__.py` imports anything else in the package, so an unsupported
+Python gets one line instead of a `SyntaxError` partway through an import;
+every other import in `__main__.py` is deferred for the same reason.
+`cfc/config_loader.py` `exec`s the trusted file once per invocation
+(distinguishing a missing file, an unreadable one, a syntax error, a failed
+import inside it, and any other exception it raises) and returns an
+immutable snapshot — nested lists/dicts become tuples and
+`MappingProxyType`s — so nothing downstream re-reads the file or mutates a
+shared structure. Root-relative by default (anchored on the package's own
+location, not the working directory); `CFC_CONFIG_PATH` overrides it, the
+one escape hatch, used by the test suite instead of ever pointing at Cas's
+real file. `cfc/settings.py` validates the required chat provider
+(`API_BASE`/`API_KEY`/`MODEL`) and the new, optional `DB_PATH` field — unset
+resolves to `~/.cfc/2.0/chat.db`, a sibling of v1.9.1's `~/.cfc/chat.db`
+rather than a replacement, and a target resolving to that legacy database,
+to `config.py` itself, or inside the repository is refused before any
+existence check runs. `cfc/diagnostics.py` adds the three optional rows
+(vault, embeddings, file tools) independently as ready, unavailable (not
+configured), or error (configured but not usable as written) — file tools
+is the one exception, always "not built" once enabled, since 2.0 has no tool
+implementation yet regardless of what's configured. `cfc/doctor.py` renders
+all seven in a fixed order and exits non-zero only when a required row
+errors; nothing it prints can carry a credential, since `ProviderSettings`
+excludes the key from its own repr and every message is built from field
+names and non-secret values only.
+
+`config.example.py` gained an opening bootstrap section: the
+trusted-local-Python boundary stated for a reader who isn't assumed to know
+it already, which settings are required for a fresh clone versus optional,
+the `python -m cfc doctor` route, and the new `DB_PATH` field and its 2.0
+default — every existing field is unchanged.
+
+76 new tests across four files cover missing/syntax/import/exec-error
+distinctions in the loader; missing-field/type/value distinctions and the
+protected-target refusal (legacy database, config.py, inside the repo, and
+the "nonexistent file, usable parent" acceptance) in settings; all three
+optional-row states in diagnostics; and, driven as real subprocesses, no
+subcommand, an unknown command, argument rejection, the interpreter guard,
+ordered rows, non-zero-only-on-required-error, root-relative discovery from
+two different working directories against the same overridden config, an
+import trace proving no flat runtime module ever loads, and secret-marker
+checks confirming no credential value reaches stdout, stderr, a repr, or an
+exception message anywhere in the stack. `python -m pytest` passes at 210
+with no personal `config.py` reachable by the test process.
+- Files: cfc/__init__.py, cfc/__main__.py, cfc/entry.py,
+  cfc/config_loader.py, cfc/settings.py, cfc/diagnostics.py, cfc/doctor.py,
+  cfc/paths.py, config.example.py, tests/test_cfc_config_loader.py,
+  tests/test_cfc_settings.py, tests/test_cfc_diagnostics.py,
+  tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-08 — Make the entry gate check for the guard, not the word
 v2.0 Stage 1, loop two. The entry gate decided a file belonged to the legacy
 suite by testing `"__main__" in text` — true for the real guard line, but

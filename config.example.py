@@ -1,8 +1,50 @@
-# config.py — fill in your values from the nano-gpt dashboard
+# config.py — copy this file to config.py and fill in your values.
+#
+# --- the 2.0 bootstrap, read this section first -----------------------------
+#
+# **Trusted-local-Python boundary.** config.py is not data cfc parses — it is
+# a Python file cfc runs, the same way any `import config` always has.
+# Anyone who can edit this file can run arbitrary code as you the moment
+# anything imports it. That is not a cfc-specific risk to defend against here;
+# it is the ordinary trust a local script always has, named explicitly so it
+# is a choice rather than an assumption — only put values in this file you
+# would be comfortable putting in any other script you run locally.
+#
+# **Required vs optional.** A fresh clone needs the four settings directly
+# below (API_BASE, API_KEY, MODEL, and the 2.0 database target further down)
+# to reach ordinary chat. Everything else — the vault, embeddings, file
+# tools, routines — is optional: leave it unset and that surface reports
+# itself unavailable rather than failing the whole app. Each optional
+# section below says so again at the point it starts.
+#
+# **The copy-and-run route.** After filling in the required settings, run:
+#
+#     python -m cfc doctor
+#
+# It reads this file once, validates the settings above and the ones marked
+# optional below, and reports each as ready, unavailable (optional and
+# unset), error (set, but not usable as written), or not built (a 2.0
+# surface that doesn't exist yet, regardless of configuration) — without
+# opening a database, creating a directory, or contacting a provider. A
+# clean report means the bootstrap is ready, not that a provider or embedder
+# is actually reachable — doctor validates format locally, never live.
+#
+# The v1.9.1 flat application (`python main.py`, or `launch.sh`) reads this
+# same file directly and remains the route that actually chats; `cfc doctor`
+# is 2.0's parallel readiness check, not a replacement for it yet.
 API_BASE = "https://api.nano-gpt.com/v1"   # check their docs for the exact URL
 API_KEY  = ""   # paste your key here
 MODEL    = "zai-org/glm-5.2:thinking"                    # pick a model your plan supports
 RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /recall (grounded synthesis)
+
+# The 2.0 database target — optional, a fresh install needs nothing here.
+# Unset (the default) resolves to Path.home() / ".cfc" / "2.0" / "chat.db",
+# a sibling of v1.9.1's own ~/.cfc/chat.db rather than a replacement for it,
+# so both can exist on the same machine without either reading the other's
+# schema. `cfc doctor` refuses a DB_PATH that resolves to the legacy
+# database, this repository, or config.py itself — those are protected
+# targets, not configuration choices.
+# DB_PATH = ""   # e.g. "~/.cfc/2.0/chat.db" (the default, written out)
 
 # Path to a folder inside your Obsidian vault where chats will be exported.
 # The name says both what it holds and that it's a directory — see VAULT_ROOT

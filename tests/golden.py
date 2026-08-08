@@ -142,6 +142,16 @@ FIXTURE_API_BASE = "https://api.example.invalid/v1"
 # about which line the baseline pins.
 FIXTURE_API_KEY = "fixture-key-not-real"
 
+# D-2.0-04: found by running this harness against a fixture `config.py`
+# instead of Cas's own for the first time. `/connect` prints EMBED_BASE
+# verbatim — the exact class of bug every other constant on this page exists
+# to close, just missed for this one because it had never been exercised
+# against a config that disagreed with the machine that recorded the
+# baseline. TOOLS_ENABLED never got its own fixture value either; pinned
+# `True` below rather than a fresh one, since that matches what the existing
+# baseline already captured and there is no behavioural reason to change it.
+FIXTURE_EMBED_BASE = "https://embed.example.invalid/v1"
+
 # 1.2's command screens read the routine store and the wiki corpus live.
 # Both fixtures are deliberately empty — a routine store and a wiki repo
 # convincing enough to test the *rich* states (armed review, routines with
@@ -625,6 +635,10 @@ def capture():
                 setattr(mod, "USER_DISPLAY_NAME", None)
             if hasattr(mod, "AI_DISPLAY_NAME"):
                 setattr(mod, "AI_DISPLAY_NAME", None)
+            if hasattr(mod, "TOOLS_ENABLED"):
+                setattr(mod, "TOOLS_ENABLED", True)
+            if hasattr(mod, "EMBED_BASE"):
+                setattr(mod, "EMBED_BASE", FIXTURE_EMBED_BASE)
 
     # `D-01`: point the outbox at the fixture. **Patched at the seam, not in
     # config** — `mover._cfg` re-reads config on every call, so setting
