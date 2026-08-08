@@ -20,7 +20,8 @@ in prose.
 | `development/BUGS.md` | what's broken and known | anything closed |
 | `ROADMAP.md` | what each version added, in Cas's words. His file — propose, don't edit | bugs, backlog, design detail |
 | `workspace/ROADMAP_PRIVATE.md` · `workspace/ROADMAP_BEYOND.md` | gitignored. The forward plan, below and above 2.0 | |
-| `workspace/TRACKER.md` | gitignored. One line per issue and the version it's assigned to; closed rows keep their resolution | open-issue explanations |
+| `workspace/TRACKER.md` | gitignored. One line per open issue and the version it's assigned to | open-issue explanations |
+| `archive/TRACKER_CLOSED.md` | manager-maintained closed tracker rows and their reasons | live assignments or open issue explanations |
 
 **The test between here and `CHANGELOG.md`: will it still be true in three
 versions?** If yes it belongs here. If it is about one change it belongs there — a changelog entry may state a decision and its reason in a sentence, but it does not argue it.
@@ -36,9 +37,9 @@ assumptions and what they cost — that is why they are worth reading. They are 
 
 ### Two files with a rule of their own
 
-**`TRACKER.md`'s ids are permanent and its closed rows stay.** An id comes from the playtest report and is never reallocated — `B-0.9.1-01` is finding 01 of the v0.9.1 pass, forever, so the report, the tracker row, the `BUGS.md` entry and the changelog line name the same thing with nothing to reconcile. Closed rows keeptheir reason and stay, *nothing owed* included: without that, the same note comes back next playtest looking new. A session transcript is not a record. The reports it consumes are in `<vault>/00 inbox`, one file per playtest.
+**Tracker ids are permanent and closed rows move to `archive/TRACKER_CLOSED.md`.** An id comes from the playtest report and is never reallocated — `B-0.9.1-01` is finding 01 of the v0.9.1 pass, forever. The archive preserves the closed reason, *nothing owed* included, so the same note does not come back next playtest looking new. A session transcript is not a record. The reports it consumes are in `<vault>/00 inbox`, one file per playtest.
 
-**Closed entries leave `development/BUGS.md` and `development/BACKLOG.md` whole, with no stub.** Struck-through stubs are why those files once reached 283 and 897 lines with eight live entries between them. `workspace/TRACKER.md` keeps the resolution, `development/CHANGELOG.md` records the shipped change, and Git history retains the deleted body. The original playtest report remains in the vault inbox. No second archive copy is maintained.
+**Closed entries leave `development/BUGS.md` and `development/BACKLOG.md` whole, with no stub.** Struck-through stubs are why those files once reached 283 and 897 lines with eight live entries between them. `archive/TRACKER_CLOSED.md` keeps the resolution, `development/CHANGELOG.md` records the shipped change, and Git history retains the deleted body. The original playtest report remains in the vault inbox.
 
 ## Versions and releases
 
