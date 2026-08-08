@@ -6,13 +6,14 @@ the closed finding and its reason so a later playtest does not reopen it as if
 it were new.
 
 `workspace/TRACKER.md` was reduced to open work on 2026-08-08. The rows
-below retain their existing shape and wording; the two rows added at the top
-are the closed records reconciled in that pass.
+below retain their existing shape and wording; the rows added at the top are
+the closed records reconciled in that pass.
 
 ## Closed
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-01 | provider 400 on tool turns, cause unestablished | deliberately closed at the 2.0 entry gate: the symptom did not recur from v0.5 through v1.9.1 and no actionable experiment remains. This is an unresolved observation, not a solved cause; a recurrence opens a new linked finding with current typed evidence | 2026-08-08 |
 | D-22 | five test files set the shared console and never restore it at all | deliberately closed at the 2.0 entry gate: the old scripts are not repaired solely for the abandoned implementation. Any retained or rewritten 2.0 proof must isolate and restore shared output state; the exact Rich-console mechanism is not carried forward | 2026-08-08 |
 | N-1.6.4-09 | the ID column still shrinks with every other column on a terminal too narrow for the table | already closed in the current tracker; retained here as a historical closed record | 2026-08-08 |
 | D-24 | the `W-1.1-02` `CHANGELOG.md` entry had no heading and read as part of `D-1.6.2-02`'s | corrected in the v1.9.1 manager closeout; the 5xx entry has its own heading again | 2026-08-08 |
