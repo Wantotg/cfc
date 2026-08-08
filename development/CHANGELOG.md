@@ -44,7 +44,7 @@ exists to reject. The frozen 52-path list and the golden check are untouched;
 `python -m pytest` still passes at 130.
 - Files: tests/test_entry_gate.py
 - Status: shipped
-- Commit: pending
+- Commit: 0a5463c
 
 ## 2026-08-08 — Pin the gate's render width so its result is not the terminal's
 v2.0 Stage 1, loop one triage. The entry gate shipped green and stayed green
@@ -77,7 +77,7 @@ documentation now says what it does not buy: the check proves the rendering
 at 80 columns and nothing about any other width.
 - Files: conftest.py, tests/test_entry_gate.py, documents/OPERATIONS AND SECURITY.md
 - Status: shipped
-- Commit: pending
+- Commit: f269a00
 
 ## 2026-08-08 — `python -m pytest` is the one v1.9.1 preservation gate
 v2.0 Stage 1, loop one. Before any 2.0 application code, `python -m pytest`
@@ -116,7 +116,7 @@ documented only as the exceptional, deliberate baseline operation.
 - Files: pytest.ini, tests/test_entry_gate.py, tests/golden.py,
   documents/OPERATIONS AND SECURITY.md
 - Status: shipped
-- Commit: pending
+- Commit: 847d05d
 
 ## 2026-08-08 — A capture hands an unset console back unset
 `D-19`, second pass, from the v1.9.1 triage. The first pass had every capture
@@ -160,7 +160,7 @@ this changelog, and Git history preserve what happened. Removed the empty
   `agents/MANAGERS_HANDBOOK.md`, `agents/OVERSEERS_HANDBOOK.md`,
   `workspace/TRACKER.md`
 - Status: shipped
-- Commit: pending
+- Commit: c0c48dd
 
 ## 2026-08-07 — An untracked wiki file previews as the addition it would make
 `D-1.6.2-02`: `/wiki diff [scope] file`'s per-file picker used to offer a

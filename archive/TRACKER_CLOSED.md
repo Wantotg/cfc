@@ -13,6 +13,8 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| D-2.0-03 | the frozen-list guard detects a suite by a substring, not by its guard | shipped in `0a5463c`; `has_main_guard()` now recognises the required guard-line shape and regression cases reject prose and incomplete spellings. The narrower triple-quoted-string residue is `D-2.0-05` | 2026-08-08 |
+| N-2.0-06 | the module-level sortedness assert is redundant | nothing owed; the inventory test already compares the frozen list with sorted discovery, but the import-time assert fails earlier and closer to an unsorted list. The project does not run pytest under `-O`, so the assert remains useful | 2026-08-08 |
 | W-12 | the loop tags a version because the loop ended, not because it is finished | deliberately closed at the 2.0 entry gate: the installed workflow separates a completed loop from a release, so the finding's required destination is already present before the first 2.0 code loop | 2026-08-08 |
 | B-01 | provider 400 on tool turns, cause unestablished | deliberately closed at the 2.0 entry gate: the symptom did not recur from v0.5 through v1.9.1 and no actionable experiment remains. This is an unresolved observation, not a solved cause; a recurrence opens a new linked finding with current typed evidence | 2026-08-08 |
 | D-22 | five test files set the shared console and never restore it at all | deliberately closed at the 2.0 entry gate: the old scripts are not repaired solely for the abandoned implementation. Any retained or rewritten 2.0 proof must isolate and restore shared output state; the exact Rich-console mechanism is not carried forward | 2026-08-08 |
