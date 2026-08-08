@@ -19,6 +19,7 @@ have to carve out its own name.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -157,6 +158,26 @@ def failure_reason(result: ChildResult) -> str | None:
     )
 
 
+# --- discovery: recognising the guard, not a substring ---------------------
+
+# The conventional guard as a real statement line: start-of-line (allowing
+# indentation), `if __name__`, ordinary spacing around `==`, either quote
+# style, and a closing colon. Deliberately narrow — this is not a parser for
+# every syntactically valid entry point, only the one spelling the legacy
+# suites use.
+MAIN_GUARD_RE = re.compile(
+    r'''^[ \t]*if[ \t]+__name__[ \t]*==[ \t]*(['"])__main__\1[ \t]*:''',
+    re.MULTILINE,
+)
+
+
+def has_main_guard(text: str) -> bool:
+    """True only for a real `if __name__ == "__main__":` statement line, not
+    a comment, docstring, assertion, or other prose mention of `__main__`.
+    """
+    return MAIN_GUARD_RE.search(text) is not None
+
+
 # --- inventory: the frozen list is the actual list -------------------------
 
 def test_frozen_list_matches_discovered_legacy_scripts():
@@ -169,10 +190,96 @@ def test_frozen_list_matches_discovered_legacy_scripts():
         p.relative_to(ROOT).as_posix()
         for p in HERE.glob("test_*.py")
         if p.name != Path(__file__).name
-        and "__main__" in p.read_text(encoding="utf-8")
+        and has_main_guard(p.read_text(encoding="utf-8"))
     )
     assert discovered == LEGACY_SUITE_PATHS
     assert len(LEGACY_SUITE_PATHS) == 52
+
+
+# --- proof: prose mentioning __main__ is not a guard ------------------------
+
+def test_discovery_seam_rejects_prose_only_dunder_main(tmp_path):
+    """A temporary candidate whose only `__main__` text is prose — a
+    docstring, a comment, an assertion — must not qualify as a legacy suite.
+    """
+    candidate = tmp_path / "test_prose_only.py"
+    candidate.write_text(
+        '"""This module talks about __main__ but never guards on it."""\n'
+        "\n"
+        "# if __name__ == '__main__' used to be here; removed intentionally\n"
+        "\n"
+        "def test_something():\n"
+        "    assert '__main__' in repr(__name__) or True\n",
+        encoding="utf-8",
+    )
+    assert has_main_guard(candidate.read_text(encoding="utf-8")) is False
+
+
+def test_discovery_seam_accepts_conventional_guard(tmp_path):
+    """A temporary candidate with a real conventional guard must qualify."""
+    candidate = tmp_path / "test_real_guard.py"
+    candidate.write_text(
+        "def main():\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    assert has_main_guard(candidate.read_text(encoding="utf-8")) is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'if __name__ == "__main__":',
+        "if __name__ == '__main__':",
+        "if __name__=='__main__':",
+        "if __name__   ==   '__main__' :",
+        "    if __name__ == '__main__':",
+        "\tif __name__ == \"__main__\":",
+    ],
+    ids=[
+        "double-quotes",
+        "single-quotes",
+        "no-spacing",
+        "wide-spacing",
+        "indented-spaces",
+        "indented-tab",
+    ],
+)
+def test_guard_formatting_boundary_is_accepted(line):
+    """The accepted formatting boundary: indentation, spacing around `==`,
+    and either quote style all still qualify as the conventional guard.
+    """
+    assert has_main_guard(f"{line}\n    pass\n") is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "# if __name__ == '__main__':\n",
+        "    # if __name__ == '__main__':\n",
+        '"""if __name__ == "__main__":  is the usual guard spelling."""\n',
+        "print('if __name__ == \"__main__\":')\n",
+        "x = \"__main__\"\n",
+        "if __name__ == '__main__'\n",  # missing the required colon
+    ],
+    ids=[
+        "line-comment",
+        "indented-comment",
+        "docstring-mention",
+        "string-literal-in-call",
+        "bare-name-assignment",
+        "missing-colon",
+    ],
+)
+def test_prose_and_incomplete_mentions_are_rejected(text):
+    """Neither a comment, a docstring, a string literal, a bare mention of
+    the name, nor a guard missing its final colon counts as the real thing.
+    """
+    assert has_main_guard(text) is False
 
 
 # --- one case per legacy suite ----------------------------------------------

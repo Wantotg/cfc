@@ -25,6 +25,27 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-08 — Make the entry gate check for the guard, not the word
+v2.0 Stage 1, loop two. The entry gate decided a file belonged to the legacy
+suite by testing `"__main__" in text` — true for the real guard line, but
+also true for a comment mentioning it, a docstring describing it, or an
+assertion string containing it. Nothing in the 52-path baseline was wrong,
+because every current legacy script's mention of `__main__` happens to be
+its real guard, but the check itself would have waved through a script that
+only talked about one.
+
+Replaced the substring test with `MAIN_GUARD_RE`, a line-anchored regular
+expression requiring `if __name__`, ordinary spacing around `==`, either
+quote style, and the closing colon — the one spelling the legacy suites use,
+not a general Python entry-point parser. Verified by disabling it: reverting
+to the old substring check and rerunning the new regression tests fails seven
+of them, on exactly the prose-mention and missing-colon cases the guard
+exists to reject. The frozen 52-path list and the golden check are untouched;
+`python -m pytest` still passes at 130.
+- Files: tests/test_entry_gate.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-08 — Pin the gate's render width so its result is not the terminal's
 v2.0 Stage 1, loop one triage. The entry gate shipped green and stayed green
 on the machine that built it, then failed two suites on Cas's first run. The
