@@ -95,9 +95,9 @@ def drive(conn, sid, keys):
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
     main.print_context_bar = spy
-    saved_main_file = main.console.file
-    saved_commands_file = commands.console.file
-    saved_agent_file = agent.console.file
+    saved_main_file = main.console._file
+    saved_commands_file = commands.console._file
+    saved_agent_file = agent.console._file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
@@ -121,7 +121,7 @@ def drive_private(conn, sid, keys):
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
-    saved_main_file = main.console.file
+    saved_main_file = main.console._file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
@@ -674,9 +674,9 @@ def main_():
         main.generate_title = title_spy
         main.auto_embed = embed_spy
         main.console.status = lambda wording, **kw: _FakeStatus(wording, **kw)
-        saved_main_file = main.console.file
-        saved_commands_file = commands.console.file
-        saved_agent_file = agent.console.file
+        saved_main_file = main.console._file
+        saved_commands_file = commands.console._file
+        saved_agent_file = agent.console._file
         try:
             with contextlib.redirect_stdout(out):
                 main.console.file = out
@@ -807,7 +807,7 @@ def main_():
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO("/tools off\nhello\n/q\n")
-    saved_main_file = main.console.file
+    saved_main_file = main.console._file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out

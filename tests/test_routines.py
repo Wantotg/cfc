@@ -170,7 +170,7 @@ def test_creation_flow():
             import contextlib
             buf = io.StringIO()
             typed(["Fourth routine", "1", "", "n"])   # runs out -> Ctrl-C
-            saved_file = commands.console.file
+            saved_file = commands.console._file
             commands.console.file = buf
             try:
                 with contextlib.redirect_stdout(buf):
@@ -1353,7 +1353,7 @@ def main():
                 runner_mod.run_routine = lambda *a, **kw: (
                     outcome_status, summary, 42, 7)
                 buf = io.StringIO()
-                saved_file = commands.console.file
+                saved_file = commands.console._file
                 try:
                     with redirect_stdout(buf):
                         commands.console.file = buf
@@ -1393,7 +1393,7 @@ def main():
     print("\n--- show_routines: every state is visible, not swallowed (W-02) ---")
     with tempfile.TemporaryDirectory() as tmp3, Store(tmp3):
         buf = io.StringIO()
-        saved_file = commands.console.file
+        saved_file = commands.console._file
         commands.console.file = buf
         try:
             with redirect_stdout(buf):
@@ -1420,7 +1420,7 @@ def main():
         routines.append_log("healthy", "ok", "wrote the digest")
 
         buf = io.StringIO()
-        saved_file = commands.console.file
+        saved_file = commands.console._file
         commands.console.file = buf
         try:
             with redirect_stdout(buf):

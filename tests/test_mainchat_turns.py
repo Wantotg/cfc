@@ -59,7 +59,7 @@ def drive(conn, sid, keys, private=False, app_conn=None):
     out = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(keys)
-    saved_file = main.console.file
+    saved_file = main.console._file
     try:
         with contextlib.redirect_stdout(out):
             main.console.file = out
@@ -101,7 +101,7 @@ def main_():
         print("--- 'm' refuses when the bundle is unconfigured ---")
         mainchat.MAIN_CHAT_DIR = ""
         out = io.StringIO()
-        saved_file = main.console.file
+        saved_file = main.console._file
         try:
             with contextlib.redirect_stdout(out):
                 main.console.file = out
@@ -119,7 +119,7 @@ def main_():
         (bdir / mainchat.FIRST_MESSAGE_FILE).unlink()
         mainchat.MAIN_CHAT_DIR = str(bdir)
         out2 = io.StringIO()
-        saved_file = main.console.file
+        saved_file = main.console._file
         try:
             with contextlib.redirect_stdout(out2):
                 main.console.file = out2

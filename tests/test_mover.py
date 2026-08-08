@@ -617,7 +617,7 @@ def main():
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO("1\n")
-        saved_file = commands.console.file
+        saved_file = commands.console._file
         try:
             with contextlib.redirect_stdout(out):
                 commands.console.file = out
@@ -664,7 +664,7 @@ def main():
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO("\n")  # blank line at the file prompt: cancel
-        saved_file = commands.console.file
+        saved_file = commands.console._file
         try:
             with contextlib.redirect_stdout(out):
                 commands.console.file = out
@@ -1109,7 +1109,7 @@ def main():
 
         def captured(fn, *a, **k):
             out = io.StringIO()
-            real_file = commands.console.file
+            real_file = commands.console._file
             commands.console.file = out
             try:
                 with contextlib.redirect_stdout(out):

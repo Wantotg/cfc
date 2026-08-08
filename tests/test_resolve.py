@@ -72,7 +72,7 @@ def scripted(answers):
 
 def run(fn, *args, answers=(), **kw):
     """Call an I/O shell with scripted input, returning (result, output)."""
-    saved_input, saved_file = builtins.input, commands.console.file
+    saved_input, saved_file = builtins.input, commands.console._file
     builtins.input = scripted(answers)
     out = io.StringIO()
     commands.console.file = out

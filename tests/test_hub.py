@@ -123,7 +123,7 @@ def main():
 
     def _captured(fn, *a, **k):
         buf = _io.StringIO()
-        real_file = hub.console.file
+        real_file = hub.console._file
         hub.console.file = buf
         try:
             with _contextlib.redirect_stdout(buf):

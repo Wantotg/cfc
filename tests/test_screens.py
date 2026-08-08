@@ -203,7 +203,7 @@ def test_help_matches_dispatch():
     for mode in ("config", "wiki", "routine"):
         table = screens.build_table(mode)
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             screens._print_help(table)
@@ -306,7 +306,7 @@ def test_config_render():
 
     def rendered():
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             screens._render_config()
@@ -407,7 +407,7 @@ def test_config_scopes_and_names():
 
     def rendered(fn, *a):
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             fn(*a)
@@ -498,7 +498,7 @@ def test_config_paths_and_connect():
         conn = dbmod.db(":memory:")
         table = screens.build_table("config")
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             table.dispatch["paths"]("", conn, table)
@@ -553,7 +553,7 @@ def test_screens_never_print_chat_syntax():
         import and every module shares that one object (decision 6), so the
         capture has to go through it."""
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             fn()
@@ -621,7 +621,7 @@ def test_wiki_read_argument_refusal():
 
     def captured(fn):
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             fn()
@@ -809,7 +809,7 @@ def test_wiki_diff_file_untracked():
 
     def captured(fn):
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             fn()
@@ -914,7 +914,7 @@ def test_routines_show_history_open():
 
         import io
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             table.dispatch["show"]("nightly", conn, table)
@@ -930,7 +930,7 @@ def test_routines_show_history_open():
            "schedule" in out and "runs only from /routine" in out, out)
 
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             table.dispatch["history"]("nightly", conn, table)
@@ -993,7 +993,7 @@ def test_routines_show_history_open():
             encoding="utf-8")
         routines.append_log("legacy-and-new", "ok", "the current one")
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             table.dispatch["history"]("legacy-and-new", conn, table)
@@ -1032,7 +1032,7 @@ def test_routines_run_and_new():
         import io
         buf = io.StringIO()
         import commands
-        saved_file = commands.console.file
+        saved_file = commands.console._file
         commands.console.file = buf
         try:
             with scripted([]):   # nothing typed -> Ctrl-C on the first prompt
@@ -1085,7 +1085,7 @@ def test_chat_model_threading():
         table = screens.build_table("config")
         import io
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             screens.render(table, conn)
@@ -1129,7 +1129,7 @@ def test_routines_narrow_and_wide():
             for width in (80, 140):
                 screens.console.width = width
                 buf = io.StringIO()
-                saved_file = screens.console.file
+                saved_file = screens.console._file
                 screens.console.file = buf
                 try:
                     screens._render_routines(conn)
@@ -1199,7 +1199,7 @@ def test_routines_schedule_column():
             for width, label in ((80, "narrow"), (140, "wide")):
                 screens.console.width = width
                 buf = io.StringIO()
-                saved_file = screens.console.file
+                saved_file = screens.console._file
                 screens.console.file = buf
                 # Captured right at the render boundary: proves the row's
                 # Schedule cell is the real assessment computed for this
@@ -1233,7 +1233,7 @@ def test_routines_schedule_column():
         table = screens.build_table("routine")
         import io
         buf = io.StringIO()
-        saved_file = screens.console.file
+        saved_file = screens.console._file
         screens.console.file = buf
         try:
             screens._routine_show("manual", conn2, table)
@@ -1265,7 +1265,7 @@ def test_private_screen_uses_app_conn():
         out = io.StringIO()
         real_stdin = sys.stdin
         sys.stdin = io.StringIO(script)
-        saved_file = chatmain.console.file
+        saved_file = chatmain.console._file
         try:
             with contextlib.redirect_stdout(out):
                 chatmain.console.file = out

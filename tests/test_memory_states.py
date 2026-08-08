@@ -215,7 +215,7 @@ def test_wiki_scope_gating():
         backfill.update_index = fake_update_index
         import io
         buf = io.StringIO()
-        saved_file = commands.console.file
+        saved_file = commands.console._file
         commands.console.file = buf
         try:
             commands.do_updatedb()
@@ -293,7 +293,7 @@ def test_missing_id_wiki_warning_names_files():
 
     import io
     buf = io.StringIO()
-    saved_file = commands.console.file
+    saved_file = commands.console._file
     commands.console.file = buf
     try:
         commands.do_updatedb()

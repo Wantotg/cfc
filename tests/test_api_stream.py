@@ -99,7 +99,7 @@ def _run_stream(deltas):
     apimod.httpx.Client = _FakeClient
     calls = []
     apimod.ai_reasoning_panel = lambda body: calls.append(1) or real_panel(body)
-    real_file = ui.console.file
+    real_file = ui.console._file
     ui.console.file = io.StringIO()
     try:
         with contextlib.redirect_stdout(io.StringIO()):

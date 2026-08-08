@@ -70,7 +70,7 @@ def run_select(query, pool, answers):
     Returns (result, output)."""
     saved_models = models.MODELS
     saved_input = builtins.input
-    saved_file = commands.console.file
+    saved_file = commands.console._file
     models.MODELS = _specs(pool)
     builtins.input = scripted(answers)
     out = io.StringIO()
@@ -239,7 +239,7 @@ def main():
     print("\n--- W-08: /list models marks a suspicious id, and it stays "
           "fully selectable ---")
     saved_models = models.MODELS
-    saved_file = commands.console.file
+    saved_file = commands.console._file
     try:
         suspicious_pool = POOL + ["vendor/typo/concatenated"]
         models.MODELS = _specs(suspicious_pool)

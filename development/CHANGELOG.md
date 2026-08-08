@@ -27,6 +27,34 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-08 — A capture hands an unset console back unset
+`D-19`, second pass, from the v1.9.1 triage. The first pass had every capture
+helper save `console.file` and restore that exact object. Rich's `file` getter
+cannot report the unset state: a console holding no file of its own resolves
+`sys.stdout` at print time, and the getter answers with it — so the save reads
+back a live terminal handle and the restore pins the console to it. That is
+the leak `D-19` exists to close, wearing the fix's clothes. It was live:
+`python -m pytest tests/` failed
+`test_empty_retry.py::test_both_empty_exits_announce`, whose assertion read an
+empty buffer while the line it wanted went to the screen, pinned there by
+`test_connection.py`'s helper — one of the four the pass had named as already
+correct. Every capture helper in `tests/` now saves `console._file`, the
+attribute that is `None` when nothing is set, so an unset console is handed
+back unset and a later plain `redirect_stdout` still receives Rich output.
+`tests/test_ui.py` gains that case beside the nested one, which is the half
+the first pass proved. Verified by disabling: putting `console.file` back in
+`test_connection.py` reproduces the failure.
+- Files: tests/test_agent.py, tests/test_api_stream.py,
+  tests/test_connection.py, tests/test_first_message.py, tests/test_hub.py,
+  tests/test_mainchat_turns.py, tests/test_memory_states.py,
+  tests/test_model.py, tests/test_model_revert.py,
+  tests/test_model_tools_notice.py, tests/test_mover.py,
+  tests/test_process_model.py, tests/test_resolve.py, tests/test_routines.py,
+  tests/test_screens.py, tests/test_turn_paths.py, tests/test_turn_repair.py,
+  tests/test_ui.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-07 — An untracked wiki file previews as the addition it would make
 `D-1.6.2-02`: `/wiki diff [scope] file`'s per-file picker used to offer a
 brand-new untracked *directory* as a single, undiffable row ("no diff to

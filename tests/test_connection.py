@@ -180,7 +180,7 @@ def _rendered(fn, *a, **kw):
     same object (`from ui import console`), so redirecting the one on `ui`
     covers every caller."""
     buf = io.StringIO()
-    saved = ui.console.file
+    saved = ui.console._file
     ui.console.file = buf
     try:
         with contextlib.redirect_stdout(buf):

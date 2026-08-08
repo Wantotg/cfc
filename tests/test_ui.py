@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.dont_write_bytecode = True
 
 import ast
+import contextlib
 import io
 import re
 
@@ -35,7 +36,7 @@ def ok(name, cond, detail=""):
 
 def rendered(text):
     buf = io.StringIO()
-    saved = console.file
+    saved = console._file
     console.file = buf
     try:
         console.print(text)
@@ -229,9 +230,15 @@ def test_capture_restore_preserves_nested_capture():
     outer capture's own buffer stops receiving anything from that point on —
     invisible in a one-file run because the process exits before anyone
     reads the buffer again, live within a shared process because a later,
-    unrelated capture is what actually notices the missing line."""
+    unrelated capture is what actually notices the missing line.
+
+    Read `console._file`, never `console.file`: the property getter falls
+    back to the live `sys.stdout` when the console holds nothing of its own,
+    so a save through it can never see "unset" and restoring it pins the
+    console — which is the leak itself, wearing the fix's clothes. See
+    `test_capture_restore_leaves_an_unset_console_unset` below."""
     print("\n--- D-19: restore the file found, not sys.stdout ---")
-    saved = console.file
+    saved = console._file
     try:
         outer = io.StringIO()
         console.file = outer
@@ -239,7 +246,7 @@ def test_capture_restore_preserves_nested_capture():
 
         # The now-repaired idiom: save what's there, restore that exact object.
         inner = io.StringIO()
-        inner_saved = console.file
+        inner_saved = console._file
         console.file = inner
         console.print("inner line")
         console.file = inner_saved
@@ -253,7 +260,7 @@ def test_capture_restore_preserves_nested_capture():
     finally:
         console.file = saved
 
-    saved = console.file
+    saved = console._file
     try:
         outer = io.StringIO()
         console.file = outer
@@ -284,6 +291,48 @@ def test_capture_restore_preserves_nested_capture():
        "a later capture" in later.getvalue(), later.getvalue())
 
 
+def test_capture_restore_leaves_an_unset_console_unset():
+    """D-19, the ordinary case: the console usually holds no file of its own
+    and resolves `sys.stdout` at print time, which is what makes a plain
+    `redirect_stdout` capture Rich output at all. A capture must hand it back
+    in that state.
+
+    `console.file` cannot tell you it is in that state — the getter answers
+    with the live `sys.stdout` — so a save-and-restore written through the
+    property pins the console to a real terminal handle, and every later
+    `redirect_stdout` in the process reads empty while the output goes to the
+    screen. That is the same leak D-19 set out to close, which is why every
+    capture helper in `tests/` saves `console._file`.
+    """
+    print("\n--- D-19: an unset console is handed back unset ---")
+    saved = console._file
+    try:
+        console.file = None
+        ok("the getter never reports the unset state",
+           console._file is None and console.file is sys.stdout)
+
+        out = io.StringIO()
+        found = console._file
+        try:
+            with contextlib.redirect_stdout(out):
+                console.file = out
+                console.print("captured line")
+        finally:
+            console.file = found
+        ok("the capture itself received its line",
+           "captured line" in out.getvalue(), out.getvalue())
+        ok("the console is unset again, not pinned to a terminal handle",
+           console._file is None, console._file)
+
+        later = io.StringIO()
+        with contextlib.redirect_stdout(later):
+            console.print("later line")
+        ok("so a later plain redirect_stdout still receives Rich output",
+           "later line" in later.getvalue(), later.getvalue())
+    finally:
+        console.file = saved
+
+
 def main_():
     print("\n--- rich shortcodes survive literally ---")
     out = rendered("run :new:")
@@ -310,6 +359,7 @@ def main_():
 
     test_display_name_sweep()
     test_capture_restore_preserves_nested_capture()
+    test_capture_restore_leaves_an_unset_console_unset()
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
