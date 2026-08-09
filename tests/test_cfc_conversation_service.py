@@ -36,7 +36,11 @@ class FixedResponder:
 
 
 class RaisingResponder:
-    def __init__(self, exc: Exception):
+    """`BaseException`, not `Exception`: a `KeyboardInterrupt` during a live
+    turn is one of the cases `send_turn` has to end the turn for.
+    """
+
+    def __init__(self, exc: BaseException):
         self._exc = exc
 
     def respond(self, snapshot, model):
@@ -176,6 +180,80 @@ def test_unexpected_exception_never_propagates_out_of_send_turn(tmp_path):
         service.close()
 
 
+# --- every way out of send_turn ends the turn it started (B-2.0-25) --------
+
+def test_an_unrecognised_responder_result_still_ends_the_turn(tmp_path):
+    """A responder returning something that is not a `ResponderResult` is a
+    programming error in a later adapter, not a reason to leave a turn
+    active forever. It is recorded as a typed internal failure naming what
+    came back.
+    """
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        turn = service.send_turn(
+            chat.id, "fixture-model", "q", FixedResponder(None),  # not a result
+        )
+
+        assert turn.outcome.evidence.kind is FailureKind.INTERNAL
+        assert "unrecognised result" in turn.outcome.evidence.reason
+        assert service.get_turn(turn.id).outcome == turn.outcome
+        assert [m.role for m in service.snapshot(chat.id).messages] == [Role.USER]
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit],
+                          ids=["keyboard-interrupt", "system-exit"])
+def test_an_interruption_ends_the_turn_and_then_keeps_travelling(tmp_path, interruption):
+    """Ctrl-C during a live turn is not process death — the process survives,
+    so reopen recovery never runs. The turn ends as a typed interrupted
+    failure here, and the interruption still propagates, because a cfc that
+    swallowed Ctrl-C would be worse than one that lost a turn.
+    """
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        responder = RaisingResponder(interruption())
+
+        with pytest.raises(interruption):
+            service.send_turn(chat.id, "fixture-model", "q", responder)
+
+        # the user message that opened the turn names the turn to re-read
+        recorded = service.get_turn(service.snapshot(chat.id).messages[0].turn_id)
+        assert recorded.outcome.evidence.kind is FailureKind.INTERRUPTED
+        assert recorded.outcome.evidence.reason == interruption.__name__
+        assert recorded.finished_at is not None
+    finally:
+        service.close()
+
+
+def test_a_turn_after_an_interruption_is_the_next_position_not_a_second_active_one(tmp_path):
+    """The bug this replaced: an interrupted turn stayed active, so the
+    chat accumulated live turns that only a restart could end.
+    """
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        with pytest.raises(KeyboardInterrupt):
+            service.send_turn(
+                chat.id, "fixture-model", "q1", RaisingResponder(KeyboardInterrupt()),
+            )
+
+        later = service.send_turn(
+            chat.id, "fixture-model", "q2", FixedResponder(Completion(content="ok")),
+        )
+        assert later.position == 1
+        assert later.outcome.__class__.__name__ == "CompletedOutcome"
+
+        active = service._store._conn.execute(
+            "SELECT COUNT(*) FROM cfc_turns WHERE outcome_kind IS NULL"
+        ).fetchone()[0]
+        assert active == 0
+    finally:
+        service.close()
+
+
 # --- a later turn is permitted after every terminal outcome -----------------
 
 @pytest.mark.parametrize("responder_factory", [
@@ -183,7 +261,8 @@ def test_unexpected_exception_never_propagates_out_of_send_turn(tmp_path):
     lambda: FixedResponder(Failure(FailureEvidence(FailureKind.RESPONDER, "no"))),
     lambda: FixedResponder(Cancellation()),
     lambda: RaisingResponder(RuntimeError("boom")),
-], ids=["completed", "failed", "cancelled", "internal-exception"])
+    lambda: FixedResponder(None),
+], ids=["completed", "failed", "cancelled", "internal-exception", "unrecognised-result"])
 def test_a_later_turn_is_permitted_after_every_terminal_outcome(tmp_path, responder_factory):
     service = open_service(tmp_path)
     try:

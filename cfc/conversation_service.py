@@ -11,7 +11,12 @@ module alone. A later HTTP adapter supplies a `Responder`
 """
 from __future__ import annotations
 
-from cfc.conversation_store import ConversationStore, open_store
+from cfc.conversation_store import (
+    ConflictingFinalisation,
+    ConversationStore,
+    ConversationStoreError,
+    open_store,
+)
 from cfc.conversation_types import (
     Cancellation,
     Chat,
@@ -73,24 +78,48 @@ class ConversationService:
 
         The responder receives a `ConversationSnapshot` and a model string —
         nothing that could let it reach `cfc_turns`/`cfc_messages` itself.
-        An exception the responder raises is caught here, converted to a
-        typed internal failure, and used to end the active turn before this
-        method returns; it never propagates past this call, so a caller
-        never has to separately handle "the responder raised" as distinct
-        from "the responder returned Failure".
+
+        **Once this method has started a turn, that turn ends before this
+        method does.** Every way out of the body below is covered: an
+        ordinary exception (from the responder, from a result this module
+        doesn't recognise, or from the store itself) becomes a typed
+        internal failure and is returned rather than raised, so a caller
+        never handles "the responder raised" separately from "the responder
+        returned Failure". An interruption that is not an ordinary exception
+        — `KeyboardInterrupt`, `SystemExit`, a cancelled async task — ends
+        the turn as a typed interrupted failure and then keeps travelling,
+        because swallowing those would make cfc un-interruptible. Only a
+        process that dies outright leaves an active turn behind, and
+        `open_store`'s reopen recovery is that case's route.
         """
         turn, _user_message = self._store.start_turn(chat_id, model, user_content)
-        snapshot = self._store.snapshot(chat_id)
 
         try:
+            snapshot = self._store.snapshot(chat_id)
             result: ResponderResult = responder.respond(snapshot, model)
+            return self._apply_result(turn.id, result)
         except Exception as exc:  # noqa: BLE001 — deliberately broad: any responder failure
-            evidence = FailureEvidence(
-                FailureKind.INTERNAL, f"{type(exc).__name__}: {exc}",
+            return self._end_unfinished(
+                turn.id, FailureKind.INTERNAL, f"{type(exc).__name__}: {exc}",
             )
-            return self._store.fail_turn(turn.id, evidence)
+        except BaseException as exc:
+            try:
+                self._end_unfinished(
+                    turn.id, FailureKind.INTERRUPTED, type(exc).__name__,
+                )
+            except ConversationStoreError:
+                pass  # the store itself is unreachable; reopen recovery remains
+            raise
 
-        return self._apply_result(turn.id, result)
+    def _end_unfinished(self, turn_id: TurnId, kind: FailureKind, reason: str) -> Turn:
+        """End a turn that is still active. If it already ended — the store
+        committed its outcome and then something later in `send_turn` went
+        wrong — the stored ending stands and is returned untouched.
+        """
+        try:
+            return self._store.fail_turn(turn_id, FailureEvidence(kind, reason))
+        except ConflictingFinalisation:
+            return self._store.get_turn(turn_id)
 
     def _apply_result(self, turn_id: TurnId, result: ResponderResult) -> Turn:
         if isinstance(result, Completion):

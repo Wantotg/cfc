@@ -156,7 +156,9 @@ class FailureKind(Enum):
     """
     RESPONDER = "responder"        #: the responder itself returned Failure
     INTERNAL = "internal"          #: an unexpected responder exception, converted
-    INTERRUPTED = "interrupted"    #: recovered on reopen after process death
+    INTERRUPTED = "interrupted"    #: ended by something outside the responder —
+                                   #: Ctrl-C or a cancelled task during a live
+                                   #: turn, or reopen recovery after process death
 
 
 @dataclass(frozen=True)
