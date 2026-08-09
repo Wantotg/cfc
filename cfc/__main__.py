@@ -25,9 +25,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _dispatch(args: list[str]) -> int:
     if not args:
-        print("cfc is not yet a chat application. Run 'python -m cfc doctor' "
-              "to check this checkout's bootstrap readiness.")
-        return 0
+        from cfc import tui
+        return tui.run()
 
     command, rest = args[0], args[1:]
     if command == "doctor":

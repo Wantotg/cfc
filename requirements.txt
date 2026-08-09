@@ -3,3 +3,8 @@ rich>=15.0,<16.0
 sqlite-vec>=0.1,<0.2
 prompt_toolkit>=3.0,<4.0
 pyyaml>=6.0,<7.0
+
+# textual — the 2.0 TUI runtime (cfc/tui.py). Retained alongside
+# prompt_toolkit/rich above rather than replacing them: launch.sh still
+# starts the v1.9.1 flat runtime on the old stack until final cutover.
+textual>=8.2,<9.0

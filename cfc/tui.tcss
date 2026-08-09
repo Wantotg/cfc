@@ -1,0 +1,83 @@
+/* tui.tcss — styling for cfc/tui.py's Hub and Chat screens. Deliberately
+ * plain: colours, borders, spacing, and every other visual-identity choice
+ * are out of loop 1's scope (see workspace/2.0 .../Tool Authority and TUI
+ * Contract.md, "Deliberately unsettled details"). This file only makes the
+ * layout legible: transcript scrolls, composer stays a fixed height, and
+ * the wide-terminal chat switcher docks beside the conversation.
+ */
+
+#hub-body {
+    height: 1fr;
+}
+
+#hub-chat-list {
+    height: 1fr;
+}
+
+#hub-empty {
+    padding: 1 2;
+}
+
+#new-chat-dialog, #chats-modal-dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#new-chat-error {
+    color: $error;
+    height: auto;
+}
+
+#chats-modal-list {
+    height: auto;
+    max-height: 20;
+}
+
+#chat-title-bar {
+    dock: top;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#chat-body {
+    height: 1fr;
+}
+
+#chat-transcript {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+}
+
+#chat-switcher {
+    width: 28;
+    height: 1fr;
+    border-left: solid $panel-lighten-2;
+}
+
+#chat-status {
+    dock: bottom;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+Composer {
+    dock: bottom;
+    height: 5;
+    border: round $primary;
+}
+
+#startup-failure {
+    align: center middle;
+}
+
+#startup-failure-message, #startup-failure-next-step {
+    width: 80%;
+    padding: 1 2;
+}

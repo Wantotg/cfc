@@ -61,11 +61,27 @@ def write_config(tmp_path: Path, body: str) -> Path:
 
 # --- no subcommand / unknown command -----------------------------------------
 
-def test_no_subcommand_states_it_is_not_yet_chat(tmp_path):
-    result = run_cfc([], cwd=tmp_path)
-    assert result.returncode == 0
-    assert "not yet a chat application" in result.stdout
-    assert "doctor" in result.stdout
+def test_no_subcommand_dispatches_to_the_tui_entry_point(monkeypatch):
+    """Stage 4 loop 1 retires the old placeholder message: `python -m cfc`
+    with no arguments now starts the real Textual client (`cfc.tui.run`).
+    Driving that end to end needs a live terminal — a real subprocess with
+    no tty attached blocks forever waiting on stdin rather than exiting, so
+    this proves the dispatch wiring at the seam instead. `cfc.tui`'s own
+    `build_app`/`CfcApp` behaviour, including every startup-refusal family,
+    is proved directly and thoroughly in `tests/test_cfc_tui.py` through
+    Textual's headless `Pilot`; real terminal feel is Cas's WSL/Windows
+    Terminal playtest, not an automated proof this loop can give honestly.
+    """
+    from cfc import __main__ as cfc_main
+    from cfc import tui
+
+    calls = []
+    monkeypatch.setattr(tui, "run", lambda: calls.append(1) or 7)
+
+    code = cfc_main.main([])
+
+    assert calls == [1]
+    assert code == 7
 
 
 def test_unknown_command_refuses_with_short_usage(tmp_path):

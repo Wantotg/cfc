@@ -8,3 +8,8 @@ pillow>=11.0
 
 # pytest — runs the tests/ suite.
 pytest
+
+# pytest-asyncio — Textual's Pilot-driven tests (tests/test_cfc_tui.py) need
+# a real running event loop per test, not the bare asyncio.run() wrapper the
+# rest of Stage 3/4's async tests use directly.
+pytest-asyncio>=1.4,<2.0
