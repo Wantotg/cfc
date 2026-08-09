@@ -41,7 +41,7 @@ a `ListView.Selected` raised by an unrelated list, and the current item's
 distinct rendered style before and after switching.
 - Files: cfc/tui.py, cfc/tui.tcss, tests/test_cfc_tui.py
 - Status: shipped
-- Commit: pending
+- Commit: 022f241
 
 ## 2026-08-09 — `doctor` names every missing provider field and the runtime version it checked (`D-2.0-19`, `D-2.0-20`)
 v2.0 Stage 4, loop two. `settings.REQUIRED_PROVIDER_FIELD_NAMES` now names
@@ -59,7 +59,7 @@ documented `X.Y.Z (floor X.Y)` form, instead of an empty string (`D-2.0-20`).
 - Files: cfc/settings.py, cfc/diagnostics.py, tests/test_cfc_settings.py,
   tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
 - Status: shipped
-- Commit: pending
+- Commit: 022f241
 
 ## 2026-08-09 — A working Textual ordinary-chat client (`D-2.0-36`, `D-2.0-42` UI-visible parts)
 v2.0 Stage 4, loop one. `python -m cfc` with no arguments now starts a real

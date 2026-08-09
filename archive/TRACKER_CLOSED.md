@@ -6,13 +6,19 @@ the closed finding and its reason so a later playtest does not reopen it as if
 it were new.
 
 `workspace/TRACKER.md` was reduced to open work on 2026-08-08. The rows
-below retain their existing shape and wording; the rows added at the top are
-the closed records reconciled in that pass.
+below retain their existing shape and wording; new closure records are added
+at the top.
 
 ## Closed
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-48 | `Shift+Enter` arrives as plain `Enter`, so a newline cannot be typed | nothing owed as an application defect; Cas's configured Windows Terminal Kitty-protocol mapping delivers the distinct `shift+enter` event that cfc already handles. The remaining terminal guidance is tracked separately as `D-2.0-56` | 2026-08-09 |
+| N-2.0-52 | a message is not stored before it is sent to the model | nothing owed; `start_turn` commits the turn and user message before any provider request, while the settled wire-history rule deliberately omits failed or cancelled orphans. The missing visible explanation is `D-2.0-53` | 2026-08-09 |
+| B-2.0-47 | the docked chat switcher accepts a selection and opens nothing | shipped in `022f241`; the guarded `ListView.Selected` route opens another stored chat through `CfcApp.open_chat` and leaves the current chat selected as an explicit no-op | 2026-08-09 |
+| D-2.0-50 | the switcher's current-chat class has no style | shipped in `022f241`; `chat-switcher-current` now renders with the theme's bold accent style | 2026-08-09 |
+| D-2.0-20 | the runtime row reports no version when it passes | shipped in `022f241`; the ready row reports the running interpreter version and enforced floor | 2026-08-09 |
+| D-2.0-19 | the chat provider row names one missing field per run | shipped in `022f241`; the diagnostic row collects and names all absent required provider fields together | 2026-08-09 |
 | B-2.0-32 | the store's own errors defeat the turn-ending guards | shipped in `eabc5c7`; unfinished-turn cleanup now catches the store's `sqlite3.Error` boundary, preserves interruption propagation, and uses typed `TurnEndingFailed` where an internal ending failure must surface | 2026-08-09 |
 | B-2.0-33 | an internal failure stores arbitrary exception text | shipped in `eabc5c7`; responder exceptions and unrecognised results now persist one bounded cfc-authored reason, with no arbitrary exception text or result representation | 2026-08-09 |
 | D-2.0-36 | nothing serialises two turns in one chat now that `send_turn` is awaitable | shipped in `eabc5c7`; `start_turn` refuses a second active turn atomically inside the chat's transaction, while different chats remain independent | 2026-08-09 |

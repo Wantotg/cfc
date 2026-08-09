@@ -26,37 +26,19 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## B-2.0-48 · `Shift+Enter` arrives as plain `Enter`, so a newline cannot be typed
+## B-2.0-55 · Switching chats stacks screens, so `Esc` stops returning to the Hub
 
-**Found:** 2026-08-09, during the v2.0 Stage 4 loop one playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 4 loop two playtest.
 
-The Composer handles Textual's `shift+enter` event, but Cas's terminal sends
-the same carriage return for `Shift+Enter` as for `Enter`. The distinction is
-therefore lost before Textual or cfc receives it. The Kitty keyboard protocol
-can restore the natural key in a configured terminal; `Ctrl+J` is the
-always-distinguishable fallback.
+`CfcApp.open_chat` always pushes a new `ChatScreen`, including when a chat is
+already open. Switching from one chat to another therefore leaves the previous
+chat on the screen stack. Each later switch adds another screen, and `Esc`
+returns through abandoned chats instead of reaching the Hub.
 
-This remains open after one small Designer decision: choose the fallback key as
-part of the documented interaction contract, then make the fallback available
-in cfc, document the Windows Terminal mapping for the natural key, and name
-the newline keys in the Chat footer. The existing `shift+enter` branch is
-already valid when the terminal sends the event.
-
----
-
-## B-2.0-47 · The docked chat switcher accepts a selection and opens nothing
-
-**Found:** 2026-08-09, during the v2.0 Stage 4 loop one playtest.
-
-The wide Chat screen builds and displays the stored-chat switcher but has no
-`ListView.Selected` handler. Clicking or keyboard-selecting another chat moves
-the list highlight and then leaves the current Chat screen unchanged. The
-narrow `ChatsModal` already has the required route.
-
-Add the equivalent guarded handler to `ChatScreen`: another chat opens, while
-selecting the current chat does not push a duplicate screen. Prove both mouse
-and keyboard selection, including the unchanged screen stack for the current
-chat.
+When a `ChatScreen` is already active, replace it with the selected chat;
+opening from the Hub should continue to push a new screen. Prove the docked
+switcher and `F2` modal routes, one `Esc` back to the Hub, and draft survival
+when switching away and back.
 
 ---
 

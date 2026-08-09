@@ -15,17 +15,18 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## D-2.0-50 · The switcher's current-chat class has no style
+## D-2.0-56 · Nothing tells a person `Shift+Enter` needs a configured terminal
 
-**Found:** 2026-08-09, by reading during the v2.0 Stage 4 loop one playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 4 loop two playtest.
 
-`ChatScreen._render_switcher` adds `chat-switcher-current` to the current
-chat's item, but `cfc/tui.tcss` has no rule for that class. The wide switcher
-therefore gives no visual indication of which chat is open.
+The Composer correctly handles Textual's `shift+enter` event, but a terminal
+that does not send Kitty keyboard-protocol sequences can deliver the same
+carriage return for `Shift+Enter` as for `Enter`. cfc currently gives no
+guidance for that environment requirement.
 
-Add one stylesheet rule and prove that the current item is visibly distinct.
-This is separate from `B-2.0-47` so the visual defect cannot disappear if the
-selection fix is split from the same pass.
+Document the supported terminal requirement and the Windows Terminal mapping
+that restores the natural key. If the interaction contract chooses a fallback
+key, document that route and expose it consistently in cfc as well.
 
 ---
 
@@ -59,28 +60,18 @@ decisions when a real gateway supplies evidence, keeping the adapter's stored
 reason bounded and provider-independent. This is watching work for Stage 4,
 not a reopening of `D-2.0-37` or `D-2.0-38`.
 
-## D-2.0-20 · The runtime row reports no version when it passes
+## D-2.0-53 · A failed turn's message is never sent, and nothing says so
 
-**Found:** 2026-08-09, during the v2.0 Stage 2 loop two playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 4 loop two playtest.
 
-`_runtime_row` returns `ready` without saying which interpreter it checked or
-what floor it enforces. The passing row should report the state the behaviour
-uses, just as the other healthy rows report their path or provider details.
-Include the running version and the 3.14 floor, for example `3.14.4 (floor
-3.14)`.
+The provider-wire history rule correctly omits a failed or cancelled turn's
+orphaned user message from every later request. The transcript only says that
+the turn failed, so a person is not told that the message was never sent and
+that later replies will not see it.
 
-## D-2.0-19 · The chat provider row names one missing field per run
-
-**Found:** 2026-08-09, during the v2.0 Stage 2 loop two playtest.
-
-With an empty `config.py`, doctor names only `API_BASE`. After that is set, it
-names only `API_KEY`, and then only `MODEL`. The settings builder deliberately
-raises on the first missing provider field, but the diagnostic row is the
-fresh-clone surface a person uses to learn what needs filling.
-
-Collect the missing required provider fields in `diagnostics._provider_row` and
-name them together. Keep `settings.build_provider` fail-fast for callers that
-need one actionable exception rather than a list.
+Make the failed and cancelled transcript lines state the omission. Prove both
+outcomes with a later completed turn and verify that the stored message remains
+unchanged while the provider request omits it.
 
 ---
 
