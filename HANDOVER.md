@@ -126,6 +126,24 @@ converter refuses an incoherent snapshot before HTTP. This keeps stored
 history provider-independent while making an unsuccessful turn's omission
 visible rather than silently replaying it.
 
+Stage 3 owns a database target through one non-blocking `flock` held on that
+target's own file descriptor for the store's lifetime. Existing targets are
+classified from the locked descriptor's header before SQLite opens them, and
+the pathname is revalidated against that descriptor before proceeding. A
+foreign, incompatible, corrupt, or empty target refuses without cfc creating
+or deleting `.lock`, `-wal`, or `-shm` sidecars; the old sidecar protocol is
+retired and is not a cross-version compatibility promise. A usable target must
+also open read-write, so operating-system acquisition failures become the
+store's bounded `TargetUnusable` refusal rather than escaping as raw errors.
+
+At the provider boundary, exactly 200–299 is success and every other HTTP
+status is typed evidence before the body is interpreted. A successful response
+with an object-shaped top-level error has a fixed bounded malformed-response
+reason, while provider text remains untrusted and unpersisted. Usage is
+separate from absence: supported whole-number spellings are normalised,
+explicit zero survives, and present invalid counts refuse the response rather
+than being silently discarded.
+
 SQLite and Qdrant formats are development interfaces until Cas deliberately
 adopts a stable-data promise. An incompatible database refuses visibly and
 explains deletion or rebuild; it is never silently reinterpreted, partially

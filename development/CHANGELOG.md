@@ -25,6 +25,17 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Keep refused database targets in the store's own vocabulary (`B-2.0-41`)
+v2.0 Stage 3, loop three playtest correction. An existing cfc database that
+cannot be opened read-write, an existing foreign target that cannot be opened,
+and an absent target whose directory cannot be written now refuse through the
+store's `TargetUnusable` vocabulary with bounded operating-system reasons.
+The store no longer lets a bare `PermissionError` escape from target
+acquisition, and the refusal paths leave the filesystem unchanged.
+- Files: cfc/conversation_store.py, tests/test_cfc_conversation_store.py
+- Status: shipped
+- Commit: 746c573
+
 ## 2026-08-09 — Make the Stage 3 store and provider boundaries state the facts they use (`B-2.0-34`, `B-2.0-35`, `D-2.0-28`, `D-2.0-37`, `D-2.0-38`, `D-2.0-39`, `W-07`)
 v2.0 Stage 3, loop three. `conversation_store.open_store` no longer locks a
 sidecar `.lock` file: it holds one non-blocking `flock` directly on the
@@ -64,7 +75,7 @@ real implementations (`D-2.0-39`). No user-facing surface changed —
   tests/test_cfc_conversation_store.py, tests/test_cfc_provider_adapter.py,
   tests/test_cfc_conversation_service.py
 - Status: shipped
-- Commit: pending
+- Commit: 21f4f31
 
 ## 2026-08-09 — Make the Stage 3 kernel usable with one OpenAI-compatible provider (`B-2.0-26`, `B-2.0-27`, `Q-2.0-29`, `W-07`)
 v2.0 Stage 3, loop two. Closes both loop-one corrections first: `Usage` with

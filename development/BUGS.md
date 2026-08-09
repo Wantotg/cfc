@@ -58,36 +58,6 @@ Keep provider-specific safe evidence typed at the adapter boundary.
 
 ---
 
-## B-2.0-34 · Refusing a WAL-mode target leaves SQLite sidecars beside it
-
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
-
-The read-only refusal classifier preserves the main database bytes, but opening
-an existing WAL-mode target creates `-wal` and `-shm` beside it. The current
-refusal tests use only rollback-journal databases and therefore do not see the
-sidecars.
-
-**Shape of the remedy:** decide whether classification reads the SQLite header
-without opening the WAL database or whether the contract accepts these
-sidecars. Do not delete them while another process may own the WAL.
-
----
-
-## B-2.0-35 · A non-2xx response below 400 is reported as malformed JSON
-
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
-
-The adapter treats only status `>= 400` as an HTTP failure. A redirect or other
-non-success status below 400 falls through to JSON parsing and is stored as a
-malformed-response failure, losing the status that explains the refusal.
-
-**Shape of the remedy:** classify every non-success status as typed HTTP
-evidence; reserve malformed-response evidence for a successful status whose
-body cannot be used. Keep redirects disabled so a bearer header is not resent
-to an unexpected destination.
-
----
-
 ## B-11 · A wiki page deleted from the vault stays in the recall index
 
 **Found:** 2026-08-03, by reading during the v1.6.3 triage. Live on the
