@@ -160,16 +160,17 @@ def _write_foreign_wal_sqlite(path: Path, application_id) -> None:
 @pytest.mark.parametrize("build,expected_problem", [
     (lambda p: _write_bytes(p, b"not a sqlite database, just some bytes" * 4),
      store_mod.DatabaseProblem.CORRUPT),
-    (lambda p: _write_bytes(p, b""),
-     store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY),
     (lambda p: _write_foreign_sqlite(p, application_id=0x11111111, user_version=0),
      store_mod.DatabaseProblem.FOREIGN_APPLICATION),
     (lambda p: _write_foreign_sqlite(p, application_id=store_mod.APPLICATION_ID, user_version=0),
      store_mod.DatabaseProblem.SCHEMA_TOO_OLD),
     (lambda p: _write_foreign_sqlite(p, application_id=store_mod.APPLICATION_ID, user_version=99),
      store_mod.DatabaseProblem.SCHEMA_TOO_NEW),
-], ids=["corrupt", "empty", "foreign-application", "schema-too-old", "schema-too-new"])
+], ids=["corrupt", "foreign-application", "schema-too-old", "schema-too-new"])
 def test_incompatible_targets_refuse_without_mutation(tmp_path, build, expected_problem):
+    """The empty target's own wording is D-2.0-42's differently-worded case,
+    proved separately below — every other incompatible target still gets the
+    shared move-or-remove recovery hint."""
     path = db_path(tmp_path)
     build(path)
     before = path.read_bytes()
@@ -230,7 +231,66 @@ def test_a_zero_page_target_is_called_empty(tmp_path):
         store_mod.open_store(path)
 
     assert exc_info.value.problem is store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY
-    assert "move or remove" in exc_info.value.detail
+
+
+# --- D-2.0-42: a zero-byte target's own recovery wording ---------------
+
+def test_an_empty_targets_wording_states_it_may_be_cfcs_own_leftover(tmp_path):
+    """The truthful fact this wording adds over the generic recovery hint:
+    cfc itself creates the zero-byte file before it finishes opening it, so
+    an interrupted first start is a real, nameable explanation — not the
+    only one, so cfc still does not act on it (below)."""
+    path = db_path(tmp_path)
+    _write_bytes(path, b"")
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    detail = exc_info.value.detail
+    assert "interrupted first start" in detail
+    assert "move" in detail and "aside or remove it and restart" in detail
+    assert "preserve" in detail and "DATABASE_PATH" in detail
+
+
+def test_an_empty_target_is_neither_adopted_nor_deleted_and_grows_no_sidecars(tmp_path):
+    path = db_path(tmp_path)
+    _write_bytes(path, b"")
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible):
+        store_mod.open_store(path)
+
+    assert path.exists()
+    assert path.read_bytes() == before  # not adopted: still exactly the empty file it was
+    for suffix in (".lock", "-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+    # refuses identically on a second attempt — no automatic remediation happened
+    with pytest.raises(store_mod.DatabaseIncompatible) as second:
+        store_mod.open_store(path)
+    assert second.value.problem is store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY
+    assert path.read_bytes() == before
+
+
+def test_an_interrupted_first_start_leaves_exactly_the_empty_target_this_wording_describes(tmp_path):
+    """Reproduces the real D-2.0-42 scenario: `_acquire_target_lock` creates
+    the absent target with `O_CREAT | O_EXCL` before `_initialise_fresh` ever
+    runs, so a process that dies in between leaves exactly a zero-byte file
+    at the configured path — simulated directly here since killing the real
+    process mid-open is not reproducible in-process. The *next* `open_store`
+    call must meet exactly the wording proved above, not a generic message.
+    """
+    path = db_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
+    os.close(fd)
+    assert path.stat().st_size == 0
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY
+    assert "interrupted first start" in exc_info.value.detail
 
 
 def test_a_markerless_populated_target_is_not_called_empty(tmp_path):
@@ -805,6 +865,58 @@ def test_a_later_turn_is_permitted_after_every_terminal_state(tmp_path, finalize
         turn2, _ = store.start_turn(chat.id, "m", "q2")
         assert turn2.position == turn.position + 1
         assert turn2.outcome is None
+    finally:
+        store.close()
+
+
+# --- D-2.0-36: one active turn per chat, refused atomically -----------------
+
+def test_starting_a_second_turn_in_the_same_chat_before_the_first_ends_refuses(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c")
+        first, _ = store.start_turn(chat.id, "m", "q1")
+
+        with pytest.raises(store_mod.ActiveTurnExists) as exc_info:
+            store.start_turn(chat.id, "m", "q2")
+
+        assert exc_info.value.chat_id == chat.id
+        assert exc_info.value.active_turn_id == first.id
+        # refused before any write: no second turn or message row exists
+        turn_count = store._conn.execute(
+            "SELECT COUNT(*) FROM cfc_turns WHERE chat_id = ?", (chat.id.value,)
+        ).fetchone()[0]
+        message_count = store._conn.execute(
+            "SELECT COUNT(*) FROM cfc_messages WHERE chat_id = ?", (chat.id.value,)
+        ).fetchone()[0]
+        assert turn_count == 1
+        assert message_count == 1
+    finally:
+        store.close()
+
+
+def test_a_terminal_turn_no_longer_blocks_starting_another(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c")
+        turn, _ = store.start_turn(chat.id, "m", "q1")
+        store.cancel_turn(turn.id)
+
+        second, _ = store.start_turn(chat.id, "m", "q2")
+        assert second.position == turn.position + 1
+    finally:
+        store.close()
+
+
+def test_different_chats_may_each_have_one_independent_active_turn(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat_a = store.create_chat("a")
+        chat_b = store.create_chat("b")
+        turn_a, _ = store.start_turn(chat_a.id, "m", "qa")
+        turn_b, _ = store.start_turn(chat_b.id, "m", "qb")
+        assert turn_a.chat_id == chat_a.id
+        assert turn_b.chat_id == chat_b.id
     finally:
         store.close()
 

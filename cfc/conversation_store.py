@@ -99,6 +99,29 @@ _POPULATED_UNCLAIMED_HINT = (
     "different file"
 )
 
+#: D-2.0-42: an absent target becomes a zero-byte file the instant this
+#: module's own `O_CREAT | O_EXCL` wins the race (`_acquire_target_lock`);
+#: an interruption or a later refusal before that file gains real content
+#: leaves it sitting at the configured path, and a later run's own
+#: classification then calls it `EMPTY_OR_ARBITRARY` and refuses to touch it
+#: — the exact same fact `_RECOVERY_HINT` states for a target cfc has no
+#: reason to believe is its own. This wording says the one thing
+#: `_RECOVERY_HINT` cannot: an empty target here may well be cfc's own
+#: leftover from a first start that never finished, not a stranger's file —
+#: but cfc still cannot prove that from zero bytes alone, so it still
+#: refuses rather than adopting or deleting it (loop 1 does not weaken that
+#: refusal). The reader decides, not this module: preserve-and-choose-
+#: another-path for anyone unsure, move-aside-or-remove-and-restart for
+#: anyone who recognises it as their own interrupted first start.
+_EMPTY_TARGET_HINT = (
+    "it may be cfc's own leftover from an interrupted first start, since "
+    "cfc creates this path before it finishes opening it — but an empty "
+    "file carries no way to tell that apart from something else entirely; "
+    "if you expected a fresh cfc database here, move {path} aside or "
+    "remove it and restart cfc so it can create one; if you are not sure, "
+    "preserve {path} and point DATABASE_PATH at a different file instead"
+)
+
 _SCHEMA_STATEMENTS = (
     """
     CREATE TABLE cfc_chats (
@@ -216,6 +239,24 @@ class DatabaseIncompatible(ConversationStoreError):
         self.problem = problem
         self.detail = detail
         super().__init__(f"{path}: {detail}")
+
+
+class ActiveTurnExists(ConversationStoreError):
+    """`start_turn` refused: `chat_id` already has one active (outcome-less)
+    turn, `active_turn_id`. Checked and raised inside the same `BEGIN
+    IMMEDIATE` transaction that would otherwise insert a second one (D-2.0-36),
+    so two `start_turn` calls racing on the same chat cannot both win — the
+    loser sees this before it ever reaches a responder. A different chat is
+    unaffected: this check is scoped to `chat_id` alone.
+    """
+
+    def __init__(self, chat_id: ChatId, active_turn_id: TurnId):
+        self.chat_id = chat_id
+        self.active_turn_id = active_turn_id
+        super().__init__(
+            f"chat {chat_id} already has an active turn ({active_turn_id}); "
+            f"it must finish or be cancelled before another can start"
+        )
 
 
 class UnknownChat(ConversationStoreError):
@@ -406,7 +447,9 @@ def _classify_header(
     hint = _RECOVERY_HINT.format(path=path)
 
     if size == 0:
-        return DatabaseProblem.EMPTY_OR_ARBITRARY, f"is empty (no application identity); {hint}"
+        empty_hint = _EMPTY_TARGET_HINT.format(path=path)
+        return (DatabaseProblem.EMPTY_OR_ARBITRARY,
+                f"is empty (no application identity); {empty_hint}")
     if len(header) < _HEADER_SIZE or not header.startswith(_SQLITE_MAGIC):
         return DatabaseProblem.CORRUPT, f"is not a valid SQLite file: bad header; {hint}"
     page_size = _page_size_from_header(header)
@@ -686,10 +729,21 @@ class ConversationStore:
         return _row_to_turn(row) if row is not None else None
 
     def start_turn(self, chat_id: ChatId, model: str, user_content: str) -> tuple[Turn, Message]:
+        """Raises `ActiveTurnExists` if `chat_id` already has one active
+        turn — checked inside this call's own transaction, so it is
+        authoritative even against a racing concurrent call, not merely a
+        pre-check a caller could outrun (D-2.0-36).
+        """
         self.get_chat(chat_id)
         conn = self._conn
         conn.execute("BEGIN IMMEDIATE")
         try:
+            active_row = conn.execute(
+                "SELECT id FROM cfc_turns WHERE chat_id = ? AND outcome_kind IS NULL",
+                (chat_id.value,),
+            ).fetchone()
+            if active_row is not None:
+                raise ActiveTurnExists(chat_id, TurnId(active_row[0]))
             row = conn.execute(
                 "SELECT COALESCE(MAX(position), -1) + 1 FROM cfc_turns WHERE chat_id = ?",
                 (chat_id.value,),

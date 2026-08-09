@@ -25,6 +25,58 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — A working Textual ordinary-chat client (`D-2.0-36`, `D-2.0-42` UI-visible parts)
+v2.0 Stage 4, loop one. `python -m cfc` with no arguments now starts a real
+Textual application (`cfc/tui.py`) instead of printing a placeholder line:
+it loads configuration, opens the configured 2.0 store, builds the
+OpenAI-compatible responder, and shows a Hub of stored chats and a working
+Chat screen — literal selectable text, a fixed multiline composer (`Enter`
+sends, `Shift+Enter` inserts a newline), an independently scrollable
+transcript, and a wide-terminal chat switcher that collapses to a `ChatsModal`
+below 80 columns (`F2`). Each accepted send runs
+`ConversationService.send_turn` in an app-owned worker; a second send while
+that chat is busy refuses visibly without clearing its draft, and a
+different chat runs its own independent worker at the same time. The
+layered `Esc` route closes a modal, then cancels the chat's active request,
+then returns to the Hub; quitting cancels and awaits every worker before
+closing the responder and the store, in that order. A known configuration
+or store-startup refusal renders as a bounded `StartupFailureApp` screen
+with the safe setting/path and next step — never a raw traceback or a mock
+Hub. Proved with 33 new Pilot-driven tests
+(`tests/test_cfc_tui.py`) that drive the real keyboard, mouse, and resize
+stack rather than calling action methods directly.
+- Files: cfc/tui.py, cfc/tui.tcss, cfc/__main__.py, requirements.txt,
+  requirements-dev.txt, pytest.ini, tests/test_cfc_tui.py,
+  tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: pending
+
+## 2026-08-09 — A safe turn-ending boundary and one active turn per chat (`B-2.0-32`, `B-2.0-33`, `D-2.0-36`, `D-2.0-42`)
+v2.0 Stage 4, loop one, kernel prerequisite for exposing the conversation
+service to a background UI caller. `ConversationStore.start_turn` now
+refuses a second active turn in the same chat atomically, inside the same
+transaction that would otherwise insert one (`ActiveTurnExists`,
+`D-2.0-36`) — a later UI mirrors this refusal, but the store is what makes
+it authoritative against a real race. `ConversationService` now catches the
+store's own `sqlite3.Error`, not just `ConversationStoreError`, while ending
+a turn: a store failure while recording a cancellation or interruption's
+ending is swallowed the same as an unreachable store, so it can never mask
+the `KeyboardInterrupt`/cancellation it happens alongside, and a store
+failure while ending an internal failure now raises the typed
+`TurnEndingFailed` instead of leaking a raw SQLite exception to the caller
+(`B-2.0-32`). Every internal-failure path — an unexpected responder
+exception or an unrecognised responder result — now stores one fixed,
+cfc-authored reason instead of `str(exc)` or `repr(result)`, so a future
+adapter's exception text can never reach `failure_reason` (`B-2.0-33`). A
+zero-byte database target's own recovery wording now states the true fact
+that it may be cfc's own leftover from an interrupted first start, alongside
+the preserve-and-choose-another-path option for anyone unsure (`D-2.0-42`);
+the refusal itself, the locking, and the no-sidecar guarantee are unchanged.
+- Files: cfc/conversation_service.py, cfc/conversation_store.py,
+  tests/test_cfc_conversation_service.py, tests/test_cfc_conversation_store.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — Keep refused database targets in the store's own vocabulary (`B-2.0-41`)
 v2.0 Stage 3, loop three playtest correction. An existing cfc database that
 cannot be opened read-write, an existing foreign target that cannot be opened,

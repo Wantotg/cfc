@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,30 @@ class OpenStoreResponder:
         except conversation_store.ConversationStoreError as exc:
             self.observed_error = exc
         return Cancellation()
+
+
+class _FailOnceConn:
+    """Wraps a real `sqlite3.Connection` and raises once, on the first
+    `execute` call whose SQL contains `trigger`, then behaves normally for
+    everything else — the service-level twin of the proxy
+    `test_cfc_conversation_store.py` uses at the repository boundary,
+    injected here at `service._store._conn` to simulate the store's own
+    SQLite raising while `conversation_service` is trying to end a turn.
+    """
+
+    def __init__(self, real, trigger: str):
+        self._real = real
+        self._trigger = trigger
+        self._fired = False
+
+    def execute(self, sql, *args, **kwargs):
+        if not self._fired and self._trigger in sql:
+            self._fired = True
+            raise sqlite3.OperationalError(f"simulated failure: {self._trigger}")
+        return self._real.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 def db_path(tmp_path: Path) -> Path:
@@ -283,10 +308,66 @@ def test_unexpected_responder_exception_becomes_typed_internal_failure(tmp_path)
         turn = run(service.send_turn(chat.id, "fixture-model", "q", responder))
 
         assert turn.outcome.evidence.kind is FailureKind.INTERNAL
-        assert "boom" in turn.outcome.evidence.reason
+        assert turn.outcome.evidence.reason == service_mod._INTERNAL_FAILURE_REASON
         # ended, not left dangling: re-reading the store shows the same
         # terminal outcome, and a later turn is immediately permitted
         assert service.get_turn(turn.id).outcome == turn.outcome
+    finally:
+        service.close()
+
+
+# --- B-2.0-33: internal evidence is one bounded, cfc-authored reason -------
+
+def test_internal_failure_reason_never_carries_the_exception_text(tmp_path):
+    """A future adapter's exception could contain a provider body, a
+    request detail, or a credential — none of that may reach storage."""
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        secret = "sk-super-secret-credential-marker"
+        responder = RaisingResponder(RuntimeError(secret))
+
+        turn = run(service.send_turn(chat.id, "fixture-model", "q", responder))
+
+        assert secret not in turn.outcome.evidence.reason
+        assert "RuntimeError" not in turn.outcome.evidence.reason
+        assert turn.outcome.evidence.reason == service_mod._INTERNAL_FAILURE_REASON
+    finally:
+        service.close()
+
+
+def test_unrecognised_result_reason_never_carries_its_repr(tmp_path):
+    class _LeaksIfPrinted:
+        def __repr__(self):
+            return "CREDENTIAL_LEAK_MARKER"
+
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        turn = run(service.send_turn(
+            chat.id, "fixture-model", "q", FixedResponder(_LeaksIfPrinted()),
+        ))
+        assert turn.outcome.evidence.kind is FailureKind.INTERNAL
+        assert "CREDENTIAL_LEAK_MARKER" not in turn.outcome.evidence.reason
+        assert turn.outcome.evidence.reason == service_mod._INTERNAL_FAILURE_REASON
+    finally:
+        service.close()
+
+
+def test_every_internal_failure_path_shares_the_one_bounded_reason(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        exception_chat = service.create_chat("c1")
+        exception_turn = run(service.send_turn(
+            exception_chat.id, "m", "q", RaisingResponder(RuntimeError("x")),
+        ))
+        unrecognised_chat = service.create_chat("c2")
+        unrecognised_turn = run(service.send_turn(
+            unrecognised_chat.id, "m", "q", FixedResponder(None),
+        ))
+        assert (exception_turn.outcome.evidence.reason
+                == unrecognised_turn.outcome.evidence.reason
+                == service_mod._INTERNAL_FAILURE_REASON)
     finally:
         service.close()
 
@@ -317,7 +398,7 @@ def test_an_unrecognised_responder_result_still_ends_the_turn(tmp_path):
         ))
 
         assert turn.outcome.evidence.kind is FailureKind.INTERNAL
-        assert "unrecognised result" in turn.outcome.evidence.reason
+        assert turn.outcome.evidence.reason == service_mod._INTERNAL_FAILURE_REASON
         assert service.get_turn(turn.id).outcome == turn.outcome
         assert [m.role for m in service.snapshot(chat.id).messages] == [Role.USER]
     finally:
@@ -545,6 +626,169 @@ def test_responder_protocol_carries_no_store_or_authority_argument():
 
 def test_send_turn_is_a_coroutine_function():
     assert inspect.iscoroutinefunction(service_mod.ConversationService.send_turn)
+
+
+# --- D-2.0-36: one active turn per chat, refused before a responder --------
+
+def test_a_second_send_in_the_same_active_chat_refuses_before_reaching_a_responder(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        first_responder = SlowResponder()
+        second_responder = FixedResponder(Completion(content="must not be reached"))
+
+        async def scenario():
+            task = asyncio.ensure_future(
+                service.send_turn(chat.id, "fixture-model", "q1", first_responder)
+            )
+            await first_responder.started.wait()
+            with pytest.raises(conversation_store.ActiveTurnExists):
+                await service.send_turn(chat.id, "fixture-model", "q2", second_responder)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        run(scenario())
+
+        # the refused draft invoked no responder and wrote nothing: the
+        # presentation layer, not the service, owns keeping "q2" around
+        assert second_responder.calls == []
+        snapshot = service.snapshot(chat.id)
+        assert [m.content for m in snapshot.messages if m.role is Role.USER] == ["q1"]
+    finally:
+        service.close()
+
+
+def test_the_refusal_names_the_chat_and_the_active_turn(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        responder = SlowResponder()
+
+        async def scenario():
+            task = asyncio.ensure_future(
+                service.send_turn(chat.id, "fixture-model", "q1", responder)
+            )
+            await responder.started.wait()
+            with pytest.raises(conversation_store.ActiveTurnExists) as exc_info:
+                await service.send_turn(chat.id, "fixture-model", "q2", responder)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return exc_info.value
+
+        error = run(scenario())
+        active_turn_id = service.snapshot(chat.id).messages[0].turn_id
+        assert error.chat_id == chat.id
+        assert error.active_turn_id == active_turn_id
+    finally:
+        service.close()
+
+
+def test_two_different_chats_each_run_one_independent_active_turn(tmp_path):
+    """Cas's clarification: different chats may each have one active request
+    at the same time — this is not a promise of concurrent turns *in* one
+    chat, which the test above proves refused."""
+    service = open_service(tmp_path)
+    try:
+        chat_a = service.create_chat("a")
+        chat_b = service.create_chat("b")
+        responder_a = SlowResponder()
+        responder_b = SlowResponder()
+
+        async def scenario():
+            task_a = asyncio.ensure_future(
+                service.send_turn(chat_a.id, "fixture-model", "qa", responder_a))
+            task_b = asyncio.ensure_future(
+                service.send_turn(chat_b.id, "fixture-model", "qb", responder_b))
+            await responder_a.started.wait()
+            await responder_b.started.wait()  # both under way at once: neither refused the other
+            task_a.cancel()
+            task_b.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task_a
+            with pytest.raises(asyncio.CancelledError):
+                await task_b
+
+        run(scenario())
+
+        assert [m.content for m in service.snapshot(chat_a.id).messages] == ["qa"]
+        assert [m.content for m in service.snapshot(chat_b.id).messages] == ["qb"]
+    finally:
+        service.close()
+
+
+def test_a_terminal_outcome_reopens_the_chat_for_another_turn(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        run(service.send_turn(
+            chat.id, "fixture-model", "q1", FixedResponder(Completion(content="ok"))))
+        # no ActiveTurnExists: the prior turn is terminal, not active
+        second = run(service.send_turn(
+            chat.id, "fixture-model", "q2", FixedResponder(Completion(content="ok2"))))
+        assert second.position == 1
+    finally:
+        service.close()
+
+
+# --- B-2.0-32: a store failure while ending a turn is never raw and never --
+# --- masks the interruption or cancellation it happens alongside -----------
+
+def test_a_store_failure_ending_an_internal_failure_raises_bounded_error_not_raw_sqlite(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        service._store._conn = _FailOnceConn(
+            service._store._conn, "UPDATE cfc_turns SET finished_at",
+        )
+        responder = RaisingResponder(RuntimeError("boom"))
+
+        with pytest.raises(service_mod.TurnEndingFailed):
+            run(service.send_turn(chat.id, "fixture-model", "q", responder))
+    finally:
+        service.close()
+
+
+def test_a_store_failure_while_ending_an_interruption_does_not_mask_it(tmp_path):
+    """The bug: the guards caught `ConversationStoreError`, not the store's
+    real `sqlite3.Error`, so a store failure while recording the ending
+    could propagate instead of the `KeyboardInterrupt` it was ending —
+    silently turning an interrupt into a database error."""
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        service._store._conn = _FailOnceConn(
+            service._store._conn, "UPDATE cfc_turns SET finished_at",
+        )
+        responder = RaisingResponder(KeyboardInterrupt())
+
+        with pytest.raises(KeyboardInterrupt):
+            run(service.send_turn(chat.id, "fixture-model", "q", responder))
+    finally:
+        service.close()
+
+
+def test_a_store_failure_while_ending_a_cancelled_task_does_not_mask_the_cancellation(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        responder = SlowResponder()
+
+        async def scenario():
+            task = asyncio.ensure_future(
+                service.send_turn(chat.id, "fixture-model", "q", responder))
+            await responder.started.wait()
+            service._store._conn = _FailOnceConn(
+                service._store._conn, "UPDATE cfc_turns SET finished_at",
+            )
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        run(scenario())  # must not raise sqlite3.Error or TurnEndingFailed instead
+    finally:
+        service.close()
 
 
 # --- module boundary: no flat runtime, config, vault, or network -----------
