@@ -25,6 +25,50 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Add the 2.0 conversation ledger: SQLite store, ownership lock, and turn service (`W-07`)
+v2.0 Stage 3, loop one. The first Stage 3 kernel: a provider-independent
+conversation service and a new SQLite store that can create and reopen
+ordinary chats, accept a turn through an injected deterministic responder,
+and leave every accepted turn with exactly one terminal outcome. No user-facing
+surface — `launch.sh` and bare `python -m cfc` are unchanged.
+
+`conversation_types.py` holds the immutable vocabulary: opaque chat/turn/message
+identities, UTC-offset timestamps, literal content, explicit chat-local and
+within-turn positions, and three-way terminal outcomes (completed/failed/cancelled)
+with typed, redacted failure evidence and independently-optional usage counts.
+`ChatKind` has exactly one member, so a private durable chat isn't a shape these
+types can express. The injected `Responder` protocol receives only an immutable
+snapshot and the selected model — never a database connection.
+
+`conversation_store.py` opens the database: it revalidates the target path,
+becomes its exclusive owner via `fcntl.flock` on a sidecar file (the same
+kernel-released mechanism `schedule.py`'s `_Lock` already uses, not a stale
+lock-file heuristic), and accepts only an absent target or one carrying cfc's
+own `PRAGMA application_id`/`user_version` markers at the exact supported
+version — corrupt, empty, foreign-application, and old/new-version files all
+refuse before any pragma, journal, or schema write touches them. Every turn an
+earlier owner left active is recovered to a typed interrupted failure on the
+next writable open. The repository layer's `complete_turn`/`fail_turn`/`cancel_turn`
+are idempotent on an identical repeat and refuse a conflicting one, leaving one
+ending in place either way.
+
+`conversation_service.py` is the one caller that starts a turn, invokes the
+responder, and requests the repository's terminal transition; an unexpected
+responder exception is converted to a typed internal failure and used to end
+the turn before this method returns, rather than propagating.
+
+93 new focused tests, including a real child process that holds the store
+while a second process is refused and then succeeds once the first is killed
+(proving the lock is kernel-released, not polled), and a monkeypatched
+connection proxy proving a final-write failure rolls back to a recoverable
+active turn. `python -m pytest`: 324 passed.
+- Files: cfc/conversation_types.py, cfc/conversation_store.py,
+  cfc/conversation_service.py, tests/test_cfc_conversation_types.py,
+  tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_service.py,
+  tests/fixtures/conversation_store_child.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — Stop doctor telling you to overwrite a `config.py` that exists (`B-2.0-18`)
 v2.0 Stage 2, loop two, playtest. `diagnose` gave every configuration load
 failure the same cure — *copy `config.example.py` to `config.py`* — including

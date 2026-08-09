@@ -1,0 +1,297 @@
+"""test_cfc_conversation_types.py — cfc/conversation_types.py: the
+provider-independent conversation vocabulary and the injected responder
+boundary. Generated values and in-memory objects only — no config, no flat
+v1.9.1 module, no provider, no filesystem.
+"""
+from __future__ import annotations
+
+import dataclasses
+import datetime
+
+import pytest
+
+from cfc import conversation_types as ct
+
+
+def aware(offset_hours: int = 0) -> datetime.datetime:
+    tz = datetime.timezone(datetime.timedelta(hours=offset_hours))
+    return datetime.datetime(2026, 8, 9, 12, 0, 0, tzinfo=tz)
+
+
+def make_chat(**overrides) -> ct.Chat:
+    fields = dict(
+        id=ct.ChatId.new(),
+        kind=ct.ChatKind.ORDINARY,
+        title="a chat",
+        created_at=aware(),
+        updated_at=aware(),
+    )
+    fields.update(overrides)
+    return ct.Chat(**fields)
+
+
+def make_turn(**overrides) -> ct.Turn:
+    fields = dict(
+        id=ct.TurnId.new(),
+        chat_id=ct.ChatId.new(),
+        position=0,
+        model="fixture-model",
+        started_at=aware(),
+    )
+    fields.update(overrides)
+    return ct.Turn(**fields)
+
+
+def make_message(**overrides) -> ct.Message:
+    fields = dict(
+        id=ct.MessageId.new(),
+        chat_id=ct.ChatId.new(),
+        turn_id=ct.TurnId.new(),
+        turn_position=0,
+        role=ct.Role.USER,
+        content="hello",
+        created_at=aware(),
+    )
+    fields.update(overrides)
+    return ct.Message(**fields)
+
+
+# --- identities: opaque, stable, distinct -----------------------------------
+
+def test_ids_are_distinct_and_stable():
+    a, b = ct.ChatId.new(), ct.ChatId.new()
+    assert a != b
+    assert a == ct.ChatId(a.value)
+
+
+@pytest.mark.parametrize("id_type", [ct.ChatId, ct.TurnId, ct.MessageId])
+def test_id_types_cannot_be_confused_for_each_other(id_type):
+    other_types = [t for t in (ct.ChatId, ct.TurnId, ct.MessageId) if t is not id_type]
+    made = id_type.new()
+    for other in other_types:
+        assert not isinstance(made, other)
+
+
+# --- immutability -------------------------------------------------------
+
+@pytest.mark.parametrize("build,attr,value", [
+    (make_chat, "title", "changed"),
+    (make_turn, "model", "changed"),
+    (make_message, "content", "changed"),
+])
+def test_records_are_frozen(build, attr, value):
+    record = build()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(record, attr, value)
+
+
+def test_ids_are_frozen():
+    chat_id = ct.ChatId.new()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        chat_id.value = "changed"  # noqa
+
+
+# --- literal content: stored and returned byte-for-byte ---------------------
+
+@pytest.mark.parametrize("content", [
+    "",
+    "plain text",
+    "line one\nline two\n",
+    "  leading and trailing whitespace  ",
+    "<script>alert(1)</script>",
+    "unicode: café ☃ \U0001f600",
+    "a very long line " * 200,
+])
+def test_message_content_is_literal(content):
+    message = make_message(content=content)
+    assert message.content == content
+
+
+def test_role_has_exactly_user_and_assistant():
+    assert {member.value for member in ct.Role} == {"user", "assistant"}
+
+
+# --- explicit ordering fields ---------------------------------------------
+
+def test_turn_position_is_explicit_and_not_negative():
+    turn = make_turn(position=3)
+    assert turn.position == 3
+    with pytest.raises(ValueError):
+        make_turn(position=-1)
+
+
+def test_message_turn_position_is_explicit_and_not_negative():
+    message = make_message(turn_position=1)
+    assert message.turn_position == 1
+    with pytest.raises(ValueError):
+        make_message(turn_position=-1)
+
+
+# --- UTC-offset timestamps: aware only --------------------------------------
+
+def test_naive_timestamps_are_rejected_everywhere():
+    naive = datetime.datetime(2026, 8, 9, 12, 0, 0)
+    with pytest.raises(ValueError):
+        make_chat(created_at=naive)
+    with pytest.raises(ValueError):
+        make_turn(started_at=naive)
+    with pytest.raises(ValueError):
+        make_message(created_at=naive)
+
+
+def test_non_utc_offsets_are_accepted_as_is():
+    turn = make_turn(started_at=aware(offset_hours=5))
+    assert turn.started_at.utcoffset() == datetime.timedelta(hours=5)
+
+
+# --- optional usage: each count independently distinguishable --------------
+
+@pytest.mark.parametrize("usage,expected", [
+    (ct.Usage(), (None, None, None)),
+    (ct.Usage(input_tokens=10), (10, None, None)),
+    (ct.Usage(input_tokens=10, output_tokens=5), (10, 5, None)),
+    (ct.Usage(input_tokens=10, output_tokens=5, total_tokens=15), (10, 5, 15)),
+    (ct.Usage(total_tokens=0), (None, None, 0)),
+])
+def test_usage_counts_are_independently_optional(usage, expected):
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == expected
+
+
+def test_absent_usage_is_none_not_a_zeroed_object():
+    turn = make_turn(
+        finished_at=aware(),
+        outcome=ct.CompletedOutcome(usage=None),
+    )
+    assert turn.outcome.usage is None
+
+
+# --- terminal outcomes: exactly one per turn, three distinct shapes --------
+
+def test_turn_outcome_variants_are_mutually_exclusive_types():
+    completed = ct.CompletedOutcome()
+    failed = ct.FailedOutcome(ct.FailureEvidence(ct.FailureKind.RESPONDER, "no"))
+    cancelled = ct.CancelledOutcome()
+    variants = [completed, failed, cancelled]
+    for a in variants:
+        for b in variants:
+            if a is not b:
+                assert type(a) is not type(b)
+
+
+def test_active_turn_has_no_outcome_and_no_finish_time():
+    turn = make_turn()
+    assert turn.outcome is None
+    assert turn.finished_at is None
+    assert turn.state is ct.TurnState.ACTIVE
+
+
+@pytest.mark.parametrize("outcome,expected_state", [
+    (ct.CompletedOutcome(), ct.TurnState.COMPLETED),
+    (ct.FailedOutcome(ct.FailureEvidence(ct.FailureKind.INTERNAL, "boom")),
+     ct.TurnState.FAILED),
+    (ct.CancelledOutcome(), ct.TurnState.CANCELLED),
+])
+def test_finished_turn_state_matches_its_outcome(outcome, expected_state):
+    turn = make_turn(finished_at=aware(), outcome=outcome)
+    assert turn.state is expected_state
+
+
+def test_a_turn_cannot_hold_an_outcome_without_a_finish_time():
+    with pytest.raises(ValueError):
+        make_turn(outcome=ct.CancelledOutcome())
+
+
+def test_a_turn_cannot_hold_a_finish_time_without_an_outcome():
+    with pytest.raises(ValueError):
+        make_turn(finished_at=aware())
+
+
+def test_a_turn_record_has_exactly_one_outcome_field():
+    """The type itself has no second slot a caller could use to attach a
+    conflicting outcome — `Turn` carries one `outcome` attribute, not a
+    list or a pair.
+    """
+    field_names = {f.name for f in dataclasses.fields(ct.Turn)}
+    outcome_fields = {name for name in field_names if "outcome" in name}
+    assert outcome_fields == {"outcome"}
+
+
+# --- failure evidence: typed, no raw payload dumping ------------------------
+
+def test_failure_kinds_are_distinct():
+    assert {member.value for member in ct.FailureKind} == {
+        "responder", "internal", "interrupted",
+    }
+
+
+def test_failure_evidence_carries_kind_and_a_short_reason():
+    evidence = ct.FailureEvidence(ct.FailureKind.RESPONDER, "declared failure")
+    assert evidence.kind is ct.FailureKind.RESPONDER
+    assert evidence.reason == "declared failure"
+
+
+# --- ChatKind: cannot express a private durable chat ------------------------
+
+def test_chat_kind_has_exactly_one_member():
+    assert list(ct.ChatKind) == [ct.ChatKind.ORDINARY]
+
+
+def test_chat_kind_has_no_private_value():
+    with pytest.raises(ValueError):
+        ct.ChatKind("private")
+    assert not hasattr(ct.ChatKind, "PRIVATE")
+
+
+# --- responder protocol: each allowed result shape --------------------------
+
+def test_completion_carries_content_and_optional_usage():
+    result = ct.Completion(content="hi", usage=ct.Usage(input_tokens=1))
+    assert isinstance(result, ct.Completion)
+    assert result.content == "hi"
+    assert result.usage.input_tokens == 1
+
+
+def test_failure_result_carries_typed_evidence():
+    result = ct.Failure(ct.FailureEvidence(ct.FailureKind.RESPONDER, "nope"))
+    assert isinstance(result, ct.Failure)
+    assert result.evidence.kind is ct.FailureKind.RESPONDER
+
+
+def test_cancellation_result_carries_nothing_else():
+    result = ct.Cancellation()
+    assert isinstance(result, ct.Cancellation)
+    assert dataclasses.fields(ct.Cancellation) == ()
+
+
+def test_responder_protocol_is_structural_and_minimal():
+    class FixedResponder:
+        def respond(self, snapshot, model):
+            return ct.Completion(content=f"echo:{model}")
+
+    responder: ct.Responder = FixedResponder()
+    snapshot = ct.ConversationSnapshot(chat_id=ct.ChatId.new(), messages=())
+    result = responder.respond(snapshot, "fixture-model")
+    assert result == ct.Completion(content="echo:fixture-model")
+
+
+def test_conversation_snapshot_holds_ordered_messages_only():
+    chat_id = ct.ChatId.new()
+    turn_id = ct.TurnId.new()
+    first = make_message(chat_id=chat_id, turn_id=turn_id, turn_position=0,
+                          role=ct.Role.USER, content="hi")
+    second = make_message(chat_id=chat_id, turn_id=turn_id, turn_position=1,
+                           role=ct.Role.ASSISTANT, content="hello")
+    snapshot = ct.ConversationSnapshot(chat_id=chat_id, messages=(first, second))
+    assert snapshot.messages == (first, second)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        snapshot.chat_id = ct.ChatId.new()  # noqa
+
+
+# --- module boundary: no flat runtime, config, provider, or filesystem -----
+
+def test_module_touches_no_flat_runtime_config_or_filesystem():
+    import inspect
+    source = inspect.getsource(ct)
+    for banned in ("import sqlite3", "import config", "from config",
+                   "import httpx", "open(", "Path("):
+        assert banned not in source
