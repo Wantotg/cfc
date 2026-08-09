@@ -563,3 +563,5 @@ silently read empty.
 ```
 —ฅ/ᐠ. ̫ .ᐟ\ฅ — `REROLL!`
 ```
+
+## v2.0 — The refactor: focused daily-chat foundation

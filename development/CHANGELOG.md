@@ -101,7 +101,7 @@ with no enclosing block is not valid Python at all, so the old bare
   tests/golden_baseline.txt, tests/fixtures/entry_gate_synthetic_config.py,
   tests/fixtures/entry_gate_bootstrap.py, tests/fixtures/sitecustomize.py
 - Status: shipped
-- Commit: pending
+- Commit: 183a097
 
 ## 2026-08-08 — Add the cfc/ bootstrap core and python -m cfc doctor
 v2.0 Stage 2, loop one, part two. The first parallel 2.0 boundary: a
@@ -165,7 +165,7 @@ with no personal `config.py` reachable by the test process.
   tests/test_cfc_settings.py, tests/test_cfc_diagnostics.py,
   tests/test_cfc_doctor_cli.py
 - Status: shipped
-- Commit: pending
+- Commit: 183a097
 
 ## 2026-08-08 — Make the entry gate check for the guard, not the word
 v2.0 Stage 1, loop two. The entry gate decided a file belonged to the legacy

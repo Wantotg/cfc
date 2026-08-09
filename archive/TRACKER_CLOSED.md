@@ -13,6 +13,16 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-01 | doctor's vault row diagnosed the chat-export directory, not the vault | shipped in `05348ad`; the row now reads `VAULT_ROOT`, and regression coverage proves export-directory settings cannot make it report a ready vault | 2026-08-09 |
+| D-2.0-04 | the one complete check cannot run without a personal `config.py` | shipped in `183a097`; the entry gate installs a tracked synthetic config fixture, so the complete preservation suite runs without reading Cas's private configuration | 2026-08-09 |
+| D-2.0-05 | a guard-shaped line at column zero inside a triple-quoted string still counts | shipped in `183a097`; structural AST recognition replaces the regex and rejects guard-shaped text inside strings | 2026-08-09 |
+| Q-2.0-08 | what state does a row report when the configuration never loaded | answered: dependent rows use `not checked`; implementation work folds into `D-2.0-07` | 2026-08-09 |
+| Q-2.0-09 | `DB_PATH` or `DATABASE_PATH` for the 2.0 database target | answered: use `DATABASE_PATH`; implementation work opens as `D-2.0-16` | 2026-08-09 |
+| Q-2.0-10 | which Python version does 2.0 refuse below | answered: use 3.14 as the floor; implementation work opens as `D-2.0-17` | 2026-08-09 |
+| N-2.0-12 | `CFC_CONFIG_PATH`, the environment override | nothing owed; it is a test-only escape hatch that does not widen authority, and the loaded path is visible in the configuration row | 2026-08-09 |
+| N-2.0-13 | file tools report only "not configured" or "not built" | nothing owed; file tools have no 2.0 implementation yet, so shape validation would report on a feature that cannot run | 2026-08-09 |
+| N-2.0-14 | the config snapshot turns a set into a tuple | nothing owed; no 2.0 consumer needs set arithmetic yet, and the immutable conversion is documented at its boundary | 2026-08-09 |
+| Q-2.0-15 | what running `launch.sh` writes | answered: it writes only under `~/.cfc` by rotating a database backup when due and appending a launch log; it does not write the repository | 2026-08-09 |
 | D-2.0-03 | the frozen-list guard detects a suite by a substring, not by its guard | shipped in `0a5463c`; `has_main_guard()` now recognises the required guard-line shape and regression cases reject prose and incomplete spellings. The narrower triple-quoted-string residue is `D-2.0-05` | 2026-08-08 |
 | N-2.0-06 | the module-level sortedness assert is redundant | nothing owed; the inventory test already compares the frozen list with sorted discovery, but the import-time assert fails earlier and closer to an unsorted list. The project does not run pytest under `-O`, so the assert remains useful | 2026-08-08 |
 | W-12 | the loop tags a version because the loop ended, not because it is finished | deliberately closed at the 2.0 entry gate: the installed workflow separates a completed loop from a release, so the finding's required destination is already present before the first 2.0 code loop | 2026-08-08 |

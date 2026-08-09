@@ -26,6 +26,26 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## B-2.0-11 · A configured vault root that does not exist reports ready
+
+**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
+
+**Symptom:** `python -m cfc doctor` reports a configured `VAULT_ROOT` as
+`ready` when the directory does not exist.
+
+**Cause:** `cfc/diagnostics.py`'s `_vault_row` uses
+`paths.usable_directory_reason`, which accepts a missing path when its nearest
+existing ancestor is a directory. That is correct for the 2.0 database target,
+which cfc may create in Stage 3, but wrong for the vault: cfc creates no vault
+root, so a missing directory is a configuration error rather than a usable
+target.
+
+**Shape of the remedy:** require the vault directory to exist and report the
+missing or unusable path clearly. The distinction belongs in the vault row, not
+in the shared database-target path rule.
+
+---
+
 ## B-11 · A wiki page deleted from the vault stays in the recall index
 
 **Found:** 2026-08-03, by reading during the v1.6.3 triage. Live on the

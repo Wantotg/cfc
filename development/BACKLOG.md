@@ -15,47 +15,46 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## D-2.0-05 · A guard-shaped line at column zero inside a triple-quoted string still counts
+## D-2.0-17 · The 2.0 interpreter floor is lower than the supported baseline
 
-**Found:** 2026-08-08, by reading during v2.0 Stage 1 loop two.
+**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
 
-`tests/test_entry_gate.py` recognises a legacy suite with a line-anchored
-regular expression. A line with the guard shape inside a multi-line
-triple-quoted string therefore counts as a suite even though it is only test
-fixture text:
+`cfc/entry.py` refuses interpreters below 3.10, while the 2.0 design and
+refactor roadmap name Python 3.14 as the supported baseline. cfc 2.0 has only
+been run on 3.14.4, so claiming that four older minor versions are supported
+would be broader than the evidence. Raise the 2.0 floor to 3.14 and state it
+in the 2.0 bootstrap instructions in `config.example.py`. The README's
+3.10 requirement describes v1.9.1 and remains unchanged until cutover.
 
-```python
-SRC = """
-if __name__ == "__main__":
-    main()
-"""
-```
+## D-2.0-16 · The 2.0 database field should be `DATABASE_PATH`, not `DB_PATH`
 
-The frozen-list comparison fails loudly on a false positive, which is safer
-than the old substring test, but it invites adding a non-suite to the list.
-That child process can import a module, do nothing, and exit successfully,
-leaving the gate green while checking nothing.
+**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
 
-When the entry gate is next touched, recognise the guard structurally with
-`ast.parse` and an `ast.If` whose test compares `__name__` with `"__main__"`.
-String literals and comments cannot produce that statement shape. This is
-small enough to ride with the next gate change and does not earn a loop of its
-own.
+`cfc/settings.py` currently exposes the new 2.0 database target as `DB_PATH`,
+while the 2.0 design named it `DATABASE_PATH`. `DB_PATH` is also the legacy
+database constant in `db.py` and the name patched by the characterization
+tests, so the same spelling now points at two different databases. Nothing
+consumes the new field yet. Rename it in `cfc/settings.py` and
+`config.example.py` before Stage 3 opens a real database through it.
 
-## D-2.0-04 · The one complete check cannot run without a personal `config.py`
+## D-2.0-07 · Doctor gives no next step, and no state for a row it never checked
 
-**Found:** 2026-08-08, by reading during v2.0 Stage 1 loop one.
+**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
 
-The entry gate depends on the ignored, personal `config.py`. With that file
-absent, 28 test modules fail during collection and pytest runs no tests. The
-test content itself is not the problem — the run leaves live data untouched —
-but the one command claiming to be the complete v1.9.1 preservation gate is
-not usable from a fresh clone.
+The 2.0 design gives each diagnostic a canonical state, a safe explanation,
+and an actionable next step. `Row` currently has only a name, state and detail.
+When configuration fails, downstream rows are marked `error` even though they
+were not diagnosed, which also conflicts with the diagnostic module's rule that
+optional rows are never `ERROR`. The required-row check asks only whether any
+required row is `ERROR`, so it would also accept a required row that was never
+examined.
 
-This belongs to Stage 2, where `python -m cfc doctor` must diagnose validated
-settings and availability, beside `W-11`'s `config.example.py` rewrite. The
-fresh-clone route and the usable example are the same gap seen from opposite
-sides.
+Add a `not checked` state for dependent rows, make required readiness mean that
+every required row is `READY`, and give known failure cases a `next_step` that
+renders as a readable second line. The missing-configuration route is the
+first concrete case: copy `config.example.py` to `config.py`, then fill the
+required provider settings. Keep the downstream explanation local to those
+rows, while the configuration row owns the cure.
 
 ## D-2.0-02 · The forged-text assertion passes only because 80 columns wraps the string
 
