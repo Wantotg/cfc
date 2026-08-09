@@ -278,14 +278,34 @@ def _acquire_target_lock(path: Path) -> tuple[int, bool]:
     existing target.
 
     Raises `DatabaseInUse` if another live process already holds this
-    target's lock.
+    target's lock, or `TargetUnusable` if the filesystem refuses the open
+    itself — a target cfc cannot read and write is refused in this module's
+    own vocabulary, with the reason the operating system gave, rather than
+    leaving `open_store` as a bare `OSError` no caller of a store expects
+    (B-2.0-41). Classification needs write access now that ownership is
+    the target's own descriptor, so "cannot open it" is decided here,
+    before any header is read.
     """
     try:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
         created_fresh = True
     except FileExistsError:
-        fd = os.open(str(path), os.O_RDWR)
+        try:
+            fd = os.open(str(path), os.O_RDWR)
+        except OSError as exc:
+            raise TargetUnusable(
+                path,
+                f"cfc could not open it for reading and writing "
+                f"({exc.strerror}); cfc owns and writes its own database, so "
+                f"read access alone is not enough"
+            ) from exc
         created_fresh = False
+    except OSError as exc:
+        raise TargetUnusable(
+            path,
+            f"cfc could not create a database file there ({exc.strerror}); "
+            f"check that {path.parent} exists and is writable"
+        ) from exc
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
@@ -780,7 +800,8 @@ def open_store(path: Path | str) -> ConversationStore:
 
     `path` must already be resolved — this function does not consult
     `config.py` or any legacy fallback path. Raises `TargetUnusable`
-    if the path shape itself is not usable, `DatabaseInUse` if another live
+    if the path shape itself is not usable or the filesystem refuses to
+    open it for reading and writing, `DatabaseInUse` if another live
     cfc process already owns it, or `DatabaseIncompatible` if an existing
     target is corrupt, empty/arbitrary, belongs to another application, or
     is an unsupported schema version. An absent target becomes a fresh,

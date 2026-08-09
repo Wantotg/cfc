@@ -6,6 +6,7 @@ the network.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 import sys
@@ -367,6 +368,77 @@ def test_a_pathname_swap_during_fresh_creation_is_refused_without_deleting_it(tm
 
     assert path.exists()
     assert path.stat().st_size == 0
+
+
+# --- B-2.0-41: a target cfc cannot open read-write is refused in its own
+# --- vocabulary, not as a bare OSError -------------------------------------
+
+#: Every permission check below is meaningless as root, which bypasses the
+#: file mode entirely and would open all three targets successfully.
+_needs_unprivileged = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="file permission bits do not restrict root",
+)
+
+
+@_needs_unprivileged
+def test_an_unreadable_writable_foreign_target_is_refused_as_unusable(tmp_path):
+    """Ownership is now the target's own descriptor, so classifying a
+    foreign database needs to open it read-write. When the filesystem says
+    no, that is still a refusal this module names — a caller catching
+    `ConversationStoreError` must not have a bare `PermissionError` come
+    past it — and the target is left exactly as it was.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=0x11111111, user_version=0)
+    before = path.read_bytes()
+    path.chmod(0o444)
+
+    with pytest.raises(store_mod.TargetUnusable) as exc_info:
+        store_mod.open_store(path)
+
+    assert "reading and writing" in exc_info.value.reason
+    path.chmod(0o644)
+    assert path.read_bytes() == before
+    for suffix in (".lock", "-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+
+@_needs_unprivileged
+def test_a_read_only_current_cfc_database_is_refused_not_opened(tmp_path):
+    """A cfc database restored without write permission — from a snapshot,
+    or off a read-only mount — is this module's own file and classifies
+    perfectly, but a store that cannot record a turn's ending is not a
+    store. Refused, with the reason, before any connection exists.
+    """
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    path.chmod(0o444)
+
+    with pytest.raises(store_mod.TargetUnusable) as exc_info:
+        store_mod.open_store(path)
+
+    assert "reading and writing" in exc_info.value.reason
+
+
+@_needs_unprivileged
+def test_an_absent_target_in_an_unwritable_directory_is_refused_as_unusable(tmp_path):
+    """The other half: nothing exists to open, and the directory will not
+    accept the file cfc would create. `usable_target_reason` cannot see
+    this — it never writes — so the create attempt is where it surfaces.
+    """
+    directory = tmp_path / "readonly"
+    directory.mkdir()
+    directory.chmod(0o555)
+    path = directory / "chat.db"
+
+    try:
+        with pytest.raises(store_mod.TargetUnusable) as exc_info:
+            store_mod.open_store(path)
+        assert "could not create" in exc_info.value.reason
+        assert not path.exists()
+    finally:
+        directory.chmod(0o755)
 
 
 def test_directory_target_is_refused_before_locking(tmp_path):
