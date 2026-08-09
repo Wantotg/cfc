@@ -147,7 +147,6 @@ def test_non_utc_offsets_are_accepted_as_is():
 # --- optional usage: each count independently distinguishable --------------
 
 @pytest.mark.parametrize("usage,expected", [
-    (ct.Usage(), (None, None, None)),
     (ct.Usage(input_tokens=10), (10, None, None)),
     (ct.Usage(input_tokens=10, output_tokens=5), (10, 5, None)),
     (ct.Usage(input_tokens=10, output_tokens=5, total_tokens=15), (10, 5, 15)),
@@ -163,6 +162,22 @@ def test_absent_usage_is_none_not_a_zeroed_object():
         outcome=ct.CompletedOutcome(usage=None),
     )
     assert turn.outcome.usage is None
+
+
+# --- B-2.0-26: all-absent Usage is not a second spelling of no usage --------
+
+@pytest.mark.parametrize("usage_kwargs", [
+    {},
+    dict(input_tokens=None, output_tokens=None, total_tokens=None),
+])
+def test_all_absent_usage_is_not_constructible(usage_kwargs):
+    with pytest.raises(ValueError):
+        ct.Usage(**usage_kwargs)
+
+
+def test_usage_with_at_least_one_zero_count_is_constructible():
+    usage = ct.Usage(input_tokens=0, output_tokens=0, total_tokens=0)
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (0, 0, 0)
 
 
 # --- terminal outcomes: exactly one per turn, three distinct shapes --------
@@ -228,6 +243,60 @@ def test_failure_evidence_carries_kind_and_a_short_reason():
     evidence = ct.FailureEvidence(ct.FailureKind.RESPONDER, "declared failure")
     assert evidence.kind is ct.FailureKind.RESPONDER
     assert evidence.reason == "declared failure"
+    assert evidence.problem is None
+    assert evidence.timeout_phase is None
+    assert evidence.status_code is None
+
+
+# --- failure evidence: the provider-wire taxonomy narrows RESPONDER --------
+
+def test_provider_problems_are_distinct():
+    assert {member.value for member in ct.ProviderProblem} == {
+        "connection", "timeout", "http_status", "malformed_response",
+    }
+
+
+def test_timeout_phases_are_distinct():
+    assert {member.value for member in ct.TimeoutPhase} == {
+        "connect", "write", "pool", "read",
+    }
+
+
+def test_connection_and_malformed_problems_carry_no_extra_field():
+    for problem in (ct.ProviderProblem.CONNECTION, ct.ProviderProblem.MALFORMED_RESPONSE):
+        evidence = ct.FailureEvidence(ct.FailureKind.RESPONDER, "x", problem=problem)
+        assert evidence.timeout_phase is None
+        assert evidence.status_code is None
+
+
+def test_timeout_problem_requires_a_phase():
+    evidence = ct.FailureEvidence(
+        ct.FailureKind.RESPONDER, "read timed out",
+        problem=ct.ProviderProblem.TIMEOUT, timeout_phase=ct.TimeoutPhase.READ,
+    )
+    assert evidence.timeout_phase is ct.TimeoutPhase.READ
+    with pytest.raises(ValueError):
+        ct.FailureEvidence(ct.FailureKind.RESPONDER, "x", problem=ct.ProviderProblem.TIMEOUT)
+
+
+def test_timeout_phase_is_rejected_without_the_timeout_problem():
+    with pytest.raises(ValueError):
+        ct.FailureEvidence(ct.FailureKind.RESPONDER, "x", timeout_phase=ct.TimeoutPhase.READ)
+
+
+def test_http_status_problem_requires_a_status_code():
+    evidence = ct.FailureEvidence(
+        ct.FailureKind.RESPONDER, "refused",
+        problem=ct.ProviderProblem.HTTP_STATUS, status_code=429,
+    )
+    assert evidence.status_code == 429
+    with pytest.raises(ValueError):
+        ct.FailureEvidence(ct.FailureKind.RESPONDER, "x", problem=ct.ProviderProblem.HTTP_STATUS)
+
+
+def test_status_code_is_rejected_without_the_http_status_problem():
+    with pytest.raises(ValueError):
+        ct.FailureEvidence(ct.FailureKind.RESPONDER, "x", status_code=500)
 
 
 # --- ChatKind: cannot express a private durable chat ------------------------
@@ -264,27 +333,39 @@ def test_cancellation_result_carries_nothing_else():
 
 
 def test_responder_protocol_is_structural_and_minimal():
+    import asyncio
+    import inspect
+
     class FixedResponder:
-        def respond(self, snapshot, model):
+        async def respond(self, snapshot, model):
             return ct.Completion(content=f"echo:{model}")
 
     responder: ct.Responder = FixedResponder()
+    assert inspect.iscoroutinefunction(responder.respond)
     snapshot = ct.ConversationSnapshot(chat_id=ct.ChatId.new(), messages=())
-    result = responder.respond(snapshot, "fixture-model")
+    result = asyncio.run(responder.respond(snapshot, "fixture-model"))
     assert result == ct.Completion(content="echo:fixture-model")
 
 
-def test_conversation_snapshot_holds_ordered_messages_only():
+def test_conversation_snapshot_holds_ordered_turns_and_messages():
     chat_id = ct.ChatId.new()
     turn_id = ct.TurnId.new()
+    turn = make_turn(id=turn_id, chat_id=chat_id, position=0)
     first = make_message(chat_id=chat_id, turn_id=turn_id, turn_position=0,
                           role=ct.Role.USER, content="hi")
     second = make_message(chat_id=chat_id, turn_id=turn_id, turn_position=1,
                            role=ct.Role.ASSISTANT, content="hello")
-    snapshot = ct.ConversationSnapshot(chat_id=chat_id, messages=(first, second))
+    snapshot = ct.ConversationSnapshot(chat_id=chat_id, turns=(turn,), messages=(first, second))
+    assert snapshot.turns == (turn,)
     assert snapshot.messages == (first, second)
     with pytest.raises(dataclasses.FrozenInstanceError):
         snapshot.chat_id = ct.ChatId.new()  # noqa
+
+
+def test_conversation_snapshot_turns_default_to_empty():
+    snapshot = ct.ConversationSnapshot(chat_id=ct.ChatId.new())
+    assert snapshot.turns == ()
+    assert snapshot.messages == ()
 
 
 # --- module boundary: no flat runtime, config, provider, or filesystem -----

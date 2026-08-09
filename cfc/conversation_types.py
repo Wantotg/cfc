@@ -138,13 +138,26 @@ class Message:
 @dataclass(frozen=True)
 class Usage:
     """Token counts a provider reported. Each field is independently
-    optional: a provider that reports input and output but not total, or
-    reports nothing at all, must stay distinguishable from one that reports
-    zero — an absent count is never coerced to `0`.
+    optional: a provider that reports input and output but not total must
+    stay distinguishable from one that reports zero — an absent count is
+    never coerced to `0`.
+
+    All three counts absent is not constructible (B-2.0-26): that spelling
+    is indistinguishable from `usage=None` once stored as three `NULL`
+    columns, so a caller with no counts at all uses `usage=None` rather than
+    building an empty `Usage`.
     """
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.input_tokens is None and self.output_tokens is None \
+                and self.total_tokens is None:
+            raise ValueError(
+                "Usage with all three counts absent is not constructible; "
+                "use usage=None to represent no reported usage"
+            )
 
 
 # --- failure evidence ---------------------------------------------------
@@ -161,14 +174,61 @@ class FailureKind(Enum):
                                    #: turn, or reopen recovery after process death
 
 
+class ProviderProblem(Enum):
+    """The provider-wire taxonomy a `RESPONDER` failure's evidence may
+    narrow to. `None` on `FailureEvidence.problem` means the failure is not
+    a provider-wire failure (an internal or interrupted failure, or a
+    responder failure that predates this taxonomy).
+    """
+    CONNECTION = "connection"                  #: could not reach the endpoint
+    TIMEOUT = "timeout"                        #: see FailureEvidence.timeout_phase
+    HTTP_STATUS = "http_status"                #: see FailureEvidence.status_code
+    MALFORMED_RESPONSE = "malformed_response"  #: no usable assistant content
+
+
+class TimeoutPhase(Enum):
+    """Which `httpx` timeout budget expired. Read has its own, longer
+    budget than the others: a model may legitimately take longer to answer
+    than a dead endpoint needs to prove it is unreachable.
+    """
+    CONNECT = "connect"
+    WRITE = "write"
+    POOL = "pool"
+    READ = "read"
+
+
 @dataclass(frozen=True)
 class FailureEvidence:
     """Typed, redacted failure detail. `reason` is a short description for
     a human or a later retry decision — never a credential, an API key, or
     an entire provider response body.
+
+    `problem`, `timeout_phase`, and `status_code` narrow a provider-wire
+    `RESPONDER` failure without smuggling in anything unsafe: `timeout_phase`
+    is set exactly when `problem` is `TIMEOUT`, and `status_code` exactly
+    when `problem` is `HTTP_STATUS`. An `INTERNAL` or `INTERRUPTED` failure,
+    or a `RESPONDER` failure with no provider-wire detail, leaves all three
+    `None`.
     """
     kind: FailureKind
     reason: str
+    problem: ProviderProblem | None = None
+    timeout_phase: TimeoutPhase | None = None
+    status_code: int | None = None
+
+    def __post_init__(self) -> None:
+        has_phase = self.timeout_phase is not None
+        wants_phase = self.problem is ProviderProblem.TIMEOUT
+        if has_phase != wants_phase:
+            raise ValueError(
+                "timeout_phase must be set exactly when problem is TIMEOUT"
+            )
+        has_status = self.status_code is not None
+        wants_status = self.problem is ProviderProblem.HTTP_STATUS
+        if has_status != wants_status:
+            raise ValueError(
+                "status_code must be set exactly when problem is HTTP_STATUS"
+            )
 
 
 # --- terminal turn outcomes (as persisted / read back) -----------------
@@ -245,12 +305,17 @@ class Turn:
 @dataclass(frozen=True)
 class ConversationSnapshot:
     """The immutable stored history a responder is allowed to see: this
-    chat's messages in canonical order, including the user message that
-    opened the active turn. No SQLite connection, no authority object, and
-    no provider-shaped dictionary — a later provider-wire converter reads
-    this, not raw rows.
+    chat's turns and messages in canonical order, including the user
+    message that opened the active (still-outcome-less) turn. No SQLite
+    connection, no authority object, and no provider-shaped dictionary — the
+    provider-wire converter reads this, not raw rows.
+
+    `turns` carries each turn's identity, position, and terminal state (or
+    none, for the one active turn) so a converter can decide which stored
+    messages belong on the wire without re-querying SQLite.
     """
     chat_id: ChatId
+    turns: tuple[Turn, ...] = field(default_factory=tuple)
     messages: tuple[Message, ...] = field(default_factory=tuple)
 
 
@@ -283,12 +348,16 @@ ResponderResult = Union[Completion, Failure, Cancellation]
 
 
 class Responder(Protocol):
-    """The injected boundary the conversation service calls to produce a
+    """The injected boundary the conversation service awaits to produce a
     turn's answer. Receives only an immutable stored-conversation snapshot
     and the selected model — never a SQLite connection, never a general
     authority object — so it cannot read or write anything this loop does
     not explicitly hand it.
+
+    `respond` is a coroutine so the service can await real network I/O
+    (`cfc.provider_adapter`) without blocking; a deterministic test
+    responder is still an ordinary `async def`.
     """
 
-    def respond(self, snapshot: ConversationSnapshot, model: str) -> ResponderResult:
+    async def respond(self, snapshot: ConversationSnapshot, model: str) -> ResponderResult:
         ...

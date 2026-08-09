@@ -21,7 +21,9 @@ from cfc.conversation_types import (
     FailedOutcome,
     FailureEvidence,
     FailureKind,
+    ProviderProblem,
     Role,
+    TimeoutPhase,
     TurnId,
     Usage,
 )
@@ -140,16 +142,13 @@ def _write_foreign_sqlite(path: Path, application_id, user_version: int) -> None
      store_mod.DatabaseProblem.CORRUPT),
     (lambda p: _write_bytes(p, b""),
      store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY),
-    (lambda p: _write_foreign_sqlite(p, application_id=None, user_version=0),
-     store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY),
     (lambda p: _write_foreign_sqlite(p, application_id=0x11111111, user_version=0),
      store_mod.DatabaseProblem.FOREIGN_APPLICATION),
     (lambda p: _write_foreign_sqlite(p, application_id=store_mod.APPLICATION_ID, user_version=0),
      store_mod.DatabaseProblem.SCHEMA_TOO_OLD),
     (lambda p: _write_foreign_sqlite(p, application_id=store_mod.APPLICATION_ID, user_version=99),
      store_mod.DatabaseProblem.SCHEMA_TOO_NEW),
-], ids=["corrupt", "empty", "arbitrary-sqlite", "foreign-application", "schema-too-old",
-        "schema-too-new"])
+], ids=["corrupt", "empty", "foreign-application", "schema-too-old", "schema-too-new"])
 def test_incompatible_targets_refuse_without_mutation(tmp_path, build, expected_problem):
     path = db_path(tmp_path)
     build(path)
@@ -163,6 +162,67 @@ def test_incompatible_targets_refuse_without_mutation(tmp_path, build, expected_
     assert path.read_bytes() == before
     for suffix in ("-journal", "-wal", "-shm"):
         assert not (path.parent / (path.name + suffix)).exists()
+
+
+# --- B-2.0-27: a genuinely empty target differs from an unclaimed populated one --
+
+def test_a_zero_page_target_is_called_empty(tmp_path):
+    path = db_path(tmp_path)
+    _write_bytes(path, b"")
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.EMPTY_OR_ARBITRARY
+    assert "move or remove" in exc_info.value.detail
+
+
+def test_a_markerless_populated_target_is_not_called_empty(tmp_path):
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=None, user_version=0)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.POPULATED_UNCLAIMED
+    detail = exc_info.value.detail
+    assert "may contain data from something other than cfc" in detail
+    assert "move or remove" not in detail  # not told to delete someone else's data
+    assert path.read_bytes() == before
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+
+def test_empty_and_populated_unclaimed_recovery_wording_differ(tmp_path):
+    empty_path = db_path(tmp_path)
+    _write_bytes(empty_path, b"")
+    with pytest.raises(store_mod.DatabaseIncompatible) as empty_exc:
+        store_mod.open_store(empty_path)
+
+    populated_path = tmp_path / "other" / "chat.db"
+    _write_foreign_sqlite(populated_path, application_id=None, user_version=0)
+    with pytest.raises(store_mod.DatabaseIncompatible) as populated_exc:
+        store_mod.open_store(populated_path)
+
+    assert empty_exc.value.problem is not populated_exc.value.problem
+    assert empty_exc.value.detail != populated_exc.value.detail
+
+
+def test_a_schema_version_one_database_refuses_as_too_old(tmp_path):
+    """This loop bumps `SCHEMA_VERSION` from 1 to 2 (new failure-evidence
+    columns, no migration). A real database created by the prior build must
+    take the existing visible refusal route, not be silently reinterpreted.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=1)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+    assert path.read_bytes() == before
 
 
 def test_directory_target_is_refused_before_locking(tmp_path):
@@ -421,6 +481,76 @@ def test_round_trip_through_a_new_connection_preserves_everything(tmp_path):
         assert t2.outcome.usage is None  # omitted usage stays unknown, not zero
         assert (t1.position, t2.position) == (0, 1)
         assert t1.id != t2.id and t1.id != turn2.id
+    finally:
+        reopened.close()
+
+
+def test_snapshot_carries_ordered_turns_alongside_messages(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c")
+        turn1, _ = store.start_turn(chat.id, "m1", "q1")
+        store.complete_turn(turn1.id, "a1")
+        turn2, _ = store.start_turn(chat.id, "m2", "q2")
+        store.fail_turn(turn2.id, FailureEvidence(FailureKind.RESPONDER, "declined"))
+        turn3, _ = store.start_turn(chat.id, "m3", "q3")  # left active
+
+        snapshot = store.snapshot(chat.id)
+        assert [t.id for t in snapshot.turns] == [turn1.id, turn2.id, turn3.id]
+        assert isinstance(snapshot.turns[0].outcome, CompletedOutcome)
+        assert isinstance(snapshot.turns[1].outcome, FailedOutcome)
+        assert snapshot.turns[2].outcome is None
+    finally:
+        store.close()
+
+
+def test_provider_wire_failure_detail_round_trips_through_a_new_connection(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    chat = store.create_chat("c")
+
+    timeout_turn, _ = store.start_turn(chat.id, "m", "q1")
+    store.fail_turn(timeout_turn.id, FailureEvidence(
+        FailureKind.RESPONDER, "read timed out",
+        problem=ProviderProblem.TIMEOUT, timeout_phase=TimeoutPhase.READ,
+    ))
+
+    http_turn, _ = store.start_turn(chat.id, "m", "q2")
+    store.fail_turn(http_turn.id, FailureEvidence(
+        FailureKind.RESPONDER, "provider refused",
+        problem=ProviderProblem.HTTP_STATUS, status_code=429,
+    ))
+
+    connection_turn, _ = store.start_turn(chat.id, "m", "q3")
+    store.fail_turn(connection_turn.id, FailureEvidence(
+        FailureKind.RESPONDER, "connection refused", problem=ProviderProblem.CONNECTION,
+    ))
+
+    internal_turn, _ = store.start_turn(chat.id, "m", "q4")
+    store.fail_turn(internal_turn.id, FailureEvidence(FailureKind.INTERNAL, "boom"))
+    store.close()
+
+    reopened = store_mod.open_store(path)
+    try:
+        timeout_evidence = reopened.get_turn(timeout_turn.id).outcome.evidence
+        assert timeout_evidence.problem is ProviderProblem.TIMEOUT
+        assert timeout_evidence.timeout_phase is TimeoutPhase.READ
+        assert timeout_evidence.status_code is None
+
+        http_evidence = reopened.get_turn(http_turn.id).outcome.evidence
+        assert http_evidence.problem is ProviderProblem.HTTP_STATUS
+        assert http_evidence.status_code == 429
+        assert http_evidence.timeout_phase is None
+
+        connection_evidence = reopened.get_turn(connection_turn.id).outcome.evidence
+        assert connection_evidence.problem is ProviderProblem.CONNECTION
+        assert connection_evidence.timeout_phase is None
+        assert connection_evidence.status_code is None
+
+        internal_evidence = reopened.get_turn(internal_turn.id).outcome.evidence
+        assert internal_evidence.problem is None
+        assert internal_evidence.timeout_phase is None
+        assert internal_evidence.status_code is None
     finally:
         reopened.close()
 

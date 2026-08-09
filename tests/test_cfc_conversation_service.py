@@ -1,10 +1,15 @@
 """test_cfc_conversation_service.py — cfc/conversation_service.py: the one
 provider-independent owner of a turn's lifecycle. Every store lives under
-`tmp_path`, driven only by injected deterministic responders; no config, no
-flat v1.9.1 module, no vault, and no network.
+`tmp_path`, driven only by injected deterministic async responders; no
+config, no flat v1.9.1 module, no vault, and no network.
+
+`send_turn` is a coroutine, so every call below goes through `run()`
+(`asyncio.run`) rather than an async test plugin — the repo has none, and
+this loop's Work Order asks for plain `asyncio` fixtures.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 from pathlib import Path
 
@@ -14,6 +19,7 @@ from cfc import conversation_service as service_mod
 from cfc import conversation_store
 from cfc.conversation_types import (
     Cancellation,
+    CancelledOutcome,
     Completion,
     Failure,
     FailureEvidence,
@@ -23,6 +29,10 @@ from cfc.conversation_types import (
 )
 
 
+def run(coro):
+    return asyncio.run(coro)
+
+
 class FixedResponder:
     """Returns the same result every time and records every call it saw."""
 
@@ -30,7 +40,7 @@ class FixedResponder:
         self._result = result
         self.calls = []
 
-    def respond(self, snapshot, model):
+    async def respond(self, snapshot, model):
         self.calls.append((snapshot, model))
         return self._result
 
@@ -43,8 +53,40 @@ class RaisingResponder:
     def __init__(self, exc: BaseException):
         self._exc = exc
 
-    def respond(self, snapshot, model):
+    async def respond(self, snapshot, model):
         raise self._exc
+
+
+class SlowResponder:
+    """Never returns on its own — `started` fires once `respond` is under
+    way, so a test can cancel the awaiting task deterministically instead of
+    racing a real clock.
+    """
+
+    def __init__(self):
+        self.started = asyncio.Event()
+
+    async def respond(self, snapshot, model):
+        self.started.set()
+        await asyncio.Event().wait()  # waits forever; the test cancels us
+        return Completion(content="too late")  # pragma: no cover
+
+
+class RaceResponder:
+    """Simulates the completion-then-cancellation race: completes the turn
+    through a back channel a real adapter is never given (`store` directly),
+    then raises `CancelledError` — as if the awaiting task's cancellation
+    were delivered in the instant right after a result already committed.
+    """
+
+    def __init__(self, store: conversation_store.ConversationStore, content: str):
+        self._store = store
+        self._content = content
+
+    async def respond(self, snapshot, model):
+        turn_id = snapshot.messages[-1].turn_id
+        self._store.complete_turn(turn_id, self._content)
+        raise asyncio.CancelledError()
 
 
 class OpenStoreResponder:
@@ -57,7 +99,7 @@ class OpenStoreResponder:
         self._path = path
         self.observed_error = None
 
-    def respond(self, snapshot, model):
+    async def respond(self, snapshot, model):
         try:
             conversation_store.open_store(self._path)
         except conversation_store.ConversationStoreError as exc:
@@ -96,7 +138,7 @@ def test_completed_turn_with_usage_round_trips(tmp_path):
         usage = Usage(input_tokens=4, output_tokens=6, total_tokens=10)
         responder = FixedResponder(Completion(content="the answer", usage=usage))
 
-        turn = service.send_turn(chat.id, "fixture-model", "the question", responder)
+        turn = run(service.send_turn(chat.id, "fixture-model", "the question", responder))
 
         assert turn.outcome.usage == usage
         snapshot = service.snapshot(chat.id)
@@ -112,7 +154,7 @@ def test_completed_turn_with_omitted_usage_stays_unknown(tmp_path):
     try:
         chat = service.create_chat("c")
         responder = FixedResponder(Completion(content="ok", usage=None))
-        turn = service.send_turn(chat.id, "fixture-model", "q", responder)
+        turn = run(service.send_turn(chat.id, "fixture-model", "q", responder))
         assert turn.outcome.usage is None
     finally:
         service.close()
@@ -127,7 +169,7 @@ def test_responder_declared_failure_is_recorded_with_no_synthetic_answer(tmp_pat
         evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
         responder = FixedResponder(Failure(evidence))
 
-        turn = service.send_turn(chat.id, "fixture-model", "q", responder)
+        turn = run(service.send_turn(chat.id, "fixture-model", "q", responder))
 
         assert turn.outcome.evidence == evidence
         snapshot = service.snapshot(chat.id)
@@ -136,17 +178,94 @@ def test_responder_declared_failure_is_recorded_with_no_synthetic_answer(tmp_pat
         service.close()
 
 
-def test_cancellation_is_recorded_and_distinct_from_failure(tmp_path):
+def test_declared_cancellation_is_recorded_and_distinct_from_failure(tmp_path):
+    """A responder returning `Cancellation()` deterministically — not a
+    cancelled `asyncio` task — remains a supported case."""
     service = open_service(tmp_path)
     try:
         chat = service.create_chat("c")
         responder = FixedResponder(Cancellation())
-        turn = service.send_turn(chat.id, "fixture-model", "q", responder)
+        turn = run(service.send_turn(chat.id, "fixture-model", "q", responder))
 
-        from cfc.conversation_types import CancelledOutcome
         assert isinstance(turn.outcome, CancelledOutcome)
         snapshot = service.snapshot(chat.id)
         assert [m.role for m in snapshot.messages] == [Role.USER]
+    finally:
+        service.close()
+
+
+# --- task cancellation: a distinct path from a declared Cancellation -------
+
+def test_cancelling_the_awaiting_task_finalises_cancelled_outcome_and_reraises(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        responder = SlowResponder()
+
+        async def scenario():
+            task = asyncio.ensure_future(
+                service.send_turn(chat.id, "fixture-model", "q", responder)
+            )
+            await responder.started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        run(scenario())
+
+        turn_id = service.snapshot(chat.id).messages[0].turn_id
+        turn = service.get_turn(turn_id)
+        assert isinstance(turn.outcome, CancelledOutcome)
+        assert [m.role for m in service.snapshot(chat.id).messages] == [Role.USER]
+    finally:
+        service.close()
+
+
+def test_a_later_turn_is_permitted_after_task_cancellation(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        responder = SlowResponder()
+
+        async def scenario():
+            task = asyncio.ensure_future(
+                service.send_turn(chat.id, "fixture-model", "q1", responder)
+            )
+            await responder.started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return await service.send_turn(
+                chat.id, "fixture-model", "q2", FixedResponder(Completion(content="ok")),
+            )
+
+        second = run(scenario())
+        assert second.position == 1
+        assert second.outcome.__class__.__name__ == "CompletedOutcome"
+    finally:
+        service.close()
+
+
+def test_cancellation_never_overwrites_a_stored_outcome_that_already_won(tmp_path):
+    """The completion-versus-cancellation race: if a result was already
+    committed by the time cancellation handling runs, that stored outcome
+    stands — cancellation must not overwrite it.
+    """
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        responder = RaceResponder(service._store, content="raced answer")
+
+        with pytest.raises(asyncio.CancelledError):
+            run(service.send_turn(chat.id, "fixture-model", "q", responder))
+
+        turn_id = service.snapshot(chat.id).messages[0].turn_id
+        turn = service.get_turn(turn_id)
+        assert turn.outcome.__class__.__name__ == "CompletedOutcome"
+        snapshot = service.snapshot(chat.id)
+        assert [(m.role, m.content) for m in snapshot.messages] == [
+            (Role.USER, "q"), (Role.ASSISTANT, "raced answer"),
+        ]
     finally:
         service.close()
 
@@ -159,7 +278,7 @@ def test_unexpected_responder_exception_becomes_typed_internal_failure(tmp_path)
         chat = service.create_chat("c")
         responder = RaisingResponder(RuntimeError("boom"))
 
-        turn = service.send_turn(chat.id, "fixture-model", "q", responder)
+        turn = run(service.send_turn(chat.id, "fixture-model", "q", responder))
 
         assert turn.outcome.evidence.kind is FailureKind.INTERNAL
         assert "boom" in turn.outcome.evidence.reason
@@ -175,7 +294,7 @@ def test_unexpected_exception_never_propagates_out_of_send_turn(tmp_path):
     try:
         chat = service.create_chat("c")
         responder = RaisingResponder(ValueError("should not escape"))
-        service.send_turn(chat.id, "fixture-model", "q", responder)  # must not raise
+        run(service.send_turn(chat.id, "fixture-model", "q", responder))  # must not raise
     finally:
         service.close()
 
@@ -191,9 +310,9 @@ def test_an_unrecognised_responder_result_still_ends_the_turn(tmp_path):
     service = open_service(tmp_path)
     try:
         chat = service.create_chat("c")
-        turn = service.send_turn(
+        turn = run(service.send_turn(
             chat.id, "fixture-model", "q", FixedResponder(None),  # not a result
-        )
+        ))
 
         assert turn.outcome.evidence.kind is FailureKind.INTERNAL
         assert "unrecognised result" in turn.outcome.evidence.reason
@@ -217,7 +336,7 @@ def test_an_interruption_ends_the_turn_and_then_keeps_travelling(tmp_path, inter
         responder = RaisingResponder(interruption())
 
         with pytest.raises(interruption):
-            service.send_turn(chat.id, "fixture-model", "q", responder)
+            run(service.send_turn(chat.id, "fixture-model", "q", responder))
 
         # the user message that opened the turn names the turn to re-read
         recorded = service.get_turn(service.snapshot(chat.id).messages[0].turn_id)
@@ -236,13 +355,13 @@ def test_a_turn_after_an_interruption_is_the_next_position_not_a_second_active_o
     try:
         chat = service.create_chat("c")
         with pytest.raises(KeyboardInterrupt):
-            service.send_turn(
+            run(service.send_turn(
                 chat.id, "fixture-model", "q1", RaisingResponder(KeyboardInterrupt()),
-            )
+            ))
 
-        later = service.send_turn(
+        later = run(service.send_turn(
             chat.id, "fixture-model", "q2", FixedResponder(Completion(content="ok")),
-        )
+        ))
         assert later.position == 1
         assert later.outcome.__class__.__name__ == "CompletedOutcome"
 
@@ -267,10 +386,10 @@ def test_a_later_turn_is_permitted_after_every_terminal_outcome(tmp_path, respon
     service = open_service(tmp_path)
     try:
         chat = service.create_chat("c")
-        first = service.send_turn(chat.id, "fixture-model", "q1", responder_factory())
-        second = service.send_turn(
+        first = run(service.send_turn(chat.id, "fixture-model", "q1", responder_factory()))
+        second = run(service.send_turn(
             chat.id, "fixture-model", "q2", FixedResponder(Completion(content="fine")),
-        )
+        ))
         assert second.position == first.position + 1
         assert second.outcome.__class__.__name__ == "CompletedOutcome"
     finally:
@@ -293,9 +412,9 @@ def test_restart_recovers_a_turn_left_active_by_a_prior_owner(tmp_path):
         assert recovered.outcome.evidence.kind is FailureKind.INTERRUPTED
 
         # the chat is still usable after recovery
-        next_turn = service.send_turn(
+        next_turn = run(service.send_turn(
             chat.id, "fixture-model", "q2", FixedResponder(Completion(content="ok")),
-        )
+        ))
         assert next_turn.position == turn.position + 1
     finally:
         service.close()
@@ -307,13 +426,13 @@ def test_responder_observes_exactly_the_stored_canonical_history(tmp_path):
     service = open_service(tmp_path)
     try:
         chat = service.create_chat("c")
-        service.send_turn(
+        run(service.send_turn(
             chat.id, "fixture-model", "first question",
             FixedResponder(Completion(content="first answer")),
-        )
+        ))
 
         spy = FixedResponder(Completion(content="second answer"))
-        service.send_turn(chat.id, "fixture-model", "second question", spy)
+        run(service.send_turn(chat.id, "fixture-model", "second question", spy))
 
         assert len(spy.calls) == 1
         seen_snapshot, seen_model = spy.calls[0]
@@ -324,6 +443,7 @@ def test_responder_observes_exactly_the_stored_canonical_history(tmp_path):
             (Role.ASSISTANT, "first answer"),
             (Role.USER, "second question"),
         ]
+        assert [t.position for t in seen_snapshot.turns] == [0, 1]
     finally:
         service.close()
 
@@ -333,7 +453,7 @@ def test_responder_snapshot_matches_an_independent_repository_read(tmp_path):
     try:
         chat = service.create_chat("c")
         spy = FixedResponder(Completion(content="answer"))
-        service.send_turn(chat.id, "fixture-model", "question", spy)
+        run(service.send_turn(chat.id, "fixture-model", "question", spy))
         seen_snapshot, _ = spy.calls[0]
         # independently re-read: only the user message existed at call time
         assert [(m.role, m.content) for m in seen_snapshot.messages] == [
@@ -351,7 +471,7 @@ def test_responder_cannot_open_the_store_itself_while_a_turn_is_active(tmp_path)
     try:
         chat = service.create_chat("c")
         responder = OpenStoreResponder(path)
-        service.send_turn(chat.id, "fixture-model", "q", responder)
+        run(service.send_turn(chat.id, "fixture-model", "q", responder))
 
         assert responder.observed_error is not None
         assert isinstance(responder.observed_error, conversation_store.DatabaseInUse)
@@ -367,6 +487,11 @@ def test_responder_protocol_carries_no_store_or_authority_argument():
     from cfc.conversation_types import Responder
     signature = inspect.signature(Responder.respond)
     assert list(signature.parameters) == ["self", "snapshot", "model"]
+    assert inspect.iscoroutinefunction(Responder.respond)
+
+
+def test_send_turn_is_a_coroutine_function():
+    assert inspect.iscoroutinefunction(service_mod.ConversationService.send_turn)
 
 
 # --- module boundary: no flat runtime, config, vault, or network -----------

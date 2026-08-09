@@ -25,6 +25,44 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Make the Stage 3 kernel usable with one OpenAI-compatible provider (`B-2.0-26`, `B-2.0-27`, `Q-2.0-29`, `W-07`)
+v2.0 Stage 3, loop two. Closes both loop-one corrections first: `Usage` with
+all three counts absent no longer constructs — that spelling collapsed into
+`usage=None` on its own round trip, breaking content-exact idempotency — and
+an existing target with no cfc application identity but real page content
+now gets its own `POPULATED_UNCLAIMED` refusal, distinct from a genuinely
+empty target, so cfc never tells a reader to delete someone else's data.
+
+`send_turn` is now a coroutine: the service still performs only its short
+synchronous SQLite start/finalise transitions, but awaits the responder
+between them. Cancelling that await finalises the still-active turn as
+`CancelledOutcome` and re-raises; a result that already won the race stands
+untouched. `FailureEvidence` grows a provider-wire taxonomy (`problem`,
+`timeout_phase`, `status_code`) with real type validation, so the schema
+advances to version 2 — a version-1 database takes the existing
+`SCHEMA_TOO_OLD` refusal route, no migration. `ConversationSnapshot` now
+carries ordered turns alongside messages.
+
+`cfc/provider_wire.py` is a new pure converter (`Q-2.0-29`): a completed
+turn sends both its messages, a failed/cancelled/interrupted turn's
+orphaned user message is omitted and named in an ordered omission account
+instead, and the current active turn's message is always included —
+refusing before any HTTP work on an incoherent snapshot. `cfc/provider_adapter.py`
+is the first live responder: one non-streaming `POST .../chat/completions`
+over `httpx`, distinct connect/write/pool/read timeouts (read longest), no
+retry, and every `httpx` exception, HTTP status, and malformed response
+translated to typed, redacted evidence — never a raw exception, header, or
+body reaching stored evidence. `scratchpad/stage3_harness.py` (gitignored)
+is Cas's manual real-provider and Ctrl-C-cancellation proof surface; bare
+`python -m cfc` and `launch.sh` are unchanged.
+- Files: cfc/conversation_types.py, cfc/conversation_store.py,
+  cfc/conversation_service.py, cfc/provider_wire.py, cfc/provider_adapter.py,
+  tests/test_cfc_conversation_types.py, tests/test_cfc_conversation_store.py,
+  tests/test_cfc_conversation_service.py, tests/test_cfc_provider_wire.py,
+  tests/test_cfc_provider_adapter.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — Ensure interrupted and invalid turns end canonically (`B-2.0-25`)
 v2.0 Stage 3, loop one playtest correction. `send_turn` now ends every turn
 it starts before returning, including an unrecognised responder result, an

@@ -1,15 +1,23 @@
 """conversation_service.py — the one provider-independent owner of a turn's
 lifecycle: creating and reopening ordinary chats, atomically starting a
-turn, invoking the injected responder, and requesting the repository's one
+turn, awaiting the injected responder, and requesting the repository's one
 terminal transition.
 
 No CLI, REPL, or provider adapter calls the repository directly for any of
 this — `conversation_store.ConversationStore` is a dependency of this
-module alone. A later HTTP adapter supplies a `Responder`
-(`conversation_types.Responder`); it does not gain its own path to
-`cfc_turns`/`cfc_messages`.
+module alone. An HTTP adapter (`cfc.provider_adapter`) supplies a
+`Responder` (`conversation_types.Responder`); it does not gain its own path
+to `cfc_turns`/`cfc_messages`.
+
+`send_turn` is a coroutine. Only the responder await can take real time —
+`start_turn`, the pre-await `snapshot` read, and every finalising call
+remain the same short synchronous SQLite transitions `conversation_store`
+always performed; this module still does not run its own executor or
+background task.
 """
 from __future__ import annotations
+
+import asyncio
 
 from cfc.conversation_store import (
     ConflictingFinalisation,
@@ -71,8 +79,8 @@ class ConversationService:
 
     # -- the turn lifecycle -------------------------------------------------
 
-    def send_turn(self, chat_id: ChatId, model: str, user_content: str,
-                  responder: Responder) -> Turn:
+    async def send_turn(self, chat_id: ChatId, model: str, user_content: str,
+                         responder: Responder) -> Turn:
         """Start a turn, hand the responder exactly the stored canonical
         history plus the model, and finalise the one result it returns.
 
@@ -80,24 +88,35 @@ class ConversationService:
         nothing that could let it reach `cfc_turns`/`cfc_messages` itself.
 
         **Once this method has started a turn, that turn ends before this
-        method does.** Every way out of the body below is covered: an
-        ordinary exception (from the responder, from a result this module
-        doesn't recognise, or from the store itself) becomes a typed
-        internal failure and is returned rather than raised, so a caller
-        never handles "the responder raised" separately from "the responder
-        returned Failure". An interruption that is not an ordinary exception
-        — `KeyboardInterrupt`, `SystemExit`, a cancelled async task — ends
-        the turn as a typed interrupted failure and then keeps travelling,
-        because swallowing those would make cfc un-interruptible. Only a
-        process that dies outright leaves an active turn behind, and
+        method does.** Every way out of the body below is covered:
+
+        - an ordinary exception (from the responder, from a result this
+          module doesn't recognise, or from the store itself) becomes a
+          typed internal failure and is returned rather than raised, so a
+          caller never handles "the responder raised" separately from "the
+          responder returned Failure";
+        - cancellation of the task awaiting the responder ends the turn as
+          `CancelledOutcome` and then re-raises — if a terminal outcome
+          already won that race (the store committed a result and then the
+          awaiting task was cancelled), that stored outcome is preserved,
+          never overwritten; and
+        - an interruption that is neither of those — `KeyboardInterrupt`,
+          `SystemExit` — ends the turn as a typed interrupted failure and
+          then keeps travelling, because swallowing those would make cfc
+          un-interruptible.
+
+        Only a process that dies outright leaves an active turn behind, and
         `open_store`'s reopen recovery is that case's route.
         """
         turn, _user_message = self._store.start_turn(chat_id, model, user_content)
 
         try:
             snapshot = self._store.snapshot(chat_id)
-            result: ResponderResult = responder.respond(snapshot, model)
+            result: ResponderResult = await responder.respond(snapshot, model)
             return self._apply_result(turn.id, result)
+        except asyncio.CancelledError:
+            self._end_unfinished_as_cancelled(turn.id)
+            raise
         except Exception as exc:  # noqa: BLE001 — deliberately broad: any responder failure
             return self._end_unfinished(
                 turn.id, FailureKind.INTERNAL, f"{type(exc).__name__}: {exc}",
@@ -120,6 +139,20 @@ class ConversationService:
             return self._store.fail_turn(turn_id, FailureEvidence(kind, reason))
         except ConflictingFinalisation:
             return self._store.get_turn(turn_id)
+
+    def _end_unfinished_as_cancelled(self, turn_id: TurnId) -> None:
+        """End a still-active turn as `CancelledOutcome`. If a terminal
+        outcome already won — the responder finished and the store
+        committed its result in the instant before this task's cancellation
+        was delivered — that stored outcome stands untouched: cancellation
+        never overwrites a completion or failure that already happened.
+        """
+        try:
+            self._store.cancel_turn(turn_id)
+        except ConflictingFinalisation:
+            pass
+        except ConversationStoreError:
+            pass  # the store itself is unreachable; reopen recovery remains
 
     def _apply_result(self, turn_id: TurnId, result: ResponderResult) -> Turn:
         if isinstance(result, Completion):

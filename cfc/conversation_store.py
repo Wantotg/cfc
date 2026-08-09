@@ -48,7 +48,9 @@ from cfc.conversation_types import (
     FailureKind,
     Message,
     MessageId,
+    ProviderProblem,
     Role,
+    TimeoutPhase,
     Turn,
     TurnId,
     TurnOutcome,
@@ -65,11 +67,25 @@ APPLICATION_ID = 0x63666332
 #: The one schema version this build understands. Bumped only alongside a
 #: real migration path; there is none yet, so an older or newer value both
 #: refuse rather than guess.
-SCHEMA_VERSION = 1
+#:
+#: 2 (this build): `cfc_turns` grows `failure_problem`, `failure_timeout_phase`,
+#: and `failure_status_code` to persist the extended provider-wire failure
+#: vocabulary. A version-1 database takes the existing `SCHEMA_TOO_OLD`
+#: refusal route — there is no migration from 1 to 2.
+SCHEMA_VERSION = 2
 
 _RECOVERY_HINT = (
     "preserve anything wanted from it, then move or remove {path} so cfc "
     "can create a fresh database there"
+)
+
+#: B-2.0-27: a target with no cfc application identity but real page content
+#: is not a placeholder to remove — it may be someone else's data. This hint
+#: never tells the reader to delete or move it; it says inspect it first.
+_POPULATED_UNCLAIMED_HINT = (
+    "it may contain data from something other than cfc; preserve and "
+    "inspect {path} before touching it, or point DATABASE_PATH at a "
+    "different file"
 )
 
 _SCHEMA_STATEMENTS = (
@@ -93,20 +109,33 @@ _SCHEMA_STATEMENTS = (
         outcome_kind TEXT CHECK (outcome_kind IN ('completed', 'failed', 'cancelled')),
         failure_kind TEXT CHECK (failure_kind IN ('responder', 'internal', 'interrupted')),
         failure_reason TEXT,
+        failure_problem TEXT CHECK (failure_problem IN
+            ('connection', 'timeout', 'http_status', 'malformed_response')),
+        failure_timeout_phase TEXT CHECK (failure_timeout_phase IN
+            ('connect', 'write', 'pool', 'read')),
+        failure_status_code INTEGER,
         usage_input INTEGER,
         usage_output INTEGER,
         usage_total INTEGER,
         UNIQUE (chat_id, position),
         CHECK (
             (outcome_kind IS NULL AND finished_at IS NULL
-                AND failure_kind IS NULL AND failure_reason IS NULL)
+                AND failure_kind IS NULL AND failure_reason IS NULL
+                AND failure_problem IS NULL)
             OR (outcome_kind = 'completed' AND finished_at IS NOT NULL
-                AND failure_kind IS NULL AND failure_reason IS NULL)
+                AND failure_kind IS NULL AND failure_reason IS NULL
+                AND failure_problem IS NULL)
             OR (outcome_kind = 'failed' AND finished_at IS NOT NULL
                 AND failure_kind IS NOT NULL AND failure_reason IS NOT NULL)
             OR (outcome_kind = 'cancelled' AND finished_at IS NOT NULL
-                AND failure_kind IS NULL AND failure_reason IS NULL)
-        )
+                AND failure_kind IS NULL AND failure_reason IS NULL
+                AND failure_problem IS NULL)
+        ),
+        -- failure_timeout_phase/failure_status_code narrow failure_problem;
+        -- `IS` rather than `=` so a NULL failure_problem compares as false,
+        -- not NULL, and cannot vacuously satisfy the check either way.
+        CHECK ((failure_problem IS 'timeout') = (failure_timeout_phase IS NOT NULL)),
+        CHECK ((failure_problem IS 'http_status') = (failure_status_code IS NOT NULL))
     )
     """,
     """
@@ -160,6 +189,7 @@ class DatabaseInUse(ConversationStoreError):
 class DatabaseProblem(Enum):
     CORRUPT = "corrupt"
     EMPTY_OR_ARBITRARY = "empty_or_arbitrary"
+    POPULATED_UNCLAIMED = "populated_unclaimed"
     FOREIGN_APPLICATION = "foreign_application"
     SCHEMA_TOO_OLD = "schema_too_old"
     SCHEMA_TOO_NEW = "schema_too_new"
@@ -292,12 +322,18 @@ def _classify_existing(path: Path) -> tuple[DatabaseProblem | None, str | None]:
 
         app_id = conn.execute("PRAGMA application_id").fetchone()[0]
         user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
     finally:
         conn.close()
 
     if app_id == 0:
-        return (DatabaseProblem.EMPTY_OR_ARBITRARY,
-                f"is empty or not a cfc database (no application identity); {hint}")
+        if page_count == 0:
+            return (DatabaseProblem.EMPTY_OR_ARBITRARY,
+                    f"is empty (no application identity); {hint}")
+        unclaimed_hint = _POPULATED_UNCLAIMED_HINT.format(path=path)
+        return (DatabaseProblem.POPULATED_UNCLAIMED,
+                f"already contains data cfc did not create (no application "
+                f"identity, but {page_count} page(s) of content); {unclaimed_hint}")
     if app_id != APPLICATION_ID:
         return (DatabaseProblem.FOREIGN_APPLICATION,
                 f"belongs to a different application (application_id={app_id}); {hint}")
@@ -393,8 +429,9 @@ def _row_to_message(row) -> Message:
 
 def _row_to_turn(row) -> Turn:
     (id_, chat_id, position, model, started_at, finished_at,
-     outcome_kind, failure_kind, failure_reason, usage_input,
-     usage_output, usage_total) = row
+     outcome_kind, failure_kind, failure_reason,
+     failure_problem, failure_timeout_phase, failure_status_code,
+     usage_input, usage_output, usage_total) = row
 
     outcome: TurnOutcome | None = None
     if outcome_kind == "completed":
@@ -404,7 +441,14 @@ def _row_to_turn(row) -> Turn:
                            total_tokens=usage_total)
         outcome = CompletedOutcome(usage=usage)
     elif outcome_kind == "failed":
-        outcome = FailedOutcome(FailureEvidence(FailureKind(failure_kind), failure_reason))
+        evidence = FailureEvidence(
+            FailureKind(failure_kind), failure_reason,
+            problem=ProviderProblem(failure_problem) if failure_problem is not None else None,
+            timeout_phase=(TimeoutPhase(failure_timeout_phase)
+                           if failure_timeout_phase is not None else None),
+            status_code=failure_status_code,
+        )
+        outcome = FailedOutcome(evidence)
     elif outcome_kind == "cancelled":
         outcome = CancelledOutcome()
 
@@ -420,26 +464,31 @@ def _row_to_turn(row) -> Turn:
 
 
 def _outcome_columns(outcome: TurnOutcome):
-    """`(outcome_kind, failure_kind, failure_reason, usage_input,
-    usage_output, usage_total)` for `UPDATE cfc_turns`.
+    """`(outcome_kind, failure_kind, failure_reason, failure_problem,
+    failure_timeout_phase, failure_status_code, usage_input, usage_output,
+    usage_total)` for `UPDATE cfc_turns`.
     """
     if isinstance(outcome, CompletedOutcome):
         usage = outcome.usage
         if usage is None:
-            return "completed", None, None, None, None, None
-        return ("completed", None, None,
+            return "completed", None, None, None, None, None, None, None, None
+        return ("completed", None, None, None, None, None,
                 usage.input_tokens, usage.output_tokens, usage.total_tokens)
     if isinstance(outcome, FailedOutcome):
-        return ("failed", outcome.evidence.kind.value, outcome.evidence.reason,
-                None, None, None)
+        evidence = outcome.evidence
+        problem = evidence.problem.value if evidence.problem is not None else None
+        phase = evidence.timeout_phase.value if evidence.timeout_phase is not None else None
+        return ("failed", evidence.kind.value, evidence.reason,
+                problem, phase, evidence.status_code, None, None, None)
     if isinstance(outcome, CancelledOutcome):
-        return "cancelled", None, None, None, None, None
+        return "cancelled", None, None, None, None, None, None, None, None
     raise TypeError(f"not a TurnOutcome: {outcome!r}")
 
 
 _TURN_COLUMNS = (
     "id, chat_id, position, model, started_at, finished_at, "
     "outcome_kind, failure_kind, failure_reason, "
+    "failure_problem, failure_timeout_phase, failure_status_code, "
     "usage_input, usage_output, usage_total"
 )
 
@@ -511,7 +560,11 @@ class ConversationStore:
 
     def snapshot(self, chat_id: ChatId) -> ConversationSnapshot:
         self.get_chat(chat_id)
-        rows = self._conn.execute(
+        turn_rows = self._conn.execute(
+            f"SELECT {_TURN_COLUMNS} FROM cfc_turns WHERE chat_id = ? ORDER BY position ASC",
+            (chat_id.value,),
+        ).fetchall()
+        message_rows = self._conn.execute(
             "SELECT m.id, m.chat_id, m.turn_id, m.turn_position, m.role, "
             "m.content, m.created_at "
             "FROM cfc_messages m JOIN cfc_turns t ON t.id = m.turn_id "
@@ -519,7 +572,9 @@ class ConversationStore:
             (chat_id.value,),
         ).fetchall()
         return ConversationSnapshot(
-            chat_id=chat_id, messages=tuple(_row_to_message(row) for row in rows),
+            chat_id=chat_id,
+            turns=tuple(_row_to_turn(row) for row in turn_rows),
+            messages=tuple(_row_to_message(row) for row in message_rows),
         )
 
     def get_turn(self, turn_id: TurnId) -> Turn:
@@ -616,12 +671,15 @@ class ConversationStore:
         finished_at = utc_now()
         try:
             (outcome_kind, failure_kind, failure_reason,
+             failure_problem, failure_timeout_phase, failure_status_code,
              usage_input, usage_output, usage_total) = _outcome_columns(outcome)
             conn.execute(
                 "UPDATE cfc_turns SET finished_at = ?, outcome_kind = ?, "
-                "failure_kind = ?, failure_reason = ?, usage_input = ?, "
-                "usage_output = ?, usage_total = ? WHERE id = ?",
+                "failure_kind = ?, failure_reason = ?, failure_problem = ?, "
+                "failure_timeout_phase = ?, failure_status_code = ?, "
+                "usage_input = ?, usage_output = ?, usage_total = ? WHERE id = ?",
                 (_dt_to_text(finished_at), outcome_kind, failure_kind, failure_reason,
+                 failure_problem, failure_timeout_phase, failure_status_code,
                  usage_input, usage_output, usage_total, turn_id.value),
             )
             if assistant_content is not None:
