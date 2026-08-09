@@ -25,6 +25,47 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Make the Stage 3 store and provider boundaries state the facts they use (`B-2.0-34`, `B-2.0-35`, `D-2.0-28`, `D-2.0-37`, `D-2.0-38`, `D-2.0-39`, `W-07`)
+v2.0 Stage 3, loop three. `conversation_store.open_store` no longer locks a
+sidecar `.lock` file: it holds one non-blocking `flock` directly on the
+database target's own file descriptor for the store's lifetime, and a
+leftover sidecar from an earlier build is inert (`D-2.0-28`). An existing
+target's application identity, schema version, and page presence are now
+read from that same locked descriptor's raw header bytes, before SQLite
+ever opens the file — only a header that already carries cfc's exact
+marker and schema version proceeds to `sqlite3.connect` and SQLite's own
+`quick_check`. This is what makes a foreign or incompatible WAL-mode
+target refuse without growing `-wal`/`-shm` sidecars beside it (`B-2.0-34`);
+a header-valid target with a corrupted body still refuses on `quick_check`,
+so a valid header is never mistaken for a valid database. A pathname that
+changes identity between the lock and classification refuses rather than
+following whatever replaced it.
+
+`provider_adapter.OpenAICompatibleAdapter` now treats exactly 200–299 as
+HTTP success — a 3xx or other non-2xx status below 400 becomes typed
+`HTTP_STATUS` evidence with its code instead of falling through to a
+malformed-JSON reading (`B-2.0-35`); redirect following stays explicitly
+disabled. A top-level `error` object in an otherwise-2xx body is now named
+with its own distinct, fixed `MALFORMED_RESPONSE` reason rather than the
+generic no-usable-content one (`D-2.0-37`) — the envelope's own text is
+never copied into evidence. Usage counts arriving as whole-number floats or
+ASCII decimal-digit strings are now accepted alongside plain integers,
+bounded to what SQLite's `INTEGER` can store exactly; a present-but-invalid
+count now rejects the whole response as malformed rather than silently
+dropping the count or committing the assistant text under it (`D-2.0-38`).
+
+A new integration regression joins a real `ConversationService`-produced
+snapshot to the real `provider_wire.build_request_plan` — the hand-built
+converter fixtures still own the contradictory snapshots the store cannot
+produce, but this proves the producer and converter agree through their
+real implementations (`D-2.0-39`). No user-facing surface changed —
+`launch.sh` and bare `python -m cfc` are unchanged.
+- Files: cfc/conversation_store.py, cfc/provider_adapter.py,
+  tests/test_cfc_conversation_store.py, tests/test_cfc_provider_adapter.py,
+  tests/test_cfc_conversation_service.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — Make the Stage 3 kernel usable with one OpenAI-compatible provider (`B-2.0-26`, `B-2.0-27`, `Q-2.0-29`, `W-07`)
 v2.0 Stage 3, loop two. Closes both loop-one corrections first: `Usage` with
 all three counts absent no longer constructs — that spelling collapsed into

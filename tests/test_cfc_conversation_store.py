@@ -137,6 +137,25 @@ def _write_foreign_sqlite(path: Path, application_id, user_version: int) -> None
         conn.close()
 
 
+def _write_foreign_wal_sqlite(path: Path, application_id) -> None:
+    """A foreign-application target left in WAL mode. Closing a connection
+    that is the only one open on a WAL database checkpoints and removes its
+    `-wal`/`-shm` sidecars, but the header's journal-mode bytes and pragmas
+    remain correctly committed — this reproduces the steady-state WAL target
+    B-2.0-34 is about, not a live writer's in-flight state.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(f"PRAGMA application_id = {application_id}")
+        conn.execute("CREATE TABLE unrelated (x INTEGER)")
+        conn.execute("INSERT INTO unrelated VALUES (1)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize("build,expected_problem", [
     (lambda p: _write_bytes(p, b"not a sqlite database, just some bytes" * 4),
      store_mod.DatabaseProblem.CORRUPT),
@@ -160,8 +179,44 @@ def test_incompatible_targets_refuse_without_mutation(tmp_path, build, expected_
     assert exc_info.value.problem is expected_problem
     assert "move or remove" in exc_info.value.detail
     assert path.read_bytes() == before
-    for suffix in ("-journal", "-wal", "-shm"):
+    for suffix in (".lock", "-journal", "-wal", "-shm"):
         assert not (path.parent / (path.name + suffix)).exists()
+
+
+# --- B-2.0-34: refusing a WAL-mode target grows no sidecars beside it ------
+
+def test_a_foreign_wal_mode_target_refuses_without_growing_sidecars(tmp_path):
+    path = db_path(tmp_path)
+    _write_foreign_wal_sqlite(path, application_id=0x11111111)
+    before = path.read_bytes()
+    before_entries = sorted(p.name for p in path.parent.iterdir())
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.FOREIGN_APPLICATION
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in path.parent.iterdir()) == before_entries
+
+
+def test_a_wal_target_with_sidecars_already_present_keeps_them_untouched(tmp_path):
+    """Sidecars another process legitimately owns are never deleted on
+    refusal: 'do not delete them while another process may own the WAL.'
+    """
+    path = db_path(tmp_path)
+    _write_foreign_wal_sqlite(path, application_id=0x11111111)
+    wal_path = path.parent / (path.name + "-wal")
+    shm_path = path.parent / (path.name + "-shm")
+    wal_path.write_bytes(b"not really a wal file, just standing in for one")
+    shm_path.write_bytes(b"stands in for a live -shm file")
+    wal_before = wal_path.read_bytes()
+    shm_before = shm_path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible):
+        store_mod.open_store(path)
+
+    assert wal_path.read_bytes() == wal_before
+    assert shm_path.read_bytes() == shm_before
 
 
 # --- B-2.0-27: a genuinely empty target differs from an unclaimed populated one --
@@ -223,6 +278,95 @@ def test_a_schema_version_one_database_refuses_as_too_old(tmp_path):
 
     assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
     assert path.read_bytes() == before
+
+
+# --- a header-valid target still owes SQLite's own integrity check --------
+
+def test_a_header_valid_current_database_with_a_corrupted_body_still_refuses(tmp_path):
+    """The header alone proves the marker and version, never the page
+    content: a legitimate cfc database whose body is corrupted after the
+    header must still be caught by SQLite's own `quick_check`, not waved
+    through because its header classified as current.
+    """
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    size = path.stat().st_size
+    assert size > store_mod._HEADER_SIZE
+
+    # corrupt the back half of the file: the header (and its marker/version)
+    # stays perfectly valid, but the page content it describes does not.
+    with open(path, "r+b") as f:
+        f.seek(size // 2)
+        f.write(b"\xff" * (size - size // 2))
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.CORRUPT
+
+
+def test_a_legitimate_current_database_reopens_cleanly(tmp_path):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    reopened = store_mod.open_store(path)
+    reopened.close()
+
+
+# --- a stale sibling .lock is inert, not ownership evidence -----------------
+
+def test_a_preexisting_stale_sibling_lock_file_is_inert(tmp_path):
+    path = db_path(tmp_path)
+    stale_lock = path.parent / (path.name + ".lock")
+    stale_lock.parent.mkdir(parents=True, exist_ok=True)
+    stale_lock.write_bytes(b"leftover from an earlier build")
+    before = stale_lock.read_bytes()
+
+    store = store_mod.open_store(path)
+    store.close()
+
+    assert stale_lock.read_bytes() == before  # neither read nor rewritten
+
+
+# --- pathname revalidation: refuse rather than follow a replaced target ----
+
+def test_a_disappeared_target_during_classification_is_refused(tmp_path, monkeypatch):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    before = path.read_bytes()
+
+    monkeypatch.setattr(store_mod, "_target_identity", lambda p: None)
+    with pytest.raises(store_mod.TargetUnusable):
+        store_mod.open_store(path)
+
+    assert path.read_bytes() == before  # never touched, let alone reopened
+
+
+def test_a_replaced_target_during_classification_is_refused_not_followed(tmp_path, monkeypatch):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    before = path.read_bytes()
+
+    monkeypatch.setattr(store_mod, "_target_identity", lambda p: (999999, 999999))
+    with pytest.raises(store_mod.TargetUnusable):
+        store_mod.open_store(path)
+
+    assert path.read_bytes() == before
+
+
+def test_a_pathname_swap_during_fresh_creation_is_refused_without_deleting_it(tmp_path, monkeypatch):
+    """The empty file this invocation atomically claimed is left in place
+    when ownership becomes uncertain — deleting `path` here could delete
+    whatever now occupies that name instead of the file this call created.
+    """
+    path = db_path(tmp_path)
+    assert not path.exists()
+
+    monkeypatch.setattr(store_mod, "_target_identity", lambda p: None)
+    with pytest.raises(store_mod.TargetUnusable):
+        store_mod.open_store(path)
+
+    assert path.exists()
+    assert path.stat().st_size == 0
 
 
 def test_directory_target_is_refused_before_locking(tmp_path):

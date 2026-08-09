@@ -165,6 +165,180 @@ def test_an_http_refusal_becomes_typed_status_evidence_with_no_body_stored(statu
     assert "top secret detail" not in result.evidence.reason
 
 
+# --- B-2.0-35: every non-2xx status is typed HTTP evidence, never parsed ---
+
+@pytest.mark.parametrize("status_code", [200, 201, 204, 299])
+def test_every_2xx_status_is_eligible_for_success(status_code):
+    body = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if status_code == 204:
+            return httpx.Response(204)
+        return json_response(status_code, body)
+
+    transport = httpx.MockTransport(handler)
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    if status_code == 204:
+        # transport-successful, but no completion body to parse
+        assert isinstance(result, Failure)
+        assert result.evidence.problem is ProviderProblem.MALFORMED_RESPONSE
+    else:
+        assert isinstance(result, Completion)
+
+
+@pytest.mark.parametrize("status_code", [300, 301, 302, 307, 308])
+def test_a_3xx_status_is_typed_http_evidence_not_malformed(status_code):
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            status_code, headers={"Location": "https://attacker.example.test/steal"},
+            content=b'{"choices": [{"message": {"role": "assistant", "content": "nope"}}]}',
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Failure)
+    assert result.evidence.problem is ProviderProblem.HTTP_STATUS
+    assert result.evidence.status_code == status_code
+    assert len(seen) == 1  # no redirect follow despite a tempting Location
+
+
+# --- D-2.0-37: an in-band error envelope is named distinctly ---------------
+
+def test_an_object_error_envelope_gets_distinct_wording_and_no_provider_text():
+    transport = httpx.MockTransport(
+        lambda request: json_response(200, {"error": {"message": "quota exceeded", "code": "x"}})
+    )
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Failure)
+    assert result.evidence.problem is ProviderProblem.MALFORMED_RESPONSE
+    assert result.evidence.reason == provider_adapter._ERROR_ENVELOPE_REASON
+    assert "quota exceeded" not in result.evidence.reason
+
+
+@pytest.mark.parametrize("error_value", ["a string, not an object", 42, None, ["nope"]])
+def test_a_non_object_error_key_falls_back_to_the_generic_unsupported_route(error_value):
+    transport = httpx.MockTransport(
+        lambda request: json_response(200, {"error": error_value})
+    )
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Failure)
+    assert result.evidence.problem is ProviderProblem.MALFORMED_RESPONSE
+    assert result.evidence.reason != provider_adapter._ERROR_ENVELOPE_REASON
+
+
+def test_an_ordinary_unsupported_shape_is_still_distinct_from_the_error_envelope():
+    transport = httpx.MockTransport(lambda request: json_response(200, {"choices": []}))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Failure)
+    assert result.evidence.reason != provider_adapter._ERROR_ENVELOPE_REASON
+
+
+# --- D-2.0-38: usage counts as whole floats or decimal strings are kept ----
+
+@pytest.mark.parametrize("usage_body,expected_usage", [
+    ({"prompt_tokens": 4.0, "completion_tokens": 6.0, "total_tokens": 10.0},
+     Usage(input_tokens=4, output_tokens=6, total_tokens=10)),
+    ({"prompt_tokens": "4", "completion_tokens": "6", "total_tokens": "10"},
+     Usage(input_tokens=4, output_tokens=6, total_tokens=10)),
+    ({"prompt_tokens": "0"}, Usage(input_tokens=0)),
+    ({"prompt_tokens": 0.0}, Usage(input_tokens=0)),
+    ({"prompt_tokens": 4, "completion_tokens": "6"}, Usage(input_tokens=4, output_tokens=6)),
+], ids=["all-whole-floats", "all-decimal-strings", "zero-string", "zero-float", "mixed-int-and-string"])
+def test_whole_floats_and_decimal_strings_are_accepted_usage_spellings(usage_body, expected_usage):
+    body = {"choices": [{"message": {"role": "assistant", "content": "ok"}}], "usage": usage_body}
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Completion)
+    assert result.usage == expected_usage
+
+
+@pytest.mark.parametrize("usage_body", [
+    {"prompt_tokens": True},
+    {"prompt_tokens": False},
+    {"prompt_tokens": -1},
+    {"prompt_tokens": 2**63},
+    {"prompt_tokens": 4.5},
+    {"prompt_tokens": float("inf")},
+    {"prompt_tokens": float("nan")},
+    {"prompt_tokens": "4.0"},
+    {"prompt_tokens": "-4"},
+    {"prompt_tokens": " 4"},
+    {"prompt_tokens": "4a"},
+    {"prompt_tokens": ""},
+    {"prompt_tokens": [4]},
+    {"prompt_tokens": {"n": 4}},
+], ids=["true", "false", "negative-int", "over-sqlite-max", "fractional-float",
+        "positive-infinity", "nan", "float-shaped-string", "negative-string",
+        "leading-space", "trailing-garbage", "empty-string", "list", "dict"])
+def test_an_invalid_usage_count_rejects_the_whole_response_as_malformed(usage_body):
+    body = {"choices": [{"message": {"role": "assistant", "content": "ok"}}], "usage": usage_body}
+    # httpx's own `json=` encoding refuses non-finite floats outright
+    # (`allow_nan=False`); build the body with the stdlib encoder instead so
+    # inf/nan reach the adapter exactly as some non-conformant provider body
+    # could send them.
+    content = json.dumps(body, allow_nan=True).encode("utf-8")
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, content=content, headers={"content-type": "application/json"})
+    )
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Failure)
+    assert result.evidence.problem is ProviderProblem.MALFORMED_RESPONSE
+    assert result.evidence.reason == provider_adapter._INVALID_USAGE_REASON
+
+
+def test_all_absent_usage_still_remains_none():
+    body = {"choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}}
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_snapshot(), "fixture-model")
+
+    result = run(scenario())
+    assert isinstance(result, Completion)
+    assert result.usage is None
+
+
 # --- malformed / unsupported response shape ----------------------------------
 
 def test_invalid_json_body_is_a_malformed_response_failure():

@@ -19,11 +19,22 @@ from. Resolving the configured database target, including the legacy
 flat-runtime spelling, is `cfc.settings`'s job, not this module's.
 
 **The ownership lock is not a stale-file heuristic.** `fcntl.flock` is held
-on a sidecar file for the connection's whole lifetime; the kernel releases
-it the moment the owning process exits or dies, so a later process's
-`open_store` call either finds the lock genuinely free or genuinely held —
-never a lock file whose age it has to guess about. `schedule.py`'s `_Lock`
-uses the same primitive for the same reason.
+directly on the database target's own file descriptor for the connection's
+whole lifetime — never a sidecar `.lock` file, which this module neither
+creates nor treats as ownership evidence; a leftover one from an earlier
+build is inert. The kernel releases the lock the moment the owning process
+exits or dies, so a later process's `open_store` call either finds the
+target genuinely free or genuinely held — never a lock file whose age it has
+to guess about.
+
+**Classification never opens the target through SQLite.** An existing
+target's application identity, schema version, and page presence are read
+from the header bytes of the same locked descriptor, before SQLite ever
+sees the file. This is what keeps a refused target's directory entry set
+unchanged: only a target whose header already carries cfc's exact marker
+and schema version proceeds to `sqlite3.connect` and SQLite's own integrity
+check, so a foreign or incompatible WAL-mode target is never opened in a
+way that would grow it `-wal`/`-shm` sidecars.
 """
 from __future__ import annotations
 
@@ -244,44 +255,84 @@ def _text_to_dt(value: str) -> datetime.datetime:
 # --- the ownership lock ---------------------------------------------------
 
 class _OwnerLock:
-    def __init__(self, handle):
-        self._handle = handle
+    def __init__(self, fd: int):
+        self._fd: int | None = fd
 
     def release(self) -> None:
-        if self._handle is not None:
-            fcntl.flock(self._handle, fcntl.LOCK_UN)
-            self._handle.close()
-            self._handle = None
+        if self._fd is not None:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            os.close(self._fd)
+            self._fd = None
 
 
-def _lock_path_for(db_path: Path) -> Path:
-    return db_path.with_name(db_path.name + ".lock")
+def _acquire_target_lock(path: Path) -> tuple[int, bool]:
+    """Open `path`, becoming this process's kernel-tracked owner of it.
 
+    Returns `(fd, created_fresh)`. `created_fresh` is true when this call's
+    own exclusive create won the race for an absent target — the caller
+    then owns initialising it and, on failure, removing exactly the file
+    this invocation claimed. `O_CREAT | O_EXCL` first (never a separate
+    existence check beforehand) is what makes a concurrent arrival a
+    `FileExistsError` here rather than a silently duplicated fresh init:
+    losing that race falls back to an ordinary open of what is now an
+    existing target.
 
-def _acquire_owner_lock(db_path: Path) -> _OwnerLock:
-    lock_path = _lock_path_for(db_path)
-    handle = open(lock_path, "a+")
+    Raises `DatabaseInUse` if another live process already holds this
+    target's lock.
+    """
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
+        created_fresh = True
+    except FileExistsError:
+        fd = os.open(str(path), os.O_RDWR)
+        created_fresh = False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
-        handle.close()
-        raise DatabaseInUse(db_path) from exc
-    return _OwnerLock(handle)
+        os.close(fd)
+        raise DatabaseInUse(path) from exc
+    return fd, created_fresh
+
+
+def _target_identity(path: Path) -> tuple[int, int] | None:
+    """`(st_dev, st_ino)` for whatever `path` names right now, or `None` if
+    nothing exists there. A dedicated seam — not a bare `os.stat` call
+    inline — so pathname-swap revalidation can be simulated deterministically
+    in tests without disturbing every other stat this module performs.
+    """
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _revalidate_locked_target(path: Path, fd: int) -> None:
+    """Confirm `path` still names the exact file this process just locked.
+    A concurrent replace-or-remove between the lock and this check means
+    the lock is no longer evidence of ownership over whatever now sits at
+    `path` — refuse rather than classify or open that other file. Ownership
+    of the locked descriptor itself is untouched; the caller still releases
+    it normally.
+    """
+    current = _target_identity(path)
+    fd_stat = os.fstat(fd)
+    if current is None or current != (fd_stat.st_dev, fd_stat.st_ino):
+        raise TargetUnusable(
+            path,
+            "the file at this path changed identity while cfc was "
+            "establishing ownership of it; refusing rather than opening a "
+            "different file"
+        )
 
 
 # --- opening: fresh initialisation ------------------------------------
 
-def _claim_new_file(path: Path) -> None:
-    """Atomically create an empty file at `path`, refusing to overwrite one
-    that appeared since the caller last checked. Raises `FileExistsError`
-    on that race — the caller falls back to treating `path` as existing.
-    """
-    fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
-    os.close(fd)
-
-
 def _initialise_fresh(path: Path) -> sqlite3.Connection:
-    _claim_new_file(path)
+    """`path` already exists as the empty file `_acquire_target_lock`
+    exclusively created for this invocation. On failure, remove exactly
+    that file — never a target this invocation did not itself claim.
+    """
     conn = sqlite3.connect(str(path), isolation_level=None)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -301,39 +352,58 @@ def _initialise_fresh(path: Path) -> sqlite3.Connection:
 
 # --- opening: existing-target inspection --------------------------------
 
-def _classify_existing(path: Path) -> tuple[DatabaseProblem | None, str | None]:
-    """Read-only classification of an existing target. Never opens it
-    writable, so a corrupt or foreign file is never touched.
+#: The fixed-size leading portion of every SQLite file that carries the
+#: facts this module classifies against — magic string, page size, and the
+#: `application_id`/`user_version` pragmas' own storage. Reading exactly
+#: this many bytes from the locked descriptor never requires SQLite itself
+#: to open the file.
+_HEADER_SIZE = 100
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def _page_size_from_header(header: bytes) -> int | None:
+    raw = int.from_bytes(header[16:18], "big")
+    size = 65536 if raw == 1 else raw
+    if size < 512 or (size & (size - 1)) != 0:
+        return None  # not a power of two in SQLite's supported range
+    return size
+
+
+def _int32_from_header(header: bytes, offset: int) -> int:
+    return int.from_bytes(header[offset:offset + 4], "big", signed=True)
+
+
+def _classify_header(
+    size: int, header: bytes, path: Path,
+) -> tuple[DatabaseProblem | None, str | None]:
+    """Classify an existing target from its raw byte size and leading
+    `_HEADER_SIZE` bytes alone — no SQLite connection, so a foreign or
+    incompatible target is never opened in a way that could grow it
+    `-journal`, `-wal`, or `-shm` sidecars (B-2.0-34). A target that passes
+    still owes SQLite's own integrity check before it is trusted; a valid
+    header only proves the marker and version, never the page content.
     """
     hint = _RECOVERY_HINT.format(path=path)
 
-    try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    except sqlite3.OperationalError as exc:
-        return DatabaseProblem.CORRUPT, f"could not be opened as SQLite: {exc}; {hint}"
+    if size == 0:
+        return DatabaseProblem.EMPTY_OR_ARBITRARY, f"is empty (no application identity); {hint}"
+    if len(header) < _HEADER_SIZE or not header.startswith(_SQLITE_MAGIC):
+        return DatabaseProblem.CORRUPT, f"is not a valid SQLite file: bad header; {hint}"
+    page_size = _page_size_from_header(header)
+    if page_size is None:
+        return DatabaseProblem.CORRUPT, f"is not a valid SQLite file: invalid page size; {hint}"
+    if size < page_size:
+        return (DatabaseProblem.CORRUPT,
+                f"is truncated (smaller than its own declared page size); {hint}")
 
-    try:
-        try:
-            check = conn.execute("PRAGMA quick_check").fetchone()
-        except sqlite3.DatabaseError as exc:
-            return DatabaseProblem.CORRUPT, f"is not a valid SQLite file: {exc}; {hint}"
-        if check is None or check[0] != "ok":
-            return DatabaseProblem.CORRUPT, f"failed its integrity check: {check}; {hint}"
-
-        app_id = conn.execute("PRAGMA application_id").fetchone()[0]
-        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
-        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
-    finally:
-        conn.close()
+    app_id = _int32_from_header(header, 68)
+    user_version = _int32_from_header(header, 60)
 
     if app_id == 0:
-        if page_count == 0:
-            return (DatabaseProblem.EMPTY_OR_ARBITRARY,
-                    f"is empty (no application identity); {hint}")
         unclaimed_hint = _POPULATED_UNCLAIMED_HINT.format(path=path)
         return (DatabaseProblem.POPULATED_UNCLAIMED,
                 f"already contains data cfc did not create (no application "
-                f"identity, but {page_count} page(s) of content); {unclaimed_hint}")
+                f"identity, but {size // page_size} page(s) of content); {unclaimed_hint}")
     if app_id != APPLICATION_ID:
         return (DatabaseProblem.FOREIGN_APPLICATION,
                 f"belongs to a different application (application_id={app_id}); {hint}")
@@ -348,30 +418,35 @@ def _classify_existing(path: Path) -> tuple[DatabaseProblem | None, str | None]:
     return None, None
 
 
-def _inspect_existing_or_raise(path: Path) -> None:
-    problem, detail = _classify_existing(path)
+def _open_existing(path: Path, fd: int) -> sqlite3.Connection:
+    """Classify the target from the locked descriptor's own header bytes,
+    then — only once that header carries cfc's exact marker and schema
+    version — connect normally and let SQLite's own integrity check have
+    the final word. No read-only or URI-mode connection is ever opened
+    against an incompatible target.
+    """
+    size = os.fstat(fd).st_size
+    header = os.pread(fd, _HEADER_SIZE, 0)
+    problem, detail = _classify_header(size, header, path)
     if problem is not None:
         raise DatabaseIncompatible(path, problem, detail)
 
-
-def _open_writable(path: Path) -> sqlite3.Connection:
-    """Reopen an already-verified-current database. No pragma, journal, or
-    schema write happens beyond the ordinary per-connection `foreign_keys`
-    session setting.
-    """
+    hint = _RECOVERY_HINT.format(path=path)
     conn = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        check = conn.execute("PRAGMA quick_check").fetchone()
+    except sqlite3.DatabaseError as exc:
+        conn.close()
+        raise DatabaseIncompatible(
+            path, DatabaseProblem.CORRUPT, f"is not a valid SQLite file: {exc}; {hint}",
+        ) from exc
+    if check is None or check[0] != "ok":
+        conn.close()
+        raise DatabaseIncompatible(
+            path, DatabaseProblem.CORRUPT, f"failed its integrity check: {check}; {hint}",
+        )
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
-
-
-def _open_validated_connection(path: Path) -> sqlite3.Connection:
-    if not path.exists():
-        try:
-            return _initialise_fresh(path)
-        except FileExistsError:
-            pass  # a concurrent, non-cfc arrival: fall through and inspect it
-    _inspect_existing_or_raise(path)
-    return _open_writable(path)
 
 
 # --- opening: recovery of an earlier owner's active turns ------------------
@@ -718,9 +793,11 @@ def open_store(path: Path | str) -> ConversationStore:
         raise TargetUnusable(path, reason)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock = _acquire_owner_lock(path)
+    fd, created_fresh = _acquire_target_lock(path)
+    lock = _OwnerLock(fd)
     try:
-        conn = _open_validated_connection(path)
+        _revalidate_locked_target(path, fd)
+        conn = _initialise_fresh(path) if created_fresh else _open_existing(path, fd)
         try:
             _recover_interrupted_turns(conn)
         except BaseException:

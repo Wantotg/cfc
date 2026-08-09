@@ -20,6 +20,8 @@ message text.
 """
 from __future__ import annotations
 
+import math
+
 import httpx
 
 from cfc.conversation_types import (
@@ -44,6 +46,18 @@ _POOL_TIMEOUT_S = 10.0
 _READ_TIMEOUT_S = 90.0
 
 _CHAT_COMPLETIONS_PATH = "/chat/completions"
+
+#: SQLite's `INTEGER` storage class is a signed 64-bit value; a usage count
+#: outside this range cannot be stored exactly, so it is rejected rather
+#: than silently truncated (D-2.0-38).
+_SQLITE_INT_MAX = 2**63 - 1
+
+#: Distinct fixed wording so a caller can tell "the provider sent an
+#: in-band error object" (D-2.0-37) apart from every other unusable-body
+#: shape — never the envelope's own message, code, or nested fields.
+_ERROR_ENVELOPE_REASON = "the provider returned an in-band error instead of a completion"
+
+_INVALID_USAGE_REASON = "the provider reported a usage count cfc could not store exactly"
 
 
 def _timeout_evidence(phase: TimeoutPhase) -> FailureEvidence:
@@ -72,21 +86,62 @@ def _malformed_evidence(reason: str) -> FailureEvidence:
     return FailureEvidence(FailureKind.RESPONDER, reason, problem=ProviderProblem.MALFORMED_RESPONSE)
 
 
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+class _InvalidUsageCount(Exception):
+    """Raised internally when a present usage count is not one of the
+    accepted spellings — caught at the `respond` boundary and turned into
+    typed malformed evidence, never left to propagate as an internal
+    failure.
+    """
+
+
+def _normalized_usage_count(value: object) -> int | None:
+    """A present usage count, normalised to a plain `int` SQLite can store
+    exactly, or `None` if `value` itself means "not reported" (absent or
+    JSON `null`).
+
+    Accepted spellings (D-2.0-38): a JSON integer other than a boolean (JSON
+    `true`/`false` decode to `bool`, which is an `int` subclass — excluded
+    explicitly so a stray boolean is never read as `0`/`1`), a finite
+    whole-number float, or a non-empty ASCII decimal-digit string. Each is
+    rejected outright if negative or past `_SQLITE_INT_MAX`.
+
+    Raises `_InvalidUsageCount` for anything else present — a fractional or
+    non-finite float, a malformed string, a container, or an out-of-range
+    number — rather than silently dropping a count the provider did report.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise _InvalidUsageCount(value)
+    if isinstance(value, int):
+        count = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or value != int(value):
+            raise _InvalidUsageCount(value)
+        count = int(value)
+    elif isinstance(value, str) and value != "" and all(c in "0123456789" for c in value):
+        count = int(value)
+    else:
+        raise _InvalidUsageCount(value)
+    if count < 0 or count > _SQLITE_INT_MAX:
+        raise _InvalidUsageCount(value)
+    return count
 
 
 def _extract_usage(body: dict) -> Usage | None:
-    """`None` unless at least one count is present and numeric — an
+    """`None` unless at least one count is present and valid — an
     all-missing or entirely absent usage object must not attempt to build a
-    `Usage` (B-2.0-26: that spelling is not constructible).
+    `Usage` (B-2.0-26: that spelling is not constructible). Unknown usage
+    keys are ignored. Raises `_InvalidUsageCount` if a present count is not
+    one of the accepted spellings; the caller rejects the whole response
+    rather than committing a completion with a dropped or guessed count.
     """
     raw = body.get("usage")
     if not isinstance(raw, dict):
         return None
-    input_tokens = _int_or_none(raw.get("prompt_tokens"))
-    output_tokens = _int_or_none(raw.get("completion_tokens"))
-    total_tokens = _int_or_none(raw.get("total_tokens"))
+    input_tokens = _normalized_usage_count(raw.get("prompt_tokens"))
+    output_tokens = _normalized_usage_count(raw.get("completion_tokens"))
+    total_tokens = _normalized_usage_count(raw.get("total_tokens"))
     if input_tokens is None and output_tokens is None and total_tokens is None:
         return None
     return Usage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens)
@@ -128,6 +183,7 @@ class OpenAICompatibleAdapter:
                 pool=_POOL_TIMEOUT_S, read=_READ_TIMEOUT_S,
             ),
             transport=transport,
+            follow_redirects=False,
         )
 
     async def aclose(self) -> None:
@@ -179,16 +235,24 @@ class OpenAICompatibleAdapter:
             # secret-carrying exception left to propagate as INTERNAL.
             return Failure(_connection_evidence(exc))
 
-        if response.status_code >= 400:
+        if not (200 <= response.status_code <= 299):
+            # Every non-2xx status, including a 3xx this client never
+            # follows (B-2.0-35), becomes typed status evidence; its body is
+            # never parsed or retained.
             return Failure(_http_status_evidence(response.status_code))
 
         try:
             data = response.json()
         except ValueError:
+            # Also the route a 204's empty body takes: transport-successful,
+            # but with no completion to parse.
             return Failure(_malformed_evidence("the provider's response body was not valid JSON"))
 
         if not isinstance(data, dict):
             return Failure(_malformed_evidence("the provider's response was not a JSON object"))
+
+        if isinstance(data.get("error"), dict):
+            return Failure(_malformed_evidence(_ERROR_ENVELOPE_REASON))
 
         content = _extract_content(data)
         if content is None:
@@ -196,4 +260,9 @@ class OpenAICompatibleAdapter:
                 "the provider's response carried no usable assistant text"
             ))
 
-        return Completion(content=content, usage=_extract_usage(data))
+        try:
+            usage = _extract_usage(data)
+        except _InvalidUsageCount:
+            return Failure(_malformed_evidence(_INVALID_USAGE_REASON))
+
+        return Completion(content=content, usage=usage)

@@ -17,6 +17,7 @@ import pytest
 
 from cfc import conversation_service as service_mod
 from cfc import conversation_store
+from cfc import provider_wire
 from cfc.conversation_types import (
     Cancellation,
     CancelledOutcome,
@@ -25,6 +26,7 @@ from cfc.conversation_types import (
     FailureEvidence,
     FailureKind,
     Role,
+    TurnState,
     Usage,
 )
 
@@ -459,6 +461,57 @@ def test_responder_snapshot_matches_an_independent_repository_read(tmp_path):
         assert [(m.role, m.content) for m in seen_snapshot.messages] == [
             (Role.USER, "question"),
         ]
+    finally:
+        service.close()
+
+
+# --- D-2.0-39: a real stored snapshot passes through the real converter ----
+
+def test_a_real_stored_snapshot_joins_the_real_wire_converter(tmp_path):
+    """The hand-built fixtures in `test_cfc_provider_wire.py` still own
+    contradictory snapshots the real store cannot produce; this proves the
+    producer (`ConversationStore`, via `ConversationService`) and the
+    converter (`provider_wire.build_request_plan`) agree through their real
+    implementations, not just that each accepts a hand-built fixture. It
+    manufactures no snapshot, uses no responder-under-test provider, loads
+    no configuration, and touches no network — the deterministic responder
+    below only forwards the snapshot it was actually handed.
+    """
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c")
+        completed = run(service.send_turn(
+            chat.id, "fixture-model", "first question",
+            FixedResponder(Completion(content="first answer"))))
+        failed = run(service.send_turn(
+            chat.id, "fixture-model", "declared failure question",
+            FixedResponder(Failure(FailureEvidence(FailureKind.RESPONDER, "declined")))))
+        cancelled = run(service.send_turn(
+            chat.id, "fixture-model", "declared cancel question",
+            FixedResponder(Cancellation())))
+
+        captured_plans = []
+
+        class PlanCapturingResponder:
+            async def respond(self, snapshot, model):
+                captured_plans.append(provider_wire.build_request_plan(snapshot, model))
+                return Completion(content="final answer")
+
+        run(service.send_turn(chat.id, "fixture-model", "current question",
+                               PlanCapturingResponder()))
+
+        assert len(captured_plans) == 1
+        plan = captured_plans[0]
+
+        assert [(m.role, m.content) for m in plan.messages] == [
+            ("user", "first question"), ("assistant", "first answer"),
+            ("user", "current question"),
+        ]
+        assert set(plan.omitted) == {
+            provider_wire.OmittedTurn(turn_id=failed.id, state=TurnState.FAILED),
+            provider_wire.OmittedTurn(turn_id=cancelled.id, state=TurnState.CANCELLED),
+        }
+        assert completed.id not in {o.turn_id for o in plan.omitted}
     finally:
         service.close()
 
