@@ -47,7 +47,7 @@ docstring. `VAULT_PATH` is a live name in `export.py` for the export
 directory, so a reader who greps for it finds a plausible wrong answer.
 - Files: cfc/diagnostics.py, tests/test_cfc_diagnostics.py, config.example.py
 - Status: shipped
-- Commit: pending
+- Commit: 05348ad
 
 ## 2026-08-08 — Make the entry gate independent of Cas's config.py, and structural about the guard
 v2.0 Stage 2, loop one, part one. D-2.0-04: every retained flat module that
