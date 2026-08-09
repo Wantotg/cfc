@@ -32,8 +32,9 @@ ROW_ORDER = REQUIRED_ROW_NAMES + OPTIONAL_ROW_NAMES
 #: `configuration`'s own next step is the one true cure for every row a
 #: failed config load leaves NOT_CHECKED — named once here so the cascade
 #: below and any test asserting "no duplicate cure" refer to the same text.
-_CONFIG_LOAD_NEXT_STEP = ("Copy config.example.py to config.py, then fill in "
-                           "the required settings.")
+#: Only offered when no file is there to lose (see `_config_load_next_step`).
+_CONFIG_MISSING_NEXT_STEP = ("Copy config.example.py to config.py, then fill in "
+                              "the required settings.")
 
 
 class State(Enum):
@@ -52,6 +53,25 @@ class Row:
     next_step: str | None = None
 
 
+def _config_load_next_step(exc: config_loader.ConfigLoadError) -> str:
+    """Recovery guidance for a configuration that would not load, chosen by
+    whether a file is already sitting at that path (B-2.0-18).
+
+    Copy-and-fill is the cure for exactly one case: nothing is there. A
+    `config.py` that exists and failed — a syntax error, a failed import,
+    an exception in its own top-level code, an unreadable file — is a file
+    holding an API key and every path this machine is configured with, and
+    it is gitignored, so replacing it with the example loses material
+    nothing can restore. That case gets told to correct the file, and told
+    plainly that copying over it is not the route.
+    """
+    if not exc.path.exists():
+        return _CONFIG_MISSING_NEXT_STEP
+    return (f"Correct {exc.path.name} — the detail above names the error. "
+            f"Do not copy config.example.py over it; that would replace the "
+            f"settings already in it.")
+
+
 def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
     """The full ordered inventory, `ROW_ORDER`. Never raises: every failure
     this can hit — a bad interpreter, a missing config, an invalid required
@@ -65,7 +85,7 @@ def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
         snapshot = config_loader.load_snapshot(config_path)
     except config_loader.ConfigLoadError as exc:
         rows.append(Row("configuration", State.ERROR, str(exc),
-                         next_step=_CONFIG_LOAD_NEXT_STEP))
+                         next_step=_config_load_next_step(exc)))
         prerequisite = "configuration did not load; see the configuration row"
         for name in REQUIRED_ROW_NAMES[2:] + OPTIONAL_ROW_NAMES:
             rows.append(Row(name, State.NOT_CHECKED, prerequisite))

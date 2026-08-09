@@ -122,6 +122,53 @@ def test_not_checked_required_row_fails_required_rows_ok_even_without_error():
     assert diagnostics.required_rows_ok(rows) is False
 
 
+# --- a config that exists and failed is never told to copy over itself -------
+
+BROKEN_BODIES = {
+    "syntax": VALID_BODY + "MODEL = (\n",
+    "import": VALID_BODY + "import cfc_no_such_module_here\n",
+    "exec": VALID_BODY + "raise ValueError('boom')\n",
+}
+
+
+@pytest.mark.parametrize("kind", sorted(BROKEN_BODIES))
+def test_existing_config_that_failed_is_not_told_to_copy_the_example_over_it(tmp_path, kind):
+    """B-2.0-18. A `config.py` that is present but will not load holds an
+    API key and every configured path on the machine, and is gitignored —
+    so copy-and-fill is not a cure here, it is unrecoverable data loss.
+    The row still carries a next step; it just names correcting the file.
+    """
+    path = write_config(tmp_path, BROKEN_BODIES[kind])
+    row = by_name(diagnostics.diagnose(path), "configuration")
+
+    assert row.state == diagnostics.State.ERROR
+    assert row.next_step is not None
+    assert row.next_step != diagnostics._CONFIG_MISSING_NEXT_STEP
+    assert "Copy config.example.py to config.py" not in row.next_step
+    assert path.name in row.next_step
+    assert path.read_text(encoding="utf-8") == BROKEN_BODIES[kind]
+
+
+def test_missing_config_still_gets_the_copy_and_fill_cure(tmp_path):
+    """The other half of B-2.0-18: nothing to lose, so the copy-and-fill
+    route D-2.0-07 shipped is still exactly right.
+    """
+    row = by_name(diagnostics.diagnose(tmp_path / "absent.py"), "configuration")
+    assert row.next_step == diagnostics._CONFIG_MISSING_NEXT_STEP
+
+
+def test_config_path_that_is_a_directory_is_not_told_to_copy_over_it(tmp_path):
+    """`load_snapshot` reports a directory under the same `"missing"` kind
+    as an absent file, so the choice cannot be made on `kind` alone — it is
+    made on whether anything is already at that path.
+    """
+    path = tmp_path / "config.py"
+    path.mkdir()
+    row = by_name(diagnostics.diagnose(path), "configuration")
+    assert row.state == diagnostics.State.ERROR
+    assert "Copy config.example.py to config.py" not in (row.next_step or "")
+
+
 # --- vault: not configured / locally invalid / ready -------------------------
 
 def test_vault_not_configured(tmp_path):

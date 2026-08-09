@@ -280,6 +280,20 @@ def test_doctor_next_step_renders_directly_below_its_row(tmp_path):
     assert lines[row_index + 1].startswith("      ")
 
 
+def test_doctor_broken_existing_config_is_never_told_to_copy_the_example_over_it(tmp_path):
+    """B-2.0-18 end to end: the file is present and unloadable, so the
+    printed cure must not be the copy-and-fill one, and the file itself is
+    still there, byte for byte, after the run.
+    """
+    body = "API_KEY = 'fixture-key'\nMODEL = (\n"
+    path = write_config(tmp_path, body)
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    assert result.returncode == 1
+    assert "Copy config.example.py to config.py" not in result.stdout
+    assert "config.py" in result.stdout
+    assert path.read_text(encoding="utf-8") == body
+
+
 def test_doctor_optional_vault_error_is_visible_but_does_not_block_zero_exit(tmp_path):
     """B-2.0-11 plus D-2.0-07 together: a missing configured vault root is
     a real, visible error row with guidance, but it is optional — an

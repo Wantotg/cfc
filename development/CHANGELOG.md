@@ -25,6 +25,28 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Stop doctor telling you to overwrite a `config.py` that exists (`B-2.0-18`)
+v2.0 Stage 2, loop two, playtest. `diagnose` gave every configuration load
+failure the same cure — *copy `config.example.py` to `config.py`* — including
+the four kinds where a file is already sitting there: a syntax error, a failed
+import, an exception raised by the file's own top-level code, and an unreadable
+file. `config.py` holds an API key and every path a machine is configured with,
+and it is gitignored, so a reader who followed that advice after a typo lost
+material no git history could restore.
+
+The cure is now chosen by whether anything is at the path. Nothing there: the
+copy-and-fill route, unchanged. Something there that failed: correct the file,
+with the detail line above it naming the error, and one sentence saying not to
+copy the example over it. Six tests, covering the three broken-file kinds, a
+directory in `config.py`'s place (which `load_snapshot` reports under the same
+`"missing"` kind as an absent file, so the choice cannot be made on `kind`
+alone), the still-correct missing-file cure, and the rendered CLI line with the
+file intact byte for byte afterwards.
+- Files: cfc/diagnostics.py, tests/test_cfc_diagnostics.py,
+  tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — Finish the doctor contract: `DATABASE_PATH`, a 3.14 floor, and real next steps (`B-2.0-11`, `D-2.0-07`, `D-2.0-16`, `D-2.0-17`)
 v2.0 Stage 2, loop two. Four adjacent gaps in `python -m cfc doctor`'s
 contract, closed together before Stage 3 opens a real database through it.
@@ -63,7 +85,7 @@ now a visible, non-blocking error with a next step, not `READY`.
   cfc/paths.py, config.example.py, tests/test_cfc_settings.py,
   tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
 - Status: shipped
-- Commit: pending
+- Commit: c7abf16
 
 ## 2026-08-09 — Point doctor's vault row at the vault (`B-2.0-01`)
 v2.0 Stage 2, loop one, playtest. `cfc/diagnostics.py`'s vault row read
