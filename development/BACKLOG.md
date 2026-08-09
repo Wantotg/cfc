@@ -15,46 +15,30 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## D-2.0-17 · The 2.0 interpreter floor is lower than the supported baseline
+## D-2.0-20 · The runtime row reports no version when it passes
 
-**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 2 loop two playtest.
 
-`cfc/entry.py` refuses interpreters below 3.10, while the 2.0 design and
-refactor roadmap name Python 3.14 as the supported baseline. cfc 2.0 has only
-been run on 3.14.4, so claiming that four older minor versions are supported
-would be broader than the evidence. Raise the 2.0 floor to 3.14 and state it
-in the 2.0 bootstrap instructions in `config.example.py`. The README's
-3.10 requirement describes v1.9.1 and remains unchanged until cutover.
+`_runtime_row` returns `ready` without saying which interpreter it checked or
+what floor it enforces. The passing row should report the state the behaviour
+uses, just as the other healthy rows report their path or provider details.
+Include the running version and the 3.14 floor, for example `3.14.4 (floor
+3.14)`.
 
-## D-2.0-16 · The 2.0 database field should be `DATABASE_PATH`, not `DB_PATH`
+## D-2.0-19 · The chat provider row names one missing field per run
 
-**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 2 loop two playtest.
 
-`cfc/settings.py` currently exposes the new 2.0 database target as `DB_PATH`,
-while the 2.0 design named it `DATABASE_PATH`. `DB_PATH` is also the legacy
-database constant in `db.py` and the name patched by the characterization
-tests, so the same spelling now points at two different databases. Nothing
-consumes the new field yet. Rename it in `cfc/settings.py` and
-`config.example.py` before Stage 3 opens a real database through it.
+With an empty `config.py`, doctor names only `API_BASE`. After that is set, it
+names only `API_KEY`, and then only `MODEL`. The settings builder deliberately
+raises on the first missing provider field, but the diagnostic row is the
+fresh-clone surface a person uses to learn what needs filling.
 
-## D-2.0-07 · Doctor gives no next step, and no state for a row it never checked
+Collect the missing required provider fields in `diagnostics._provider_row` and
+name them together. Keep `settings.build_provider` fail-fast for callers that
+need one actionable exception rather than a list.
 
-**Found:** 2026-08-09, during the v2.0 Stage 2 loop one playtest.
-
-The 2.0 design gives each diagnostic a canonical state, a safe explanation,
-and an actionable next step. `Row` currently has only a name, state and detail.
-When configuration fails, downstream rows are marked `error` even though they
-were not diagnosed, which also conflicts with the diagnostic module's rule that
-optional rows are never `ERROR`. The required-row check asks only whether any
-required row is `ERROR`, so it would also accept a required row that was never
-examined.
-
-Add a `not checked` state for dependent rows, make required readiness mean that
-every required row is `READY`, and give known failure cases a `next_step` that
-renders as a readable second line. The missing-configuration route is the
-first concrete case: copy `config.example.py` to `config.py`, then fill the
-required provider settings. Keep the downstream explanation local to those
-rows, while the configuration row owns the cure.
+---
 
 ## D-2.0-02 · The forged-text assertion passes only because 80 columns wraps the string
 

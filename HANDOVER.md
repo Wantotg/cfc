@@ -190,6 +190,11 @@ visual behaviour, usability, real-provider interaction, and retrieval quality
 against real data. A baseline changes only after its difference is inspected
 and tied to an intentional design or data change.
 
+Recovery advice is behaviour, not commentary: proof must exercise the situation
+in which the advice appears, including whether the target already exists and
+could be lost. When one rule or message covers several failure cases, proof
+must check each case where the consequence differs.
+
 Before a loop overwrites, deletes, relocates, or reinterprets unique durable
 material, its work order names the material at risk, recovery source,
 verification before mutation, partial-failure state, and resumption route.

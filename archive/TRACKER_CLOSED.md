@@ -13,6 +13,15 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-18 | doctor told a reader to copy the example over a `config.py` that exists | shipped in `3a54a9c`; an existing failed configuration file now gets a correction route instead of advice that would replace its settings, while the copy-and-fill route remains for a missing file | 2026-08-09 |
+| B-2.0-11 | a configured vault root that does not exist reports ready | shipped in `c7abf16`; the vault row now requires an existing usable directory and leaves the database-target rule separate | 2026-08-09 |
+| D-2.0-07 | doctor gives no next step, and no state for a row it never checked | shipped in `c7abf16`; dependent rows use `not checked`, required readiness requires every required row to be `ready`, and known failures render safe next steps | 2026-08-09 |
+| D-2.0-16 | the 2.0 database field should be `DATABASE_PATH`, not `DB_PATH` | shipped in `c7abf16`; the 2.0 setting uses `DATABASE_PATH` and does not treat the legacy `DB_PATH` spelling as an alias | 2026-08-09 |
+| D-2.0-17 | the 2.0 interpreter floor is lower than the supported baseline | shipped in `c7abf16`; the 2.0 entry gate now refuses below Python 3.14 and the bootstrap example states that floor | 2026-08-09 |
+| N-2.0-21 | `PLACEHOLDER` in the vault row, left over from `CHAT_EXPORT_DIR` | nothing owed; `VAULT_ROOT` uses the empty example value, the branch is harmless for plausible configuration, and its behaviour is pinned by a regression test | 2026-08-09 |
+| N-2.0-22 | every next step says `config.py` by name | nothing owed; the override is a development and test seam, the real loaded path is shown above the settings rows, and the load-error route uses the actual filename | 2026-08-09 |
+| N-2.0-23 | `required_rows_ok` does not check that the required rows are present | nothing owed; `diagnose` always emits the complete ordered row set, while the short-tuple case is a deliberate unit-test guard for required readiness | 2026-08-09 |
+| N-2.0-24 | the 3.13 refusal proof is a simulation, with no 3.13 on the machine | nothing owed; Python 3.13 is unavailable here, and the synthetic proof covers the changed comparison and import ordering without claiming native 3.13 execution | 2026-08-09 |
 | B-2.0-01 | doctor's vault row diagnosed the chat-export directory, not the vault | shipped in `05348ad`; the row now reads `VAULT_ROOT`, and regression coverage proves export-directory settings cannot make it report a ready vault | 2026-08-09 |
 | D-2.0-04 | the one complete check cannot run without a personal `config.py` | shipped in `183a097`; the entry gate installs a tracked synthetic config fixture, so the complete preservation suite runs without reading Cas's private configuration | 2026-08-09 |
 | D-2.0-05 | a guard-shaped line at column zero inside a triple-quoted string still counts | shipped in `183a097`; structural AST recognition replaces the regex and rejects guard-shaped text inside strings | 2026-08-09 |

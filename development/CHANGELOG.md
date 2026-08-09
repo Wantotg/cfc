@@ -45,7 +45,7 @@ file intact byte for byte afterwards.
 - Files: cfc/diagnostics.py, tests/test_cfc_diagnostics.py,
   tests/test_cfc_doctor_cli.py
 - Status: shipped
-- Commit: pending
+- Commit: 3a54a9c
 
 ## 2026-08-09 — Finish the doctor contract: `DATABASE_PATH`, a 3.14 floor, and real next steps (`B-2.0-11`, `D-2.0-07`, `D-2.0-16`, `D-2.0-17`)
 v2.0 Stage 2, loop two. Four adjacent gaps in `python -m cfc doctor`'s
