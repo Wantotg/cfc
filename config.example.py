@@ -23,11 +23,16 @@
 #
 # It reads this file once, validates the settings above and the ones marked
 # optional below, and reports each as ready, unavailable (optional and
-# unset), error (set, but not usable as written), or not built (a 2.0
-# surface that doesn't exist yet, regardless of configuration) — without
-# opening a database, creating a directory, or contacting a provider. A
-# clean report means the bootstrap is ready, not that a provider or embedder
-# is actually reachable — doctor validates format locally, never live.
+# unset), error (set, but not usable as written), not checked (a row that
+# depends on a failed one above it), or not built (a 2.0 surface that
+# doesn't exist yet, regardless of configuration) — without opening a
+# database, creating a directory, or contacting a provider. A clean report
+# means the bootstrap is ready, not that a provider or embedder is actually
+# reachable — doctor validates format locally, never live.
+#
+# The 2.0 bootstrap needs Python 3.14 or newer — `python -m cfc doctor`'s
+# runtime row refuses and names both versions on anything older. The v1.9.1
+# flat application below has its own, lower floor; see README.md.
 #
 # The v1.9.1 flat application (`python main.py`, or `launch.sh`) reads this
 # same file directly and remains the route that actually chats; `cfc doctor`
@@ -41,10 +46,10 @@ RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /r
 # Unset (the default) resolves to Path.home() / ".cfc" / "2.0" / "chat.db",
 # a sibling of v1.9.1's own ~/.cfc/chat.db rather than a replacement for it,
 # so both can exist on the same machine without either reading the other's
-# schema. `cfc doctor` refuses a DB_PATH that resolves to the legacy
+# schema. `cfc doctor` refuses a DATABASE_PATH that resolves to the legacy
 # database, this repository, or config.py itself — those are protected
 # targets, not configuration choices.
-# DB_PATH = ""   # e.g. "~/.cfc/2.0/chat.db" (the default, written out)
+# DATABASE_PATH = ""   # e.g. "~/.cfc/2.0/chat.db" (the default, written out)
 
 # Path to a folder inside your Obsidian vault where chats will be exported.
 # The name says both what it holds and that it's a directory — see VAULT_ROOT

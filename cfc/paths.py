@@ -1,5 +1,7 @@
-"""paths.py — the one path-shape check the bootstrap core needs, shared by
-the database target and the vault diagnosis.
+"""paths.py — the one path-shape check the bootstrap core needs: whether the
+2.0 database target could be created or opened without anything else
+changing first. The vault diagnosis (`diagnostics._vault_row`) does not use
+this — cfc never creates the vault root, so it checks existence directly.
 
 Deliberately not `paths.py` at the repository root (the v1.9.1 tool jail) —
 importing that would pull in a flat runtime module, which this package
@@ -39,26 +41,6 @@ def usable_target_reason(path: Path) -> str | None:
         if path.is_dir():
             return f"{path} is a directory, not a file"
         return None
-
-    parent = nearest_existing_parent(path.parent)
-    if not parent.exists():
-        return f"no existing ancestor directory found above {path}"
-    if not parent.is_dir():
-        return f"{parent} exists but is not a directory"
-    return None
-
-
-def usable_directory_reason(path: Path) -> str | None:
-    """None if `path` already is a directory, or does not exist yet but its
-    nearest existing ancestor is a real directory (so it could become one
-    without anything else changing first). Otherwise the reason it could
-    not — see `usable_target_reason` for the file-target equivalent this
-    mirrors.
-    """
-    if path.exists():
-        if path.is_dir():
-            return None
-        return f"{path} exists but is not a directory"
 
     parent = nearest_existing_parent(path.parent)
     if not parent.exists():

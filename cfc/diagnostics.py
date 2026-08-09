@@ -1,12 +1,20 @@
 """diagnostics.py — the seven-row inventory `cfc doctor` renders: runtime,
 configuration, chat provider, 2.0 database target, vault, embeddings, and
-file tools. The first four are required — a `Row.state` of `ERROR` on any
-of them is what makes `doctor` exit non-zero. The last three are optional:
-absence is `UNAVAILABLE`, never `ERROR`, and never blocks the exit code.
+file tools. The first four are required — `required_rows_ok` is an exact
+allow-list, so `doctor` exits non-zero unless every one of them is `READY`,
+not merely absent of `ERROR`. The last three are optional: absence is
+`UNAVAILABLE`, and neither that nor `NOT_CHECKED` blocks the exit code.
 
 Every check here is local and structural, same as `settings.py`, which this
 module calls for the two rows that share its rules. Nothing here opens a
 socket, a database, or creates a directory.
+
+`Row.detail` is diagnostic evidence — what was checked and what it found.
+`Row.next_step`, stored separately, is recovery guidance — what to do about
+it — and is only ever set on a row this module actually diagnosed. A `NOT
+CHECKED` row (one that depends on an earlier row that failed) carries a
+local explanation in `detail` but no `next_step`: the cure lives once, on
+the row that owns it, not copied onto everything downstream.
 """
 from __future__ import annotations
 
@@ -15,11 +23,17 @@ from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
-from cfc import config_loader, entry, paths, settings
+from cfc import config_loader, entry, settings
 
 REQUIRED_ROW_NAMES = ("runtime", "configuration", "chat provider", "2.0 database target")
 OPTIONAL_ROW_NAMES = ("vault", "embeddings", "file tools")
 ROW_ORDER = REQUIRED_ROW_NAMES + OPTIONAL_ROW_NAMES
+
+#: `configuration`'s own next step is the one true cure for every row a
+#: failed config load leaves NOT_CHECKED — named once here so the cascade
+#: below and any test asserting "no duplicate cure" refer to the same text.
+_CONFIG_LOAD_NEXT_STEP = ("Copy config.example.py to config.py, then fill in "
+                           "the required settings.")
 
 
 class State(Enum):
@@ -27,6 +41,7 @@ class State(Enum):
     UNAVAILABLE = "unavailable"
     ERROR = "error"
     NOT_BUILT = "not built"
+    NOT_CHECKED = "not checked"
 
 
 @dataclass(frozen=True)
@@ -34,6 +49,7 @@ class Row:
     name: str
     state: State
     detail: str = ""
+    next_step: str | None = None
 
 
 def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
@@ -48,12 +64,11 @@ def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
     try:
         snapshot = config_loader.load_snapshot(config_path)
     except config_loader.ConfigLoadError as exc:
-        rows.append(Row("configuration", State.ERROR, str(exc)))
-        cascaded = "configuration failed to load; see the configuration row"
-        for name in REQUIRED_ROW_NAMES[2:]:
-            rows.append(Row(name, State.ERROR, cascaded))
-        for name in OPTIONAL_ROW_NAMES:
-            rows.append(Row(name, State.ERROR, cascaded))
+        rows.append(Row("configuration", State.ERROR, str(exc),
+                         next_step=_CONFIG_LOAD_NEXT_STEP))
+        prerequisite = "configuration did not load; see the configuration row"
+        for name in REQUIRED_ROW_NAMES[2:] + OPTIONAL_ROW_NAMES:
+            rows.append(Row(name, State.NOT_CHECKED, prerequisite))
         return tuple(rows)
 
     rows.append(Row("configuration", State.READY,
@@ -67,11 +82,14 @@ def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
 
 
 def required_rows_ok(rows: tuple[Row, ...]) -> bool:
-    """False if any required row is `ERROR` — what `doctor` bases its exit
-    code on. Optional rows never affect this.
+    """An exact allow-list, not merely "no `ERROR`": every required row
+    must be `READY` — what `doctor` bases its exit code on. A required row
+    left `NOT_CHECKED` (its prerequisite failed, so it was never actually
+    diagnosed) is not readiness either, and must not produce exit zero.
+    Optional rows never affect this.
     """
     return all(
-        row.state != State.ERROR
+        row.state == State.READY
         for row in rows
         if row.name in REQUIRED_ROW_NAMES
     )
@@ -84,11 +102,25 @@ def _runtime_row() -> Row:
     return Row("runtime", State.ERROR, problem)
 
 
+def _settings_error_next_step(exc: settings.SettingsError) -> str:
+    """Recovery guidance for a `settings.SettingsError`, kept generic and
+    redacted on purpose: it names the field to fix, never the value that
+    was rejected (`Row.detail`, printed right above, already carries that
+    evidence for a value that was safe to show in the first place).
+    """
+    if exc.kind == "missing":
+        return f"Set {exc.field_name} in config.py."
+    if exc.kind == "type":
+        return f"Set {exc.field_name} to the expected type in config.py."
+    return f"Fix {exc.field_name} in config.py — see the detail above."
+
+
 def _provider_row(snapshot) -> Row:
     try:
         provider = settings.build_provider(snapshot)
     except settings.SettingsError as exc:
-        return Row("chat provider", State.ERROR, str(exc))
+        return Row("chat provider", State.ERROR, str(exc),
+                    next_step=_settings_error_next_step(exc))
     return Row("chat provider", State.READY,
                f"{provider.model} via {provider.api_base}")
 
@@ -97,7 +129,8 @@ def _database_row(snapshot) -> Row:
     try:
         db_path = settings.build_database_path(snapshot)
     except settings.SettingsError as exc:
-        return Row("2.0 database target", State.ERROR, str(exc))
+        return Row("2.0 database target", State.ERROR, str(exc),
+                    next_step=_settings_error_next_step(exc))
     return Row("2.0 database target", State.READY, str(db_path))
 
 
@@ -107,6 +140,13 @@ def _vault_row(snapshot) -> Row:
     `CHAT_EXPORT_DIR` (nor `VAULT_PATH`, its pre-1.3.1 name): that is where
     v1.9.1 *writes* exported chats, usually a folder inside the vault, and
     reporting it here answered a different question than the row asked.
+
+    Unlike the 2.0 database target, cfc never creates the vault root
+    (B-2.0-11): a configured root is `READY` only if it already exists and
+    is a directory. A missing directory or a configured file is a visible,
+    non-blocking `ERROR` — optional rows are never allowed to block the
+    exit code — with guidance that Cas creates or corrects it himself;
+    doctor never offers to make it.
     """
     values = snapshot.values
     raw = values.get("VAULT_ROOT")
@@ -114,10 +154,15 @@ def _vault_row(snapshot) -> Row:
         return Row("vault", State.UNAVAILABLE, "VAULT_ROOT is not set")
 
     resolved = Path(raw).expanduser().resolve()
-    reason = paths.usable_directory_reason(resolved)
-    if reason is not None:
-        return Row("vault", State.ERROR, reason)
-    return Row("vault", State.READY, str(resolved))
+    if resolved.is_dir():
+        return Row("vault", State.READY, str(resolved))
+    if resolved.exists():
+        detail = f"{resolved} exists but is not a directory"
+    else:
+        detail = f"{resolved} does not exist"
+    next_step = (f"Create the directory at {resolved}, or correct "
+                 f"VAULT_ROOT in config.py — cfc does not create it.")
+    return Row("vault", State.ERROR, detail, next_step=next_step)
 
 
 def _embeddings_row(snapshot) -> Row:

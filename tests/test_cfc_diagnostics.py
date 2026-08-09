@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cfc import diagnostics
+from cfc import diagnostics, settings
 
 VALID_BODY = (
     "API_BASE = 'https://provider.invalid/v1'\n"
@@ -58,17 +58,67 @@ def test_unset_optional_settings_are_unavailable_not_error(tmp_path):
 def test_missing_required_field_is_error_and_not_ok(tmp_path):
     path = write_config(tmp_path, "API_BASE = 'https://provider.invalid/v1'\nMODEL='m'\n")
     rows = diagnostics.diagnose(path)
-    assert by_name(rows, "chat provider").state == diagnostics.State.ERROR
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    assert row.next_step is not None
+    assert "API_KEY" in row.next_step
     assert diagnostics.required_rows_ok(rows) is False
 
 
-def test_missing_config_file_cascades_to_every_row_but_runtime(tmp_path):
+def test_database_target_error_carries_a_next_step(tmp_path):
+    path = write_config(
+        tmp_path, VALID_BODY + f"DATABASE_PATH = {str(settings.LEGACY_DATABASE_PATH)!r}\n",
+    )
+    rows = diagnostics.diagnose(path)
+    row = by_name(rows, "2.0 database target")
+    assert row.state == diagnostics.State.ERROR
+    assert row.next_step is not None
+    assert "DATABASE_PATH" in row.next_step
+
+
+def test_missing_config_file_gives_one_error_and_five_not_checked_rows(tmp_path):
+    """D-2.0-07. Downstream rows that never actually ran a check must not
+    be `ERROR` — that state is reserved for a row this module diagnosed and
+    found broken. The configuration row alone carries the cure; the five
+    dependent rows explain only that their prerequisite failed, with no
+    `next_step` of their own (no duplicate cure) — and every one of them
+    still fails `required_rows_ok` where it matters (the two required ones).
+    """
     path = tmp_path / "does_not_exist.py"
     rows = diagnostics.diagnose(path)
+
     assert by_name(rows, "runtime").state == diagnostics.State.READY
-    assert by_name(rows, "configuration").state == diagnostics.State.ERROR
-    for name in diagnostics.REQUIRED_ROW_NAMES[2:] + diagnostics.OPTIONAL_ROW_NAMES:
-        assert by_name(rows, name).state == diagnostics.State.ERROR, name
+
+    config_row = by_name(rows, "configuration")
+    assert config_row.state == diagnostics.State.ERROR
+    assert config_row.next_step is not None
+    assert "config.example.py" in config_row.next_step
+    assert "config.py" in config_row.next_step
+
+    dependent_names = diagnostics.REQUIRED_ROW_NAMES[2:] + diagnostics.OPTIONAL_ROW_NAMES
+    assert len(dependent_names) == 5
+    for name in dependent_names:
+        row = by_name(rows, name)
+        assert row.state == diagnostics.State.NOT_CHECKED, name
+        assert row.next_step is None, name
+        assert row.detail
+        assert row.next_step != config_row.next_step
+
+    assert diagnostics.required_rows_ok(rows) is False
+
+
+def test_not_checked_required_row_fails_required_rows_ok_even_without_error():
+    """A synthetic row set proving `required_rows_ok`'s exact allow-list
+    directly: no row here is `ERROR`, but a required row left `NOT_CHECKED`
+    must still fail readiness — the old rule (`state != ERROR`) would have
+    wrongly accepted this, which was D-2.0-07's actual bug.
+    """
+    rows = (
+        diagnostics.Row("runtime", diagnostics.State.READY),
+        diagnostics.Row("configuration", diagnostics.State.READY),
+        diagnostics.Row("chat provider", diagnostics.State.NOT_CHECKED, "prerequisite failed"),
+        diagnostics.Row("2.0 database target", diagnostics.State.READY),
+    )
     assert diagnostics.required_rows_ok(rows) is False
 
 
@@ -95,12 +145,32 @@ def test_vault_ready_when_directory_exists(tmp_path):
     assert str(vault_dir) in by_name(rows, "vault").detail
 
 
-def test_vault_ready_when_directory_does_not_exist_yet_but_parent_does(tmp_path):
+def test_vault_error_when_directory_does_not_exist_yet_even_though_parent_does(tmp_path):
+    """B-2.0-11. Unlike the 2.0 database target, cfc never creates the
+    vault root, so a missing directory is a visible, non-blocking error —
+    not `READY` merely because its parent exists.
+    """
     vault_dir = tmp_path / "not_yet_created"
     path = write_config(tmp_path, VALID_BODY + f"VAULT_ROOT = {str(vault_dir)!r}\n")
     rows = diagnostics.diagnose(path)
-    assert by_name(rows, "vault").state == diagnostics.State.READY
+    row = by_name(rows, "vault")
+    assert row.state == diagnostics.State.ERROR
+    assert str(vault_dir) in row.detail
     assert not vault_dir.exists()
+    assert row.next_step is not None
+    assert "VAULT_ROOT" in row.next_step
+    assert diagnostics.required_rows_ok(rows) is True
+
+
+def test_vault_error_when_configured_root_is_a_file(tmp_path):
+    vault_file = tmp_path / "vault-is-actually-a-file"
+    vault_file.write_text("x", encoding="utf-8")
+    path = write_config(tmp_path, VALID_BODY + f"VAULT_ROOT = {str(vault_file)!r}\n")
+    rows = diagnostics.diagnose(path)
+    row = by_name(rows, "vault")
+    assert row.state == diagnostics.State.ERROR
+    assert "not a directory" in row.detail
+    assert row.next_step is not None
 
 
 def test_vault_error_when_blocked_by_a_file(tmp_path):
@@ -207,6 +277,8 @@ def test_no_row_ever_shows_the_api_key_or_embed_key(tmp_path):
     for row in rows:
         assert api_marker not in row.detail
         assert embed_marker not in row.detail
+        assert api_marker not in (row.next_step or "")
+        assert embed_marker not in (row.next_step or "")
         assert api_marker not in repr(row)
         assert embed_marker not in repr(row)
 
@@ -220,7 +292,7 @@ def test_diagnose_creates_nothing_on_disk(tmp_path):
         tmp_path,
         VALID_BODY
         + f"VAULT_ROOT = {str(vault_dir)!r}\n"
-        + f"DB_PATH = {str(db_dir / 'chat.db')!r}\n"
+        + f"DATABASE_PATH = {str(db_dir / 'chat.db')!r}\n"
         + "TOOLS_ENABLED = True\n",
     )
     before = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))

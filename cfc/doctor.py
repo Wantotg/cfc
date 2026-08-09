@@ -3,9 +3,10 @@
 Prints the ordered inventory `diagnostics.diagnose()` produces and exits
 non-zero exactly when a required row is not ready. Never prints a
 credential value, a configuration dump, or a traceback — every string here
-comes from `Row.detail`, and `diagnostics.py` is what keeps those safe to
-print (see its module docstring). It validates provider and embedding
-settings locally; it never claims they are reachable.
+comes from `Row.detail` or `Row.next_step`, and `diagnostics.py` is what
+keeps those safe to print (see its module docstring). A row's `next_step`,
+when present, renders as a subordinate line directly below it. It validates
+provider and embedding settings locally; it never claims they are reachable.
 """
 from __future__ import annotations
 
@@ -40,6 +41,8 @@ def render(rows) -> str:
         if row.detail:
             line += f"   {row.detail}"
         lines.append(line.rstrip())
+        if row.next_step:
+            lines.append(f"      -> {row.next_step}")
     lines.append("")
     lines.append(_CLOSING)
     return "\n".join(lines)

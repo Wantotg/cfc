@@ -10,15 +10,17 @@ genuinely needs newer syntax still fails as "unsupported Python", not as a
 `SyntaxError` pointing at a file the person running the command didn't write
 and can't fix by editing.
 
-3.10 is the floor: nothing in cfc needs it specifically yet, but it is a
-deliberate floor rather than an accident of whatever wrote this file, so it
-is named here once instead of discovered piecemeal.
+3.14 is the floor (D-2.0-17): the 2.0 bootstrap has only ever been run on
+3.14.4, so this names the interpreter actually verified rather than
+guessing how far back it would work. This is the 2.0 parallel package's own
+floor, not README.md's 3.10, which still describes the live v1.9.1
+application until cutover.
 """
 from __future__ import annotations
 
 import sys
 
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 14)
 
 
 def check_interpreter() -> str | None:

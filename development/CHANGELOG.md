@@ -25,6 +25,46 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Finish the doctor contract: `DATABASE_PATH`, a 3.14 floor, and real next steps (`B-2.0-11`, `D-2.0-07`, `D-2.0-16`, `D-2.0-17`)
+v2.0 Stage 2, loop two. Four adjacent gaps in `python -m cfc doctor`'s
+contract, closed together before Stage 3 opens a real database through it.
+
+`DATABASE_PATH` replaces `DB_PATH` as the 2.0 database field's name
+(`cfc/settings.py`, `config.example.py`): the old spelling collided with
+`db.py`'s own legacy constant of the same name, now pointing at two
+different databases under one name. `DB_PATH` is not read as a hidden alias
+— a config setting only `DB_PATH` still falls back to the ordinary 2.0
+default.
+
+`cfc.entry.MIN_PYTHON` rises to 3.14 (D-2.0-17): the 2.0 bootstrap has only
+ever run on 3.14.4, so 3.10 claimed four untested minor versions of support.
+`cfc/__main__.py` stays import-minimal, so an unsupported interpreter still
+gets one line on stderr and nothing else. README's 3.10 line is unchanged —
+that describes the live v1.9.1 application, not this package.
+
+`diagnostics.Row` gains `next_step`, and `State` gains `NOT_CHECKED`
+(D-2.0-07). A row a failed configuration load never actually reached is
+`NOT_CHECKED`, not `ERROR` — `ERROR` now means "diagnosed and broken," and
+`required_rows_ok` became an exact allow-list (every required row `READY`)
+rather than "no required row `ERROR`," since the old rule would have quietly
+accepted a required row that was never checked. The configuration row alone
+carries the copy-and-fill cure; the five dependent rows explain only that
+their prerequisite failed, so the cure isn't repeated five times. Known
+provider, database, and vault failures now carry a redacted `next_step` —
+naming the field or path to fix, never the rejected value — and the
+renderer shows it on a line directly under its row.
+
+The vault rule tightens separately (B-2.0-11): `_vault_row` no longer
+accepts a missing directory whose parent exists — that rule was right for
+the database target, which cfc may create in Stage 3, and wrong for the
+vault, which cfc never creates. A missing or file-blocked `VAULT_ROOT` is
+now a visible, non-blocking error with a next step, not `READY`.
+- Files: cfc/settings.py, cfc/entry.py, cfc/diagnostics.py, cfc/doctor.py,
+  cfc/paths.py, config.example.py, tests/test_cfc_settings.py,
+  tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — Point doctor's vault row at the vault (`B-2.0-01`)
 v2.0 Stage 2, loop one, playtest. `cfc/diagnostics.py`'s vault row read
 `CHAT_EXPORT_DIR`, falling back to its pre-1.3.1 name `VAULT_PATH` — the

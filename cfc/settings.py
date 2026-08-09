@@ -24,8 +24,9 @@ from cfc import paths
 #: compatible, and 2.0 must never open v1.9.1's database.
 LEGACY_DATABASE_PATH = Path.home() / ".cfc" / "chat.db"
 
-#: The 2.0 default, used when `config.py` sets no `DB_PATH` — a sibling of
-#: the legacy path, not a replacement for it, so both can exist at once.
+#: The 2.0 default, used when `config.py` sets no `DATABASE_PATH` — a
+#: sibling of the legacy path, not a replacement for it, so both can exist
+#: at once.
 DEFAULT_DATABASE_PATH = Path.home() / ".cfc" / "2.0" / "chat.db"
 
 #: The repository root, computed the same way `config_loader.default_config_path`
@@ -95,24 +96,29 @@ def build_provider(snapshot) -> ProviderSettings:
 
 
 def build_database_path(snapshot) -> Path:
-    """The 2.0 database target: `config.py`'s `DB_PATH` if it set one and
-    it is a non-empty string, else `DEFAULT_DATABASE_PATH`. Expanded and
+    """The 2.0 database target: `config.py`'s `DATABASE_PATH` if it set one
+    and it is a non-empty string, else `DEFAULT_DATABASE_PATH`. Expanded and
     resolved before the protected-target check, so `~` and `..` cannot be
     used to aim at a protected path while looking like something else.
     `snapshot` is a `config_loader.ConfigSnapshot`.
 
+    `DB_PATH` is never read here: that spelling is the legacy flat runtime's
+    own field, and this module does not treat it as an alias for
+    `DATABASE_PATH` — an unset `DATABASE_PATH` falls back to the 2.0
+    default even when `DB_PATH` is set.
+
     Refused if it resolves to the legacy v1.9.1 database, `config.py`
     itself, or anywhere inside the repository — all three are `"value"`
-    errors on the field name `"DB_PATH"`, since a default that fails this
-    check would be a bug in cfc, not something the reader configured.
+    errors on the field name `"DATABASE_PATH"`, since a default that fails
+    this check would be a bug in cfc, not something the reader configured.
     """
-    raw = snapshot.values.get("DB_PATH")
+    raw = snapshot.values.get("DATABASE_PATH")
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         candidate = DEFAULT_DATABASE_PATH
     elif isinstance(raw, (str, Path)):
         candidate = Path(raw)
     else:
-        raise SettingsError("DB_PATH", "type",
+        raise SettingsError("DATABASE_PATH", "type",
                              f"must be a string or path, got {type(raw).__name__}")
 
     resolved = candidate.expanduser().resolve()
@@ -123,16 +129,16 @@ def build_database_path(snapshot) -> Path:
     }
 
     if resolved in protected:
-        raise SettingsError("DB_PATH", "value",
+        raise SettingsError("DATABASE_PATH", "value",
                              f"{resolved} is protected: {protected[resolved]}")
     if resolved == REPOSITORY_ROOT or REPOSITORY_ROOT in resolved.parents:
-        raise SettingsError("DB_PATH", "value",
+        raise SettingsError("DATABASE_PATH", "value",
                              f"{resolved} is inside the repository, which git tracks "
                              f"and a live database must not live in")
 
     reason = paths.usable_target_reason(resolved)
     if reason is not None:
-        raise SettingsError("DB_PATH", "value", reason)
+        raise SettingsError("DATABASE_PATH", "value", reason)
 
     return resolved
 
