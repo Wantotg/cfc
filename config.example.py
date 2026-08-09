@@ -57,8 +57,11 @@ RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /r
 # your VAULT_PATH line to CHAT_EXPORT_DIR.
 CHAT_EXPORT_DIR = "PLACEHOLDER"
 
-# The vault's top folder. **Display only** — cfc never builds a path from this
-# and no behaviour depends on it. Every real path is configured on its own line
+# The vault's top folder. **Display only in v1.9.1** — the flat application
+# never builds a path from this and no behaviour there depends on it. The 2.0
+# bootstrap does read it: `python -m cfc doctor`'s vault row is this setting,
+# so an unset VAULT_ROOT reports the vault unavailable however much else is
+# configured. Every real v1.9.1 path is configured on its own line
 # further down (ROUTINE_DIR, WIKI_DIR, JOURNAL_DIR, MOVE_ROOTS …); this exists
 # so what gets *printed* can drop the machine-specific prefix. On WSL that
 # prefix is most of the line and none of the information:

@@ -81,7 +81,7 @@ def test_vault_not_configured(tmp_path):
 
 
 def test_vault_placeholder_counts_as_not_configured(tmp_path):
-    path = write_config(tmp_path, VALID_BODY + "CHAT_EXPORT_DIR = 'PLACEHOLDER'\n")
+    path = write_config(tmp_path, VALID_BODY + "VAULT_ROOT = 'PLACEHOLDER'\n")
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "vault").state == diagnostics.State.UNAVAILABLE
 
@@ -89,14 +89,15 @@ def test_vault_placeholder_counts_as_not_configured(tmp_path):
 def test_vault_ready_when_directory_exists(tmp_path):
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
-    path = write_config(tmp_path, VALID_BODY + f"CHAT_EXPORT_DIR = {str(vault_dir)!r}\n")
+    path = write_config(tmp_path, VALID_BODY + f"VAULT_ROOT = {str(vault_dir)!r}\n")
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "vault").state == diagnostics.State.READY
+    assert str(vault_dir) in by_name(rows, "vault").detail
 
 
 def test_vault_ready_when_directory_does_not_exist_yet_but_parent_does(tmp_path):
     vault_dir = tmp_path / "not_yet_created"
-    path = write_config(tmp_path, VALID_BODY + f"CHAT_EXPORT_DIR = {str(vault_dir)!r}\n")
+    path = write_config(tmp_path, VALID_BODY + f"VAULT_ROOT = {str(vault_dir)!r}\n")
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "vault").state == diagnostics.State.READY
     assert not vault_dir.exists()
@@ -106,17 +107,28 @@ def test_vault_error_when_blocked_by_a_file(tmp_path):
     blocker = tmp_path / "blocker"
     blocker.write_text("x", encoding="utf-8")
     vault_dir = blocker / "vault"
-    path = write_config(tmp_path, VALID_BODY + f"CHAT_EXPORT_DIR = {str(vault_dir)!r}\n")
+    path = write_config(tmp_path, VALID_BODY + f"VAULT_ROOT = {str(vault_dir)!r}\n")
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "vault").state == diagnostics.State.ERROR
 
 
-def test_vault_legacy_name_is_honoured(tmp_path):
-    vault_dir = tmp_path / "vault"
-    vault_dir.mkdir()
-    path = write_config(tmp_path, VALID_BODY + f"VAULT_PATH = {str(vault_dir)!r}\n")
+def test_chat_export_dir_is_not_the_vault(tmp_path):
+    """B-2.0-01: the row is named for `VAULT_ROOT`, and an export directory
+    — under either of its two names — must not answer for it. Both are set
+    here to real directories, so a row reading the wrong one still looks
+    ready; only the path it names gives it away.
+    """
+    export_dir = tmp_path / "chat-export"
+    export_dir.mkdir()
+    path = write_config(
+        tmp_path,
+        VALID_BODY
+        + f"CHAT_EXPORT_DIR = {str(export_dir)!r}\n"
+        + f"VAULT_PATH = {str(export_dir)!r}\n",
+    )
     rows = diagnostics.diagnose(path)
-    assert by_name(rows, "vault").state == diagnostics.State.READY
+    assert by_name(rows, "vault").state == diagnostics.State.UNAVAILABLE
+    assert str(export_dir) not in by_name(rows, "vault").detail
 
 
 # --- embeddings: not configured / locally invalid / ready -------------------
@@ -207,7 +219,7 @@ def test_diagnose_creates_nothing_on_disk(tmp_path):
     path = write_config(
         tmp_path,
         VALID_BODY
-        + f"CHAT_EXPORT_DIR = {str(vault_dir)!r}\n"
+        + f"VAULT_ROOT = {str(vault_dir)!r}\n"
         + f"DB_PATH = {str(db_dir / 'chat.db')!r}\n"
         + "TOOLS_ENABLED = True\n",
     )

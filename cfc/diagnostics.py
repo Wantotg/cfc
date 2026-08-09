@@ -102,11 +102,16 @@ def _database_row(snapshot) -> Row:
 
 
 def _vault_row(snapshot) -> Row:
+    """The vault is `VAULT_ROOT` — the folder of human-readable material
+    cfc reads, and the one this row is named after. Deliberately not
+    `CHAT_EXPORT_DIR` (nor `VAULT_PATH`, its pre-1.3.1 name): that is where
+    v1.9.1 *writes* exported chats, usually a folder inside the vault, and
+    reporting it here answered a different question than the row asked.
+    """
     values = snapshot.values
-    raw = values.get("CHAT_EXPORT_DIR") or values.get("VAULT_PATH")
+    raw = values.get("VAULT_ROOT")
     if not raw or raw == "PLACEHOLDER":
-        return Row("vault", State.UNAVAILABLE,
-                    "CHAT_EXPORT_DIR (or legacy VAULT_PATH) is not set")
+        return Row("vault", State.UNAVAILABLE, "VAULT_ROOT is not set")
 
     resolved = Path(raw).expanduser().resolve()
     reason = paths.usable_directory_reason(resolved)

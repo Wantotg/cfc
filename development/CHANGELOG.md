@@ -25,6 +25,30 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Point doctor's vault row at the vault (`B-2.0-01`)
+v2.0 Stage 2, loop one, playtest. `cfc/diagnostics.py`'s vault row read
+`CHAT_EXPORT_DIR`, falling back to its pre-1.3.1 name `VAULT_PATH` — the
+directory v1.9.1 *writes* exported chats into, not the vault. On Cas's
+machine the row therefore reported his chat-backup folder as the vault; on a
+config with a vault and no export directory it would have reported the vault
+unavailable. Both are wrong answers to the question the row's name asks, and
+`Concept.md` had named `VAULT_ROOT` for it.
+
+The row now reads `VAULT_ROOT` and nothing else. `test_vault_legacy_name_is_honoured`,
+which pinned the wrong field, is replaced by `test_chat_export_dir_is_not_the_vault`:
+it sets both export names to real directories and asserts the vault row stays
+unavailable and never names either path — a row reading the wrong field looks
+ready, so state alone would not have caught this. `config.example.py`'s
+VAULT_ROOT comment, which said the setting was display-only, now says the 2.0
+bootstrap reads it.
+
+The same confusion produced `D-14` on 2026-08-03, in `ui.vault_relative`'s
+docstring. `VAULT_PATH` is a live name in `export.py` for the export
+directory, so a reader who greps for it finds a plausible wrong answer.
+- Files: cfc/diagnostics.py, tests/test_cfc_diagnostics.py, config.example.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-08 — Make the entry gate independent of Cas's config.py, and structural about the guard
 v2.0 Stage 2, loop one, part one. D-2.0-04: every retained flat module that
 `import config`s made the entry gate depend on Cas's own ignored, personal
