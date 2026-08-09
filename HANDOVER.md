@@ -117,6 +117,15 @@ fact exists only in Qdrant during 2.0. Its first collection is reproducible
 from a named source snapshot and experiment manifest; it is not a live
 synchronization claim and is read-only from the model's perspective.
 
+The Stage 3 ordinary-chat kernel has one provider-wire history rule: completed
+turns contribute both literal messages; failed, cancelled, and interrupted
+turns retain their user message in SQLite but omit that orphan from the next
+provider request and expose its turn identity and state in an omission
+account; the one current active turn contributes its user message. The pure
+converter refuses an incoherent snapshot before HTTP. This keeps stored
+history provider-independent while making an unsuccessful turn's omission
+visible rather than silently replaying it.
+
 SQLite and Qdrant formats are development interfaces until Cas deliberately
 adopts a stable-data promise. An incompatible database refuses visibly and
 explains deletion or rebuild; it is never silently reinterpreted, partially

@@ -13,6 +13,10 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-26 | an identical repeat of a completion carrying an all-absent `Usage` refuses as a conflict | shipped in `512cb00`; all-absent `Usage` is refused at construction, provider usage with no usable counts becomes `usage=None`, and content-exact finalisation remains idempotent for unknown usage | 2026-08-09 |
+| B-2.0-27 | a populated non-cfc database is diagnosed as empty and advised away | shipped in `512cb00`; zero-page targets retain the empty-placeholder route while markerless targets with pages receive `POPULATED_UNCLAIMED` preservation-first advice and are never described as empty | 2026-08-09 |
+| Q-2.0-29 | what the wire converter does with a failed turn's orphaned user message | answered in `Concept.md` and shipped in `512cb00`; completed turns send both messages, unsuccessful turns omit and name their orphaned user messages, and the current active user message is sent | 2026-08-09 |
+| N-2.0-40 | a version-1 cfc database is told "move or remove" | nothing owed; the schema-too-old route leads with preservation and explains why the reader's own cfc database cannot be opened, unlike the populated-unclaimed diagnosis in `B-2.0-27` | 2026-08-09 |
 | B-2.0-25 | a turn `send_turn` started could stay active forever | shipped in `12435b6`; every exit from `send_turn` after `start_turn` now ends the turn it started, an interruption records a typed interrupted failure and still propagates, and a store that already committed an outcome keeps it | 2026-08-09 |
 | N-2.0-30 | `list_chats` orders by `rowid` | nothing owed; without `AUTOINCREMENT` a new chat always takes a rowid above every surviving row, so listing order cannot invert, and rowid cannot tie the way `created_at` can | 2026-08-09 |
 | N-2.0-31 | `fcntl.flock` is POSIX-only | nothing owed; `schedule.py`'s lock already accepts the same POSIX constraint, the repository promises no native Windows support, and WSL2 is ordinary Linux | 2026-08-09 |

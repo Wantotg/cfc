@@ -15,6 +15,60 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## D-2.0-36 · Nothing serialises two turns in one chat now that `send_turn` is awaitable
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+
+Two concurrent sends can start in one chat. Both turns end and retain explicit
+positions, but the second snapshot can contain another active turn, so the
+provider either sees an unfinished conversation or the converter refuses it.
+
+This becomes live Stage 4 debt when the composer remains available during a
+background turn. The service needs one-turn-per-chat serialisation or a visible
+queue/refusal decision; the converter is right to refuse the incoherent
+snapshot.
+
+---
+
+## D-2.0-37 · An in-band provider error is indistinguishable from an unrecognised shape
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+
+Some OpenAI-compatible gateways return a successful HTTP status with an
+`error` object instead of `choices`. The adapter currently reports the same
+generic malformed-response evidence as an empty or unsupported response.
+
+The body must remain untrusted and unpersisted, but cfc can name the observed
+error-envelope shape with its own bounded reason. This is Stage 3 follow-up
+work, not permission to store provider text.
+
+---
+
+## D-2.0-38 · Usage counts arriving as floats or numeric strings are dropped
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+
+The adapter accepts plain integer counts and deliberately rejects booleans, but
+it also drops whole-number floats and numeric strings by treating them as
+missing usage. The completion succeeds, while `usage=None` now conflates no
+usage with an unaccepted spelling of reported usage.
+
+Decide and test the supported provider spellings at the adapter boundary;
+preserve explicit zero and partial-count semantics.
+
+---
+
+## D-2.0-39 · No test joins the store's real snapshot to the converter
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+
+The converter tests construct snapshots by hand, which is necessary for
+contradiction refusals, but no automated test passes a snapshot produced by the
+real store through the real converter. The producer/reader pair was probed
+manually and worked; the missing regression belongs in a Stage 3 follow-up.
+
+---
+
 ## D-2.0-28 · A refused target keeps the `.lock` sidecar cfc created beside it
 
 **Found:** 2026-08-09, during the v2.0 Stage 3 loop one playtest.

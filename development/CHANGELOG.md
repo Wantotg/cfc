@@ -61,7 +61,7 @@ is Cas's manual real-provider and Ctrl-C-cancellation proof surface; bare
   tests/test_cfc_conversation_service.py, tests/test_cfc_provider_wire.py,
   tests/test_cfc_provider_adapter.py
 - Status: shipped
-- Commit: pending
+- Commit: 512cb00
 
 ## 2026-08-09 — Ensure interrupted and invalid turns end canonically (`B-2.0-25`)
 v2.0 Stage 3, loop one playtest correction. `send_turn` now ends every turn

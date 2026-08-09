@@ -26,51 +26,65 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## B-2.0-26 · An identical completion carrying an all-absent `Usage` refuses as a conflict
+## B-2.0-32 · The store's own errors defeat the turn-ending guards
 
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop one playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
 
-**Symptom:** `Usage(None, None, None)` and `usage=None` both round-trip from
-SQLite as no usage, but an identical repeat of the first spelling is refused
-as a conflicting finalisation. Repeating the second spelling is accepted.
+`send_turn`'s recovery guards catch `ConversationStoreError`, but SQLite
+errors such as a closed connection, full disk, or an external write failure
+arrive as `sqlite3.Error`. An ordinary store failure can therefore escape and
+leave the started turn active; the same mismatch can hide a `KeyboardInterrupt`
+while its ending is being attempted.
 
-**Cause:** the three optional usage counts deliberately distinguish absent
-counts from reported zeroes, but the all-absent `Usage` value is stored as
-three `NULL` columns and read back as `usage=None`. Content-exact idempotency
-then compares the submitted value with a representation that has lost the
-distinction.
-
-**Shape of the remedy:** preserve whether usage was supplied, or decide that
-an all-absent `Usage` is not constructible. Pull this into the loop that makes
-the HTTP adapter reachable, where a real response naturally produces the
-value through three optional fields. Content-exact finalisation remains the
-chosen rule; a conflicting answer must not be silently discarded.
+**Shape of the remedy:** catch the store's actual database-error boundary when
+ending an unfinished turn, and preserve interruption propagation even when the
+ending write cannot be recorded. This is owed before Stage 4 background work;
+reopen recovery remains the route when the store itself cannot accept a write.
 
 ---
 
-## B-2.0-27 · A populated non-cfc database is diagnosed as empty
+## B-2.0-33 · An internal failure stores arbitrary exception text
 
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop one playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
 
-**Symptom:** an existing SQLite target with tables but no `application_id` is
-classified as `EMPTY_OR_ARBITRARY` and receives the same advice as a truly
-empty file: preserve anything wanted, then move or remove it so cfc can create
-a fresh database.
+The service stores `f"{type(exc).__name__}: {exc}"` for unexpected responder
+errors, including the `repr` of an unrecognised responder result. A future
+adapter could therefore persist a provider body, request detail, or credential
+in `failure_reason`, which Stage 4 will render.
 
-**Cause:** the refusal classifier treats a missing application marker as the
-empty-or-arbitrary case. Most SQLite files never set `application_id`, so the
-branch combines a zero-byte file with a populated database whose ownership is
-unknown. The foreign-application branch catches only files that voluntarily
-set a non-zero marker.
+**Shape of the remedy:** make the service's internal evidence bounded and
+cfc-authored, with no arbitrary exception or returned-object representation.
+Keep provider-specific safe evidence typed at the adapter boundary.
 
-**Boundary:** Stage 2's database-path validation prevents the live v1.9.1
-database from reaching this code; the reachable case is a copy or a database
-pointed at explicitly. The diagnosis is still wrong, and moving a populated
-database has a different recovery consequence from moving an empty file.
+---
 
-**Shape of the remedy:** inspect whether the target contains meaningful SQLite
-content and give populated unknown databases their own refusal and recovery
-advice without weakening the validate-before-mutation rule.
+## B-2.0-34 · Refusing a WAL-mode target leaves SQLite sidecars beside it
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+
+The read-only refusal classifier preserves the main database bytes, but opening
+an existing WAL-mode target creates `-wal` and `-shm` beside it. The current
+refusal tests use only rollback-journal databases and therefore do not see the
+sidecars.
+
+**Shape of the remedy:** decide whether classification reads the SQLite header
+without opening the WAL database or whether the contract accepts these
+sidecars. Do not delete them while another process may own the WAL.
+
+---
+
+## B-2.0-35 · A non-2xx response below 400 is reported as malformed JSON
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+
+The adapter treats only status `>= 400` as an HTTP failure. A redirect or other
+non-success status below 400 falls through to JSON parsing and is stored as a
+malformed-response failure, losing the status that explains the refusal.
+
+**Shape of the remedy:** classify every non-success status as typed HTTP
+evidence; reserve malformed-response evidence for a successful status whose
+body cannot be used. Keep redirects disabled so a bearer header is not resent
+to an unexpected destination.
 
 ---
 
