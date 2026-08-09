@@ -60,6 +60,11 @@
     border-left: solid $panel-lighten-2;
 }
 
+#chat-switcher ListItem.chat-switcher-current {
+    text-style: bold;
+    color: $accent;
+}
+
 #chat-status {
     dock: bottom;
     height: 1;

@@ -224,6 +224,20 @@ def test_config_example_loads_through_the_real_loader_and_default_database_path(
     assert str(cfc_settings.DEFAULT_DATABASE_PATH.expanduser().resolve()) in result.stdout
 
 
+# --- D-2.0-20: doctor's real stdout carries the version and floor ----------
+
+def test_doctor_runtime_row_shows_interpreter_version_and_min_python_floor(tmp_path):
+    path = write_config(tmp_path, VALID_BODY)
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    lines = result.stdout.splitlines()
+    runtime_line = next(line for line in lines if line.strip().startswith("runtime"))
+    from cfc import entry
+    floor = ".".join(str(part) for part in entry.MIN_PYTHON)
+    assert f"(floor {floor})" in runtime_line
+    version_marker = ".".join(str(part) for part in sys.version_info[:3])
+    assert version_marker in runtime_line
+
+
 # --- doctor: ordered output, redaction, required vs optional exit -----------
 
 def test_doctor_ready_config_exits_zero_and_lists_ordered_rows(tmp_path):
@@ -243,6 +257,23 @@ def test_doctor_required_error_exits_nonzero(tmp_path):
     result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
     assert result.returncode == 1
     assert "error" in result.stdout
+
+
+def test_doctor_names_every_missing_provider_field_together(tmp_path):
+    """D-2.0-19 end to end: with an empty config, the one chat provider row
+    names all three required fields together rather than the old one field
+    at a time behaviour — the recovery line renders directly below the row,
+    same shape as every other `next_step`.
+    """
+    path = write_config(tmp_path, "")
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    lines = result.stdout.splitlines()
+    row_index = next(i for i, line in enumerate(lines) if line.strip().startswith("chat provider"))
+    assert "API_BASE" in lines[row_index]
+    assert "API_KEY" in lines[row_index]
+    assert "MODEL" in lines[row_index]
+    assert "API_BASE" in lines[row_index + 1]
+    assert lines[row_index + 1].startswith("      ")
 
 
 def test_doctor_optional_absence_does_not_cause_nonzero_exit(tmp_path):

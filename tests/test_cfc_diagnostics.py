@@ -3,11 +3,13 @@ doctor renders, and required_rows_ok's exit-code decision.
 """
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
 
 import pytest
 
-from cfc import diagnostics, settings
+from cfc import diagnostics, entry, settings
 
 VALID_BODY = (
     "API_BASE = 'https://provider.invalid/v1'\n"
@@ -63,6 +65,80 @@ def test_missing_required_field_is_error_and_not_ok(tmp_path):
     assert row.next_step is not None
     assert "API_KEY" in row.next_step
     assert diagnostics.required_rows_ok(rows) is False
+
+
+# --- D-2.0-19: every missing required provider field named together --------
+
+def test_one_missing_provider_field_names_only_that_field(tmp_path):
+    body = "API_BASE = 'https://provider.invalid/v1'\nMODEL = 'm'\n"  # API_KEY absent
+    rows = diagnostics.diagnose(write_config(tmp_path, body))
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    assert "API_KEY" in row.detail
+    assert "API_BASE" not in row.detail
+    assert "MODEL" not in row.detail
+    assert row.next_step is not None
+    assert "API_KEY" in row.next_step
+
+
+def test_two_missing_provider_fields_are_named_together_in_stable_order(tmp_path):
+    body = "MODEL = 'm'\n"  # API_BASE and API_KEY both absent
+    rows = diagnostics.diagnose(write_config(tmp_path, body))
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    base_pos = row.detail.index("API_BASE")
+    key_pos = row.detail.index("API_KEY")
+    assert base_pos < key_pos  # REQUIRED_PROVIDER_FIELD_NAMES's own order
+    assert "MODEL" not in row.detail
+    assert "API_BASE" in row.next_step
+    assert "API_KEY" in row.next_step
+
+
+def test_every_provider_field_missing_names_all_three_in_order(tmp_path):
+    rows = diagnostics.diagnose(write_config(tmp_path, ""))
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    positions = [row.detail.index(name) for name in settings.REQUIRED_PROVIDER_FIELD_NAMES]
+    assert positions == sorted(positions)
+    assert diagnostics.required_rows_ok(rows) is False
+
+
+def test_missing_provider_fields_row_names_no_configuration_value(tmp_path):
+    marker = "SECRET-MARKER-DO-NOT-LEAK-onlykey-91af"
+    body = f"API_KEY = {marker!r}\n"  # API_BASE and MODEL absent
+    rows = diagnostics.diagnose(write_config(tmp_path, body))
+    row = by_name(rows, "chat provider")
+    assert marker not in row.detail
+    assert marker not in (row.next_step or "")
+
+
+def test_present_but_empty_provider_field_still_fails_one_field_at_a_time(tmp_path):
+    """Once every required name exists, the aggregated path is not taken —
+    ordinary per-field validation (unchanged) is what reports this."""
+    body = "API_BASE = 'https://provider.invalid/v1'\nAPI_KEY = '   '\nMODEL = 'm'\n"
+    rows = diagnostics.diagnose(write_config(tmp_path, body))
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    assert "API_KEY" in str(row.next_step)
+    assert "missing required setting(s)" not in row.detail
+
+
+def test_present_but_wrong_type_provider_field_still_fails_one_field_at_a_time(tmp_path):
+    body = "API_BASE = 'https://provider.invalid/v1'\nAPI_KEY = 5\nMODEL = 'm'\n"
+    rows = diagnostics.diagnose(write_config(tmp_path, body))
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    assert "API_KEY" in str(row.next_step)
+    assert "missing required setting(s)" not in row.detail
+
+
+def test_present_but_invalid_url_provider_field_still_fails_one_field_at_a_time(tmp_path):
+    body = "API_BASE = 'not-a-url'\nAPI_KEY = 'k'\nMODEL = 'm'\n"
+    rows = diagnostics.diagnose(write_config(tmp_path, body))
+    row = by_name(rows, "chat provider")
+    assert row.state == diagnostics.State.ERROR
+    assert "API_BASE" in str(row.next_step)
+    assert "missing required setting(s)" not in row.detail
 
 
 def test_database_target_error_carries_a_next_step(tmp_path):
@@ -167,6 +243,31 @@ def test_config_path_that_is_a_directory_is_not_told_to_copy_over_it(tmp_path):
     row = by_name(diagnostics.diagnose(path), "configuration")
     assert row.state == diagnostics.State.ERROR
     assert "Copy config.example.py to config.py" not in (row.next_step or "")
+
+
+# --- D-2.0-20: the ready runtime row reports version and MIN_PYTHON floor ---
+
+def test_ready_runtime_row_reports_the_running_version_and_the_real_floor(tmp_path):
+    path = write_config(tmp_path, VALID_BODY)
+    row = by_name(diagnostics.diagnose(path), "runtime")
+    assert row.state == diagnostics.State.READY
+    assert re.fullmatch(r"\d+\.\d+\.\d+ \(floor \d+\.\d+\)", row.detail)
+    expected_version = ".".join(str(part) for part in sys.version_info[:3])
+    expected_floor = ".".join(str(part) for part in entry.MIN_PYTHON)
+    assert row.detail == f"{expected_version} (floor {expected_floor})"
+
+
+def test_ready_runtime_row_floor_tracks_min_python_not_a_duplicated_literal(tmp_path, monkeypatch):
+    """A hardcoded `"3.14.x (floor 3.14)"` string would pass the previous
+    test by coincidence. Moving the real floor this interpreter still
+    satisfies and checking the row's floor half moves with it proves the
+    detail is actually read from `entry.MIN_PYTHON`, not copied.
+    """
+    monkeypatch.setattr(entry, "MIN_PYTHON", (3, 5))
+    path = write_config(tmp_path, VALID_BODY)
+    row = by_name(diagnostics.diagnose(path), "runtime")
+    assert row.state == diagnostics.State.READY
+    assert row.detail.endswith("(floor 3.5)")
 
 
 # --- vault: not configured / locally invalid / ready -------------------------

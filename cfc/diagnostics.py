@@ -18,6 +18,7 @@ the row that owns it, not copied onto everything downstream.
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -118,7 +119,9 @@ def required_rows_ok(rows: tuple[Row, ...]) -> bool:
 def _runtime_row() -> Row:
     problem = entry.check_interpreter()
     if problem is None:
-        return Row("runtime", State.READY, "")
+        version = ".".join(str(part) for part in sys.version_info[:3])
+        floor = ".".join(str(part) for part in entry.MIN_PYTHON)
+        return Row("runtime", State.READY, f"{version} (floor {floor})")
     return Row("runtime", State.ERROR, problem)
 
 
@@ -136,6 +139,22 @@ def _settings_error_next_step(exc: settings.SettingsError) -> str:
 
 
 def _provider_row(snapshot) -> Row:
+    """A fresh clone's real surface for learning what to fill in: unlike
+    `build_provider`'s own deliberate fail-fast raise on the first missing
+    field, this collects every required field absent from the snapshot and
+    names them together (D-2.0-19). Once all required names exist, this
+    falls through to `build_provider` unchanged, so its ordinary type,
+    empty-value, and URL validation still fails one actionable field at a
+    time — only the "nothing was even set" case is aggregated.
+    """
+    values = snapshot.values
+    missing = [name for name in settings.REQUIRED_PROVIDER_FIELD_NAMES if name not in values]
+    if missing:
+        names = ", ".join(missing)
+        return Row("chat provider", State.ERROR,
+                    f"missing required setting(s): {names}",
+                    next_step=f"Set {names} in config.py.")
+
     try:
         provider = settings.build_provider(snapshot)
     except settings.SettingsError as exc:

@@ -54,6 +54,13 @@ class ProviderSettings:
     model: str
 
 
+#: The provider fields `build_provider` cannot run without, in the order it
+#: validates them — named once here so `diagnostics._provider_row` can name
+#: every one absent from a snapshot together, rather than only the first one
+#: `build_provider`'s own fail-fast raise would reach (D-2.0-19).
+REQUIRED_PROVIDER_FIELD_NAMES: tuple[str, ...] = ("API_BASE", "API_KEY", "MODEL")
+
+
 @dataclass(frozen=True)
 class BootstrapSettings:
     provider: ProviderSettings
@@ -88,10 +95,11 @@ def build_provider(snapshot) -> ProviderSettings:
     `snapshot` is a `config_loader.ConfigSnapshot`. Raises `SettingsError`
     naming the first field that fails.
     """
+    base_name, key_name, model_name = REQUIRED_PROVIDER_FIELD_NAMES
     values = snapshot.values
-    api_base = _require_url(values, "API_BASE")
-    api_key = _require_nonempty_str(values, "API_KEY")
-    model = _require_nonempty_str(values, "MODEL")
+    api_base = _require_url(values, base_name)
+    api_key = _require_nonempty_str(values, key_name)
+    model = _require_nonempty_str(values, model_name)
     return ProviderSettings(api_base=api_base, api_key=api_key, model=model)
 
 

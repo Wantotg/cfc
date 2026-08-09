@@ -25,6 +25,42 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — A guarded, styled wide chat switcher (`B-2.0-47`, `D-2.0-50`)
+v2.0 Stage 4, loop two. `ChatScreen` now has the docked switcher's own
+`ListView.Selected` route, guarded to `#chat-switcher` alone since the
+message bubbles to the screen from any list it contains: selecting another
+stored chat opens it through `CfcApp.open_chat`, and selecting the chat
+already open is an explicit no-op — no duplicate screen, no draft or focus
+disturbance, no `Esc` step (`B-2.0-47`). `_render_switcher` already marked
+the current chat's item with `chat-switcher-current`; `cfc/tui.tcss` now
+carries a rule for that class — bold text in `$accent` — so the wide
+switcher finally shows which chat is open (`D-2.0-50`). Proved through
+Textual's real `Pilot` input stack: keyboard and mouse selection of another
+row, the current-row no-op leaving the screen stack untouched, rejection of
+a `ListView.Selected` raised by an unrelated list, and the current item's
+distinct rendered style before and after switching.
+- Files: cfc/tui.py, cfc/tui.tcss, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: pending
+
+## 2026-08-09 — `doctor` names every missing provider field and the runtime version it checked (`D-2.0-19`, `D-2.0-20`)
+v2.0 Stage 4, loop two. `settings.REQUIRED_PROVIDER_FIELD_NAMES` now names
+the one ordered set of fields `build_provider` needs, shared with
+`diagnostics._provider_row`: a fresh clone's `chat provider` row now
+collects every one of `API_BASE`, `API_KEY`, and `MODEL` absent from
+`config.py` and names them together with one recovery line, instead of the
+old one-field-per-run cycle forced by `build_provider`'s own deliberate
+fail-fast raise (`D-2.0-19`). Once every required name is present,
+`build_provider`'s existing type, empty-value, and URL validation still
+fails one actionable field at a time, unchanged — no configuration value is
+ever rendered either way. The ready `runtime` row's detail now reports the
+real running interpreter version against `entry.MIN_PYTHON`'s floor, in the
+documented `X.Y.Z (floor X.Y)` form, instead of an empty string (`D-2.0-20`).
+- Files: cfc/settings.py, cfc/diagnostics.py, tests/test_cfc_settings.py,
+  tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — A working Textual ordinary-chat client (`D-2.0-36`, `D-2.0-42` UI-visible parts)
 v2.0 Stage 4, loop one. `python -m cfc` with no arguments now starts a real
 Textual application (`cfc/tui.py`) instead of printing a placeholder line:

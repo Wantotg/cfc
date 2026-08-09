@@ -730,7 +730,152 @@ async def test_the_chats_action_opens_the_same_switcher_choices_as_a_modal(tmp_p
         await app.shutdown()
 
 
-# === quit: cancels and awaits workers, then closes adapter and service ======
+# === wide docked switcher: guarded selection route (B-2.0-47, D-2.0-50) ====
+
+def switcher_items(screen) -> list[tui.ListItem]:
+    return list(screen.query_one("#chat-switcher", tui.ListView).query(tui.ListItem))
+
+
+async def open_three_chats(app, pilot) -> list[tui.ChatId]:
+    """Creates three stored chats and returns their ids in creation order,
+    ending back on the Hub."""
+    ids = []
+    for title in ("chat one", "chat two", "chat three"):
+        screen = await open_new_chat(app, pilot, title)
+        ids.append(screen.chat_id)
+        await app.pop_screen()
+        await pilot.pause()
+    return ids
+
+
+async def test_keyboard_selection_of_another_docked_row_opens_that_chat(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            chat_ids = await open_three_chats(app, pilot)
+            app.open_chat(chat_ids[0])
+            await pilot.pause()
+
+            items = switcher_items(app.screen)
+            other_index = next(i for i, item in enumerate(items) if item.chat_id != chat_ids[0])
+            target_id = items[other_index].chat_id
+
+            switcher = app.screen.query_one("#chat-switcher", tui.ListView)
+            switcher.focus()
+            switcher.index = other_index
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert app.screen.chat_id == target_id
+    finally:
+        await app.shutdown()
+
+
+async def test_mouse_selection_reaches_the_same_route_and_result(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            chat_ids = await open_three_chats(app, pilot)
+            app.open_chat(chat_ids[0])
+            await pilot.pause()
+
+            items = switcher_items(app.screen)
+            other_index = next(i for i, item in enumerate(items) if item.chat_id != chat_ids[0])
+            target_id = items[other_index].chat_id
+
+            await pilot.click(items[other_index])
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert app.screen.chat_id == target_id
+    finally:
+        await app.shutdown()
+
+
+async def test_selecting_the_current_row_leaves_screen_stack_and_screen_unchanged(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            chat_ids = await open_three_chats(app, pilot)
+            app.open_chat(chat_ids[0])
+            await pilot.pause()
+            screen = app.screen
+            screen_count_before = len(app.screen_stack)
+
+            current_index = next(
+                i for i, item in enumerate(switcher_items(screen)) if item.chat_id == chat_ids[0]
+            )
+            switcher = screen.query_one("#chat-switcher", tui.ListView)
+            switcher.focus()
+            switcher.index = current_index
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.screen is screen
+            assert len(app.screen_stack) == screen_count_before
+    finally:
+        await app.shutdown()
+
+
+async def test_an_unrelated_list_view_selected_event_is_rejected(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            chat_ids = await open_three_chats(app, pilot)
+            app.open_chat(chat_ids[0])
+            await pilot.pause()
+            screen = app.screen
+
+            other_id = next(item.chat_id for item in switcher_items(screen) if item.chat_id != chat_ids[0])
+            foreign_list = tui.ListView(id="not-the-chat-switcher")
+            foreign_item = tui.ListItem()
+            foreign_item.chat_id = other_id
+            screen.post_message(tui.ListView.Selected(foreign_list, foreign_item, 0))
+            await pilot.pause()
+
+            assert app.screen is screen
+            assert app.screen.chat_id == chat_ids[0]
+    finally:
+        await app.shutdown()
+
+
+async def test_current_switcher_item_has_the_current_class_and_a_distinct_style(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            chat_ids = await open_three_chats(app, pilot)
+            app.open_chat(chat_ids[0])
+            await pilot.pause()
+
+            items = switcher_items(app.screen)
+            current = next(item for item in items if item.chat_id == chat_ids[0])
+            ordinary = next(item for item in items if item.chat_id != chat_ids[0])
+            assert current.has_class("chat-switcher-current")
+            assert not ordinary.has_class("chat-switcher-current")
+            assert current.styles.color != ordinary.styles.color
+            assert current.styles.text_style != ordinary.styles.text_style
+
+            # switch to a different chat: the class and style follow the
+            # displayed screen's chat_id, not whatever was highlighted
+            other_index = next(i for i, item in enumerate(items) if item.chat_id != chat_ids[0])
+            switcher = app.screen.query_one("#chat-switcher", tui.ListView)
+            switcher.focus()
+            switcher.index = other_index
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            new_items = switcher_items(app.screen)
+            new_current = next(item for item in new_items if item.chat_id == app.screen.chat_id)
+            new_ordinary = next(item for item in new_items if item.chat_id != app.screen.chat_id)
+            assert new_current.has_class("chat-switcher-current")
+            assert new_current.styles.color != new_ordinary.styles.color
+    finally:
+        await app.shutdown()
+
 
 async def test_quit_cancels_running_workers_then_closes_responder_and_service(tmp_path):
     responder = SlowResponder()

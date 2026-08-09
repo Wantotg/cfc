@@ -89,6 +89,27 @@ def test_provider_repr_never_shows_the_key(tmp_path):
     assert marker not in str(provider)
 
 
+# --- the shared required-field ordering (D-2.0-19) ---------------------------
+
+def test_required_provider_field_names_is_api_base_key_model_in_that_order():
+    assert settings.REQUIRED_PROVIDER_FIELD_NAMES == ("API_BASE", "API_KEY", "MODEL")
+
+
+@pytest.mark.parametrize("index", range(3))
+def test_a_field_missing_only_from_the_shared_list_is_still_reported_missing(tmp_path, index):
+    """Proves `build_provider` really reads `REQUIRED_PROVIDER_FIELD_NAMES`
+    rather than a second, independently-spelled literal: dropping each name
+    the tuple names, in the tuple's own order, is what this test drives.
+    """
+    field_name = settings.REQUIRED_PROVIDER_FIELD_NAMES[index]
+    lines = [ln for ln in VALID_BODY.splitlines() if not ln.startswith(field_name)]
+    snapshot = snapshot_from(tmp_path, "\n".join(lines) + "\n")
+    with pytest.raises(settings.SettingsError) as exc_info:
+        settings.build_provider(snapshot)
+    assert exc_info.value.field_name == field_name
+    assert exc_info.value.kind == "missing"
+
+
 # --- database target: default, override, protected targets ------------------
 
 def test_unset_database_path_uses_the_2_0_default(tmp_path):

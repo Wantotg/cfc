@@ -342,6 +342,22 @@ class ChatScreen(Screen):
                 item.add_class("chat-switcher-current")
             await switcher.append(item)
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """The docked switcher's own selection route (B-2.0-47). A
+        `ListView.Selected` message bubbles to the screen from any list it
+        contains, so this only acts on one raised by `#chat-switcher` itself
+        — guarding against a future second list on this screen catching the
+        same handler. Selecting the chat already open is an explicit no-op:
+        it must not push a duplicate screen, disturb the draft or focus, or
+        add an `Esc` step, since a person is already looking at that chat.
+        """
+        if event.list_view.id != "chat-switcher":
+            return
+        chat_id = event.item.chat_id
+        if chat_id == self.chat_id:
+            return
+        self.app.open_chat(chat_id)
+
     async def notify_run_changed(self) -> None:
         """Called by `CfcApp` — awaited from inside its worker's own
         `finally` — after that worker reaches a terminal state, but only
