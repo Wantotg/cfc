@@ -49,7 +49,7 @@ stack rather than calling action methods directly.
   requirements-dev.txt, pytest.ini, tests/test_cfc_tui.py,
   tests/test_cfc_doctor_cli.py
 - Status: shipped
-- Commit: pending
+- Commit: bb79437
 
 ## 2026-08-09 — A safe turn-ending boundary and one active turn per chat (`B-2.0-32`, `B-2.0-33`, `D-2.0-36`, `D-2.0-42`)
 v2.0 Stage 4, loop one, kernel prerequisite for exposing the conversation
@@ -75,7 +75,7 @@ the refusal itself, the locking, and the no-sidecar guarantee are unchanged.
 - Files: cfc/conversation_service.py, cfc/conversation_store.py,
   tests/test_cfc_conversation_service.py, tests/test_cfc_conversation_store.py
 - Status: shipped
-- Commit: pending
+- Commit: eabc5c7
 
 ## 2026-08-09 — Keep refused database targets in the store's own vocabulary (`B-2.0-41`)
 v2.0 Stage 3, loop three playtest correction. An existing cfc database that

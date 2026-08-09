@@ -15,21 +15,32 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## D-2.0-42 · An interrupted first run leaves a zero-byte target that blocks every later open
+## D-2.0-50 · The switcher's current-chat class has no style
 
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop three playtest.
+**Found:** 2026-08-09, by reading during the v2.0 Stage 4 loop one playtest.
 
-`open_store` creates an absent target before it has completed revalidation and
-opened the database. If the process is interrupted, or a later ownership check
-refuses, the zero-byte file remains. The next run classifies it as an empty or
-arbitrary target and refuses again, so the path cfc created can block every
-later startup.
+`ChatScreen._render_switcher` adds `chat-switcher-current` to the current
+chat's item, but `cfc/tui.tcss` has no rule for that class. The wide switcher
+therefore gives no visual indication of which chat is open.
 
-This is the first-startup recovery question for Stage 4. Decide whether a
-locked zero-byte target can be adopted as cfc's own placeholder, or whether it
-must remain a visible refusal with an explicit preserve-then-move-or-remove
-route. Do not delete the path automatically: an interrupted process may have
-lost ownership of the pathname.
+Add one stylesheet rule and prove that the current item is visibly distinct.
+This is separate from `B-2.0-47` so the visual defect cannot disappear if the
+selection fix is split from the same pass.
+
+---
+
+## D-2.0-49 · cfc inherits Textual's whole command palette without deciding what is in it
+
+**Found:** 2026-08-09, during the v2.0 Stage 4 loop one playtest.
+
+`Ctrl+P` exposes Textual's built-in command palette because cfc has not chosen
+its own command provider. Its Screenshot command can fail when the platform's
+downloads directory does not exist, and its theme choice is only in memory.
+
+Later Stage 4 work should decide which commands cfc owns, give screenshot a
+created destination with a recovery route, and decide where interface
+preferences such as the chosen theme belong. This is ownership and product
+design work, not a request to copy Textual's default command list.
 
 ---
 
@@ -47,23 +58,6 @@ The body remains untrusted and unpersisted. Revisit the veto and absent-usage
 decisions when a real gateway supplies evidence, keeping the adapter's stored
 reason bounded and provider-independent. This is watching work for Stage 4,
 not a reopening of `D-2.0-37` or `D-2.0-38`.
-
----
-
-## D-2.0-36 · Nothing serialises two turns in one chat now that `send_turn` is awaitable
-
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
-
-Two concurrent sends can start in one chat. Both turns end and retain explicit
-positions, but the second snapshot can contain another active turn, so the
-provider either sees an unfinished conversation or the converter refuses it.
-
-This becomes live Stage 4 debt when the composer remains available during a
-background turn. The service needs one-turn-per-chat serialisation or a visible
-queue/refusal decision; the converter is right to refuse the incoherent
-snapshot.
-
----
 
 ## D-2.0-20 · The runtime row reports no version when it passes
 
@@ -108,26 +102,15 @@ bug. It should wait for Stage 7, when web search is rebuilt through the new
 tool lifecycle and the legacy suite retires; correcting the old assertion
 first would do the work twice.
 
-## D-04 · `[esc]` doesn't back out of prompts, and can't while they're `input()`. 0.8.2 remnant
+## D-04 · Future prompt surfaces still need the shared Escape behaviour
 
-**Found:** 2026-07-26, Cas's 0.8.1 testing pass, as half of the `/model`
-strictness ask. The other half shipped in v0.8.2 (the near-miss picker, the
-dropped vendor prefix, lowercase `[enter]`); this is what was left.
+**Found:** 2026-07-26, during Cas's 0.8.1 testing pass.
 
-Description: every prompt in cfc is built on plain `input()`, which reads a
-*line* — it cannot see a bare Esc at all. Detecting one needs a keypress reader,
-and Esc is the ambiguous key to pick for it: terminals send it as the prefix of
-every arrow key, so a bare Esc is only distinguishable by a timeout. So decline
-keys are still `[c]`/`[n]`.
+The old obstacle is retired: Textual now owns live terminal input, and the
+layered `Esc` route is implemented and proved for the Stage 4 Hub and Chat
+surfaces. The remaining debt is applying that same contract consistently as
+the other prompt surfaces are built — including the hub picker, `/file`,
+`/wiki` pickers, and model prompts named by the original finding.
 
-**Worth doing properly or not at all**, because the value is *consistency across
-every prompt* and not any one of them: the hub picker, `/file`, `/wiki`'s
-pickers and the model prompts should all back out the same way.
-
-**Where it lands (2026-07-27):** it is a terminal-stack change, and standing
-decision 6 — prompt_toolkit and rich never drive the terminal at once — puts
-that at **2.0**, alongside mouse support, scrollwheel and select-and-copy, which
-the roadmap already says are one decision rather than a series of tweaks.
-The knock-on: any 1.x screen that wants "Esc returns" backs out on a **typed
-word** (`esc`, `back`, `q`) instead. Costs nothing, works today, and is honest —
-those screens are command-driven already.
+Keep this open until those surfaces exist and each one closes a modal, cancels
+an active prompt, or returns to the Hub at the correct layer.

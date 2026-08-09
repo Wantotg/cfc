@@ -13,6 +13,11 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-32 | the store's own errors defeat the turn-ending guards | shipped in `eabc5c7`; unfinished-turn cleanup now catches the store's `sqlite3.Error` boundary, preserves interruption propagation, and uses typed `TurnEndingFailed` where an internal ending failure must surface | 2026-08-09 |
+| B-2.0-33 | an internal failure stores arbitrary exception text | shipped in `eabc5c7`; responder exceptions and unrecognised results now persist one bounded cfc-authored reason, with no arbitrary exception text or result representation | 2026-08-09 |
+| D-2.0-36 | nothing serialises two turns in one chat now that `send_turn` is awaitable | shipped in `eabc5c7`; `start_turn` refuses a second active turn atomically inside the chat's transaction, while different chats remain independent | 2026-08-09 |
+| D-2.0-42 | an interrupted first run leaves a zero-byte target that blocks every later open | shipped in `eabc5c7`; the zero-byte refusal now names cfc's interrupted-first-start possibility and offers preserve-then-choose-another-path recovery without adopting or deleting the target | 2026-08-09 |
+| Q-2.0-51 | how the command palette works and where its themes come from | answered; `Ctrl+P` and its built-in commands and themes come from Textual, not VS Code; cfc inherits them unchanged and must later decide its own palette ownership under `D-2.0-49` | 2026-08-09 |
 | B-2.0-41 | a target cfc cannot open read-write left `open_store` as a bare `PermissionError` | shipped in `746c573`; target acquisition now converts read-write and database-file creation errors into `TargetUnusable` with bounded operating-system reasons, and refusal tests verify that no filesystem state changes | 2026-08-09 |
 | N-2.0-44 | `golden.py` by hand needs a working 1.x config; the gate's own copy does not | nothing owed; the standalone command intentionally imports the real 1.x configuration, while the entry gate injects its tracked synthetic configuration and remains config-independent | 2026-08-09 |
 | N-2.0-45 | a live foreign WAL writer degrades the refusal reason, not the refusal | nothing owed; the stale main-header route remains preservation-first `POPULATED_UNCLAIMED`, refuses without reading or deleting the live WAL, and never advises removal | 2026-08-09 |

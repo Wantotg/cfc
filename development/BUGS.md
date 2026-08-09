@@ -26,35 +26,37 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## B-2.0-32 · The store's own errors defeat the turn-ending guards
+## B-2.0-48 · `Shift+Enter` arrives as plain `Enter`, so a newline cannot be typed
 
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 4 loop one playtest.
 
-`send_turn`'s recovery guards catch `ConversationStoreError`, but SQLite
-errors such as a closed connection, full disk, or an external write failure
-arrive as `sqlite3.Error`. An ordinary store failure can therefore escape and
-leave the started turn active; the same mismatch can hide a `KeyboardInterrupt`
-while its ending is being attempted.
+The Composer handles Textual's `shift+enter` event, but Cas's terminal sends
+the same carriage return for `Shift+Enter` as for `Enter`. The distinction is
+therefore lost before Textual or cfc receives it. The Kitty keyboard protocol
+can restore the natural key in a configured terminal; `Ctrl+J` is the
+always-distinguishable fallback.
 
-**Shape of the remedy:** catch the store's actual database-error boundary when
-ending an unfinished turn, and preserve interruption propagation even when the
-ending write cannot be recorded. This is owed before Stage 4 background work;
-reopen recovery remains the route when the store itself cannot accept a write.
+This remains open after one small Designer decision: choose the fallback key as
+part of the documented interaction contract, then make the fallback available
+in cfc, document the Windows Terminal mapping for the natural key, and name
+the newline keys in the Chat footer. The existing `shift+enter` branch is
+already valid when the terminal sends the event.
 
 ---
 
-## B-2.0-33 · An internal failure stores arbitrary exception text
+## B-2.0-47 · The docked chat switcher accepts a selection and opens nothing
 
-**Found:** 2026-08-09, during the v2.0 Stage 3 loop two playtest.
+**Found:** 2026-08-09, during the v2.0 Stage 4 loop one playtest.
 
-The service stores `f"{type(exc).__name__}: {exc}"` for unexpected responder
-errors, including the `repr` of an unrecognised responder result. A future
-adapter could therefore persist a provider body, request detail, or credential
-in `failure_reason`, which Stage 4 will render.
+The wide Chat screen builds and displays the stored-chat switcher but has no
+`ListView.Selected` handler. Clicking or keyboard-selecting another chat moves
+the list highlight and then leaves the current Chat screen unchanged. The
+narrow `ChatsModal` already has the required route.
 
-**Shape of the remedy:** make the service's internal evidence bounded and
-cfc-authored, with no arbitrary exception or returned-object representation.
-Keep provider-specific safe evidence typed at the adapter boundary.
+Add the equivalent guarded handler to `ChatScreen`: another chat opens, while
+selecting the current chat does not push a duplicate screen. Prove both mouse
+and keyboard selection, including the unchanged screen stack for the current
+chat.
 
 ---
 
