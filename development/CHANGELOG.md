@@ -25,6 +25,17 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-09 — Ensure interrupted and invalid turns end canonically (`B-2.0-25`)
+v2.0 Stage 3, loop one playtest correction. `send_turn` now ends every turn
+it starts before returning, including an unrecognised responder result, an
+ordinary store or responder exception, and an in-process interruption. An
+interruption is recorded as a typed interrupted failure and still propagates;
+an outcome already committed by the store remains authoritative.
+- Files: cfc/conversation_service.py, cfc/conversation_types.py,
+  tests/test_cfc_conversation_service.py
+- Status: shipped
+- Commit: 12435b6
+
 ## 2026-08-09 — Add the 2.0 conversation ledger: SQLite store, ownership lock, and turn service (`W-07`)
 v2.0 Stage 3, loop one. The first Stage 3 kernel: a provider-independent
 conversation service and a new SQLite store that can create and reopen
@@ -67,7 +78,7 @@ active turn. `python -m pytest`: 324 passed.
   tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_service.py,
   tests/fixtures/conversation_store_child.py
 - Status: shipped
-- Commit: pending
+- Commit: 24f81c4
 
 ## 2026-08-09 — Stop doctor telling you to overwrite a `config.py` that exists (`B-2.0-18`)
 v2.0 Stage 2, loop two, playtest. `diagnose` gave every configuration load

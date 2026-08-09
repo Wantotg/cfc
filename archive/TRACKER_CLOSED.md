@@ -13,6 +13,9 @@ the closed records reconciled in that pass.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-25 | a turn `send_turn` started could stay active forever | shipped in `12435b6`; every exit from `send_turn` after `start_turn` now ends the turn it started, an interruption records a typed interrupted failure and still propagates, and a store that already committed an outcome keeps it | 2026-08-09 |
+| N-2.0-30 | `list_chats` orders by `rowid` | nothing owed; without `AUTOINCREMENT` a new chat always takes a rowid above every surviving row, so listing order cannot invert, and rowid cannot tie the way `created_at` can | 2026-08-09 |
+| N-2.0-31 | `fcntl.flock` is POSIX-only | nothing owed; `schedule.py`'s lock already accepts the same POSIX constraint, the repository promises no native Windows support, and WSL2 is ordinary Linux | 2026-08-09 |
 | B-2.0-18 | doctor told a reader to copy the example over a `config.py` that exists | shipped in `3a54a9c`; an existing failed configuration file now gets a correction route instead of advice that would replace its settings, while the copy-and-fill route remains for a missing file | 2026-08-09 |
 | B-2.0-11 | a configured vault root that does not exist reports ready | shipped in `c7abf16`; the vault row now requires an existing usable directory and leaves the database-target rule separate | 2026-08-09 |
 | D-2.0-07 | doctor gives no next step, and no state for a row it never checked | shipped in `c7abf16`; dependent rows use `not checked`, required readiness requires every required row to be `ready`, and known failures render safe next steps | 2026-08-09 |

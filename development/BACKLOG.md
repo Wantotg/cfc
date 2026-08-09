@@ -15,6 +15,24 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## D-2.0-28 · A refused target keeps the `.lock` sidecar cfc created beside it
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop one playtest.
+
+`open_store` acquires the ownership lock before classifying the existing
+target. If the target is corrupt, foreign, or empty, cfc refuses it after
+creating `<path>.lock`, and that sidecar remains beside a database cfc has
+declared incompatible. The target bytes are unchanged.
+
+Deleting the lock file on refusal is not a safe quick fix: another process may
+already hold it open, and unlinking it could let later processes lock a new
+inode while the first process still believes it owns the old one. The existing
+`schedule.py` lock accepts the same lifecycle. The design choices are to
+inspect before locking, reopening a time-of-check gap, or to keep the lock in
+another location. This is owed design work, not a cleanup deletion.
+
+---
+
 ## D-2.0-20 · The runtime row reports no version when it passes
 
 **Found:** 2026-08-09, during the v2.0 Stage 2 loop two playtest.

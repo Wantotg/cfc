@@ -26,6 +26,54 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## B-2.0-26 · An identical completion carrying an all-absent `Usage` refuses as a conflict
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop one playtest.
+
+**Symptom:** `Usage(None, None, None)` and `usage=None` both round-trip from
+SQLite as no usage, but an identical repeat of the first spelling is refused
+as a conflicting finalisation. Repeating the second spelling is accepted.
+
+**Cause:** the three optional usage counts deliberately distinguish absent
+counts from reported zeroes, but the all-absent `Usage` value is stored as
+three `NULL` columns and read back as `usage=None`. Content-exact idempotency
+then compares the submitted value with a representation that has lost the
+distinction.
+
+**Shape of the remedy:** preserve whether usage was supplied, or decide that
+an all-absent `Usage` is not constructible. Pull this into the loop that makes
+the HTTP adapter reachable, where a real response naturally produces the
+value through three optional fields. Content-exact finalisation remains the
+chosen rule; a conflicting answer must not be silently discarded.
+
+---
+
+## B-2.0-27 · A populated non-cfc database is diagnosed as empty
+
+**Found:** 2026-08-09, during the v2.0 Stage 3 loop one playtest.
+
+**Symptom:** an existing SQLite target with tables but no `application_id` is
+classified as `EMPTY_OR_ARBITRARY` and receives the same advice as a truly
+empty file: preserve anything wanted, then move or remove it so cfc can create
+a fresh database.
+
+**Cause:** the refusal classifier treats a missing application marker as the
+empty-or-arbitrary case. Most SQLite files never set `application_id`, so the
+branch combines a zero-byte file with a populated database whose ownership is
+unknown. The foreign-application branch catches only files that voluntarily
+set a non-zero marker.
+
+**Boundary:** Stage 2's database-path validation prevents the live v1.9.1
+database from reaching this code; the reachable case is a copy or a database
+pointed at explicitly. The diagnosis is still wrong, and moving a populated
+database has a different recovery consequence from moving an empty file.
+
+**Shape of the remedy:** inspect whether the target contains meaningful SQLite
+content and give populated unknown databases their own refusal and recovery
+advice without weakening the validate-before-mutation rule.
+
+---
+
 ## B-11 · A wiki page deleted from the vault stays in the recall index
 
 **Found:** 2026-08-03, by reading during the v1.6.3 triage. Live on the
