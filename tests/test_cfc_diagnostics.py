@@ -28,6 +28,23 @@ def by_name(rows, name):
     return next(r for r in rows if r.name == name)
 
 
+@pytest.fixture(autouse=True)
+def isolated_default_database(tmp_path, monkeypatch):
+    """B-2.0-65. The appearance row is the first row that opens the
+    configured 2.0 database, and a fixture body without `DATABASE_PATH`
+    falls through to `settings.DEFAULT_DATABASE_PATH` — Cas's own live
+    `~/.cfc/2.0/chat.db`. Reading it is a retained failure class ("tests do
+    not touch personal configuration or live data") and it makes a row's
+    content depend on whatever he last saved there. Every test in this file
+    resolves that default under its own `tmp_path` instead; `settings`
+    reads the module global at call time, so replacing it here reaches
+    `build_database_path` and everything downstream of it.
+    """
+    monkeypatch.setattr(
+        settings, "DEFAULT_DATABASE_PATH", tmp_path / "resolved-default" / "chat.db",
+    )
+
+
 # --- row order is stable -----------------------------------------------------
 
 def test_row_order_matches_row_order_constant(tmp_path):
@@ -627,6 +644,111 @@ def test_appearance_row_never_affects_required_rows_ok(tmp_path):
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "appearance").state == diagnostics.State.READY
     assert diagnostics.required_rows_ok(rows) is True
+
+
+def test_appearance_row_falls_back_to_bootstrap_when_the_database_is_malformed(tmp_path):
+    """B-2.0-63 through doctor's own surface: a database carrying cfc's
+    header but malformed pages made `diagnose` raise `sqlite3.DatabaseError`
+    instead of building a row, so `python -m cfc doctor` — the one command
+    whose job is explaining what is wrong — died on the corruption it exists
+    to report.
+    """
+    db_target = tmp_path / "store" / "chat.db"
+    conversation_store.open_store(db_target).close()
+    data = bytearray(db_target.read_bytes())
+    page_size = int.from_bytes(data[16:18], "big") or 65536
+    for index in range(page_size, len(data)):
+        data[index] = 0x41
+    db_target.write_bytes(bytes(data))
+
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    rows = diagnostics.diagnose(path)
+    row = by_name(rows, "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "dark" in row.detail
+    assert "not inspected" in row.detail
+    assert diagnostics.required_rows_ok(rows) is True
+
+
+# --- a rejected TUI_THEME is its own source, with its own correction route --
+
+def test_appearance_row_names_the_built_in_fallback_when_tui_theme_is_invalid(tmp_path):
+    """B-2.0-64: `build_theme` returns `dark` for an unset `TUI_THEME` and a
+    rejected one alike, so reporting both as "configured default" told Cas
+    his value had been honoured when it had not.
+    """
+    db_target = tmp_path / "store" / "chat.db"
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\nTUI_THEME = 'solarized'\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "dark" in row.detail
+    assert "configured default" not in row.detail
+    assert "TUI_THEME" in row.detail
+    assert row.next_step is not None
+    assert "TUI_THEME" in row.next_step
+
+
+def test_appearance_row_carries_no_correction_route_for_an_accepted_tui_theme(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    for body in ("", "TUI_THEME = 'dark'\n", "TUI_THEME = 'light'\n"):
+        path = write_config(
+            tmp_path,
+            VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n" + body,
+        )
+        row = by_name(diagnostics.diagnose(path), "appearance")
+        assert row.next_step is None, body
+        assert "configured default" in row.detail, body
+
+
+def test_invalid_tui_theme_keeps_its_correction_route_behind_a_saved_override(tmp_path):
+    """The override decides the effective value; the rejected setting is
+    still a real misconfiguration, and it is what a later reset falls back
+    to — so the route stays even though the colour shown is not from it.
+    """
+    db_target = tmp_path / "store" / "chat.db"
+    store = conversation_store.open_store(db_target)
+    store.save_appearance_override("light")
+    store.close()
+
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\nTUI_THEME = 'solarized'\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert "light (saved override)" in row.detail
+    assert row.next_step is not None
+
+
+def test_a_config_without_a_database_path_inspects_only_the_resolved_default(tmp_path, monkeypatch):
+    """The mechanism behind B-2.0-65, pinned: with no `DATABASE_PATH` set,
+    the one target the appearance row opens is whatever
+    `settings.DEFAULT_DATABASE_PATH` currently resolves to — so a test
+    file that does not redirect that constant reads the real one.
+    """
+    seen = []
+    real_inspect = conversation_store.inspect_appearance_override
+
+    def recording_inspect(path):
+        seen.append(Path(path))
+        return real_inspect(path)
+
+    monkeypatch.setattr(conversation_store, "inspect_appearance_override", recording_inspect)
+    path = write_config(tmp_path, VALID_BODY)
+    diagnostics.diagnose(path)
+
+    assert seen == [settings.DEFAULT_DATABASE_PATH.expanduser().resolve()]
+    assert tmp_path in seen[0].parents
+
+
+def test_appearance_row_never_prints_the_rejected_tui_theme_value(tmp_path):
+    marker = "SECRET-MARKER-DO-NOT-LEAK-theme-4b8d"
+    path = write_config(tmp_path, VALID_BODY + f"TUI_THEME = {marker!r}\n")
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert marker not in row.detail
+    assert marker not in (row.next_step or "")
 
 
 def test_appearance_row_never_creates_the_database_target(tmp_path):

@@ -1328,16 +1328,42 @@ def _inspect_locked_target(path: Path, fd: int) -> AppearanceInspection:
 
 
 def _read_appearance_via_readonly_connection(path: Path) -> AppearanceInspection:
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    """The last step, reached only once `_classify_header` has accepted the
+    target's marker and schema version. A valid header proves neither that
+    SQLite can open the file nor that its pages are intact, so every
+    `sqlite3` failure here becomes a bounded `INCOMPATIBLE` result the same
+    way `_open_existing` already turns one into a `DatabaseIncompatible`
+    refusal (B-2.0-63): `PRAGMA quick_check` raises `DatabaseError` outright
+    on a malformed image rather than returning a non-`ok` string, and a
+    hand-made target carrying cfc's own header can lack `cfc_appearance`
+    altogether. `inspect_appearance_override` promises `diagnostics` a
+    result for every target, and `diagnostics.diagnose` promises `doctor` a
+    row rather than a traceback.
+    """
+    hint = _RECOVERY_HINT.format(path=path)
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return AppearanceInspection(
+            AppearanceInspectionState.INCOMPATIBLE,
+            problem=DatabaseProblem.CORRUPT,
+            detail=f"{path} could not be opened for reading ({exc}); {hint}",
+        )
     try:
         check = conn.execute("PRAGMA quick_check").fetchone()
         if check is None or check[0] != "ok":
             return AppearanceInspection(
                 AppearanceInspectionState.INCOMPATIBLE,
                 problem=DatabaseProblem.CORRUPT,
-                detail=f"{path} failed its integrity check: {check}",
+                detail=f"{path} failed its integrity check: {check}; {hint}",
             )
         row = conn.execute("SELECT override FROM cfc_appearance WHERE id = 1").fetchone()
+    except sqlite3.Error as exc:
+        return AppearanceInspection(
+            AppearanceInspectionState.INCOMPATIBLE,
+            problem=DatabaseProblem.CORRUPT,
+            detail=f"{path} could not be read ({exc}); {hint}",
+        )
     finally:
         conn.close()
 

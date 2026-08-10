@@ -313,25 +313,58 @@ def _appearance_row(snapshot) -> Row:
     bootstrap `TUI_THEME` (or its own built-in `dark` fallback) is always
     available (Concept.md's "appearance row always names the effective
     value and its source").
+
+    A `TUI_THEME` cfc does not recognise is that third source, and it is
+    the one this row must not quietly flatten into the second (B-2.0-64):
+    `build_theme` falls back to `DEFAULT_TUI_THEME` for an unset setting
+    and a wrong one alike, so reporting both as "configured default" told
+    Cas his rejected value had been honoured. That state is named, and it
+    is the only one here carrying a `next_step`.
     """
     theme = settings.build_theme(snapshot)
+    next_step = _tui_theme_next_step(theme)
     try:
         db_path = settings.build_database_path(snapshot)
     except settings.SettingsError:
         return Row("appearance", State.READY,
-                    f"{theme.name} (configured default; see the 2.0 database "
-                    f"target row — the database could not be resolved)")
+                    f"{theme.name} ({_bootstrap_source(theme)}; see the 2.0 database "
+                    f"target row — the database could not be resolved)",
+                    next_step=next_step)
 
     inspection = conversation_store.inspect_appearance_override(db_path)
     if inspection.state is conversation_store.AppearanceInspectionState.READY:
         effective = settings.resolve_effective_appearance(theme, inspection.override)
         source = ("saved override" if effective.source is settings.AppearanceSource.OVERRIDE
-                  else "configured default")
-        return Row("appearance", State.READY, f"{effective.name} ({source})")
+                  else _bootstrap_source(theme))
+        return Row("appearance", State.READY, f"{effective.name} ({source})",
+                    next_step=next_step)
 
     return Row("appearance", State.READY,
-                f"{theme.name} (configured default; database not inspected: "
-                f"{_appearance_inspection_reason(inspection)})")
+                f"{theme.name} ({_bootstrap_source(theme)}; database not inspected: "
+                f"{_appearance_inspection_reason(inspection)})",
+                next_step=next_step)
+
+
+def _bootstrap_source(theme: settings.ThemeSettings) -> str:
+    """What produced `theme.name`: `config.py`'s own accepted `TUI_THEME`
+    (or its absence, which is the documented default), or cfc's built-in
+    fallback after that setting was rejected.
+    """
+    if theme.invalid_value_notice is None:
+        return "configured default"
+    return "built-in default; TUI_THEME is not one cfc recognises"
+
+
+def _tui_theme_next_step(theme: settings.ThemeSettings) -> str | None:
+    """The correction route for a rejected `TUI_THEME`, and nothing else —
+    it names the field and its two accepted values, never the rejected
+    value, matching `_settings_error_next_step`'s own redaction.
+    """
+    if theme.invalid_value_notice is None:
+        return None
+    accepted = " or ".join(settings.ACCEPTED_TUI_THEMES)
+    return (f"Set TUI_THEME to {accepted} in config.py, or remove it to use "
+            f"{settings.DEFAULT_TUI_THEME}.")
 
 
 def _appearance_inspection_reason(inspection) -> str:

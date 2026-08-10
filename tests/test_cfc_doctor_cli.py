@@ -16,10 +16,21 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+
+#: B-2.0-65. `settings.DEFAULT_DATABASE_PATH` is `Path.home() / ".cfc" /
+#: "2.0" / "chat.db"`, so a configuration with no `DATABASE_PATH` sends
+#: doctor's appearance row at Cas's own live database. Each subprocess is
+#: imported fresh, so giving it an empty `HOME` resolves that default
+#: somewhere disposable instead — a retained failure class ("tests do not
+#: touch personal configuration or live data"). One directory serves the
+#: whole file: doctor never creates a database target, so nothing
+#: accumulates in it and no test can see another's leftovers.
+ISOLATED_HOME = Path(tempfile.mkdtemp(prefix="cfc-doctor-home-"))
 
 sys.path.insert(0, str(ROOT))
 from cfc import config_loader as _config_loader  # noqa: E402
@@ -45,6 +56,7 @@ def run_cfc(args, cwd, extra_env=None, timeout=30):
     env = dict(os.environ)
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(ROOT) + (os.pathsep + existing if existing else "")
+    env["HOME"] = str(ISOLATED_HOME)
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -220,8 +232,25 @@ def test_config_example_loads_through_the_real_loader_and_default_database_path(
         line for line in result.stdout.splitlines() if line.strip().startswith("configuration")
     )
     assert "ready" in config_line
+    expected = (ISOLATED_HOME / ".cfc" / "2.0" / "chat.db").resolve()
+    assert str(expected) in result.stdout
+
+
+def test_doctor_never_touches_the_real_default_database(tmp_path):
+    """B-2.0-65: with no `DATABASE_PATH` configured, doctor's appearance row
+    opens whatever `~/.cfc/2.0/chat.db` resolves to. Under the isolated
+    `HOME` that is a disposable path; the real one is neither reported nor
+    opened, and doctor creates nothing where it looked.
+    """
     from cfc import settings as cfc_settings
-    assert str(cfc_settings.DEFAULT_DATABASE_PATH.expanduser().resolve()) in result.stdout
+
+    path = write_config(tmp_path, VALID_BODY)
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    assert result.returncode == 0
+    real_default = str(cfc_settings.DEFAULT_DATABASE_PATH.expanduser().resolve())
+    assert real_default not in result.stdout
+    assert str(ISOLATED_HOME) in result.stdout
+    assert not (ISOLATED_HOME / ".cfc").exists()
 
 
 # --- D-2.0-20: doctor's real stdout carries the version and floor ----------
@@ -374,6 +403,51 @@ def test_doctor_appearance_row_reports_a_saved_override_end_to_end(tmp_path):
     )
     assert "light" in appearance_line
     assert "saved override" in appearance_line
+
+
+def test_doctor_still_reports_when_the_database_is_malformed(tmp_path):
+    """B-2.0-63 as Cas would meet it: a corrupt 2.0 database used to end
+    `python -m cfc doctor` in a `sqlite3.DatabaseError` traceback before a
+    single row printed. Every row still renders, the appearance row names
+    why the override was not inspected, and stderr stays empty — doctor's
+    own module contract is that it never prints a traceback.
+    """
+    from cfc import conversation_store
+
+    db_target = tmp_path / "store" / "chat.db"
+    conversation_store.open_store(db_target).close()
+    data = bytearray(db_target.read_bytes())
+    page_size = int.from_bytes(data[16:18], "big") or 65536
+    for index in range(page_size, len(data)):
+        data[index] = 0x41
+    db_target.write_bytes(bytes(data))
+
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert "Traceback" not in result.stdout
+    appearance_line = next(
+        line for line in result.stdout.splitlines() if line.strip().startswith("appearance")
+    )
+    assert "not inspected" in appearance_line
+
+
+def test_doctor_appearance_row_shows_the_tui_theme_correction_route(tmp_path):
+    """B-2.0-64 end to end: the rejected value never reaches stdout, but the
+    row says the setting was not recognised and the line below it says what
+    to set instead.
+    """
+    marker = "SECRET-MARKER-DO-NOT-LEAK-theme-1f07"
+    path = write_config(tmp_path, VALID_BODY + f"TUI_THEME = {marker!r}\n")
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    assert result.returncode == 0
+    assert marker not in result.stdout
+    lines = result.stdout.splitlines()
+    row_index = next(i for i, line in enumerate(lines) if line.strip().startswith("appearance"))
+    assert "TUI_THEME" in lines[row_index]
+    assert lines[row_index + 1].strip().startswith("->")
+    assert "TUI_THEME" in lines[row_index + 1]
 
 
 def test_doctor_appearance_row_never_creates_the_database_target(tmp_path):

@@ -1503,6 +1503,77 @@ def test_inspect_appearance_override_on_a_directory_target_is_incompatible(tmp_p
     assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
 
 
+# --- B-2.0-63: a valid header proves nothing about the pages behind it ------
+
+def test_inspect_appearance_override_malformed_image_refuses_without_raising(tmp_path):
+    """A real current-schema database whose interior pages are overwritten
+    keeps cfc's own header, so `_classify_header` accepts it and SQLite is
+    the only thing left that can notice — and `PRAGMA quick_check` reports
+    a malformed image by raising, not by returning a non-`ok` string.
+    """
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    store.save_appearance_override("light")
+    store.close()
+
+    data = bytearray(path.read_bytes())
+    page_size = int.from_bytes(data[16:18], "big") or 65536
+    for index in range(page_size, len(data)):
+        data[index] = 0x41
+    path.write_bytes(bytes(data))
+
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+    assert inspection.problem is store_mod.DatabaseProblem.CORRUPT
+    assert inspection.override is None
+    assert str(path) in inspection.detail
+
+
+def test_inspect_appearance_override_truncated_image_refuses_without_raising(tmp_path):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+
+    data = path.read_bytes()
+    page_size = int.from_bytes(data[16:18], "big") or 65536
+    path.write_bytes(data[: page_size * 2])
+
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+    assert inspection.problem is store_mod.DatabaseProblem.CORRUPT
+
+
+def test_inspect_appearance_override_without_the_appearance_table_refuses(tmp_path):
+    """cfc's own application id and current schema version on a target cfc
+    did not build. Nothing in the header can catch this; the `SELECT` is
+    what fails, and it must still produce a result rather than an exception.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(
+        path, application_id=store_mod.APPLICATION_ID,
+        user_version=store_mod.SCHEMA_VERSION,
+    )
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+    assert inspection.problem is store_mod.DatabaseProblem.CORRUPT
+    assert inspection.override is None
+
+
+def test_inspect_appearance_override_leaves_a_malformed_target_untouched(tmp_path):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    data = bytearray(path.read_bytes())
+    for index in range(4096, len(data)):
+        data[index] = 0x41
+    path.write_bytes(bytes(data))
+    before_entries = sorted(p.name for p in path.parent.iterdir())
+    before_bytes = path.read_bytes()
+
+    store_mod.inspect_appearance_override(path)
+
+    assert sorted(p.name for p in path.parent.iterdir()) == before_entries
+    assert path.read_bytes() == before_bytes
+
+
 # --- explicit temporary targets only ----------------------------------------
 
 def test_module_touches_no_config_or_legacy_path():
