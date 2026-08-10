@@ -13,6 +13,8 @@ at the top.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-60 | removing a trait crashed cfc | shipped in `4a9f75f`; Chat transcript and docked switcher redraws now run one at a time, so overlapping refreshes cannot mount duplicate widgets or silently duplicate the switcher | 2026-08-10 |
+| B-2.0-62 | a vault category cfc knows is unusable looks like an ordinary empty choice | shipped in `4a9f75f`; unusable categories now show their bounded setting reason and a `config.py` correction route, while an unset private `USER_PREFERENCES_DIR` has been supplied and confirmed | 2026-08-10 |
 | N-2.0-57 | "light and dark look the same" because `TUI_THEME` was still commented out | nothing owed; the theme setting resolves correctly when enabled, and Cas enabled `TUI_THEME = "light"` in the private configuration | 2026-08-10 |
 | W-2.0-54 | no way to re-send a message the provider never received | shipped in `ae437df`; each omitted failed or cancelled turn now has a **Restore to composer** action that restores the stored text for a new manual turn | 2026-08-10 |
 | D-2.0-56 | nothing tells a person `Shift+Enter` needs a configured terminal | shipped in `ae437df`; Keyboard help states the Kitty keyboard-protocol requirement and shows the tested Windows Terminal mapping | 2026-08-10 |

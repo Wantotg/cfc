@@ -15,6 +15,30 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## D-2.0-61 · Keyboard help reads as a specification, not sentences
+
+**Found:** 2026-08-10, during the v2.0 Stage 5 loop one playtest.
+
+Keyboard help lists bindings as reference rows and drops a raw Windows Terminal
+JSON fragment into the middle of them. The interaction works, but the requested
+overview is not readable normal-language guidance. Rewrite the copy as short
+sentences while retaining the tested key behaviour and terminal requirement.
+This is wording work for the Stage 10 release-facing documentation pass, not a
+reason to reopen the shipped Stage 4 interaction.
+
+## D-25 · `cfc doctor` says nothing about the vault categories or model catalogue
+
+**Found:** 2026-08-10, by reading during the v2.0 Stage 5 loop one diagnosis.
+
+`cfc doctor` reports the provider, database, and interpreter, but not the four
+vault categories or the model catalogue. A person therefore cannot use the
+diagnostic command to learn which context sources and models cfc can use before
+opening a chat. Add bounded readiness information for those optional surfaces,
+including a useful correction route without exposing credentials or vault
+content. This belongs to the remaining Stage 5 vault work.
+
+---
+
 ## D-2.0-43 · Provider evidence checks can discard a usable answer, and one malformed usage shape walks past them
 
 **Found:** 2026-08-09, during the v2.0 Stage 3 loop three playtest.

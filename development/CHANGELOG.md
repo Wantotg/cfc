@@ -25,6 +25,18 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-10 — Playtest corrections to the named-context foundation (`B-2.0-60`, `B-2.0-62`, Stage 5 loop 1)
+The pushed Stage 5 loop now serialises Chat transcript and switcher redraws so
+overlapping refreshes cannot mount duplicate widgets. Unusable vault categories
+also reach the interface as visibly unavailable, with the setting name and a
+configuration correction route; an unset First Message category names its
+setting instead of blaming the selected Persona. Proved with the full suite at
+**692 passed** (eleven new tests and two changed) and the unchanged 516-line
+golden baseline.
+- Files: cfc/context.py, cfc/conversation_service.py, cfc/tui.py, cfc/tui.tcss, tests/test_cfc_context.py, tests/test_cfc_conversation_service.py, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: 4a9f75f
+
 ## 2026-08-10 — The named-context foundation: selections, a resolver, one accepted request plan, and Context/Model in the TUI (`W-07`, Stage 5 loop 1)
 An ordinary stored chat now has one inspectable, provider-independent context
 path instead of an unpersonalised default. `cfc/context.py` (new) is the
@@ -75,7 +87,7 @@ version 3, and every new/changed suite uses only temporary configs, vaults,
 and databases.
 - Files: cfc/context.py (new), cfc/conversation_service.py, cfc/conversation_store.py, cfc/conversation_types.py, cfc/provider_adapter.py, cfc/provider_wire.py, cfc/settings.py, cfc/tui.py, cfc/tui.tcss, config.example.py, tests/test_cfc_context.py (new), tests/test_cfc_conversation_service.py, tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_types.py, tests/test_cfc_provider_adapter.py, tests/test_cfc_provider_wire.py, tests/test_cfc_settings.py, tests/test_cfc_tui.py, tests/fixtures/conversation_store_child.py
 - Status: shipped
-- Commit: pending
+- Commit: b308a99
 
 ## 2026-08-10 — Recoverable chat navigation: screen replacement, omitted-turn restore, theme, and a cfc-owned command palette (`B-2.0-55`, `D-2.0-49`, `D-2.0-53`, `D-2.0-56`, `W-2.0-54`)
 v2.0 Stage 4, loop three. `CfcApp.open_chat` now replaces the active
