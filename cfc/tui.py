@@ -313,7 +313,25 @@ def _source_record_text(record) -> str:
     return f"{record.display_name}, {record.character_count} chars, {_short_fingerprint(record.fingerprint)}"
 
 
+#: What a row says after naming why a category cannot be used at all — the
+#: correction route for every `settings.VaultCategorySettings` reason, all of
+#: which are `config.py` fields (B-2.0-62). Distinct from a broken selected
+#: file's route, which is the vault itself.
+_CATEGORY_CONFIG_ROUTE = "correct config.py to use this category"
+
+
 def _category_state_text(state: CategoryState) -> str:
+    """One category row's text. A category with no usable configured
+    directory says so first (B-2.0-62): `none selected` alone would report
+    an ordinary empty choice for something cfc already knows cannot be
+    chosen, which is what sent a whole playtest looking for a selector that
+    was never going to appear.
+    """
+    if state.category_unavailable_reason is not None:
+        prefix = f"unavailable ({state.category_unavailable_reason}) — {_CATEGORY_CONFIG_ROUTE}"
+        if state.selected_name is None:
+            return prefix
+        return f"{prefix}; {state.selected_name} stays selected until you clear it"
     if state.selected_name is None:
         return "none selected"
     if state.source is not None:
@@ -321,10 +339,20 @@ def _category_state_text(state: CategoryState) -> str:
     return f"unavailable ({state.unavailable_reason}) — open to correct"
 
 
-def _first_message_row_text(opening: OpeningMessage | None, lookup) -> str:
+def _first_message_row_text(
+    opening: OpeningMessage | None, lookup, category_unavailable_reason: str | None = None,
+) -> str:
+    """The First Message row. A frozen opening always wins — it is stored
+    conversation content and no later configuration change can unsay it. An
+    unusable First Messages directory is named with the `config.py` route
+    (B-2.0-62); a companion that exists but cannot be read keeps the vault
+    route it always had.
+    """
     if opening is not None:
         return (f"{opening.source_name}, {len(opening.content)} chars, "
                 f"{_short_fingerprint(opening.fingerprint)}")
+    if category_unavailable_reason is not None:
+        return f"unavailable ({category_unavailable_reason}) — {_CATEGORY_CONFIG_ROUTE}"
     if lookup is None:
         return "none for no persona selected"
     if lookup.state is FirstMessageState.ABSENT:
@@ -367,21 +395,31 @@ class SourcePickerModal(ModalScreen[object]):
     plus an explicit **None (clear selection)** entry when `allow_clear`
     (Change only — Add always adds something). Dismisses with the chosen
     exact filename, `_CLEAR_SELECTION`, or `None` for Cancel/Esc.
+
+    `notice`, when given, is why this category has nothing to offer
+    (B-2.0-62). A picker that opens on one bare **None (clear selection)**
+    row and no explanation is what a person reads as "cfc doesn't do this",
+    so an unusable category says why it is empty, and still offers the clear
+    route for a selection made while it worked.
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    def __init__(self, title: str, options: tuple[SourceOption, ...], *, allow_clear: bool) -> None:
+    def __init__(self, title: str, options: tuple[SourceOption, ...], *,
+                 allow_clear: bool, notice: str | None = None) -> None:
         super().__init__()
         self._title = title
         self._options = options
         self._allow_clear = allow_clear
+        self._notice = notice
 
     def compose(self) -> ComposeResult:
         with Vertical(id="source-picker-dialog"):
             yield Label(self._title, markup=False)
             yield ListView(id="source-picker-list")
-            if not self._options and not self._allow_clear:
+            if self._notice is not None:
+                yield Static(self._notice, id="source-picker-notice", markup=False)
+            elif not self._options and not self._allow_clear:
                 yield Static("Nothing available to select.", id="source-picker-empty", markup=False)
             yield Button("Cancel", id="source-picker-cancel")
 
@@ -481,15 +519,28 @@ class ContextModal(ModalScreen[None]):
                 list_view, ("trait", trait.selected_name),
                 f"Trait: {_category_state_text(trait)}",
             )
-        await self._append_row(list_view, "add_trait", "Add trait…")
+        await self._append_row(list_view, "add_trait", self._add_trait_row_text())
         await self._append_row(
             list_view, "first_message",
-            f"First Message: {_first_message_row_text(chat.opening, rows.first_message)}",
+            "First Message: " + _first_message_row_text(
+                chat.opening, rows.first_message,
+                self.app.service.category_unavailable_reason(ContextCategory.FIRST_MESSAGE),
+            ),
         )
 
         if previous_index is not None and list_view.children and previous_index < len(list_view.children):
             list_view.index = previous_index
         self._update_actions()
+
+    def _add_trait_row_text(self) -> str:
+        """The Add-trait row names an unusable Traits category itself
+        (B-2.0-62), rather than offering an action whose only outcome is an
+        empty picker.
+        """
+        reason = self.app.service.category_unavailable_reason(ContextCategory.TRAIT)
+        if reason is None:
+            return "Add trait…"
+        return f"Add trait… unavailable ({reason}) — {_CATEGORY_CONFIG_ROUTE}"
 
     def _current_kind(self) -> object:
         list_view = self.query_one("#context-modal-list", ListView)
@@ -540,7 +591,14 @@ class ContextModal(ModalScreen[None]):
                 )
 
     def _open_category_preview(self, title: str, state: CategoryState | None) -> None:
-        if state is None or state.selected_name is None:
+        if state is not None and state.category_unavailable_reason is not None and (
+            state.source is None
+        ):
+            self._open_preview(
+                title,
+                f"unavailable: {state.category_unavailable_reason}\n\n{_CATEGORY_CONFIG_ROUTE}.",
+            )
+        elif state is None or state.selected_name is None:
             self._open_preview(title, "none selected")
         elif state.source is not None:
             self._open_preview(title, state.source.body)
@@ -558,6 +616,9 @@ class ContextModal(ModalScreen[None]):
                     else ContextCategory.PERSONA)
         title = "Change User Preferences" if kind == "user_preferences" else "Change Persona"
         options = self.app.service.available_sources(category)
+        notice = self.app.service.category_unavailable_reason(category)
+        if notice is not None:
+            notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
 
         async def handle_result(result: object) -> None:
             if result is None:
@@ -570,7 +631,8 @@ class ContextModal(ModalScreen[None]):
                 self._mutate_selection(lambda: self.app.service.set_persona(self.chat_id, filename))
             await self.refresh_rows()
 
-        self.app.push_screen(SourcePickerModal(title, options, allow_clear=True), handle_result)
+        self.app.push_screen(
+            SourcePickerModal(title, options, allow_clear=True, notice=notice), handle_result)
 
     def _begin_add(self) -> None:
         already_selected = {t.selected_name for t in self.app.service.context_rows(self.chat_id).traits}
@@ -578,6 +640,9 @@ class ContextModal(ModalScreen[None]):
             option for option in self.app.service.available_sources(ContextCategory.TRAIT)
             if option.name not in already_selected
         )
+        notice = self.app.service.category_unavailable_reason(ContextCategory.TRAIT)
+        if notice is not None:
+            notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
 
         async def handle_result(result: object) -> None:
             if result is None or result is _CLEAR_SELECTION:
@@ -585,7 +650,8 @@ class ContextModal(ModalScreen[None]):
             self._mutate_selection(lambda: self.app.service.add_trait(self.chat_id, result))
             await self.refresh_rows()
 
-        self.app.push_screen(SourcePickerModal("Add trait", options, allow_clear=False), handle_result)
+        self.app.push_screen(
+            SourcePickerModal("Add trait", options, allow_clear=False, notice=notice), handle_result)
 
     async def _handle_remove(self) -> None:
         kind = self._current_kind()
@@ -754,6 +820,7 @@ class ChatScreen(Screen):
         self.chat_id = chat_id
         self.chat_title = chat_title
         self._notice: str = ""
+        self._refresh_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Static(self.chat_title, id="chat-title-bar", markup=False)
@@ -792,13 +859,28 @@ class ChatScreen(Screen):
         state, and rebuild the transcript, context bar, and status line from
         them — never an optimistic patch. Called on mount, on resume, and
         whenever the app-owned worker for this chat changes state.
+
+        One rebuild at a time (B-2.0-60). Three callers reach this method
+        from three different asyncio tasks: `on_screen_resume` and
+        `on_mount` run on this screen's own message pump; a dismissed
+        modal's result callback (`_handle_context_result`,
+        `_handle_model_result`) runs on the App's pump, because
+        `App.push_screen` records the App as the callback's requester; and
+        `notify_run_changed` is awaited directly from the turn worker's
+        task. Without this lock two of them interleave across the `await`
+        inside `_render_transcript`, both clear the transcript and both
+        mount their own widgets, and the second mount crashes on the first's
+        already-mounted `restore-<turn>` button. Serialising is correct
+        rather than merely safe: every rebuild re-reads canonical state, so
+        a queued second pass renders the newer truth, not a stale repeat.
         """
-        chat = self.app.service.get_chat(self.chat_id)
-        snapshot = self.app.service.snapshot(self.chat_id)
-        await self._render_transcript(chat, snapshot)
-        self._render_context_bar(chat)
-        self._render_status()
-        await self._render_switcher()
+        async with self._refresh_lock:
+            chat = self.app.service.get_chat(self.chat_id)
+            snapshot = self.app.service.snapshot(self.chat_id)
+            await self._render_transcript(chat, snapshot)
+            self._render_context_bar(chat)
+            self._render_status()
+            await self._render_switcher()
 
     async def _render_transcript(self, chat: Chat, snapshot: ConversationSnapshot) -> None:
         transcript = self.query_one("#chat-transcript", VerticalScroll)

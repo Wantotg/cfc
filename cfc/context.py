@@ -239,9 +239,19 @@ def look_up_first_message(category_settings, persona_filename: str) -> FirstMess
     that exact filename — never by display name, so this lookup is
     independent of the sibling-collision rule `read_source` applies to an
     ordinary category selection.
+
+    A category with no usable configured directory is `UNAVAILABLE` and
+    carries the settings reason, not `ABSENT` (B-2.0-62): `ABSENT` says this
+    persona has no companion, which is an ordinary fact about the vault, and
+    cfc must not report that about a directory it was never told where to
+    find.
     """
     if category_settings is None or category_settings.path is None:
-        return FirstMessageLookup(FirstMessageState.ABSENT)
+        reason = getattr(category_settings, "unavailable_reason", None)
+        return FirstMessageLookup(
+            FirstMessageState.UNAVAILABLE,
+            reason=reason or "no First Messages directory is configured",
+        )
     try:
         body = _resolve_file_body(category_settings.path, persona_filename)
     except _SourceProblem as exc:

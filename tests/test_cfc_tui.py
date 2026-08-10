@@ -1635,8 +1635,24 @@ async def select_row(pilot, index: int) -> None:
     await pilot.pause()
 
 
+def configured_empty_vault(tmp_path: Path) -> settings.VaultSettings:
+    """All four categories configured and usable, every directory empty —
+    the "you have chosen nothing yet" vault, as distinct from `empty_vault`,
+    where nothing is configured at all (B-2.0-62).
+    """
+    directories = {}
+    for name in ("prefs", "personas", "traits", "first_messages"):
+        directory = tmp_path / f"vault-{name}"
+        directory.mkdir(parents=True, exist_ok=True)
+        directories[name] = directory
+    return real_vault(
+        tmp_path, prefs=directories["prefs"], personas=directories["personas"],
+        traits=directories["traits"], first_messages=directories["first_messages"],
+    )
+
+
 async def test_context_modal_lists_rows_in_request_order_with_nothing_selected(tmp_path):
-    app = make_app(tmp_path)
+    app = make_app(tmp_path, vault=configured_empty_vault(tmp_path))
     try:
         async with app.run_test() as pilot:
             await open_new_chat(app, pilot)
@@ -1648,6 +1664,268 @@ async def test_context_modal_lists_rows_in_request_order_with_nothing_selected(t
             assert rows[2] == "Persona: none selected"
             assert rows[3] == "Add trait…"
             assert rows[4].startswith("First Message:")
+    finally:
+        await app.shutdown()
+
+
+# --- B-2.0-60: one transcript rebuild at a time ----------------------------
+
+async def test_closing_context_while_a_turn_finishes_does_not_crash_the_transcript(tmp_path):
+    """The playtest crash, by its real route. A failed turn puts an
+    id-carrying **Restore to composer** button in the transcript; closing
+    the Context modal starts a rebuild on the App's pump (the dismiss
+    callback) and another on this screen's own pump (`on_screen_resume`),
+    and a worker finishing at that moment starts a third from its own task.
+    Interleaved, two of them mount the same button id and Textual raises
+    `DuplicateIds`, which ends the app.
+    """
+    traits_dir = tmp_path / "traits"
+    write_source(traits_dir, "dry.md", "dry")
+    responder = SlowResponder()
+    app = make_app(tmp_path, responder, vault=real_vault(tmp_path, traits=traits_dir))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.add_trait(screen.chat_id, "dry.md")
+
+            await type_text(pilot, "first")
+            await pilot.press("enter")
+            await responder.started.wait()
+            await pilot.pause()
+            await pilot.press("escape")  # cancel: leaves one restore button
+            await pilot.pause()
+            assert len(screen.query(".restore-button")) == 1
+
+            responder.started.clear()
+            await type_text(pilot, "second")
+            await pilot.press("enter")
+            await responder.started.wait()
+            await pilot.pause()
+
+            await open_context_modal(pilot)
+            # while here: a selection change during an active turn refuses
+            # visibly instead of escaping a Textual callback (the guard
+            # `Update.md` shipped without end-to-end proof)
+            rows = context_modal_row_texts(app)
+            await select_row(pilot, next(i for i, r in enumerate(rows) if r.startswith("Trait:")))
+            await pilot.click("#context-action-remove")
+            await pilot.pause()
+            assert "request in progress" in str(
+                app.screen.query_one("#context-modal-error", tui.Static).content)
+            assert app.service.get_chat(screen.chat_id).context_selection.traits == ("dry.md",)
+
+            responder.released.set()   # the worker finishes as the modal closes
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert len(screen.query(".restore-button")) == 1
+    finally:
+        await app.shutdown()
+
+
+async def test_concurrent_refreshes_render_once_rather_than_twice(tmp_path):
+    """The same contract without the timing: two rebuilds started at once
+    from two tasks produce one transcript and one switcher, not two. Called
+    directly on purpose — this proves the concurrency rule itself, which no
+    single keypress can express.
+    """
+    responder = FixedResponder(Failure(evidence=FailureEvidence(
+        kind=FailureKind.RESPONDER, reason="the provider refused the request (HTTP 503)")))
+    app = make_app(tmp_path, responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hello")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(screen.query(".restore-button")) == 1
+
+            await asyncio.gather(
+                screen.refresh_from_service(),
+                screen.refresh_from_service(),
+                screen.refresh_from_service(),
+            )
+            assert len(screen.query(".restore-button")) == 1
+            assert len(screen.query("#chat-switcher ListItem")) == 1
+    finally:
+        await app.shutdown()
+
+
+# --- B-2.0-62: an unusable category says so, everywhere it appears ---------
+
+async def test_an_unconfigured_category_row_names_its_reason_not_none_selected(tmp_path):
+    """The playtest's own route: `USER_PREFERENCES_DIR` unset while Traits
+    work. `none selected` on that row reads as an ordinary empty choice and
+    sends a person looking for a selector that cannot exist.
+    """
+    traits_dir = tmp_path / "traits"
+    write_source(traits_dir, "dry.md", "dry")
+    vault = settings.VaultSettings(
+        root=tmp_path,
+        user_preferences=settings.VaultCategorySettings(
+            unavailable_reason="USER_PREFERENCES_DIR is not set"),
+        personas=settings.VaultCategorySettings(unavailable_reason="PERSONAS_DIR is not set"),
+        traits=settings.VaultCategorySettings(path=traits_dir),
+        first_messages=settings.VaultCategorySettings(
+            unavailable_reason="FIRST_MESSAGES_DIR is not set"),
+    )
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+
+            assert rows[1] == (
+                "User Preferences: unavailable (USER_PREFERENCES_DIR is not set) "
+                "— correct config.py to use this category"
+            )
+            assert rows[2] == (
+                "Persona: unavailable (PERSONAS_DIR is not set) "
+                "— correct config.py to use this category"
+            )
+            assert rows[3] == "Add trait…"  # the one category that works stays ordinary
+            assert rows[4] == (
+                "First Message: unavailable (FIRST_MESSAGES_DIR is not set) "
+                "— correct config.py to use this category"
+            )
+    finally:
+        await app.shutdown()
+
+
+async def test_an_unconfigured_categorys_change_picker_says_why_it_is_empty(tmp_path):
+    """The picker that stopped the playtest: one bare `None (clear
+    selection)` row and no explanation.
+    """
+    app = make_app(tmp_path, vault=empty_vault())
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await select_row(pilot, 1)  # User Preferences
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            notice = app.screen.query_one("#source-picker-notice", tui.Static)
+            assert "not configured" in str(notice.content)
+            assert "correct config.py" in str(notice.content)
+            # the clear route survives, for a selection made while it worked
+            options = list(app.screen.query("#source-picker-list ListItem"))
+            assert len(options) == 1
+    finally:
+        await app.shutdown()
+
+
+async def test_an_unconfigured_traits_category_says_so_on_the_add_row(tmp_path):
+    app = make_app(tmp_path, vault=empty_vault())
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            add_row = next(r for r in rows if r.startswith("Add trait…"))
+            assert add_row == (
+                "Add trait… unavailable (not configured) "
+                "— correct config.py to use this category"
+            )
+
+            await select_row(pilot, rows.index(add_row))
+            await pilot.click("#context-action-add")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            notice = app.screen.query_one("#source-picker-notice", tui.Static)
+            assert "correct config.py" in str(notice.content)
+    finally:
+        await app.shutdown()
+
+
+async def test_a_configured_but_empty_traits_directory_stays_an_ordinary_empty_picker(tmp_path):
+    """The third state, and the reason the other two need separating: the
+    directory is configured and readable, it just holds nothing yet. That is
+    the vault's business, not `config.py`'s.
+    """
+    app = make_app(tmp_path, vault=configured_empty_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await select_row(pilot, 3)  # Add trait
+            await pilot.click("#context-action-add")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            assert not app.screen.query("#source-picker-notice")
+            empty = app.screen.query_one("#source-picker-empty", tui.Static)
+            assert str(empty.content) == "Nothing available to select."
+    finally:
+        await app.shutdown()
+
+
+async def test_an_unconfigured_categorys_preview_names_the_configuration_route(tmp_path):
+    app = make_app(tmp_path, vault=empty_vault())
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await select_row(pilot, 2)  # Persona
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePreviewModal)
+            body = str(app.screen.query_one("#source-preview-body", tui.Static).content)
+            assert "unavailable: not configured" in body
+            assert "correct config.py" in body
+    finally:
+        await app.shutdown()
+
+
+async def test_an_unconfigured_first_messages_directory_says_so_instead_of_none(tmp_path):
+    """A persona is selected and readable; only the companion directory is
+    missing. `none for this persona` would blame the persona for a setting.
+    """
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    vault = real_vault(tmp_path, personas=personas_dir)  # first_messages unset
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            first_message_row = next(r for r in rows if r.startswith("First Message:"))
+            assert first_message_row == (
+                "First Message: unavailable (not configured) "
+                "— correct config.py to use this category"
+            )
+    finally:
+        await app.shutdown()
+
+
+async def test_a_frozen_opening_outlives_its_categorys_configuration(tmp_path):
+    """An opening is stored conversation content: unsetting the directory it
+    came from cannot turn what a chat actually opened with into an
+    unavailability notice.
+    """
+    personas_dir = tmp_path / "personas"
+    first_messages_dir = tmp_path / "first_messages"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    write_source(first_messages_dir, "muse.md", "Hello, I am Muse.")
+    app = make_app(tmp_path, vault=real_vault(
+        tmp_path, personas=personas_dir, first_messages=first_messages_dir))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            assert app.service.get_chat(screen.chat_id).opening is not None
+            # the directory goes away from configuration afterwards
+            app.service._vault = real_vault(tmp_path, personas=personas_dir)
+
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            first_message_row = next(r for r in rows if r.startswith("First Message:"))
+            assert first_message_row.startswith("First Message: muse.md, 17 chars, ")
     finally:
         await app.shutdown()
 
@@ -1861,9 +2139,16 @@ async def test_persona_selection_freezes_a_usable_first_message_and_renders_it_a
 
 
 async def test_persona_selection_with_no_companion_leaves_first_message_absent(tmp_path):
+    """A configured First Messages directory that simply holds no companion
+    for this persona — `none for this persona`. The unconfigured-directory
+    case is a different row and a different route (B-2.0-62), proved in
+    `test_an_unconfigured_first_messages_directory_says_so_instead_of_none`.
+    """
     personas_dir = tmp_path / "personas"
+    first_messages_dir = tmp_path / "first_messages"
     write_source(personas_dir, "muse.md", "You are Muse.")
-    vault = real_vault(tmp_path, personas=personas_dir)
+    first_messages_dir.mkdir()
+    vault = real_vault(tmp_path, personas=personas_dir, first_messages=first_messages_dir)
     app = make_app(tmp_path, vault=vault)
     try:
         async with app.run_test() as pilot:

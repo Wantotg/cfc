@@ -139,7 +139,7 @@ Composer {
     max-height: 16;
 }
 
-#model-modal-notice {
+#model-modal-notice, #source-picker-notice {
     color: $warning;
     height: auto;
 }

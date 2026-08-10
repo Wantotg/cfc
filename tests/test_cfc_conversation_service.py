@@ -976,7 +976,33 @@ def test_context_rows_resolves_each_category_independently_not_fail_fast(tmp_pat
 
         assert rows.user_preferences == service_mod.CategoryState(
             ContextCategory.USER_PREFERENCES, None,
+            category_unavailable_reason="not configured",
         )
+    finally:
+        service.close()
+
+
+def test_context_rows_carry_each_category_s_own_unavailable_reason(tmp_path):
+    """B-2.0-62: a category with no usable configured directory reports that
+    fact whether or not anything is selected in it, so the interface can
+    tell "you have chosen nothing" apart from "you cannot choose here".
+    """
+    traits_dir = tmp_path / "traits"
+    write(traits_dir, "dry.md", "dry body")
+    vault = real_vault(tmp_path, traits=traits_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_trait(chat.id, "dry.md")
+        rows = service.context_rows(chat.id)
+
+        assert rows.user_preferences.category_unavailable_reason == "not configured"
+        assert rows.user_preferences.selected_name is None
+        assert rows.persona.category_unavailable_reason == "not configured"
+        assert rows.traits[0].category_unavailable_reason is None
+
+        assert service.category_unavailable_reason(ContextCategory.PERSONA) == "not configured"
+        assert service.category_unavailable_reason(ContextCategory.TRAIT) is None
     finally:
         service.close()
 

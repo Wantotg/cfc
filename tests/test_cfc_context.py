@@ -189,9 +189,25 @@ def test_first_message_absent_when_no_companion_file(tmp_path):
     assert lookup.record is None
 
 
-def test_first_message_absent_when_category_unconfigured():
+def test_first_message_unavailable_when_category_unconfigured():
+    """B-2.0-62: an unconfigured directory is not the same fact as "this
+    persona has no companion", and carries the settings reason so a caller
+    can name the field to correct.
+    """
+    settings = VaultCategorySettings(unavailable_reason="FIRST_MESSAGES_DIR is not set")
+    lookup = context.look_up_first_message(settings, "muse.md")
+    assert lookup.state is context.FirstMessageState.UNAVAILABLE
+    assert lookup.reason == "FIRST_MESSAGES_DIR is not set"
+    assert lookup.record is None
+
+
+def test_first_message_unavailable_when_category_settings_carry_no_reason():
+    """The same state without a settings reason to borrow — cfc still says
+    something bounded rather than `None`.
+    """
     lookup = context.look_up_first_message(category(None), "muse.md")
-    assert lookup.state is context.FirstMessageState.ABSENT
+    assert lookup.state is context.FirstMessageState.UNAVAILABLE
+    assert "no First Messages directory is configured" in lookup.reason
 
 
 def test_first_message_usable_reads_exact_filename_not_display_name(tmp_path):

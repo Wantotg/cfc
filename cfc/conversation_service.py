@@ -63,14 +63,27 @@ from cfc.settings import VaultCategorySettings, VaultSettings
 class CategoryState:
     """One optional context category's current resolved state, for display —
     never fail-fast the way `build_context_plan` is: a broken Persona must
-    not hide whether Traits are fine. At most one of `source`/
-    `unavailable_reason` is set, and only when `selected_name` is not
-    `None`; all three are absent together for "nothing selected".
+    not hide whether Traits are fine.
+
+    Two independent kinds of unavailability, because a person corrects them
+    in two different places (B-2.0-62):
+
+    - `category_unavailable_reason` is set whenever this category has no
+      usable configured directory at all, selection or no selection. It is
+      `settings.VaultCategorySettings`'s own bounded reason, and it is
+      corrected in `config.py`. Nothing in this category can be selected
+      while it is set.
+    - `unavailable_reason` is set only when `selected_name` names a file
+      this category cannot currently read, and is corrected in the vault.
+
+    `source` and `unavailable_reason` are both absent when nothing is
+    selected; `category_unavailable_reason` is independent of all three.
     """
     category: ContextCategory
     selected_name: str | None
     source: SourceRecord | None = None
     unavailable_reason: str | None = None
+    category_unavailable_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,16 +195,28 @@ class ConversationService:
     def _category_settings(self, category: ContextCategory) -> VaultCategorySettings:
         return getattr(self._vault, _CATEGORY_VAULT_FIELD[category])
 
+    def category_unavailable_reason(self, category: ContextCategory) -> str | None:
+        """Why this category has no usable configured directory, or `None`
+        when it has one. Straight from `settings.VaultCategorySettings`,
+        which already words every case (`VAULT_ROOT` unset, the category's
+        own setting unset or not a string, a directory outside `VAULT_ROOT`)
+        — this module adds no second vocabulary for the same fact.
+        """
+        return self._category_settings(category).unavailable_reason
+
     def _resolve_category_state(
         self, category: ContextCategory, filename: str | None,
     ) -> CategoryState:
+        unusable = self.category_unavailable_reason(category)
         if filename is None:
-            return CategoryState(category, None)
+            return CategoryState(category, None, category_unavailable_reason=unusable)
         try:
             source = context_mod.read_source(category, self._category_settings(category), filename)
-            return CategoryState(category, filename, source=source)
+            return CategoryState(category, filename, source=source,
+                                  category_unavailable_reason=unusable)
         except context_mod.SourceUnavailable as exc:
-            return CategoryState(category, filename, unavailable_reason=exc.reason)
+            return CategoryState(category, filename, unavailable_reason=exc.reason,
+                                  category_unavailable_reason=unusable)
 
     def context_rows(self, chat_id: ChatId) -> ContextRows:
         """Every row the Context modal renders, resolved independently —
