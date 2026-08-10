@@ -513,6 +513,32 @@ def test_malformed_models_never_raises_and_leaves_default_model_untouched(tmp_pa
     assert built.models.unavailable_reason is not None
 
 
+# --- effective-appearance precedence vocabulary (Stage 5 loop 2) -----------
+
+def test_resolve_effective_appearance_with_no_override_uses_the_bootstrap_theme():
+    theme = settings.ThemeSettings("light")
+    effective = settings.resolve_effective_appearance(theme, None)
+    assert effective.name == "light"
+    assert effective.source is settings.AppearanceSource.CONFIGURED_DEFAULT
+
+
+@pytest.mark.parametrize("override", settings.ACCEPTED_TUI_THEMES)
+def test_resolve_effective_appearance_with_an_override_wins_over_the_bootstrap_theme(override):
+    theme = settings.ThemeSettings("dark" if override == "light" else "light")
+    effective = settings.resolve_effective_appearance(theme, override)
+    assert effective.name == override
+    assert effective.source is settings.AppearanceSource.OVERRIDE
+
+
+def test_resolve_effective_appearance_never_reimplements_precedence_independently():
+    """An override always wins regardless of whether it happens to equal
+    the bootstrap value — proves the function reads `override is not None`,
+    not `override != theme.name`."""
+    theme = settings.ThemeSettings("dark")
+    effective = settings.resolve_effective_appearance(theme, "dark")
+    assert effective.source is settings.AppearanceSource.OVERRIDE
+
+
 # --- build_settings: vault and models included -------------------------------
 
 def test_build_settings_includes_vault_and_models(tmp_path):

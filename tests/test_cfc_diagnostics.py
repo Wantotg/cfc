@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cfc import diagnostics, entry, settings
+from cfc import conversation_store, diagnostics, entry, settings
 
 VALID_BODY = (
     "API_BASE = 'https://provider.invalid/v1'\n"
@@ -172,7 +172,7 @@ def test_missing_config_file_gives_one_error_and_five_not_checked_rows(tmp_path)
     assert "config.py" in config_row.next_step
 
     dependent_names = diagnostics.REQUIRED_ROW_NAMES[2:] + diagnostics.OPTIONAL_ROW_NAMES
-    assert len(dependent_names) == 5
+    assert len(dependent_names) == 11
     for name in dependent_names:
         row = by_name(rows, name)
         assert row.state == diagnostics.State.NOT_CHECKED, name
@@ -405,6 +405,236 @@ def test_file_tools_not_built_when_enabled(tmp_path):
     path = write_config(tmp_path, VALID_BODY + "TOOLS_ENABLED = True\n")
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "file tools").state == diagnostics.State.NOT_BUILT
+
+
+# --- Stage 5 vault category rows: shared readiness with Context ------------
+
+_CATEGORY_ROWS = (
+    ("user preferences", "USER_PREFERENCES_DIR"),
+    ("personas", "PERSONAS_DIR"),
+    ("traits", "TRAITS_DIR"),
+    ("first messages", "FIRST_MESSAGES_DIR"),
+)
+
+
+@pytest.mark.parametrize("row_name,field_name", _CATEGORY_ROWS)
+def test_vault_category_row_unavailable_when_unconfigured(tmp_path, row_name, field_name):
+    path = write_config(tmp_path, VALID_BODY)
+    row = by_name(diagnostics.diagnose(path), row_name)
+    assert row.state == diagnostics.State.UNAVAILABLE
+    assert field_name in row.detail
+
+
+@pytest.mark.parametrize("row_name,field_name", _CATEGORY_ROWS)
+def test_vault_category_row_ready_empty_for_a_real_empty_directory(tmp_path, row_name, field_name):
+    vault_root = tmp_path / "vault"
+    category_dir = vault_root / row_name.replace(" ", "_")
+    category_dir.mkdir(parents=True)
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\n{field_name} = {str(category_dir)!r}\n",
+    )
+    row = by_name(diagnostics.diagnose(path), row_name)
+    assert row.state == diagnostics.State.READY
+    assert "empty" in row.detail
+    assert "0" in row.detail
+
+
+@pytest.mark.parametrize("row_name,field_name", _CATEGORY_ROWS)
+def test_vault_category_row_ready_with_a_selectable_count(tmp_path, row_name, field_name):
+    vault_root = tmp_path / "vault"
+    category_dir = vault_root / row_name.replace(" ", "_")
+    category_dir.mkdir(parents=True)
+    (category_dir / "one.md").write_text("one", encoding="utf-8")
+    (category_dir / "two.md").write_text("two", encoding="utf-8")
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\n{field_name} = {str(category_dir)!r}\n",
+    )
+    row = by_name(diagnostics.diagnose(path), row_name)
+    assert row.state == diagnostics.State.READY
+    assert "2" in row.detail
+    assert "empty" not in row.detail
+
+
+@pytest.mark.parametrize("row_name,field_name", _CATEGORY_ROWS)
+def test_vault_category_row_error_when_configured_directory_does_not_exist(
+    tmp_path, row_name, field_name,
+):
+    vault_root = tmp_path / "vault"
+    category_dir = vault_root / "missing"
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\n{field_name} = {str(category_dir)!r}\n",
+    )
+    row = by_name(diagnostics.diagnose(path), row_name)
+    assert row.state == diagnostics.State.ERROR
+    assert str(category_dir) in row.detail
+    assert row.next_step is not None
+    assert field_name in row.next_step
+    assert not category_dir.exists()
+
+
+def test_vault_category_rows_never_affect_required_rows_ok(tmp_path):
+    vault_root = tmp_path / "vault"
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nPERSONAS_DIR = {str(vault_root / 'missing')!r}\n",
+    )
+    rows = diagnostics.diagnose(path)
+    assert by_name(rows, "personas").state == diagnostics.State.ERROR
+    assert diagnostics.required_rows_ok(rows) is True
+
+
+# --- model catalogue row: absent/empty unavailable, malformed an error -----
+
+def test_model_catalogue_row_unavailable_when_unset(tmp_path):
+    path = write_config(tmp_path, VALID_BODY)
+    row = by_name(diagnostics.diagnose(path), "model catalogue")
+    assert row.state == diagnostics.State.UNAVAILABLE
+
+
+def test_model_catalogue_row_unavailable_when_no_entry_is_selectable(tmp_path):
+    path = write_config(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='m/one', listed=False)]\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "model catalogue")
+    assert row.state == diagnostics.State.UNAVAILABLE
+
+
+def test_model_catalogue_row_ready_with_selectable_count(tmp_path):
+    path = write_config(
+        tmp_path,
+        VALID_BODY + "MODELS = [dict(id='m/one'), dict(id='m/two', listed=False)]\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "model catalogue")
+    assert row.state == diagnostics.State.READY
+    assert "1" in row.detail
+
+
+def test_model_catalogue_row_error_when_malformed(tmp_path):
+    path = write_config(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='a'), dict(id='a')]\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "model catalogue")
+    assert row.state == diagnostics.State.ERROR
+    assert row.next_step is not None
+    assert "MODELS" in row.next_step
+    assert diagnostics.required_rows_ok(diagnostics.diagnose(path)) is True
+
+
+def test_model_catalogue_row_never_prints_the_configuration_record(tmp_path):
+    marker = "SECRET-MARKER-DO-NOT-LEAK-model-9c31"
+    path = write_config(
+        tmp_path, VALID_BODY + f"MODELS = [dict(id={marker!r})]\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "model catalogue")
+    assert marker not in row.detail
+    assert marker not in (row.next_step or "")
+
+
+# --- appearance row: effective value, source, and safe non-inspection ------
+
+def test_appearance_row_reports_the_bootstrap_default_when_no_database_exists_yet(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "dark" in row.detail
+    assert not db_target.exists()
+
+
+def test_appearance_row_reports_the_configured_default_when_tui_theme_is_light(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\nTUI_THEME = 'light'\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "light" in row.detail
+
+
+def test_appearance_row_reports_a_saved_override_when_the_database_is_inspectable(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    store = conversation_store.open_store(db_target)
+    store.save_appearance_override("light")
+    store.close()
+
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "light" in row.detail
+    assert "saved override" in row.detail
+
+
+def test_appearance_row_reports_configured_default_when_database_has_no_override(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    conversation_store.open_store(db_target).close()
+
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "dark" in row.detail
+    assert "configured default" in row.detail
+
+
+def test_appearance_row_falls_back_to_bootstrap_when_database_is_locked(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    owner = conversation_store.open_store(db_target)
+    try:
+        path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+        row = by_name(diagnostics.diagnose(path), "appearance")
+        assert row.state == diagnostics.State.READY
+        assert "dark" in row.detail
+        assert "not inspected" in row.detail
+    finally:
+        owner.close()
+
+
+def test_appearance_row_falls_back_to_bootstrap_when_database_is_the_wrong_schema(tmp_path):
+    import sqlite3
+    db_target = tmp_path / "store" / "chat.db"
+    db_target.parent.mkdir(parents=True)
+    conn = sqlite3.connect(str(db_target))
+    conn.execute(f"PRAGMA application_id = {conversation_store.APPLICATION_ID}")
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute("CREATE TABLE placeholder (x INTEGER)")
+    conn.commit()
+    conn.close()
+
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "dark" in row.detail
+    assert "not inspected" in row.detail
+
+
+def test_appearance_row_falls_back_to_bootstrap_when_the_database_path_is_unresolvable(tmp_path):
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"DATABASE_PATH = {str(settings.LEGACY_DATABASE_PATH)!r}\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "appearance")
+    assert row.state == diagnostics.State.READY
+    assert "dark" in row.detail
+    assert "2.0 database target" in row.detail
+
+
+def test_appearance_row_never_affects_required_rows_ok(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    rows = diagnostics.diagnose(path)
+    assert by_name(rows, "appearance").state == diagnostics.State.READY
+    assert diagnostics.required_rows_ok(rows) is True
+
+
+def test_appearance_row_never_creates_the_database_target(tmp_path):
+    db_target = tmp_path / "store" / "chat.db"
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    diagnostics.diagnose(path)
+    assert not db_target.exists()
+    assert not db_target.parent.exists()
 
 
 # --- secret markers never leak into any row's detail -------------------------

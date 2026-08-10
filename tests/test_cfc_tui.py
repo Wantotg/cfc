@@ -1438,6 +1438,15 @@ async def command_palette_option_names(app) -> list[str]:
     )
 
 
+#: The three cfc-owned Appearance commands, in the exact text
+#: `test_ctrl_p_reaches_exactly_the_cfc_command_set_on_the_hub`'s default
+#: fixture produces: no saved override, `TUI_THEME` unset (dark) — so
+#: "Use configured default" is the one marked `(current)`.
+_DEFAULT_APPEARANCE_COMMANDS = [
+    "Appearance: Dark", "Appearance: Light", "Appearance: Use configured default (current)",
+]
+
+
 async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_the_hub(tmp_path):
     app = make_app(tmp_path)
     try:
@@ -1445,16 +1454,16 @@ async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_the_hub(tmp_path):
             await pilot.press("ctrl+p")
             await pilot.pause()
             await pilot.pause()
-            assert await command_palette_option_names(app) == [
-                "Keyboard help", "Quit cfc", "Save screenshot",
-            ]
+            assert await command_palette_option_names(app) == sorted([
+                *_DEFAULT_APPEARANCE_COMMANDS, "Keyboard help", "Quit cfc", "Save screenshot",
+            ])
     finally:
         await app.shutdown()
 
 
 async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_a_chat_screen(tmp_path):
     """An ordinary Chat's palette gains Context and Model on top of the
-    three commands every screen shares (Work Order Steps 4 and 5)."""
+    commands every screen shares (Work Order Steps 4 and 5)."""
     app = make_app(tmp_path)
     try:
         async with app.run_test() as pilot:
@@ -1462,9 +1471,10 @@ async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_a_chat_screen(tmp_p
             await pilot.press("ctrl+p")
             await pilot.pause()
             await pilot.pause()
-            assert await command_palette_option_names(app) == [
+            assert await command_palette_option_names(app) == sorted([
+                *_DEFAULT_APPEARANCE_COMMANDS,
                 "Context", "Keyboard help", "Model", "Quit cfc", "Save screenshot",
-            ]
+            ])
     finally:
         await app.shutdown()
 
@@ -1614,6 +1624,295 @@ def test_write_screenshot_refuses_on_a_replacement_failure_and_leaves_no_partial
     assert str(directory) in str(exc_info.value)
     assert list(directory.glob("*.svg")) == []
     assert list(directory.glob(".*")) == []
+
+
+# === appearance: durable palette override (Stage 5 loop 2) =================
+
+async def test_startup_failure_uses_built_in_dark_when_config_never_loads(tmp_path):
+    """No snapshot exists to resolve `TUI_THEME` from at all — the one case
+    that legitimately falls back without reading it (Concept.md)."""
+    app = tui.build_app(tmp_path / "does-not-exist.py")
+    assert isinstance(app, tui.StartupFailureApp)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme == "textual-dark"
+        assert list(app._notifications) == []
+
+
+@pytest.mark.parametrize("theme_line,expected", [
+    ("", "textual-dark"),
+    ("TUI_THEME = 'light'\n", "textual-light"),
+])
+async def test_startup_failure_on_a_settings_error_still_uses_the_resolved_theme(
+    tmp_path, theme_line, expected,
+):
+    """A snapshot that loaded but then failed required-provider validation
+    still carries its own resolved `TUI_THEME` into the refusal screen."""
+    path = tmp_path / "config.py"
+    path.write_text(theme_line, encoding="utf-8")  # every required field missing
+    app = tui.build_app(path)
+    assert isinstance(app, tui.StartupFailureApp)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme == expected
+
+
+async def test_startup_failure_on_a_settings_error_shows_the_invalid_theme_notice(tmp_path):
+    path = tmp_path / "config.py"
+    path.write_text("TUI_THEME = 'purple'\n", encoding="utf-8")
+    app = tui.build_app(path)
+    assert isinstance(app, tui.StartupFailureApp)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme == "textual-dark"
+        notices = [n.message for n in app._notifications]
+        assert any("TUI_THEME" in message and "purple" in message for message in notices)
+
+
+@pytest.mark.parametrize("theme_line,expected", [
+    ("", "textual-dark"),
+    ("TUI_THEME = 'light'\n", "textual-light"),
+    ("TUI_THEME = 'purple'\n", "textual-dark"),
+])
+async def test_startup_failure_on_an_incompatible_database_still_uses_the_resolved_theme(
+    tmp_path, theme_line, expected,
+):
+    """A snapshot that loaded and passed provider validation, but then
+    failed opening the store, still carries its resolved theme into the
+    refusal screen (Concept.md's "protected-path failures, and database
+    open failures therefore render with the resolved TUI_THEME value")."""
+    db_path = tmp_path / "store" / "chat.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(b"not a sqlite database, just some bytes" * 4)
+    path = write_config(tmp_path, VALID_BODY + theme_line)  # default db_subdir="store"
+
+    app = tui.build_app(path)
+    assert isinstance(app, tui.StartupFailureApp)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme == expected
+
+
+def appearance_option_texts(app) -> dict[str, str]:
+    """`{prompt: help_text}` for exactly the three Appearance commands
+    currently offered — reads the real command palette's own hit list, the
+    same way `command_palette_option_names` does, but keeps the help text
+    too so a test can check which one names itself `(current)`."""
+    from textual.command import CommandList
+    command_list = app.screen.query_one(CommandList)
+    result = {}
+    for i in range(command_list.option_count):
+        option = command_list.get_option_at_index(i)
+        prompt_lines = str(option.prompt).splitlines()
+        if prompt_lines and prompt_lines[0].startswith("Appearance:"):
+            result[prompt_lines[0]] = prompt_lines[1] if len(prompt_lines) > 1 else ""
+    return result
+
+
+async def open_palette(pilot) -> None:
+    await pilot.press("ctrl+p")
+    await pilot.pause()
+    await pilot.pause()
+
+
+async def test_choosing_dark_saves_an_override_and_applies_it_live(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Dark")
+            assert app.theme == "textual-dark"
+            assert app.service.get_appearance_override() == "dark"
+            notices = [n.message for n in app._notifications]
+            assert any("dark" in message and "saved" in message for message in notices)
+    finally:
+        await app.shutdown()
+
+
+async def test_choosing_light_saves_an_override_and_applies_it_live(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Light")
+            assert app.theme == "textual-light"
+            assert app.service.get_appearance_override() == "light"
+    finally:
+        await app.shutdown()
+
+
+async def test_exactly_one_appearance_command_is_marked_current_and_it_updates(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await open_palette(pilot)
+            options = appearance_option_texts(app)
+            assert options["Appearance: Use configured default (current)"]
+            assert "Appearance: Dark" in options
+            assert "Appearance: Light" in options
+            await pilot.press("escape")
+            await pilot.pause()
+
+            await run_command(pilot, "Appearance: Dark")
+            await open_palette(pilot)
+            options = appearance_option_texts(app)
+            assert "Appearance: Dark (current)" in options
+            assert "Appearance: Light" in options
+            assert "Appearance: Use configured default" in options
+    finally:
+        await app.shutdown()
+
+
+async def test_choosing_dark_stays_current_even_when_it_matches_todays_default(tmp_path):
+    """Concept.md's "Config edits unexpectedly beat an explicit choice": an
+    explicit Dark choice is `(current)` because it is a saved override, not
+    merely because the effective colour happens to be dark."""
+    app = make_app(tmp_path)  # default TUI_THEME is dark
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Dark")
+            await open_palette(pilot)
+            options = appearance_option_texts(app)
+            assert "Appearance: Dark (current)" in options
+            assert "Appearance: Use configured default" in options
+            assert "Appearance: Use configured default (current)" not in options
+    finally:
+        await app.shutdown()
+
+
+async def test_reset_returns_to_the_configured_default_immediately(tmp_path):
+    app = make_app(tmp_path, theme=settings.ThemeSettings("light"))
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Dark")
+            assert app.theme == "textual-dark"
+
+            await run_command(pilot, "Appearance: Use configured default")
+            assert app.theme == "textual-light"
+            assert app.service.get_appearance_override() is None
+            notices = [n.message for n in app._notifications]
+            assert any("light" in message and "reset" in message for message in notices)
+    finally:
+        await app.shutdown()
+
+
+async def test_saved_choice_survives_a_config_edit_and_reopen(tmp_path):
+    """Concept.md's "The saved choice dies on restart" plus "Config edits
+    unexpectedly beat an explicit choice": a real `build_app` round trip
+    through the same database, with `config.py` edited to the opposite
+    default in between, must still resolve the saved override."""
+    path = write_config(tmp_path, VALID_BODY)  # TUI_THEME unset -> dark
+    app = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Dark")
+            assert app.theme == "textual-dark"
+    finally:
+        await app.shutdown()
+
+    # same tmp_path and default db_subdir -> the exact same DATABASE_PATH
+    write_config(tmp_path, VALID_BODY + "TUI_THEME = 'light'\n")
+
+    reopened = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    assert isinstance(reopened, tui.CfcApp)
+    try:
+        async with reopened.run_test() as pilot:
+            await pilot.pause()
+            assert reopened.theme == "textual-dark"  # the saved override, not today's default
+    finally:
+        await reopened.shutdown()
+
+
+async def test_reset_to_a_configured_light_default_after_an_edit(tmp_path):
+    """The other half: once the override is cleared, a later `config.py`
+    edit's default really does apply — reset is not hardcoded dark."""
+    path = write_config(tmp_path, VALID_BODY)
+    app = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Dark")
+            await run_command(pilot, "Appearance: Use configured default")
+            assert app.theme == "textual-dark"  # still today's default
+    finally:
+        await app.shutdown()
+
+    write_config(tmp_path, VALID_BODY + "TUI_THEME = 'light'\n")
+
+    reopened = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        async with reopened.run_test() as pilot:
+            await pilot.pause()
+            assert reopened.theme == "textual-light"
+    finally:
+        await reopened.shutdown()
+
+
+async def test_appearance_save_refusal_leaves_the_live_theme_and_source_unchanged(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            real_conn = app.service._store._conn
+            app.service._store._conn = _FailOnceConn(real_conn, "INSERT INTO cfc_appearance")
+
+            await run_command(pilot, "Appearance: Light")
+
+            assert app.theme == "textual-dark"  # unchanged — never a transient success
+            assert app.service.get_appearance_override() is None
+            notices = [n.message for n in app._notifications]
+            assert any("not save" in message.lower() for message in notices)
+    finally:
+        await app.shutdown()
+
+
+async def test_appearance_reset_refusal_leaves_the_live_theme_and_source_unchanged(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Appearance: Light")
+            assert app.theme == "textual-light"
+
+            real_conn = app.service._store._conn
+            app.service._store._conn = _FailOnceConn(real_conn, "INSERT INTO cfc_appearance")
+            await run_command(pilot, "Appearance: Use configured default")
+
+            assert app.theme == "textual-light"  # unchanged
+            assert app.service.get_appearance_override() == "light"
+    finally:
+        await app.shutdown()
+
+
+async def test_appearance_change_is_safe_and_effective_during_an_active_turn(tmp_path):
+    """Concept.md: "It is safe during an active turn because it changes
+    neither the request nor chat state." """
+    responder = SlowResponder()
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.is_chat_busy(screen.chat_id)
+
+            await run_command(pilot, "Appearance: Light")
+            await pilot.pause()
+
+            assert app.theme == "textual-light"
+            assert app.service.get_appearance_override() == "light"
+            assert app.is_chat_busy(screen.chat_id)  # the turn kept running, untouched
+
+            responder.released.set()
+            await pilot.pause()
+    finally:
+        await app.shutdown()
+
+
+async def test_appearance_commands_never_offered_on_startup_failure(tmp_path):
+    app = tui.StartupFailureApp(
+        "cfc could not start.", screenshots_dir=tmp_path / "screenshots",
+    )
+    async with app.run_test() as pilot:
+        await open_palette(pilot)
+        names = await command_palette_option_names(app)
+        assert not any(name.startswith("Appearance:") for name in names)
 
 
 # === Context modal: selector, inspector, and one literal preview route =====

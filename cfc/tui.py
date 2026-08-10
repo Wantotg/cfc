@@ -27,6 +27,7 @@ invented (Concept.md's "optimistic drift" failure mode).
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -87,6 +88,15 @@ _WORKER_FAILURE_MESSAGE = (
 
 _BLANK_DRAFT_NOTICE = "A message can't be blank."
 _CHAT_BUSY_NOTICE = "A request is already in progress in this chat; wait or press Esc to cancel it."
+
+#: Concept.md's "Persistence failure produces false success": shown instead
+#: of a transient theme change when the durable appearance write itself
+#: refused — the live appearance and its source are left exactly as they
+#: were.
+_APPEARANCE_NOT_SAVED_NOTICE = (
+    "cfc could not save this appearance choice. The current appearance is "
+    "unchanged."
+)
 
 
 def _context_unavailable_notice(exc: context_mod.SourceUnavailable) -> str:
@@ -1300,6 +1310,10 @@ class CfcCommandsProvider(Provider):
             ("Save screenshot", app.action_save_screenshot,
              "Export an SVG of the current screen"),
         ]
+        if isinstance(app, CfcApp):
+            #: Never offered on `StartupFailureApp` (Concept.md): it has no
+            #: safely opened database in which to make the choice durable.
+            commands.extend(app.appearance_commands())
         if isinstance(self.screen, ChatScreen):
             commands.append(("Context", self.screen.action_show_context,
                               "Select and inspect this chat's context"))
@@ -1321,12 +1335,28 @@ class CfcCommandsProvider(Provider):
 
 
 class _CommandSurfaceMixin:
-    """`action_show_keyboard_help`/`action_save_screenshot` shared by every
-    `App` subclass that installs `CfcCommandsProvider`. Each concrete class
-    still supplies its own `_screenshots_dir` (set in `__init__`) and its
-    own `action_quit` — this mixin only owns the two commands that are
-    identical everywhere they appear.
+    """`action_show_keyboard_help`/`action_save_screenshot`, plus the shared
+    themed-startup application of a resolved `TUI_THEME`, for every `App`
+    subclass that installs `CfcCommandsProvider`. Each concrete class still
+    supplies its own `_screenshots_dir` (set in `__init__`) and its own
+    `action_quit` — this mixin only owns what is identical everywhere it
+    appears.
     """
+
+    def _apply_theme(self, name: str, invalid_value_notice: str | None) -> None:
+        """Sets the live Textual theme to cfc's `name` (`dark`/`light`) and,
+        when `config.py` set an unrecognised `TUI_THEME`, shows the one
+        bounded notice once — never edits or reprints `config.py` itself.
+        Shared by `CfcApp` (an already-resolved effective appearance) and
+        `StartupFailureApp` (the resolved bootstrap `TUI_THEME` alone, since
+        it has no safely opened database to consult an override in).
+        """
+        self.theme = _TEXTUAL_THEME_NAMES[name]
+        if invalid_value_notice:
+            self.notify(
+                invalid_value_notice, title="Theme",
+                severity="warning", markup=False, timeout=10,
+            )
 
     def action_show_keyboard_help(self) -> None:
         self.push_screen(KeyboardHelpModal())
@@ -1351,6 +1381,16 @@ class StartupFailureApp(_CommandSurfaceMixin, App):
     a credential — see their own modules); `next_step`, when given, is
     separate recovery guidance, mirroring how `doctor.render` shows a row's
     detail and next step as two lines rather than one blended sentence.
+
+    `theme`, when given, is the bootstrap `TUI_THEME` resolution
+    `build_app` already made before this refusal happened — a snapshot that
+    loaded but then failed provider, database-path, or store validation
+    still renders with that resolved value. Left unset (a configuration
+    load failure, before any snapshot exists to resolve `TUI_THEME` from)
+    falls back to the same built-in `dark` `ThemeSettings.build_theme`
+    itself uses for an absent setting — never a guessed or unsafely read
+    override, since this app never has an opened database to read one from
+    (Concept.md's "Startup refusal has a determinate appearance").
     """
 
     CSS_PATH = "tui.tcss"
@@ -1359,12 +1399,17 @@ class StartupFailureApp(_CommandSurfaceMixin, App):
 
     def __init__(
         self, message: str, next_step: str | None = None, *,
+        theme: settings.ThemeSettings | None = None,
         screenshots_dir: Path | None = None,
     ) -> None:
         super().__init__()
         self._message = message
         self._next_step = next_step
+        self._theme = theme or settings.ThemeSettings(settings.DEFAULT_TUI_THEME)
         self._screenshots_dir = screenshots_dir or _DEFAULT_SCREENSHOTS_DIR
+
+    def on_mount(self) -> None:
+        self._apply_theme(self._theme.name, self._theme.invalid_value_notice)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="startup-failure"):
@@ -1416,13 +1461,96 @@ class CfcApp(_CommandSurfaceMixin, App):
         return self._model
 
     def on_mount(self) -> None:
-        self.theme = _TEXTUAL_THEME_NAMES[self._theme_settings.name]
-        if self._theme_settings.invalid_value_notice:
-            self.notify(
-                self._theme_settings.invalid_value_notice,
-                title="Theme", severity="warning", markup=False, timeout=10,
-            )
+        effective = self._current_appearance()
+        self._apply_theme(effective.name, self._theme_settings.invalid_value_notice)
         self.push_screen(HubScreen())
+
+    # -- appearance: the shared precedence boundary, never re-implemented --
+
+    def _current_appearance(self) -> settings.EffectiveAppearance:
+        """The effective `dark`/`light` value and its source, resolved
+        fresh through `settings.resolve_effective_appearance` — never
+        cached, so a palette label or a reset notification always reflects
+        what a fresh read of the store would show right now. A store
+        refusal reading the saved override (`ConversationStoreError`,
+        including a corrupted `AppearanceOverrideInvalid` value, or a raw
+        `sqlite3.Error`) is treated the same as "no override": ordinary
+        chat, and appearance, must not break over one unreadable row.
+        """
+        try:
+            override = self.service.get_appearance_override()
+        except (ConversationStoreError, sqlite3.Error):
+            override = None
+        return settings.resolve_effective_appearance(self._theme_settings, override)
+
+    def appearance_commands(self) -> tuple[tuple[str, Callable, str], ...]:
+        """`CfcCommandsProvider`'s three cfc-owned Appearance commands,
+        built fresh on every palette open so exactly one is marked
+        `(current)` — tied to *source*, not merely to which name the
+        effective colour happens to match right now (Concept.md's "Config
+        edits unexpectedly beat an explicit choice": a saved Dark override
+        stays `(current)` even after `config.py` is edited to `light`, and
+        `Use configured default` is `(current)` only when nothing is saved
+        at all, never because the default happens to resolve to a given
+        colour).
+        """
+        effective = self._current_appearance()
+        is_override = effective.source is settings.AppearanceSource.OVERRIDE
+        source_text = "saved override" if is_override else "configured default"
+        help_text = f"Effective: {effective.name} ({source_text})"
+
+        def label(base: str, current: bool) -> str:
+            return f"{base} (current)" if current else base
+
+        return (
+            (label("Appearance: Dark", is_override and effective.name == "dark"),
+             self._set_appearance_dark, help_text),
+            (label("Appearance: Light", is_override and effective.name == "light"),
+             self._set_appearance_light, help_text),
+            (label("Appearance: Use configured default", not is_override),
+             self._reset_appearance, help_text),
+        )
+
+    def _set_appearance_dark(self) -> None:
+        self._apply_appearance_choice("dark")
+
+    def _set_appearance_light(self) -> None:
+        self._apply_appearance_choice("light")
+
+    def _apply_appearance_choice(self, name: str) -> None:
+        """Persists `name` as an explicit saved override, then — only once
+        that commit has succeeded — applies it live (Concept.md's "Persist
+        first, then change the running Textual theme"). A store refusal
+        leaves the live theme and its source exactly as they were and
+        reports that the choice was not saved, rather than a transient
+        success that would disappear on restart.
+        """
+        try:
+            self.service.save_appearance_override(name)
+        except (ConversationStoreError, sqlite3.Error):
+            self.notify(_APPEARANCE_NOT_SAVED_NOTICE, title="Appearance",
+                        severity="error", markup=False, timeout=10)
+            return
+        self.theme = _TEXTUAL_THEME_NAMES[name]
+        self.notify(f"Appearance set to {name} (saved).", title="Appearance", markup=False)
+
+    def _reset_appearance(self) -> None:
+        """Removes the saved override, then applies the resolved `TUI_THEME`
+        configured default live — the same commit-before-live-change
+        discipline as `_apply_appearance_choice` (Concept.md's "Reset means
+        hardcoded dark": this reapplies the real configured default, which
+        may itself be `light`, never a hardcoded `dark`).
+        """
+        try:
+            self.service.clear_appearance_override()
+        except (ConversationStoreError, sqlite3.Error):
+            self.notify(_APPEARANCE_NOT_SAVED_NOTICE, title="Appearance",
+                        severity="error", markup=False, timeout=10)
+            return
+        effective = self._current_appearance()
+        self.theme = _TEXTUAL_THEME_NAMES[effective.name]
+        self.notify(f"Appearance reset to the configured default ({effective.name}).",
+                    title="Appearance", markup=False)
 
     # -- navigation --------------------------------------------------------
 
@@ -1579,24 +1707,35 @@ def build_app(
     try:
         snapshot = config_loader.load_snapshot(config_path)
     except config_loader.ConfigLoadError as exc:
+        #: No snapshot exists yet to resolve `TUI_THEME` from — `StartupFailureApp`
+        #: falls back to its own built-in `dark` default (Concept.md: "a
+        #: configuration-load failure alone uses built-in dark").
         return StartupFailureApp(str(exc), diagnostics._config_load_next_step(exc))
+
+    #: Resolved independently of `build_settings` below, and *before* it —
+    #: theme resolution never depends on the required provider or database
+    #: fields, so a snapshot that loaded but then fails one of those still
+    #: renders its refusal with this real value, not a guess (Concept.md's
+    #: "Startup resolves the optional theme independently once configuration
+    #: loads and passes it into every later refusal surface").
+    theme = settings.build_theme(snapshot)
 
     try:
         built = settings.build_settings(snapshot)
     except settings.SettingsError as exc:
-        return StartupFailureApp(str(exc), diagnostics._settings_error_next_step(exc))
+        return StartupFailureApp(str(exc), diagnostics._settings_error_next_step(exc), theme=theme)
 
     try:
         service = open_service(built.database_path, built.vault)
     except ConversationStoreError as exc:
-        return StartupFailureApp(str(exc))
+        return StartupFailureApp(str(exc), theme=theme)
 
     if responder_factory is not None:
         responder = responder_factory(built.provider)
     else:
         responder = provider_adapter.OpenAICompatibleAdapter(built.provider)
 
-    return CfcApp(service, responder, built.provider.model, theme=built.theme, models=built.models)
+    return CfcApp(service, responder, built.provider.model, theme=theme, models=built.models)
 
 
 def run(config_path: Path | None = None) -> int:

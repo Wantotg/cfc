@@ -221,6 +221,69 @@ def available_sources(category_settings) -> tuple[SourceOption, ...]:
     )
 
 
+class CategoryReadinessState(Enum):
+    """A vault category's readiness for `cfc doctor`'s vault-category rows —
+    a different question than `VaultCategorySettings` alone can answer,
+    since that dataclass is shape validation only and never checks whether
+    a configured directory actually exists (its own docstring).
+    """
+    UNAVAILABLE = "unavailable"  #: not configured, wrong shape, or outside VAULT_ROOT
+    ERROR = "error"              #: configured, but missing, not a directory, or unreadable
+    READY = "ready"              #: a real, readable directory — see `count`
+
+
+@dataclass(frozen=True)
+class CategoryReadiness:
+    """`category_readiness`'s one result. `count`, set only when `state` is
+    `READY`, is the number of currently selectable sources — zero is a
+    legitimate, distinct fact ("ready, empty"), not `UNAVAILABLE` or
+    `ERROR`. `reason` is set for `UNAVAILABLE` (borrowed straight from
+    `VaultCategorySettings.unavailable_reason`, which already names the
+    `config.py` field to correct) and `ERROR` (a filesystem fact); never
+    for `READY`, and never a filename or source body.
+    """
+    state: CategoryReadinessState
+    count: int | None = None
+    reason: str | None = None
+
+
+def category_readiness(category_settings) -> CategoryReadiness:
+    """A vault category's doctor-facing readiness: `UNAVAILABLE` when
+    `category_settings` has no usable configured directory at all (the same
+    fact `read_source`/`available_sources` already treat as "nothing to
+    read"), `ERROR` when a configured directory does not exist, is not a
+    directory, or cannot be listed, else `READY` with the same selectable-
+    source count `available_sources` would return — so a category doctor
+    calls "ready, empty" and one Context's Add/Change picker would show
+    empty are provably the same fact, not two independently maintained
+    opinions.
+
+    Never raises, never creates or repairs a directory, and never reads a
+    source body — `available_sources` already reads only filenames.
+    """
+    if category_settings is None or category_settings.path is None:
+        reason = getattr(category_settings, "unavailable_reason", None)
+        return CategoryReadiness(
+            CategoryReadinessState.UNAVAILABLE,
+            reason=reason or "no vault category directory is configured",
+        )
+    directory = category_settings.path
+    if not directory.exists():
+        return CategoryReadiness(CategoryReadinessState.ERROR, reason=f"{directory} does not exist")
+    if not directory.is_dir():
+        return CategoryReadiness(CategoryReadinessState.ERROR, reason=f"{directory} is not a directory")
+    try:
+        list(directory.iterdir())
+    except OSError as exc:
+        return CategoryReadiness(
+            CategoryReadinessState.ERROR,
+            reason=f"{directory} could not be read ({exc.strerror})",
+        )
+    return CategoryReadiness(
+        CategoryReadinessState.READY, count=len(available_sources(category_settings)),
+    )
+
+
 class FirstMessageState(Enum):
     ABSENT = "absent"        #: no companion file — ordinary, not an error
     UNAVAILABLE = "unavailable"  #: a companion exists but cannot be used

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -352,6 +353,45 @@ def build_database_path(snapshot) -> Path:
         raise SettingsError("DATABASE_PATH", "value", reason)
 
     return resolved
+
+
+class AppearanceSource(Enum):
+    """Which precedence step produced an `EffectiveAppearance` — a saved
+    cfc override, or the resolved `TUI_THEME` configured default (itself
+    `DEFAULT_TUI_THEME` when `TUI_THEME` is unset or invalid; that distinction
+    stays on `ThemeSettings.invalid_value_notice`, not duplicated here).
+    """
+    OVERRIDE = "override"
+    CONFIGURED_DEFAULT = "configured_default"
+
+
+@dataclass(frozen=True)
+class EffectiveAppearance:
+    """The one resolved `dark`/`light` value an app, doctor, or a palette
+    label actually shows, plus which precedence step produced it —
+    `resolve_effective_appearance`'s only return shape.
+    """
+    name: str
+    source: AppearanceSource
+
+
+def resolve_effective_appearance(
+    theme: ThemeSettings, override: str | None,
+) -> EffectiveAppearance:
+    """The one precedence rule every appearance-consuming caller (doctor,
+    `tui.build_app`, palette labels, reset notifications) shares rather than
+    re-implementing: `override` wins when given; otherwise `theme.name` —
+    `build_theme`'s own already-resolved bootstrap value — applies.
+
+    `override` must already be validated to `ACCEPTED_TUI_THEMES` or `None`;
+    this function does not re-validate it. `conversation_store`'s own
+    stored-value check is where an impossible persisted value is caught, so
+    it never reaches this function as anything but `None` or an accepted
+    name.
+    """
+    if override is not None:
+        return EffectiveAppearance(override, AppearanceSource.OVERRIDE)
+    return EffectiveAppearance(theme.name, AppearanceSource.CONFIGURED_DEFAULT)
 
 
 def build_theme(snapshot) -> ThemeSettings:

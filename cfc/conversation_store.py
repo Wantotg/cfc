@@ -43,6 +43,7 @@ import datetime
 import fcntl
 import os
 import sqlite3
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -88,14 +89,21 @@ APPLICATION_ID = 0x63666332
 #: vocabulary. A version-1 database takes the existing `SCHEMA_TOO_OLD`
 #: refusal route — there is no migration from 1 to 2.
 #:
-#: 3 (this build): the named-context foundation (Stage 5 loop 1).
-#: `cfc_chats` grows `selected_user_preferences`, `selected_persona`, and
-#: `selected_model`; `cfc_chat_traits` holds each chat's ordered Trait
-#: selection; `cfc_chat_openings` holds at most one frozen First Message per
-#: chat; `cfc_turn_context` holds each turn's ordered context-source
-#: provenance (never a vault body). A version-2 database takes the same
+#: 3: the named-context foundation (Stage 5 loop 1). `cfc_chats` grows
+#: `selected_user_preferences`, `selected_persona`, and `selected_model`;
+#: `cfc_chat_traits` holds each chat's ordered Trait selection;
+#: `cfc_chat_openings` holds at most one frozen First Message per chat;
+#: `cfc_turn_context` holds each turn's ordered context-source provenance
+#: (never a vault body). A version-2 database takes the same
 #: `SCHEMA_TOO_OLD` refusal route — there is no migration from 2 to 3.
-SCHEMA_VERSION = 3
+#:
+#: 4 (this build): configuration truth and durable appearance (Stage 5 loop
+#: 2). `cfc_appearance` grows one constrained singleton row (`id = 1`)
+#: holding cfc's own optional durable palette override — absent (`NULL`),
+#: `'dark'`, or `'light'` — never a generic preferences table. A version-3
+#: database takes the same `SCHEMA_TOO_OLD` refusal route — there is no
+#: migration from 3 to 4.
+SCHEMA_VERSION = 4
 
 _RECOVERY_HINT = (
     "preserve anything wanted from it, then move or remove {path} so cfc "
@@ -229,12 +237,25 @@ _SCHEMA_STATEMENTS = (
         PRIMARY KEY (turn_id, position)
     )
     """,
+    """
+    CREATE TABLE cfc_appearance (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        override TEXT CHECK (override IS NULL OR override IN ('dark', 'light'))
+    )
+    """,
     "CREATE INDEX idx_cfc_turns_chat ON cfc_turns(chat_id)",
     "CREATE INDEX idx_cfc_messages_chat ON cfc_messages(chat_id)",
     "CREATE INDEX idx_cfc_messages_turn ON cfc_messages(turn_id)",
     "CREATE INDEX idx_cfc_chat_traits_chat ON cfc_chat_traits(chat_id)",
     "CREATE INDEX idx_cfc_turn_context_turn ON cfc_turn_context(turn_id)",
+    "INSERT INTO cfc_appearance (id, override) VALUES (1, NULL)",
 )
+
+#: `cfc_appearance.override`'s only two non-`NULL` values — deliberately not
+#: imported from `cfc.settings.ACCEPTED_TUI_THEMES`: this module never
+#: imports `cfc.settings` (see this module's own docstring), so it names its
+#: own small, stable vocabulary rather than reaching across that boundary.
+_APPEARANCE_VALUES = ("dark", "light")
 
 
 class ConversationStoreError(Exception):
@@ -327,6 +348,22 @@ class ConflictingFinalisation(ConversationStoreError):
         self.turn_id = turn_id
         super().__init__(
             f"turn {turn_id}: a different terminal outcome is already stored"
+        )
+
+
+class AppearanceOverrideInvalid(ConversationStoreError):
+    """`cfc_appearance.override` holds something other than `NULL`, `'dark'`,
+    or `'light'` — impossible through this module's own writes (the schema's
+    own `CHECK` constraint forbids it), so this can only mean the file was
+    edited outside cfc's own write path. A visible store refusal, not a
+    silent reinterpretation of arbitrary text as a theme.
+    """
+
+    def __init__(self, value: str):
+        self.value = value
+        super().__init__(
+            f"the stored appearance override ({value!r}) is neither 'dark' "
+            f"nor 'light'"
         )
 
 
@@ -928,6 +965,70 @@ class ConversationStore:
             raise
         return self.get_chat(chat_id)
 
+    # -- appearance: one durable singleton, not a preferences subsystem -----
+
+    def get_appearance_override(self) -> str | None:
+        """`None` when no override is saved, else `'dark'` or `'light'`.
+
+        Validates the stored value even though the schema's own `CHECK`
+        already constrains it (Concept.md: "An impossible or manually
+        corrupted value is a visible store refusal, not an invitation to
+        reinterpret arbitrary text as a theme") — raises
+        `AppearanceOverrideInvalid` rather than silently treating an
+        impossible value as absent or passing it through uninspected.
+        """
+        row = self._conn.execute(
+            "SELECT override FROM cfc_appearance WHERE id = 1"
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        value = row[0]
+        if value not in _APPEARANCE_VALUES:
+            raise AppearanceOverrideInvalid(value)
+        return value
+
+    def save_appearance_override(self, value: str) -> None:
+        """Persists `value` (`'dark'` or `'light'`) as the one durable
+        appearance override, replacing whatever was saved before. Commits
+        before returning — a caller only changes the running application's
+        live appearance after this call succeeds (Concept.md: "Persist
+        first, then change the running Textual theme").
+        """
+        if value not in _APPEARANCE_VALUES:
+            raise ValueError(
+                f"value must be one of {_APPEARANCE_VALUES!r}, got {value!r}"
+            )
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO cfc_appearance (id, override) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET override = excluded.override",
+                (value,),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+    def clear_appearance_override(self) -> None:
+        """Removes any saved override — a later `get_appearance_override`
+        returns `None`, and the resolved `TUI_THEME` configured default
+        applies again. The same commit-before-live-change discipline as
+        `save_appearance_override` applies to a caller resetting to it.
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO cfc_appearance (id, override) VALUES (1, NULL) "
+                "ON CONFLICT(id) DO UPDATE SET override = NULL"
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
     # -- turns and messages -----------------------------------------------
 
     def snapshot(self, chat_id: ChatId) -> ConversationSnapshot:
@@ -1133,3 +1234,118 @@ def open_store(path: Path | str) -> ConversationStore:
         lock.release()
         raise
     return ConversationStore(conn, lock)
+
+
+# --- diagnostics: a narrow, read-only appearance-override inspection ------
+
+class AppearanceInspectionState(Enum):
+    ABSENT = "absent"          #: no database exists at this path yet
+    LOCKED = "locked"          #: another cfc process currently owns it
+    INCOMPATIBLE = "incompatible"  #: see `problem`, or `detail` when unset
+    READY = "ready"            #: safely read; `override` is authoritative
+
+
+@dataclass(frozen=True)
+class AppearanceInspection:
+    """`inspect_appearance_override`'s one result. `override` is set only
+    when `state` is `READY`. `problem` is set only for `INCOMPATIBLE` when
+    the same classification `open_store` uses (`DatabaseProblem`) named a
+    specific reason; `detail` carries a bounded, safe-to-show explanation
+    for every non-`READY` state, including the rare `INCOMPATIBLE` case
+    `_classify_header` did not produce (an `OSError` opening the file, or an
+    impossible stored value).
+    """
+    state: AppearanceInspectionState
+    override: str | None = None
+    problem: DatabaseProblem | None = None
+    detail: str = ""
+
+
+def inspect_appearance_override(path: Path | str) -> AppearanceInspection:
+    """A doctor-facing seam, deliberately separate from `open_store`: is
+    `path` currently a target cfc could safely read a saved appearance
+    override from, and if so, what does it hold?
+
+    Reuses `open_store`'s own header, application-id, schema, and integrity
+    classification (`_classify_header`, SQLite's own `PRAGMA quick_check`),
+    so this can never call a target readable that the real store would
+    refuse to open. `LOCKED`/`INCOMPATIBLE`/`ABSENT` are never treated as
+    evidence that the override itself is absent (Concept.md: "Doctor
+    silently claims no saved override") — a caller distinguishes "no
+    override" (`READY`, `override=None`) from "could not check."
+
+    Never creates an absent target (an `ABSENT` result leaves nothing on
+    disk), never blocks waiting for another process's lock (a non-blocking
+    shared `flock` — a reader's request, not `open_store`'s owning
+    exclusive one), and never leaves a `-journal`/`-wal`/`-shm` sidecar: the
+    one SQLite connection this opens is a read-only `mode=ro` URI
+    connection, which never grows one.
+    """
+    path = Path(path)
+    if not path.exists():
+        return AppearanceInspection(
+            AppearanceInspectionState.ABSENT,
+            detail=f"no database exists yet at {path}",
+        )
+    if path.is_dir():
+        return AppearanceInspection(
+            AppearanceInspectionState.INCOMPATIBLE,
+            detail=f"{path} is a directory, not a file",
+        )
+
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except OSError as exc:
+        return AppearanceInspection(
+            AppearanceInspectionState.INCOMPATIBLE,
+            detail=f"{path} could not be opened for inspection ({exc.strerror})",
+        )
+    try:
+        return _inspect_locked_target(path, fd)
+    finally:
+        os.close(fd)
+
+
+def _inspect_locked_target(path: Path, fd: int) -> AppearanceInspection:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        return AppearanceInspection(
+            AppearanceInspectionState.LOCKED,
+            detail=f"{path} is currently owned by another cfc process",
+        )
+    try:
+        size = os.fstat(fd).st_size
+        header = os.pread(fd, _HEADER_SIZE, 0)
+        problem, detail = _classify_header(size, header, path)
+        if problem is not None:
+            return AppearanceInspection(
+                AppearanceInspectionState.INCOMPATIBLE, problem=problem, detail=detail,
+            )
+        return _read_appearance_via_readonly_connection(path)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _read_appearance_via_readonly_connection(path: Path) -> AppearanceInspection:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        check = conn.execute("PRAGMA quick_check").fetchone()
+        if check is None or check[0] != "ok":
+            return AppearanceInspection(
+                AppearanceInspectionState.INCOMPATIBLE,
+                problem=DatabaseProblem.CORRUPT,
+                detail=f"{path} failed its integrity check: {check}",
+            )
+        row = conn.execute("SELECT override FROM cfc_appearance WHERE id = 1").fetchone()
+    finally:
+        conn.close()
+
+    override = row[0] if row is not None else None
+    if override is not None and override not in _APPEARANCE_VALUES:
+        return AppearanceInspection(
+            AppearanceInspectionState.INCOMPATIBLE,
+            detail=f"the stored appearance override ({override!r}) is neither "
+                   f"'dark' nor 'light'",
+        )
+    return AppearanceInspection(AppearanceInspectionState.READY, override=override)

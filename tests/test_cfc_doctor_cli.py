@@ -245,7 +245,9 @@ def test_doctor_ready_config_exits_zero_and_lists_ordered_rows(tmp_path):
     result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
     assert result.returncode == 0
     names = ("runtime", "configuration", "chat provider",
-              "2.0 database target", "vault", "embeddings", "file tools")
+              "2.0 database target", "vault", "embeddings", "file tools",
+              "user preferences", "personas", "traits", "first messages",
+              "model catalogue", "appearance")
     for name in names:
         assert name in result.stdout, name
     order = [result.stdout.index(name) for name in names]
@@ -312,7 +314,7 @@ def test_doctor_no_config_shows_one_cure_and_five_not_checked_rows(tmp_path):
     result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(missing_path))
     assert result.returncode == 1
     assert result.stdout.count("error") == 1
-    assert result.stdout.count("not checked") == 5
+    assert result.stdout.count("not checked") == 11
     assert result.stdout.count("config.example.py") == 1
 
 
@@ -352,6 +354,35 @@ def test_doctor_optional_vault_error_is_visible_but_does_not_block_zero_exit(tmp
     assert result.returncode == 0
     assert str(missing_vault) in result.stdout
     assert "VAULT_ROOT" in result.stdout
+
+
+# --- appearance row: real subprocess, real temporary database --------------
+
+def test_doctor_appearance_row_reports_a_saved_override_end_to_end(tmp_path):
+    from cfc import conversation_store
+
+    db_target = tmp_path / "store" / "chat.db"
+    store = conversation_store.open_store(db_target)
+    store.save_appearance_override("light")
+    store.close()
+
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    assert result.returncode == 0
+    appearance_line = next(
+        line for line in result.stdout.splitlines() if line.strip().startswith("appearance")
+    )
+    assert "light" in appearance_line
+    assert "saved override" in appearance_line
+
+
+def test_doctor_appearance_row_never_creates_the_database_target(tmp_path):
+    db_target = tmp_path / "store_never_created" / "chat.db"
+    path = write_config(tmp_path, VALID_BODY + f"DATABASE_PATH = {str(db_target)!r}\n")
+    result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(path))
+    assert result.returncode == 0
+    assert not db_target.exists()
+    assert not db_target.parent.exists()
 
 
 # --- root-relative discovery: repository cwd vs elsewhere, same config ------

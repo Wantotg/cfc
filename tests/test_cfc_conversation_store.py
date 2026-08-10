@@ -1295,6 +1295,214 @@ def test_two_chats_round_trip_distinct_selections_opening_and_manifests(tmp_path
         reopened.close()
 
 
+# --- appearance: the one durable singleton override (Stage 5 loop 2) -------
+
+def test_a_fresh_database_has_no_appearance_override(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        assert store.get_appearance_override() is None
+    finally:
+        store.close()
+
+
+def test_save_appearance_override_round_trips_through_a_new_connection(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    store.save_appearance_override("light")
+    store.close()
+
+    reopened = store_mod.open_store(path)
+    try:
+        assert reopened.get_appearance_override() == "light"
+    finally:
+        reopened.close()
+
+
+def test_save_appearance_override_replaces_a_previous_choice(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store.save_appearance_override("dark")
+        store.save_appearance_override("light")
+        assert store.get_appearance_override() == "light"
+    finally:
+        store.close()
+
+
+def test_clear_appearance_override_returns_to_absent_and_round_trips(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    store.save_appearance_override("dark")
+    store.clear_appearance_override()
+    store.close()
+
+    reopened = store_mod.open_store(path)
+    try:
+        assert reopened.get_appearance_override() is None
+    finally:
+        reopened.close()
+
+
+def test_save_appearance_override_rejects_an_out_of_vocabulary_value(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        with pytest.raises(ValueError):
+            store.save_appearance_override("purple")
+        assert store.get_appearance_override() is None
+    finally:
+        store.close()
+
+
+def test_get_appearance_override_rejects_an_impossible_stored_value(tmp_path):
+    """The schema's own `CHECK` constraint makes this unreachable through
+    this module's own writes; simulating it directly (bypassing the CHECK
+    on this live connection, the same way a hand-edited file could) proves
+    the read path validates independently rather than trusting the schema
+    alone."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store._conn.execute("PRAGMA ignore_check_constraints=1")
+        store._conn.execute("UPDATE cfc_appearance SET override = 'purple' WHERE id = 1")
+        store._conn.commit()
+        with pytest.raises(store_mod.AppearanceOverrideInvalid) as exc_info:
+            store.get_appearance_override()
+        assert exc_info.value.value == "purple"
+    finally:
+        store._conn.execute("PRAGMA ignore_check_constraints=1")
+        store._conn.execute("UPDATE cfc_appearance SET override = NULL WHERE id = 1")
+        store._conn.commit()
+        store.close()
+
+
+def test_appearance_save_failure_does_not_report_a_changed_value(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store.save_appearance_override("dark")
+        store._conn = _FailOnce(store._conn, "INSERT INTO cfc_appearance")
+        with pytest.raises(sqlite3.OperationalError):
+            store.save_appearance_override("light")
+        assert store.get_appearance_override() == "dark"
+    finally:
+        store.close()
+
+
+def test_appearance_clear_failure_does_not_report_a_changed_value(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store.save_appearance_override("light")
+        store._conn = _FailOnce(store._conn, "INSERT INTO cfc_appearance")
+        with pytest.raises(sqlite3.OperationalError):
+            store.clear_appearance_override()
+        assert store.get_appearance_override() == "light"
+    finally:
+        store.close()
+
+
+# --- appearance: schema bump refuses the loop-one (version 3) schema -------
+
+def test_a_schema_version_three_database_refuses_as_too_old(tmp_path):
+    """This loop bumps `SCHEMA_VERSION` from 3 to 4 (`cfc_appearance`, the
+    one durable appearance override). A real loop-one database must take
+    the existing visible refusal route, not be silently reinterpreted,
+    `ALTER`ed, or have its sidecars touched.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=3)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+    assert path.read_bytes() == before
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+
+# --- inspect_appearance_override: read-only, never creates or blocks -------
+
+def test_inspect_appearance_override_absent_target_creates_nothing(tmp_path):
+    path = db_path(tmp_path)
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.ABSENT
+    assert not path.exists()
+    assert not path.parent.exists()
+
+
+def test_inspect_appearance_override_reports_no_saved_override(tmp_path):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.READY
+    assert inspection.override is None
+
+
+def test_inspect_appearance_override_reports_a_saved_override(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    store.save_appearance_override("light")
+    store.close()
+
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.READY
+    assert inspection.override == "light"
+
+
+def test_inspect_appearance_override_locked_while_another_owner_holds_it(tmp_path):
+    path = db_path(tmp_path)
+    owner = store_mod.open_store(path)
+    try:
+        inspection = store_mod.inspect_appearance_override(path)
+        assert inspection.state is store_mod.AppearanceInspectionState.LOCKED
+    finally:
+        owner.close()
+
+    # released the instant the owner closes — not a stale-file heuristic
+    inspection_after = store_mod.inspect_appearance_override(path)
+    assert inspection_after.state is store_mod.AppearanceInspectionState.READY
+
+
+def test_inspect_appearance_override_foreign_database_is_incompatible(tmp_path):
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=0x11111111, user_version=0)
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+    assert inspection.problem is store_mod.DatabaseProblem.FOREIGN_APPLICATION
+    assert inspection.override is None
+
+
+def test_inspect_appearance_override_corrupt_database_is_incompatible(tmp_path):
+    path = db_path(tmp_path)
+    _write_bytes(path, b"not a sqlite database, just some bytes" * 4)
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+    assert inspection.problem is store_mod.DatabaseProblem.CORRUPT
+
+
+def test_inspect_appearance_override_old_schema_is_incompatible(tmp_path):
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=3)
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+    assert inspection.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+
+
+def test_inspect_appearance_override_never_creates_a_target_or_sidecars(tmp_path):
+    path = db_path(tmp_path)
+    store_mod.open_store(path).close()
+    before_entries = sorted(p.name for p in path.parent.iterdir())
+
+    store_mod.inspect_appearance_override(path)
+
+    assert sorted(p.name for p in path.parent.iterdir()) == before_entries
+
+
+def test_inspect_appearance_override_on_a_directory_target_is_incompatible(tmp_path):
+    path = tmp_path / "adir"
+    path.mkdir()
+    inspection = store_mod.inspect_appearance_override(path)
+    assert inspection.state is store_mod.AppearanceInspectionState.INCOMPATIBLE
+
+
 # --- explicit temporary targets only ----------------------------------------
 
 def test_module_touches_no_config_or_legacy_path():

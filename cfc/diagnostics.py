@@ -1,13 +1,22 @@
-"""diagnostics.py — the seven-row inventory `cfc doctor` renders: runtime,
-configuration, chat provider, 2.0 database target, vault, embeddings, and
-file tools. The first four are required — `required_rows_ok` is an exact
-allow-list, so `doctor` exits non-zero unless every one of them is `READY`,
-not merely absent of `ERROR`. The last three are optional: absence is
-`UNAVAILABLE`, and neither that nor `NOT_CHECKED` blocks the exit code.
+"""diagnostics.py — the thirteen-row inventory `cfc doctor` renders: runtime,
+configuration, chat provider, 2.0 database target, vault, embeddings, file
+tools, the four Stage 5 vault categories (User Preferences, Personas,
+Traits, First Messages), the model catalogue, and appearance. The first
+four are required — `required_rows_ok` is an exact allow-list, so `doctor`
+exits non-zero unless every one of them is `READY`, not merely absent of
+`ERROR`. Every other row is optional: absence is `UNAVAILABLE`, and neither
+that nor `NOT_CHECKED` blocks the exit code.
 
 Every check here is local and structural, same as `settings.py`, which this
-module calls for the two rows that share its rules. Nothing here opens a
-socket, a database, or creates a directory.
+module calls for most rows, and `cfc.context`, which the four vault-category
+rows call for the exact same directory/selectable-file rules the Context
+picker uses — so a category doctor calls "ready, empty" and one Context
+would show empty are provably the same fact, not two opinions. The
+appearance row is the one row that opens anything: a narrow, read-only,
+non-blocking peek at the configured 2.0 database target
+(`conversation_store.inspect_appearance_override`) to report a saved
+palette override when one can be safely read — it never creates a target,
+mutates one, or leaves a sidecar.
 
 `Row.detail` is diagnostic evidence — what was checked and what it found.
 `Row.next_step`, stored separately, is recovery guidance — what to do about
@@ -24,11 +33,28 @@ from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
-from cfc import config_loader, entry, settings
+from cfc import config_loader, conversation_store, entry, settings
+from cfc import context as context_mod
 
 REQUIRED_ROW_NAMES = ("runtime", "configuration", "chat provider", "2.0 database target")
-OPTIONAL_ROW_NAMES = ("vault", "embeddings", "file tools")
+OPTIONAL_ROW_NAMES = (
+    "vault", "embeddings", "file tools",
+    "user preferences", "personas", "traits", "first messages",
+    "model catalogue", "appearance",
+)
 ROW_ORDER = REQUIRED_ROW_NAMES + OPTIONAL_ROW_NAMES
+
+#: `ContextReadinessState`/`Row.name` pairing for the four Stage 5 vault
+#: categories, in `Concept.md`'s own listed order — named once here so
+#: `_vault_category_rows` and any test walking "every category" share one
+#: source of the row name, the `VaultSettings` attribute to read, and the
+#: exact `config.py` field to name in an `ERROR` row's `next_step`.
+_VAULT_CATEGORY_ROWS = (
+    ("user preferences", "user_preferences", "USER_PREFERENCES_DIR"),
+    ("personas", "personas", "PERSONAS_DIR"),
+    ("traits", "traits", "TRAITS_DIR"),
+    ("first messages", "first_messages", "FIRST_MESSAGES_DIR"),
+)
 
 #: `configuration`'s own next step is the one true cure for every row a
 #: failed config load leaves NOT_CHECKED — named once here so the cascade
@@ -99,6 +125,10 @@ def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
     rows.append(_vault_row(snapshot))
     rows.append(_embeddings_row(snapshot))
     rows.append(_file_tools_row(snapshot))
+    vault_settings = settings.build_vault_settings(snapshot)
+    rows.extend(_vault_category_rows(vault_settings))
+    rows.append(_model_catalogue_row(snapshot))
+    rows.append(_appearance_row(snapshot))
     return tuple(rows)
 
 
@@ -234,3 +264,79 @@ def _file_tools_row(snapshot) -> Row:
     return Row("file tools", State.NOT_BUILT,
                "TOOLS_ENABLED is on, but file tools are not implemented in "
                "the 2.0 boundary yet")
+
+
+# --- Stage 5 vault categories: shared readiness rules with Context --------
+
+def _vault_category_rows(vault: settings.VaultSettings) -> tuple[Row, ...]:
+    return tuple(
+        _vault_category_row(row_name, field_name, getattr(vault, attr))
+        for row_name, attr, field_name in _VAULT_CATEGORY_ROWS
+    )
+
+
+def _vault_category_row(row_name: str, field_name: str, category_settings) -> Row:
+    readiness = context_mod.category_readiness(category_settings)
+    if readiness.state is context_mod.CategoryReadinessState.UNAVAILABLE:
+        return Row(row_name, State.UNAVAILABLE, readiness.reason)
+    if readiness.state is context_mod.CategoryReadinessState.ERROR:
+        next_step = (f"Create the directory, or correct {field_name} in "
+                     f"config.py — cfc does not create it.")
+        return Row(row_name, State.ERROR, readiness.reason, next_step=next_step)
+    if readiness.count == 0:
+        return Row(row_name, State.READY, "ready, empty (0 selectable .md files)")
+    plural = "" if readiness.count == 1 else "s"
+    return Row(row_name, State.READY, f"ready ({readiness.count} selectable .md file{plural})")
+
+
+# --- model catalogue: absent/empty is unavailable, malformed is an error --
+
+def _model_catalogue_row(snapshot) -> Row:
+    catalogue = settings.build_model_catalogue(snapshot)
+    if catalogue.unavailable_reason is not None:
+        return Row("model catalogue", State.ERROR, catalogue.unavailable_reason,
+                    next_step="Correct MODELS in config.py — see the detail above.")
+    selectable = catalogue.selectable_entries()
+    if not selectable:
+        if not catalogue.entries:
+            return Row("model catalogue", State.UNAVAILABLE, "MODELS is not set")
+        return Row("model catalogue", State.UNAVAILABLE,
+                    f"MODELS lists {len(catalogue.entries)} model(s), none chat-selectable")
+    return Row("model catalogue", State.READY, f"{len(selectable)} selectable model(s)")
+
+
+# --- appearance: the effective dark/light value and its source ------------
+
+def _appearance_row(snapshot) -> Row:
+    """Always `READY`: an effective `dark`/`light` value is resolvable
+    regardless of whether a saved override can currently be inspected — the
+    bootstrap `TUI_THEME` (or its own built-in `dark` fallback) is always
+    available (Concept.md's "appearance row always names the effective
+    value and its source").
+    """
+    theme = settings.build_theme(snapshot)
+    try:
+        db_path = settings.build_database_path(snapshot)
+    except settings.SettingsError:
+        return Row("appearance", State.READY,
+                    f"{theme.name} (configured default; see the 2.0 database "
+                    f"target row — the database could not be resolved)")
+
+    inspection = conversation_store.inspect_appearance_override(db_path)
+    if inspection.state is conversation_store.AppearanceInspectionState.READY:
+        effective = settings.resolve_effective_appearance(theme, inspection.override)
+        source = ("saved override" if effective.source is settings.AppearanceSource.OVERRIDE
+                  else "configured default")
+        return Row("appearance", State.READY, f"{effective.name} ({source})")
+
+    return Row("appearance", State.READY,
+                f"{theme.name} (configured default; database not inspected: "
+                f"{_appearance_inspection_reason(inspection)})")
+
+
+def _appearance_inspection_reason(inspection) -> str:
+    if inspection.state is conversation_store.AppearanceInspectionState.ABSENT:
+        return "no database exists there yet"
+    if inspection.state is conversation_store.AppearanceInspectionState.LOCKED:
+        return "another cfc process currently owns it"
+    return inspection.detail or "it could not be safely recognised as a compatible cfc database"

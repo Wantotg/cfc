@@ -25,6 +25,52 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-10 — Configuration truth and durable appearance (`D-25`, `D-2.0-59`, `W-2.0-58`, `W-07`, Stage 5 loop 2)
+`cfc doctor` now answers the setup question completely instead of stopping at
+one coarse vault row. Four new rows (User Preferences, Personas, Traits,
+First Messages) share `cfc.context`'s new `category_readiness` inspection —
+the same configured-directory and selectable-`.md`-file rules
+`available_sources` already used for the Context picker — so a category
+doctor calls "ready, empty" and one Context would show empty are provably the
+same fact. A model-catalogue row says whether `MODELS` offers any
+chat-selectable entry, and an appearance row names the effective `dark`/
+`light` value and whether it came from a saved override or the configured
+`TUI_THEME` default.
+
+That override is now durable. `cfc.conversation_store` bumps to schema
+version 4 for one constrained singleton `cfc_appearance` record — absent,
+`dark`, or `light`, never a general preferences table — with typed
+read/save/clear operations that validate the stored value even though the
+schema's own `CHECK` already constrains it. A new read-only
+`inspect_appearance_override` reuses the store's own header/application-id/
+schema/integrity/non-blocking-lock classification to let doctor safely peek
+at a real database without ever opening, creating, or leaving a sidecar
+beside an incompatible one; an uninspectable database is never read as
+evidence the override is absent. `cfc.settings` gains the one shared
+precedence resolver (`resolve_effective_appearance`) every caller — doctor,
+`tui.build_app`, the palette, reset notifications — now uses instead of
+re-implementing "override wins, else the resolved `TUI_THEME`".
+
+The existing cfc-owned `Ctrl+P` palette gains three commands — **Appearance:
+Dark**, **Appearance: Light**, **Appearance: Use configured default** — on
+the Hub and on Chat, never a new modal. Exactly one is marked `(current)`,
+tied to *source* rather than to which colour is currently showing, so a
+saved Dark choice stays marked even after `config.py`'s default changes
+underneath it. A choice persists before it changes the live theme, and a
+failed write leaves the visible appearance and its source untouched rather
+than a transient success that dies on restart. Every startup-refusal
+surface — a failed provider setting, a protected database path, an
+incompatible store — now renders with the same resolved `TUI_THEME` a
+working app would have used, instead of always defaulting to dark; only a
+configuration file that never loaded at all still falls back to the
+built-in default, since no snapshot exists yet to resolve a setting from.
+
+Proved with the full suite at **775 passed** (83 new tests) and the
+unchanged 516-line golden baseline.
+- Files: cfc/settings.py, cfc/context.py, cfc/conversation_store.py, cfc/conversation_service.py, cfc/diagnostics.py, cfc/tui.py, tests/test_cfc_settings.py, tests/test_cfc_context.py, tests/test_cfc_conversation_store.py, tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-10 — Playtest corrections to the named-context foundation (`B-2.0-60`, `B-2.0-62`, Stage 5 loop 1)
 The pushed Stage 5 loop now serialises Chat transcript and switcher redraws so
 overlapping refreshes cannot mount duplicate widgets. Unusable vault categories

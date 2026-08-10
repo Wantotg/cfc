@@ -6,6 +6,7 @@ Cas's live vault.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,13 @@ import pytest
 from cfc import context
 from cfc.conversation_types import ContextCategory, ContextSelection
 from cfc.settings import VaultCategorySettings, VaultSettings
+
+#: Permission bits do not restrict root, which would make the unreadable-
+#: directory case below silently readable instead of refused.
+_needs_unprivileged = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="file permission bits do not restrict root",
+)
 
 
 def category(path: Path | None) -> VaultCategorySettings:
@@ -290,6 +298,96 @@ def test_build_context_plan_raises_on_first_unavailable_selected_source(tmp_path
     with pytest.raises(context.SourceUnavailable) as exc_info:
         context.build_context_plan(vault, ContextSelection(persona="ghost.md"))
     assert exc_info.value.category is ContextCategory.PERSONA
+
+
+# --- category_readiness: doctor's shared-with-Context readiness rules ------
+
+def test_category_readiness_unavailable_when_unconfigured():
+    settings_obj = VaultCategorySettings(unavailable_reason="TRAITS_DIR is not set")
+    readiness = context.category_readiness(settings_obj)
+    assert readiness.state is context.CategoryReadinessState.UNAVAILABLE
+    assert readiness.reason == "TRAITS_DIR is not set"
+    assert readiness.count is None
+
+
+def test_category_readiness_unavailable_with_no_settings_object_at_all():
+    readiness = context.category_readiness(None)
+    assert readiness.state is context.CategoryReadinessState.UNAVAILABLE
+    assert readiness.reason is not None
+
+
+def test_category_readiness_error_when_configured_directory_is_missing(tmp_path):
+    directory = tmp_path / "does_not_exist"
+    readiness = context.category_readiness(category(directory))
+    assert readiness.state is context.CategoryReadinessState.ERROR
+    assert str(directory) in readiness.reason
+    assert not directory.exists()
+
+
+def test_category_readiness_error_when_configured_path_is_a_file(tmp_path):
+    path = tmp_path / "not_a_directory"
+    path.write_text("x", encoding="utf-8")
+    readiness = context.category_readiness(category(path))
+    assert readiness.state is context.CategoryReadinessState.ERROR
+    assert "not a directory" in readiness.reason
+
+
+@_needs_unprivileged
+def test_category_readiness_error_when_directory_is_unreadable(tmp_path):
+    directory = tmp_path / "locked"
+    directory.mkdir()
+    write(directory, "one.md", "one")
+    directory.chmod(0o000)
+    try:
+        readiness = context.category_readiness(category(directory))
+        assert readiness.state is context.CategoryReadinessState.ERROR
+        assert readiness.reason is not None
+    finally:
+        directory.chmod(0o755)
+
+
+def test_category_readiness_ready_empty_when_directory_has_no_selectable_files(tmp_path):
+    directory = tmp_path / "empty"
+    directory.mkdir()
+    readiness = context.category_readiness(category(directory))
+    assert readiness.state is context.CategoryReadinessState.READY
+    assert readiness.count == 0
+
+
+def test_category_readiness_ready_counts_selectable_files(tmp_path):
+    directory = tmp_path / "traits"
+    write(directory, "a.md", "a")
+    write(directory, "b.md", "b")
+    readiness = context.category_readiness(category(directory))
+    assert readiness.state is context.CategoryReadinessState.READY
+    assert readiness.count == 2
+
+
+def test_category_readiness_count_matches_available_sources_not_raw_entries(tmp_path):
+    """A colliding pair is excluded from both `available_sources` and this
+    count — pinning that doctor and Context read the exact same fact."""
+    directory = tmp_path / "traits"
+    write(directory, "Kit.md", "one")
+    write(directory, "Kit.MD", "two")
+    write(directory, "solo.md", "solo")
+    readiness = context.category_readiness(category(directory))
+    assert readiness.state is context.CategoryReadinessState.READY
+    assert readiness.count == len(context.available_sources(category(directory)))
+    assert readiness.count == 1
+
+
+def test_category_readiness_never_creates_or_repairs_a_directory(tmp_path):
+    directory = tmp_path / "does_not_exist"
+    context.category_readiness(category(directory))
+    assert not directory.exists()
+
+
+def test_category_readiness_never_exposes_a_filename_or_body(tmp_path):
+    directory = tmp_path / "traits"
+    write(directory, "secret-name.md", "secret body")
+    readiness = context.category_readiness(category(directory))
+    assert "secret-name" not in repr(readiness)
+    assert "secret body" not in repr(readiness)
 
 
 def test_a_fresh_plan_differs_after_a_vault_edit(tmp_path):

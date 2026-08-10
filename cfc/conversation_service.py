@@ -296,6 +296,22 @@ class ConversationService:
     def set_model(self, chat_id: ChatId, model: str) -> Chat:
         return self._store.set_model(chat_id, model)
 
+    # -- appearance: the one durable override, never a raw connection ------
+
+    def get_appearance_override(self) -> str | None:
+        """`None` when no override is saved, else `'dark'` or `'light'` —
+        straight from `conversation_store.ConversationStore`, the narrow
+        seam that lets `tui.py` reach this one durable record without ever
+        holding a SQLite connection of its own.
+        """
+        return self._store.get_appearance_override()
+
+    def save_appearance_override(self, value: str) -> None:
+        self._store.save_appearance_override(value)
+
+    def clear_appearance_override(self) -> None:
+        self._store.clear_appearance_override()
+
     # -- the turn lifecycle -------------------------------------------------
 
     async def send_turn(self, chat_id: ChatId, user_content: str,
