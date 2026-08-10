@@ -69,7 +69,21 @@ Proved with the full suite at **775 passed** (83 new tests) and the
 unchanged 516-line golden baseline.
 - Files: cfc/settings.py, cfc/context.py, cfc/conversation_store.py, cfc/conversation_service.py, cfc/diagnostics.py, cfc/tui.py, tests/test_cfc_settings.py, tests/test_cfc_context.py, tests/test_cfc_conversation_store.py, tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py, tests/test_cfc_tui.py
 - Status: shipped
-- Commit: pending
+- Commit: abc0450
+
+## 2026-08-10 — Playtest corrections to configuration truth and durable appearance (`B-2.0-63`, `B-2.0-64`, `B-2.0-65`, `N-2.0-66`, Stage 5 loop 2)
+The follow-up read found three ways the new diagnostic evidence could lie or
+fail: a malformed 2.0 database could make `cfc doctor` print a traceback, a
+rejected `TUI_THEME` could be presented as honoured, and proof could read the
+live database. The inspection path now turns SQLite failures into bounded
+diagnostic evidence, doctor names the rejected setting and its correction
+route, and the diagnostic and doctor-CLI tests isolate their database targets.
+An unreadable saved appearance row was considered and left as no action because
+the running app has already passed integrity and lock acquisition; the finding
+is recorded so it is not mistaken for a new playtest failure.
+- Files: cfc/conversation_store.py, cfc/diagnostics.py, tests/test_cfc_conversation_store.py, tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: f132dea
 
 ## 2026-08-10 — Playtest corrections to the named-context foundation (`B-2.0-60`, `B-2.0-62`, Stage 5 loop 1)
 The pushed Stage 5 loop now serialises Chat transcript and switcher redraws so

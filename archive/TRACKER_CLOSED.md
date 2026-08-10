@@ -13,6 +13,13 @@ at the top.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-63 | a corrupt 2.0 database made `cfc doctor` die in a traceback | shipped in `f132dea`; read-only SQLite inspection now converts malformed, truncated, and incomplete targets into bounded diagnostic evidence, while preserving the target and its directory | 2026-08-10 |
+| B-2.0-64 | doctor reported a rejected `TUI_THEME` as though it had been honoured | shipped in `f132dea`; the rejected setting is reported as the built-in fallback with a bounded correction route, without printing the rejected value | 2026-08-10 |
+| B-2.0-65 | the diagnostics and doctor tests read the live database | shipped in `f132dea`; in-process diagnostics use isolated temporary targets and doctor subprocesses use an isolated `HOME`, with proof that Cas's default path is not read | 2026-08-10 |
+| N-2.0-66 | an unreadable appearance override becomes no override in the running app | nothing owed; the running app has already passed header, schema, integrity, and lock checks, and a mid-session corruption would already have broken the chat; the alternatives are worse than retaining the configured appearance | 2026-08-10 |
+| D-25 | `cfc doctor` says nothing about the vault categories or model catalogue | shipped in `abc0450`; doctor now reports the four context categories and selectable model catalogue with bounded readiness and correction routes | 2026-08-10 |
+| D-2.0-59 | `TUI_THEME` has no visible confirmation, and one surface ignores it | shipped in `abc0450`; doctor reports the resolved theme and startup-refusal surfaces use the same resolved theme, with the rejected-setting correction route completed in `f132dea` | 2026-08-10 |
+| W-2.0-58 | no durable theme picker in the palette | shipped in `abc0450`; cfc-owned palette commands save dark/light overrides or clear them back to the configured default without rewriting `config.py` | 2026-08-10 |
 | B-2.0-60 | removing a trait crashed cfc | shipped in `4a9f75f`; Chat transcript and docked switcher redraws now run one at a time, so overlapping refreshes cannot mount duplicate widgets or silently duplicate the switcher | 2026-08-10 |
 | B-2.0-62 | a vault category cfc knows is unusable looks like an ordinary empty choice | shipped in `4a9f75f`; unusable categories now show their bounded setting reason and a `config.py` correction route, while an unset private `USER_PREFERENCES_DIR` has been supplied and confirmed | 2026-08-10 |
 | N-2.0-57 | "light and dark look the same" because `TUI_THEME` was still commented out | nothing owed; the theme setting resolves correctly when enabled, and Cas enabled `TUI_THEME = "light"` in the private configuration | 2026-08-10 |
