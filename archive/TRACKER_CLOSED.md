@@ -13,6 +13,12 @@ at the top.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| N-2.0-57 | "light and dark look the same" because `TUI_THEME` was still commented out | nothing owed; the theme setting resolves correctly when enabled, and Cas enabled `TUI_THEME = "light"` in the private configuration | 2026-08-10 |
+| W-2.0-54 | no way to re-send a message the provider never received | shipped in `ae437df`; each omitted failed or cancelled turn now has a **Restore to composer** action that restores the stored text for a new manual turn | 2026-08-10 |
+| D-2.0-56 | nothing tells a person `Shift+Enter` needs a configured terminal | shipped in `ae437df`; Keyboard help states the Kitty keyboard-protocol requirement and shows the tested Windows Terminal mapping | 2026-08-10 |
+| D-2.0-53 | a failed or cancelled turn's message is omitted from every later request and nothing says so | shipped in `ae437df`; the transcript names the omission and each turn carries its own restore action without claiming what the provider received | 2026-08-10 |
+| D-2.0-49 | cfc inherits Textual's whole command palette without deciding what is in it | shipped in `ae437df`; cfc owns the command set, screenshot destination and theme preference surface | 2026-08-10 |
+| B-2.0-55 | switching chats stacks screens, so `Esc` returns to the previous chat instead of the Hub | shipped in `ae437df`; switching replaces the active chat screen, preserves drafts, and leaves one `Esc` route back to the Hub | 2026-08-10 |
 | B-2.0-48 | `Shift+Enter` arrives as plain `Enter`, so a newline cannot be typed | nothing owed as an application defect; Cas's configured Windows Terminal Kitty-protocol mapping delivers the distinct `shift+enter` event that cfc already handles. The remaining terminal guidance is tracked separately as `D-2.0-56` | 2026-08-09 |
 | N-2.0-52 | a message is not stored before it is sent to the model | nothing owed; `start_turn` commits the turn and user message before any provider request, while the settled wire-history rule deliberately omits failed or cancelled orphans. The missing visible explanation is `D-2.0-53` | 2026-08-09 |
 | B-2.0-47 | the docked chat switcher accepts a selection and opens nothing | shipped in `022f241`; the guarded `ListView.Selected` route opens another stored chat through `CfcApp.open_chat` and leaves the current chat selected as an explicit no-op | 2026-08-09 |

@@ -15,36 +15,6 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## D-2.0-56 · Nothing tells a person `Shift+Enter` needs a configured terminal
-
-**Found:** 2026-08-09, during the v2.0 Stage 4 loop two playtest.
-
-The Composer correctly handles Textual's `shift+enter` event, but a terminal
-that does not send Kitty keyboard-protocol sequences can deliver the same
-carriage return for `Shift+Enter` as for `Enter`. cfc currently gives no
-guidance for that environment requirement.
-
-Document the supported terminal requirement and the Windows Terminal mapping
-that restores the natural key. If the interaction contract chooses a fallback
-key, document that route and expose it consistently in cfc as well.
-
----
-
-## D-2.0-49 · cfc inherits Textual's whole command palette without deciding what is in it
-
-**Found:** 2026-08-09, during the v2.0 Stage 4 loop one playtest.
-
-`Ctrl+P` exposes Textual's built-in command palette because cfc has not chosen
-its own command provider. Its Screenshot command can fail when the platform's
-downloads directory does not exist, and its theme choice is only in memory.
-
-Later Stage 4 work should decide which commands cfc owns, give screenshot a
-created destination with a recovery route, and decide where interface
-preferences such as the chosen theme belong. This is ownership and product
-design work, not a request to copy Textual's default command list.
-
----
-
 ## D-2.0-43 · Provider evidence checks can discard a usable answer, and one malformed usage shape walks past them
 
 **Found:** 2026-08-09, during the v2.0 Stage 3 loop three playtest.
@@ -60,18 +30,16 @@ decisions when a real gateway supplies evidence, keeping the adapter's stored
 reason bounded and provider-independent. This is watching work for Stage 4,
 not a reopening of `D-2.0-37` or `D-2.0-38`.
 
-## D-2.0-53 · A failed turn's message is never sent, and nothing says so
+## D-2.0-59 · `TUI_THEME` has no visible confirmation, and one surface ignores it
 
-**Found:** 2026-08-09, during the v2.0 Stage 4 loop two playtest.
+**Found:** 2026-08-10, by reading during v2.0 Stage 4 loop three diagnosis.
 
-The provider-wire history rule correctly omits a failed or cancelled turn's
-orphaned user message from every later request. The transcript only says that
-the turn failed, so a person is not told that the message was never sent and
-that later replies will not see it.
-
-Make the failed and cancelled transcript lines state the omission. Prove both
-outcomes with a later completed turn and verify that the stored message remains
-unchanged while the provider request omits it.
+The optional `TUI_THEME` setting is not reported by `doctor`, so a commented-out
+setting and a working default are indistinguishable from the outside. The
+startup-failure screen also ignores the configured theme and always uses the
+dark theme. Add bounded confirmation of the resolved theme and carry the
+setting through the startup-failure surface. This is v2.0 Stage 4 or later;
+it does not block the completed Stage 4 claim.
 
 ---
 

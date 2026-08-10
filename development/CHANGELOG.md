@@ -59,7 +59,7 @@ switcher, the restore control, and every command — plus the real
 converter to confirm the settled omission rule still holds end to end.
 - Files: cfc/settings.py, cfc/tui.py, config.example.py, tests/test_cfc_settings.py, tests/test_cfc_tui.py
 - Status: shipped
-- Commit: pending
+- Commit: ae437df
 
 ## 2026-08-09 — A guarded, styled wide chat switcher (`B-2.0-47`, `D-2.0-50`)
 v2.0 Stage 4, loop two. `ChatScreen` now has the docked switcher's own

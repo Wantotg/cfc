@@ -26,22 +26,6 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## B-2.0-55 · Switching chats stacks screens, so `Esc` stops returning to the Hub
-
-**Found:** 2026-08-09, during the v2.0 Stage 4 loop two playtest.
-
-`CfcApp.open_chat` always pushes a new `ChatScreen`, including when a chat is
-already open. Switching from one chat to another therefore leaves the previous
-chat on the screen stack. Each later switch adds another screen, and `Esc`
-returns through abandoned chats instead of reaching the Hub.
-
-When a `ChatScreen` is already active, replace it with the selected chat;
-opening from the Hub should continue to push a new screen. Prove the docked
-switcher and `F2` modal routes, one `Esc` back to the Hub, and draft survival
-when switching away and back.
-
----
-
 ## B-11 · A wiki page deleted from the vault stays in the recall index
 
 **Found:** 2026-08-03, by reading during the v1.6.3 triage. Live on the
