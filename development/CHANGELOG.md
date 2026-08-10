@@ -25,6 +25,42 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-10 — Recoverable chat navigation: screen replacement, omitted-turn restore, theme, and a cfc-owned command palette (`B-2.0-55`, `D-2.0-49`, `D-2.0-53`, `D-2.0-56`, `W-2.0-54`)
+v2.0 Stage 4, loop three. `CfcApp.open_chat` now replaces the active
+`ChatScreen` when switching to a different stored chat instead of pushing
+another one on top — both the wide docked switcher and the narrow `F2`
+modal converge on the same call, so switching chats no longer grows the
+screen stack, drafts still survive via the existing suspend/draft seam, and
+one `Esc` always reaches the Hub (`B-2.0-55`). A failed or cancelled turn's
+transcript line now says only that cfc will omit that message from later
+provider requests — never that the provider certainly never received it —
+and carries its own turn-specific **Restore to composer** button that
+copies the exact stored user message back to an empty composer without
+contacting the responder, reopening the old turn, or overwriting an
+existing draft (`D-2.0-53`). `cfc/settings.py` gains the optional
+`TUI_THEME` setting (`dark`/`light`, default `dark`), carried through
+`build_app` into `CfcApp`, which applies the matching built-in Textual
+theme at startup and shows a bounded, non-blocking notice naming
+`TUI_THEME` and its accepted values when the configured value is invalid
+(`D-2.0-49`). `CfcApp` and `StartupFailureApp` both now install one
+cfc-owned `Ctrl+P` command provider in place of Textual's inherited one —
+**Keyboard help**, **Save screenshot**, **Quit cfc**, and nothing else.
+Keyboard help is a modal naming every Stage 4 binding, the Kitty
+keyboard-protocol requirement behind `Shift+Enter`, and the literal tested
+Windows Terminal `settings.json` mapping (`D-2.0-56`). Save screenshot
+writes one collision-resistant timestamped SVG below
+`~/.cfc/2.0/screenshots/`, validating/creating the directory first and
+writing a temporary file that is renamed to its final name only after a
+successful export, with bounded notices for a blocked directory,
+permission failure, or replacement failure. Proved through Textual's real
+`Pilot` input stack throughout — keyboard and mouse routes for the
+switcher, the restore control, and every command — plus the real
+`ConversationService`/`ConversationStore` and `provider_wire`'s own
+converter to confirm the settled omission rule still holds end to end.
+- Files: cfc/settings.py, cfc/tui.py, config.example.py, tests/test_cfc_settings.py, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-09 — A guarded, styled wide chat switcher (`B-2.0-47`, `D-2.0-50`)
 v2.0 Stage 4, loop two. `ChatScreen` now has the docked switcher's own
 `ListView.Selected` route, guarded to `#chat-switcher` alone since the

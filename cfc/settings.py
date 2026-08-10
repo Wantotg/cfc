@@ -60,11 +60,32 @@ class ProviderSettings:
 #: `build_provider`'s own fail-fast raise would reach (D-2.0-19).
 REQUIRED_PROVIDER_FIELD_NAMES: tuple[str, ...] = ("API_BASE", "API_KEY", "MODEL")
 
+#: `TUI_THEME`'s only two accepted values — a startup preference, not an
+#: in-memory palette experiment (Concept.md, "cfc owns Ctrl+P").
+ACCEPTED_TUI_THEMES: tuple[str, ...] = ("dark", "light")
+
+#: `TUI_THEME`'s value when `config.py` sets none, and the value an invalid
+#: setting falls back to rather than blocking ordinary chat.
+DEFAULT_TUI_THEME = "dark"
+
+
+@dataclass(frozen=True)
+class ThemeSettings:
+    """The resolved `TUI_THEME` value plus, when `config.py` set an
+    unrecognised one, the bounded notice `tui.py` shows once at startup
+    instead of silently discarding the reader's mistake. `name` is always
+    one of `ACCEPTED_TUI_THEMES` — an invalid value never reaches the rest
+    of the app as anything but `DEFAULT_TUI_THEME`.
+    """
+    name: str
+    invalid_value_notice: str | None = None
+
 
 @dataclass(frozen=True)
 class BootstrapSettings:
     provider: ProviderSettings
     database_path: Path
+    theme: ThemeSettings
 
 
 def _require_nonempty_str(values, name: str) -> str:
@@ -151,13 +172,37 @@ def build_database_path(snapshot) -> Path:
     return resolved
 
 
+def build_theme(snapshot) -> ThemeSettings:
+    """The optional `TUI_THEME` setting: `config.py`'s value when it is one
+    of `ACCEPTED_TUI_THEMES`, else `DEFAULT_TUI_THEME` — absent or invalid
+    alike. Never raises: an invalid value is bootstrap-shaped recovery
+    guidance, not a reason to refuse ordinary chat (Concept.md's "Ephemeral
+    preference" section still requires the value come only from this
+    setting, but a wrong one must not block startup the way a missing
+    provider field does).
+    """
+    raw = snapshot.values.get("TUI_THEME")
+    if raw is None:
+        return ThemeSettings(DEFAULT_TUI_THEME)
+    if isinstance(raw, str) and raw in ACCEPTED_TUI_THEMES:
+        return ThemeSettings(raw)
+    notice = (
+        f"TUI_THEME is set to {raw!r}, which cfc does not recognise. "
+        f"Accepted values are {' and '.join(ACCEPTED_TUI_THEMES)}. "
+        f"Using {DEFAULT_TUI_THEME} until config.py is corrected."
+    )
+    return ThemeSettings(DEFAULT_TUI_THEME, invalid_value_notice=notice)
+
+
 def build_settings(snapshot) -> BootstrapSettings:
-    """Everything 2.0 cannot boot without. `snapshot` is a
-    `config_loader.ConfigSnapshot`. Raises `SettingsError` naming the first
-    required field that fails; a caller that wants every failure at once
-    should call `build_provider`/`build_database_path` directly.
+    """Everything 2.0 cannot boot without, plus the optional `TUI_THEME`
+    preference. `snapshot` is a `config_loader.ConfigSnapshot`. Raises
+    `SettingsError` naming the first required field that fails; a caller
+    that wants every failure at once should call
+    `build_provider`/`build_database_path` directly.
     """
     return BootstrapSettings(
         provider=build_provider(snapshot),
         database_path=build_database_path(snapshot),
+        theme=build_theme(snapshot),
     )

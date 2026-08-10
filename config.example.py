@@ -51,6 +51,15 @@ RECALL_MODEL = "qwen3-30b-a3b-instruct-2507"             # model that answers /r
 # targets, not configuration choices.
 # DATABASE_PATH = ""   # e.g. "~/.cfc/2.0/chat.db" (the default, written out)
 
+# The 2.0 Textual client's colour theme — optional, a fresh install needs
+# nothing here. Accepted values are "dark" and "light"; unset (the default)
+# and any other value both mean "dark", but an unrecognised value also shows
+# a one-time startup notice naming TUI_THEME and its two accepted values, so
+# a typo is visible rather than silently ignored. This is a durable startup
+# preference, not something the 2.0 Textual client itself lets you switch at
+# runtime — change this line and restart to change it.
+# TUI_THEME = "dark"   # or "light"
+
 # Path to a folder inside your Obsidian vault where chats will be exported.
 # The name says both what it holds and that it's a directory — see VAULT_ROOT
 # below, which is the vault itself, for the thing this isn't.

@@ -221,13 +221,66 @@ def test_database_path_wrong_type_is_reported_as_type(tmp_path):
     assert exc_info.value.kind == "type"
 
 
-# --- build_settings: both halves together ------------------------------------
+# --- theme: optional, defaulted, bounded invalid-value recovery -------------
+
+def test_unset_tui_theme_defaults_to_dark(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    theme = settings.build_theme(snapshot)
+    assert theme.name == "dark"
+    assert theme.invalid_value_notice is None
+
+
+@pytest.mark.parametrize("value", settings.ACCEPTED_TUI_THEMES)
+def test_each_accepted_tui_theme_value_is_used_as_is(tmp_path, value):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"TUI_THEME = {value!r}\n")
+    theme = settings.build_theme(snapshot)
+    assert theme.name == value
+    assert theme.invalid_value_notice is None
+
+
+def test_an_invalid_tui_theme_falls_back_to_dark_with_a_bounded_notice(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "TUI_THEME = 'purple'\n")
+    theme = settings.build_theme(snapshot)
+    assert theme.name == "dark"
+    assert theme.invalid_value_notice is not None
+    assert "TUI_THEME" in theme.invalid_value_notice
+    assert "purple" in theme.invalid_value_notice
+    for accepted in settings.ACCEPTED_TUI_THEMES:
+        assert accepted in theme.invalid_value_notice
+
+
+def test_a_non_string_tui_theme_also_falls_back_to_dark_with_a_bounded_notice(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "TUI_THEME = 5\n")
+    theme = settings.build_theme(snapshot)
+    assert theme.name == "dark"
+    assert theme.invalid_value_notice is not None
+    assert "TUI_THEME" in theme.invalid_value_notice
+
+
+# --- build_settings: all three parts together --------------------------------
 
 def test_build_settings_combines_provider_and_database(tmp_path):
     snapshot = snapshot_from(tmp_path, VALID_BODY)
     built = settings.build_settings(snapshot)
     assert built.provider.model == "fixture-model"
     assert built.database_path == settings.DEFAULT_DATABASE_PATH.expanduser().resolve()
+    assert built.theme.name == "dark"
+
+
+def test_build_settings_carries_an_accepted_theme_value_through(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "TUI_THEME = 'light'\n")
+    built = settings.build_settings(snapshot)
+    assert built.theme.name == "light"
+    assert built.theme.invalid_value_notice is None
+
+
+def test_build_settings_never_mutates_config_py(tmp_path):
+    path = tmp_path / "config.py"
+    path.write_text(VALID_BODY + "TUI_THEME = 'not-a-real-theme'\n", encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    snapshot = config_loader.load_snapshot(path)
+    settings.build_settings(snapshot)
+    assert path.read_text(encoding="utf-8") == before
 
 
 # --- no mutation: this module never touches the filesystem beyond reading ---

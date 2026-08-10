@@ -27,16 +27,20 @@ invented (Concept.md's "optimistic drift" failure mode).
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen, Screen
+from textual.widget import Widget
 from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 from textual.widgets import TextArea
 from textual.worker import Worker
@@ -54,6 +58,7 @@ from cfc.conversation_types import (
     Responder,
     Role,
     Turn,
+    TurnId,
 )
 
 #: At this width and wider, `ChatScreen` keeps the stored-chat switcher
@@ -74,6 +79,23 @@ _WORKER_FAILURE_MESSAGE = (
 
 _BLANK_DRAFT_NOTICE = "A message can't be blank."
 _CHAT_BUSY_NOTICE = "A request is already in progress in this chat; wait or press Esc to cancel it."
+
+#: What an omitted (failed or cancelled) turn's outcome line says about its
+#: future — never that the provider certainly never received the original
+#: request, since a timeout or an HTTP failure can happen after delivery
+#: (Concept.md's "False delivery claim" failure mode; B-2.0-55/D-2.0-53).
+_OMISSION_NOTICE = (
+    "cfc will not include this message in later requests, so later replies "
+    "cannot see it. Use Restore to composer to send it again."
+)
+_RESTORE_LABEL = "Restore to composer"
+_RESTORE_BUSY_NOTICE = (
+    "The composer already has a draft; clear or send it before restoring "
+    "an omitted message."
+)
+_RESTORE_MISSING_NOTICE = (
+    "cfc could not find that turn's stored message; nothing was restored."
+)
 
 
 # --- per-chat turn run state, owned by the App, not any Screen --------------
@@ -191,6 +213,60 @@ class ChatsModal(ModalScreen[ChatId | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         self.dismiss(event.item.chat_id)
+
+
+#: Stage 4's complete interaction vocabulary, shown by `KeyboardHelpModal`
+#: (Concept.md's "Keyboard help lives in the interface").
+_KEYBOARD_HELP_LINES = (
+    "Enter — send the composer's text as a new turn",
+    "Shift+Enter — insert a newline in the composer",
+    "Esc — closes an open modal, else cancels an active turn, else returns to the Hub",
+    "F2 — opens the stored-chats switcher",
+    "Ctrl+P — opens this command palette",
+    "Ctrl+Q — quits cfc",
+)
+
+_KEYBOARD_HELP_TERMINAL_NOTE = (
+    "Shift+Enter needs a terminal that reports modified Enter through the "
+    "Kitty keyboard protocol. Without one, Shift+Enter behaves like Enter — "
+    "cfc adds no fallback newline key."
+)
+
+#: The literal, tested Windows Terminal mapping. Its escape spelling is
+#: shown as text, exactly as it must appear in settings.json - never as a
+#: live escape character (Work Order Step 4).
+_KEYBOARD_HELP_WINDOWS_TERMINAL = (
+    "Windows Terminal — add this entry to settings.json's \"actions\" array:\n"
+    '{ "command": { "action": "sendInput", "input": "\\u001b[13;2u" }, "keys": "shift+enter" }'
+)
+
+
+class KeyboardHelpModal(ModalScreen[None]):
+    """Opened from the cfc command palette's **Keyboard help** command.
+    Follows the same `Esc`-first layering as every other modal here: closing
+    this modal is all one `Esc` press does.
+    """
+
+    BINDINGS = [Binding("escape", "dismiss_help", "Close", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="keyboard-help-dialog"):
+            yield Label("Keyboard help")
+            for line in _KEYBOARD_HELP_LINES:
+                yield Static(line, markup=False)
+            yield Static(_KEYBOARD_HELP_TERMINAL_NOTE, markup=False)
+            yield Static(
+                _KEYBOARD_HELP_WINDOWS_TERMINAL,
+                id="keyboard-help-windows-terminal", markup=False,
+            )
+            yield Button("Close", id="keyboard-help-close")
+
+    def action_dismiss_help(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "keyboard-help-close":
+            self.dismiss(None)
 
 
 # --- the Hub -------------------------------------------------------------
@@ -324,7 +400,7 @@ class ChatScreen(Screen):
         transcript = self.query_one("#chat-transcript", VerticalScroll)
         was_at_bottom = transcript.is_vertical_scroll_end
         await transcript.remove_children()
-        await transcript.mount_all(Static(text, markup=False) for text in _transcript_lines(snapshot))
+        await transcript.mount_all(_transcript_widgets(snapshot))
         if was_at_bottom:
             transcript.scroll_end(animate=False)
 
@@ -357,6 +433,46 @@ class ChatScreen(Screen):
         if chat_id == self.chat_id:
             return
         self.app.open_chat(chat_id)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Routes a transcript **Restore to composer** press — the only
+        `Button`s this screen mounts carry a `turn_id` attribute
+        (`_restore_button`); anything else is ignored rather than assumed.
+        """
+        turn_id = getattr(event.button, "turn_id", None)
+        if turn_id is not None:
+            self._restore_turn(turn_id)
+
+    def _restore_turn(self, turn_id: TurnId) -> None:
+        """**Restore to composer**'s handler (Concept.md's "An omitted
+        message is visible and recoverable"). Local and manual: it never
+        calls the responder and never mutates, reopens, or marks handled
+        `turn_id`'s own turn — it only copies that turn's real stored user
+        message into the composer. Re-reads the canonical snapshot rather
+        than anything this rendering pass cached, so it identifies the exact
+        stored message for `turn_id` even if the mounted transcript is
+        stale. A non-blank composer is protected: restoring refuses and
+        leaves both the draft and the stored omitted message untouched,
+        since cfc cannot guess which text a person meant to keep.
+        """
+        composer = self.query_one(Composer)
+        if composer.text.strip():
+            self._notice = _RESTORE_BUSY_NOTICE
+            self._render_status()
+            return
+        snapshot = self.app.service.snapshot(self.chat_id)
+        user_message = next(
+            (m for m in snapshot.messages if m.turn_id == turn_id and m.role is Role.USER),
+            None,
+        )
+        if user_message is None:
+            self._notice = _RESTORE_MISSING_NOTICE
+            self._render_status()
+            return
+        composer.text = user_message.content
+        composer.focus()
+        self._notice = ""
+        self._render_status()
 
     async def notify_run_changed(self) -> None:
         """Called by `CfcApp` — awaited from inside its worker's own
@@ -407,29 +523,45 @@ class ChatScreen(Screen):
             self.app.open_chat(chat_id)
 
 
-def _transcript_lines(snapshot: ConversationSnapshot) -> list[str]:
-    """One line per stored message plus one status line for a turn that is
-    active, failed, or cancelled — literal content only, never Rich/Textual
-    markup, so a message containing `[bold]` or an ANSI-looking string stays
-    inert content (Concept.md's "markup execution" failure mode; every
-    caller renders these with `Static(..., markup=False)`).
+def _transcript_widgets(snapshot: ConversationSnapshot) -> list[Widget]:
+    """One `Static` per stored message plus one status line for a turn that
+    is active, failed, or cancelled — literal content only, never
+    Rich/Textual markup, so a message containing `[bold]` or an ANSI-looking
+    string stays inert content (Concept.md's "markup execution" failure
+    mode; every `Static` here is built with `markup=False`).
+
+    A failed or cancelled turn additionally gets the omission notice and its
+    own turn-specific **Restore to composer** button (Concept.md's "An
+    omitted message is visible and recoverable"; B-2.0-55/D-2.0-53) — never
+    a generic "retry latest", since several omissions in one chat must stay
+    independently restorable.
     """
     by_turn: dict[str, list[StoredMessage]] = {t.id.value: [] for t in snapshot.turns}
     for message in snapshot.messages:
         by_turn[message.turn_id.value].append(message)
 
-    lines: list[str] = []
+    widgets: list[Widget] = []
     for turn in snapshot.turns:
         for message in by_turn[turn.id.value]:
             speaker = "You" if message.role is Role.USER else "cfc"
-            lines.append(f"{speaker}: {message.content}")
+            widgets.append(Static(f"{speaker}: {message.content}", markup=False))
         if turn.outcome is None:
-            lines.append("… cfc is working on this turn …")
+            widgets.append(Static("… cfc is working on this turn …", markup=False))
         elif isinstance(turn.outcome, FailedOutcome):
-            lines.append(f"[turn failed: {turn.outcome.evidence.reason}]")
+            widgets.append(Static(f"[turn failed: {turn.outcome.evidence.reason}]", markup=False))
+            widgets.append(Static(_OMISSION_NOTICE, markup=False))
+            widgets.append(_restore_button(turn.id))
         elif isinstance(turn.outcome, CancelledOutcome):
-            lines.append("[turn cancelled]")
-    return lines
+            widgets.append(Static("[turn cancelled]", markup=False))
+            widgets.append(Static(_OMISSION_NOTICE, markup=False))
+            widgets.append(_restore_button(turn.id))
+    return widgets
+
+
+def _restore_button(turn_id: TurnId) -> Button:
+    button = Button(_RESTORE_LABEL, id=f"restore-{turn_id.value}", classes="restore-button")
+    button.turn_id = turn_id
+    return button
 
 
 def _status_text(run: _TurnRun | None) -> str:
@@ -449,9 +581,147 @@ def _status_text(run: _TurnRun | None) -> str:
     return ""  # pragma: no cover — exhaustive over _TurnRun.status's own values
 
 
+# --- theme, screenshot export, and the cfc-owned Ctrl+P command set --------
+
+#: `TUI_THEME`'s two accepted values, mapped to the built-in Textual themes
+#: cfc actually applies (`settings.ACCEPTED_TUI_THEMES` owns the accepted
+#: value spelling; this module owns what each one means visually).
+_TEXTUAL_THEME_NAMES = {"dark": "textual-dark", "light": "textual-light"}
+
+#: The fixed, cfc-owned screenshot destination (Concept.md's "Screenshot
+#: destination and recovery" — explicitly not user-configurable). A test
+#: constructs `CfcApp`/`StartupFailureApp` with an explicit `screenshots_dir`
+#: instead of touching this real path.
+_DEFAULT_SCREENSHOTS_DIR = Path.home() / ".cfc" / "2.0" / "screenshots"
+
+
+class ScreenshotError(Exception):
+    """A bounded, cfc-authored screenshot failure reason. `str(exc)` never
+    carries a raw exception string, provider text, or a configuration value
+    (Concept.md's "Screenshot false success" failure mode) — it is always
+    safe to show directly.
+    """
+
+
+def _screenshot_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+
+
+def _quietly_unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # noqa: BLE001 — best-effort cleanup after an already-reported failure
+        pass
+
+
+def _write_screenshot(svg: str, directory: Path, *, timestamp: str | None = None) -> Path:
+    """Validates/creates `directory`, writes `svg` to a temporary file
+    inside it, and renames that file to its final path only after the write
+    succeeds — a failed capture never leaves a plausible partial file under
+    a final-looking name (Concept.md). The final name is collision-resistant:
+    an already-occupied timestamped name gets a numbered suffix rather than
+    overwriting whatever is already there. Raises `ScreenshotError` naming
+    `directory` on any failure; never lets a raw `OSError` escape.
+
+    `timestamp`, when given, replaces the real clock — the seam a test uses
+    to make a filename collision deterministic rather than a matter of
+    hitting the same microsecond twice.
+    """
+    stamp = timestamp if timestamp is not None else _screenshot_timestamp()
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise ScreenshotError(
+            f"cfc could not create the screenshot folder {directory}. "
+            "Create it or correct its permissions, then try again."
+        )
+
+    final_path = directory / f"cfc-{stamp}.svg"
+    suffix = 1
+    while final_path.exists():
+        suffix += 1
+        final_path = directory / f"cfc-{stamp}-{suffix}.svg"
+    temp_path = directory / f".{final_path.name}.tmp"
+
+    try:
+        temp_path.write_text(svg, encoding="utf-8")
+    except OSError:
+        _quietly_unlink(temp_path)
+        raise ScreenshotError(
+            f"cfc could not write a screenshot into {directory}. "
+            "Correct its permissions, then try again."
+        )
+
+    try:
+        temp_path.replace(final_path)
+    except OSError:
+        _quietly_unlink(temp_path)
+        raise ScreenshotError(
+            f"cfc could not finish saving the screenshot to {final_path}. "
+            "Correct the folder's permissions, then try again."
+        )
+
+    return final_path
+
+
+class CfcCommandsProvider(Provider):
+    """cfc's complete `Ctrl+P` command set: **Keyboard help**, **Save
+    screenshot**, **Quit cfc** — nothing else. Installed in place of (never
+    alongside) Textual's inherited system-commands provider, so Theme, Keys,
+    Maximize/Minimize, generic Screenshot, and immediate Quit are absent by
+    construction rather than filtered out (Concept.md's "cfc owns Ctrl+P").
+    Shared by `CfcApp` and `StartupFailureApp` — the Concept requires the
+    same three commands on Hub, ordinary Chat, help, and startup-failure
+    alike; only a later private-chat screen is deliberately excluded.
+    """
+
+    def _commands(self) -> tuple[tuple[str, Callable, str], ...]:
+        app = self.app
+        return (
+            ("Keyboard help", app.action_show_keyboard_help,
+             "Stage 4's keys and the Shift+Enter terminal requirement"),
+            ("Save screenshot", app.action_save_screenshot,
+             "Export an SVG of the current screen"),
+            ("Quit cfc", app.action_quit, "Close cfc"),
+        )
+
+    async def discover(self) -> Hits:
+        for name, callback, help_text in self._commands():
+            yield DiscoveryHit(name, callback, help=help_text)
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for name, callback, help_text in self._commands():
+            score = matcher.match(name)
+            if score > 0:
+                yield Hit(score, matcher.highlight(name), callback, help=help_text)
+
+
+class _CommandSurfaceMixin:
+    """`action_show_keyboard_help`/`action_save_screenshot` shared by every
+    `App` subclass that installs `CfcCommandsProvider`. Each concrete class
+    still supplies its own `_screenshots_dir` (set in `__init__`) and its
+    own `action_quit` — this mixin only owns the two commands that are
+    identical everywhere they appear.
+    """
+
+    def action_show_keyboard_help(self) -> None:
+        self.push_screen(KeyboardHelpModal())
+
+    async def action_save_screenshot(self) -> None:
+        try:
+            svg = self.export_screenshot()
+            final_path = _write_screenshot(svg, self._screenshots_dir)
+        except ScreenshotError as exc:
+            self.notify(str(exc), title="Screenshot failed", severity="error", markup=False, timeout=10)
+            return
+        self.notify(f"Screenshot saved to {final_path}", title="Screenshot saved", markup=False)
+
+
 # --- the startup-failure app: never a raw traceback, never a mock Hub ------
 
-class StartupFailureApp(App):
+class StartupFailureApp(_CommandSurfaceMixin, App):
     """Rendered instead of `CfcApp` when configuration or store startup
     refuses real chat (Concept.md's "Startup refusal" section). `message`
     is the safe, already-bounded text the failing call itself produced
@@ -463,11 +733,16 @@ class StartupFailureApp(App):
 
     CSS_PATH = "tui.tcss"
     BINDINGS = [Binding("q", "quit", "Quit", show=True, priority=True)]
+    COMMANDS = {CfcCommandsProvider}
 
-    def __init__(self, message: str, next_step: str | None = None) -> None:
+    def __init__(
+        self, message: str, next_step: str | None = None, *,
+        screenshots_dir: Path | None = None,
+    ) -> None:
         super().__init__()
         self._message = message
         self._next_step = next_step
+        self._screenshots_dir = screenshots_dir or _DEFAULT_SCREENSHOTS_DIR
 
     def compose(self) -> ComposeResult:
         with Vertical(id="startup-failure"):
@@ -480,7 +755,7 @@ class StartupFailureApp(App):
 
 # --- the real app ------------------------------------------------------
 
-class CfcApp(App):
+class CfcApp(_CommandSurfaceMixin, App):
     """The working ordinary-chat client. Constructed with an already-open
     `ConversationService` and a `Responder` this app does not construct
     itself (`build_app` does that) — the same constructor tests use with a
@@ -489,25 +764,56 @@ class CfcApp(App):
 
     CSS_PATH = "tui.tcss"
     BINDINGS = [Binding("ctrl+q", "quit", "Quit", show=True, priority=True)]
+    COMMANDS = {CfcCommandsProvider}
 
-    def __init__(self, service: ConversationService, responder: Responder, model: str) -> None:
+    def __init__(
+        self, service: ConversationService, responder: Responder, model: str, *,
+        theme: settings.ThemeSettings | None = None,
+        screenshots_dir: Path | None = None,
+    ) -> None:
         super().__init__()
         self.service = service
         self._responder = responder
         self._model = model
+        self._theme_settings = theme or settings.ThemeSettings(settings.DEFAULT_TUI_THEME)
+        self._screenshots_dir = screenshots_dir or _DEFAULT_SCREENSHOTS_DIR
         self._chat_workers: dict[str, Worker] = {}
         self._turn_runs: dict[str, _TurnRun] = {}
         self._drafts: dict[str, str] = {}
         self._shut_down = False
 
     def on_mount(self) -> None:
+        self.theme = _TEXTUAL_THEME_NAMES[self._theme_settings.name]
+        if self._theme_settings.invalid_value_notice:
+            self.notify(
+                self._theme_settings.invalid_value_notice,
+                title="Theme", severity="warning", markup=False, timeout=10,
+            )
         self.push_screen(HubScreen())
 
     # -- navigation --------------------------------------------------------
 
     def open_chat(self, chat_id: ChatId) -> None:
+        """Opens `chat_id`'s `ChatScreen`. Pushed from the Hub, preserving
+        the existing one-`Esc`-back route; replaced in place when a
+        `ChatScreen` is already active, so switching between stored chats
+        does not grow the screen stack (B-2.0-55, Concept.md's "one chat
+        screen at a time"). `switch_screen` suspends the outgoing screen
+        before removing it — the same `on_screen_suspend` hook `pop_screen`
+        already relies on for `save_draft` — so a switched-away draft is
+        never lost. Selecting the chat already displayed is a no-op;
+        callers already guard this (`ChatScreen.on_list_view_selected`,
+        `ChatsModal`'s dismiss handler) and this repeats the guard so no
+        future caller can skip it.
+        """
+        if isinstance(self.screen, ChatScreen) and self.screen.chat_id == chat_id:
+            return
         chat = self.service.get_chat(chat_id)
-        self.push_screen(ChatScreen(chat_id, chat.title))
+        new_screen = ChatScreen(chat_id, chat.title)
+        if isinstance(self.screen, ChatScreen):
+            self.switch_screen(new_screen)
+        else:
+            self.push_screen(new_screen)
 
     # -- the draft a chat's composer held when last left, read and written
     # -- only by ChatScreen's own mount/suspend hooks ------------------------
@@ -657,7 +963,7 @@ def build_app(
     else:
         responder = provider_adapter.OpenAICompatibleAdapter(built.provider)
 
-    return CfcApp(service, responder, built.provider.model)
+    return CfcApp(service, responder, built.provider.model, theme=built.theme)
 
 
 def run(config_path: Path | None = None) -> int:

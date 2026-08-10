@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from cfc import conversation_store, tui
+from cfc import conversation_store, provider_wire, settings, tui
 from cfc.conversation_service import open_service
 from cfc.conversation_types import (
     Cancellation,
@@ -25,6 +25,7 @@ from cfc.conversation_types import (
     Failure,
     FailureEvidence,
     FailureKind,
+    Role,
 )
 
 
@@ -137,11 +138,32 @@ def open_test_service(tmp_path: Path):
     return open_service(tmp_path / "direct" / "chat.db")
 
 
-def make_app(tmp_path: Path, responder=None, model: str = "fixture-model") -> tui.CfcApp:
+def make_app(
+    tmp_path: Path, responder=None, model: str = "fixture-model", *,
+    theme: settings.ThemeSettings | None = None,
+    screenshots_dir: Path | None = None,
+) -> tui.CfcApp:
     service = open_test_service(tmp_path)
     if responder is None:
         responder = FixedResponder(Completion(content="the answer"))
-    return tui.CfcApp(service, responder, model)
+    return tui.CfcApp(
+        service, responder, model,
+        theme=theme, screenshots_dir=screenshots_dir or (tmp_path / "screenshots"),
+    )
+
+
+async def run_command(pilot, query: str) -> None:
+    """Drives cfc's Ctrl+P palette through its real keyboard route: open it,
+    type an exact command name so only that command matches, then Enter to
+    select the highlighted (top) hit — the same route a person uses, never a
+    direct call to the command's own action method (Work Order Step 4).
+    """
+    await pilot.press("ctrl+p")
+    await pilot.pause()
+    await pilot.press(*query)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
 
 
 # === build_app: the composition seam ========================================
@@ -898,3 +920,671 @@ async def test_quit_cancels_running_workers_then_closes_responder_and_service(tm
 
     assert responder.aclose_called is True
     assert app.service._store._closed is True
+
+
+# === chat replacement: one chat screen at a time (B-2.0-55) =================
+
+async def test_wide_switcher_replaces_the_screen_and_preserves_both_drafts(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen_a = await open_new_chat(app, pilot, "chat a")
+            await type_text(pilot, "draft a")
+            await app.pop_screen()
+            await pilot.pause()
+            screen_b = await open_new_chat(app, pilot, "chat b")
+            await type_text(pilot, "draft b")
+            await pilot.pause()
+
+            stack_before = len(app.screen_stack)
+
+            def switch_via_docked_row(target_id):
+                items = switcher_items(app.screen)
+                index = next(i for i, item in enumerate(items) if item.chat_id == target_id)
+                switcher = app.screen.query_one("#chat-switcher", tui.ListView)
+                switcher.focus()
+                switcher.index = index
+
+            switch_via_docked_row(screen_a.chat_id)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(app.screen_stack) == stack_before  # replaced, never pushed
+            assert app.screen.chat_id == screen_a.chat_id
+            assert app.screen.query_one(tui.Composer).text == "draft a"
+            assert app.screen.query_one(tui.Composer).has_focus
+
+            switch_via_docked_row(screen_b.chat_id)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(app.screen_stack) == stack_before
+            assert app.screen.chat_id == screen_b.chat_id
+            assert app.screen.query_one(tui.Composer).text == "draft b"
+
+            # one Esc from a switched chat reaches the Hub — no screen left behind
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.HubScreen)
+    finally:
+        await app.shutdown()
+
+
+async def test_narrow_chats_modal_replaces_the_screen_and_preserves_both_drafts(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test(size=(60, 24)) as pilot:
+            screen_a = await open_new_chat(app, pilot, "chat a")
+            await type_text(pilot, "draft a")
+            await app.pop_screen()
+            await pilot.pause()
+            screen_b = await open_new_chat(app, pilot, "chat b")
+            await type_text(pilot, "draft b")
+            await pilot.pause()
+
+            stack_before = len(app.screen_stack)
+            await pilot.press("f2")
+            assert isinstance(app.screen, tui.ChatsModal)
+            list_view = app.screen.query_one("#chats-modal-list", tui.ListView)
+            items = list(list_view.query(tui.ListItem))
+            target_index = next(i for i, item in enumerate(items) if item.chat_id == screen_a.chat_id)
+            list_view.index = target_index
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(app.screen_stack) == stack_before
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert app.screen.chat_id == screen_a.chat_id
+            assert app.screen.query_one(tui.Composer).text == "draft a"
+            assert app.screen.query_one(tui.Composer).has_focus
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.HubScreen)
+    finally:
+        await app.shutdown()
+
+
+async def test_a_completion_while_its_screen_is_replaced_is_visible_on_return(tmp_path):
+    """Concept.md's "Optimistic chat state" failure mode: a replaced screen's
+    worker keeps running app-owned, and reopening renders the canonical
+    snapshot rather than a stale or lost screen-local guess."""
+    responder = SlowResponder()
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen_a = await open_new_chat(app, pilot, "chat a")
+            await app.pop_screen()
+            await pilot.pause()
+            screen_b = await open_new_chat(app, pilot, "chat b")
+            await app.pop_screen()
+            await pilot.pause()
+
+            app.open_chat(screen_a.chat_id)
+            await pilot.pause()
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.is_chat_busy(screen_a.chat_id)
+
+            def switch_via_docked_row(target_id):
+                items = switcher_items(app.screen)
+                index = next(i for i, item in enumerate(items) if item.chat_id == target_id)
+                switcher = app.screen.query_one("#chat-switcher", tui.ListView)
+                switcher.focus()
+                switcher.index = index
+
+            # replace chat a (turn still running) with chat b
+            switch_via_docked_row(screen_b.chat_id)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen.chat_id == screen_b.chat_id
+            assert app.is_chat_busy(screen_a.chat_id)
+
+            responder.result = Completion(content="finished while replaced")
+            responder.released.set()
+            await pilot.pause()
+
+            # switch back to chat a — its own screen was gone the whole time
+            switch_via_docked_row(screen_a.chat_id)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.screen.chat_id == screen_a.chat_id
+            assert "cfc: finished while replaced" in transcript_lines(app.screen)
+    finally:
+        await app.shutdown()
+
+
+# === omitted-turn recovery: honest wording plus per-turn restore ===========
+# (B-2.0-55, D-2.0-53)
+
+def restore_button_for(screen, turn_id) -> tui.Button:
+    return screen.query_one(f"#restore-{turn_id.value}", tui.Button)
+
+
+def latest_turn(app, chat_id):
+    return app.service.snapshot(chat_id).turns[-1]
+
+
+async def test_a_failed_turns_wording_omits_without_claiming_non_delivery(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "the provider declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert any(tui._OMISSION_NOTICE in line for line in lines)
+            assert not any("never received" in line.lower() for line in lines)
+            assert not any("did not reach" in line.lower() for line in lines)
+
+            turn = latest_turn(app, screen.chat_id)
+            assert restore_button_for(screen, turn.id).label.plain == tui._RESTORE_LABEL
+    finally:
+        await app.shutdown()
+
+
+async def test_a_cancelled_turns_wording_omits_without_claiming_non_delivery(tmp_path):
+    responder = SlowResponder()
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("escape")  # cancels the active turn
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert "[turn cancelled]" in lines
+            assert any(tui._OMISSION_NOTICE in line for line in lines)
+            assert not any("never received" in line.lower() for line in lines)
+
+            turn = latest_turn(app, screen.chat_id)
+            assert restore_button_for(screen, turn.id) is not None
+    finally:
+        await app.shutdown()
+
+
+async def test_a_later_request_omits_the_failed_turns_user_message(tmp_path):
+    """Uses the real `provider_wire` converter — untouched by this loop — to
+    interpret the raw canonical snapshot the responder received, proving the
+    settled omission rule still holds end to end through the new wording and
+    restore control, without re-testing `provider_wire.py`'s own unit proof.
+    """
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = ManualResponder()
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "first, will fail")
+            await pilot.press("enter")
+            await pilot.pause()
+            responder.release(0, Failure(evidence))
+            await pilot.pause()
+
+            await type_text(pilot, "second, will succeed")
+            await pilot.press("enter")
+            await pilot.pause()
+            responder.release(1, Completion(content="ok"))
+            await pilot.pause()
+
+            second_snapshot, second_model = responder.calls[1]
+            plan = provider_wire.build_request_plan(second_snapshot, second_model)
+            wire_user_texts = [m.content for m in plan.messages if m.role == "user"]
+            assert "first, will fail" not in wire_user_texts
+            assert "second, will succeed" in wire_user_texts
+            assert len(plan.omitted) == 1
+    finally:
+        await app.shutdown()
+
+
+async def test_restoring_copies_the_exact_stored_message_and_focuses_the_composer(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "the exact stored text")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert screen.query_one(tui.Composer).text == ""
+
+            turn = latest_turn(app, screen.chat_id)
+            button = restore_button_for(screen, turn.id)
+            button.focus()
+            await pilot.pause()
+            await pilot.press("enter")  # keyboard route: a focused Button
+            await pilot.pause()
+
+            composer = screen.query_one(tui.Composer)
+            assert composer.text == "the exact stored text"
+            assert composer.has_focus
+    finally:
+        await app.shutdown()
+
+
+async def test_restore_activates_by_mouse_click_the_same_as_keyboard(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "click me back")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            turn = latest_turn(app, screen.chat_id)
+            button = restore_button_for(screen, turn.id)
+            await pilot.click(button)
+            await pilot.pause()
+
+            composer = screen.query_one(tui.Composer)
+            assert composer.text == "click me back"
+    finally:
+        await app.shutdown()
+
+
+async def test_restore_does_not_contact_the_responder(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+            calls_before = len(responder.calls)
+
+            turn = latest_turn(app, screen.chat_id)
+            await pilot.click(restore_button_for(screen, turn.id))
+            await pilot.pause()
+
+            assert len(responder.calls) == calls_before
+    finally:
+        await app.shutdown()
+
+
+async def test_multiple_omissions_each_restore_their_own_message(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "omission one")
+            await pilot.press("enter")
+            await pilot.pause()
+            turn_one = latest_turn(app, screen.chat_id)
+
+            await type_text(pilot, "omission two")
+            await pilot.press("enter")
+            await pilot.pause()
+            turn_two = latest_turn(app, screen.chat_id)
+            assert turn_one.id != turn_two.id
+
+            await pilot.click(restore_button_for(screen, turn_two.id))
+            await pilot.pause()
+            assert screen.query_one(tui.Composer).text == "omission two"
+
+            screen.query_one(tui.Composer).text = ""
+            await pilot.pause()
+            await pilot.click(restore_button_for(screen, turn_one.id))
+            await pilot.pause()
+            assert screen.query_one(tui.Composer).text == "omission one"
+    finally:
+        await app.shutdown()
+
+
+async def test_restore_refuses_and_preserves_state_when_the_composer_has_a_draft(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+            turn = latest_turn(app, screen.chat_id)
+
+            await type_text(pilot, "an unrelated draft")
+            await pilot.pause()
+            await pilot.click(restore_button_for(screen, turn.id))
+            await pilot.pause()
+
+            assert screen.query_one(tui.Composer).text == "an unrelated draft"
+            status = screen.query_one("#chat-status", tui.Static)
+            assert "already" in str(status.content) or "draft" in str(status.content)
+
+            stored = app.service.snapshot(screen.chat_id)
+            stored_user_texts = [m.content for m in stored.messages if m.role is Role.USER]
+            assert "q" in stored_user_texts
+    finally:
+        await app.shutdown()
+
+
+async def test_restore_refuses_with_a_bounded_notice_when_the_stored_message_is_missing(tmp_path):
+    """The stored-user-message-gone case is not reachable through ordinary
+    use; the store row is removed directly to exercise cfc's own defensive
+    refusal, then restore is still driven through its real mouse route."""
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = FixedResponder(Failure(evidence))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "q")
+            await pilot.press("enter")
+            await pilot.pause()
+            turn = latest_turn(app, screen.chat_id)
+
+            app.service._store._conn.execute(
+                "DELETE FROM cfc_messages WHERE turn_id = ?", (turn.id.value,)
+            )
+
+            await pilot.click(restore_button_for(screen, turn.id))
+            await pilot.pause()
+
+            assert screen.query_one(tui.Composer).text == ""
+            status = screen.query_one("#chat-status", tui.Static)
+            assert tui._RESTORE_MISSING_NOTICE == str(status.content)
+    finally:
+        await app.shutdown()
+
+
+async def test_a_submitted_restored_copy_is_a_new_turn_and_the_original_is_unchanged(tmp_path):
+    evidence = FailureEvidence(FailureKind.RESPONDER, "declined")
+    responder = ManualResponder()
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "try again please")
+            await pilot.press("enter")
+            await pilot.pause()
+            responder.release(0, Failure(evidence))
+            await pilot.pause()
+            original_turn = latest_turn(app, screen.chat_id)
+
+            await pilot.click(restore_button_for(screen, original_turn.id))
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            responder.release(1, Completion(content="second time worked"))
+            await pilot.pause()
+
+            snapshot = app.service.snapshot(screen.chat_id)
+            assert len(snapshot.turns) == 2
+            unchanged_original = next(t for t in snapshot.turns if t.id == original_turn.id)
+            assert isinstance(unchanged_original.outcome, tui.FailedOutcome)
+            new_turn = next(t for t in snapshot.turns if t.id != original_turn.id)
+            assert new_turn.id != original_turn.id
+            assert isinstance(new_turn.outcome, tui.CompletedOutcome)
+
+            lines = transcript_lines(screen)
+            # the original turn's message and the resubmitted copy are two
+            # separately stored user messages, not one merged/deduped line
+            assert lines.count("You: try again please") == 2
+            assert "cfc: second time worked" in lines
+            assert any(tui._OMISSION_NOTICE in line for line in lines)  # still marked omitted
+    finally:
+        await app.shutdown()
+
+
+# === theme: optional durable startup preference (D-2.0-49) =================
+
+async def test_build_app_applies_the_default_dark_theme_when_unset(tmp_path):
+    path = write_config(tmp_path, VALID_BODY)
+    app = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme == "textual-dark"
+            assert list(app._notifications) == []
+    finally:
+        await app.shutdown()
+
+
+async def test_build_app_applies_the_light_theme_when_configured(tmp_path):
+    path = write_config(tmp_path, VALID_BODY + "TUI_THEME = 'light'\n")
+    app = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme == "textual-light"
+            assert list(app._notifications) == []
+    finally:
+        await app.shutdown()
+
+
+async def test_build_app_falls_back_to_dark_with_a_visible_notice_for_an_invalid_theme(tmp_path):
+    path = write_config(tmp_path, VALID_BODY + "TUI_THEME = 'purple'\n")
+    app = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme == "textual-dark"  # still reaches ordinary chat
+            notices = [n.message for n in app._notifications]
+            assert any("TUI_THEME" in message and "purple" in message for message in notices)
+    finally:
+        await app.shutdown()
+
+
+async def test_build_app_never_mutates_config_py_for_an_invalid_theme(tmp_path):
+    path = write_config(tmp_path, VALID_BODY + "TUI_THEME = 'purple'\n")
+    before = path.read_text(encoding="utf-8")
+    app = tui.build_app(path, responder_factory=_no_network_responder_factory)
+    try:
+        assert path.read_text(encoding="utf-8") == before
+    finally:
+        await app.shutdown()
+
+
+def test_cfc_app_defaults_to_dark_without_an_explicit_theme_argument(tmp_path):
+    app = make_app(tmp_path, theme=None)
+    assert app._theme_settings.name == "dark"
+    app.service.close()
+
+
+# === the cfc-owned Ctrl+P command set (D-2.0-49, D-2.0-56) ==================
+
+async def command_palette_option_names(app) -> list[str]:
+    from textual.command import CommandList
+    await asyncio.sleep(0)
+    command_list = app.screen.query_one(CommandList)
+    return sorted(
+        str(command_list.get_option_at_index(i).prompt).splitlines()[0]
+        for i in range(command_list.option_count)
+    )
+
+
+async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_the_hub(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+            await pilot.pause()
+            assert await command_palette_option_names(app) == [
+                "Keyboard help", "Quit cfc", "Save screenshot",
+            ]
+    finally:
+        await app.shutdown()
+
+
+async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_a_chat_screen(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+            await pilot.pause()
+            assert await command_palette_option_names(app) == [
+                "Keyboard help", "Quit cfc", "Save screenshot",
+            ]
+    finally:
+        await app.shutdown()
+
+
+async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_startup_failure(tmp_path):
+    app = tui.StartupFailureApp(
+        "cfc could not start.", screenshots_dir=tmp_path / "screenshots",
+    )
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        await pilot.pause()
+        assert await command_palette_option_names(app) == [
+            "Keyboard help", "Quit cfc", "Save screenshot",
+        ]
+
+
+async def test_keyboard_help_command_opens_with_the_literal_mapping_and_escape_closes_it(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Keyboard help")
+            assert isinstance(app.screen, tui.KeyboardHelpModal)
+
+            mapping = app.screen.query_one("#keyboard-help-windows-terminal", tui.Static)
+            rendered = str(mapping.content)
+            assert '\\u001b[13;2u' in rendered  # the literal JSON spelling
+            assert "\x1b" not in rendered       # never a live escape byte
+            assert "sendInput" in rendered
+            assert "shift+enter" in rendered
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, tui.KeyboardHelpModal)
+    finally:
+        await app.shutdown()
+
+
+async def test_quit_command_follows_the_existing_orderly_shutdown(tmp_path):
+    responder = SlowResponder()
+    responder.aclose_called = False
+
+    async def aclose():
+        responder.aclose_called = True
+
+    responder.aclose = aclose
+
+    app = make_app(tmp_path, responder=responder)
+    async with app.run_test() as pilot:
+        screen = await open_new_chat(app, pilot)
+        await type_text(pilot, "q")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.is_chat_busy(screen.chat_id)
+
+        await run_command(pilot, "Quit cfc")
+
+    assert responder.aclose_called is True
+    assert app.service._store._closed is True
+
+
+async def test_save_screenshot_command_reports_an_exact_path_and_writes_a_complete_svg(tmp_path):
+    target = tmp_path / "screenshots"
+    app = make_app(tmp_path, screenshots_dir=target)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Save screenshot")
+
+            files = list(target.glob("*.svg"))
+            assert len(files) == 1
+            content = files[0].read_text(encoding="utf-8")
+            assert content.startswith("<svg") or "<svg" in content[:200]
+            assert content.rstrip().endswith("</svg>")
+
+            notices = [n.message for n in app._notifications]
+            assert any(str(files[0]) in message for message in notices)
+    finally:
+        await app.shutdown()
+
+
+async def test_save_screenshot_refuses_when_the_directory_is_blocked_by_a_file(tmp_path):
+    target = tmp_path / "screenshots"
+    target.write_text("not a directory", encoding="utf-8")
+    app = make_app(tmp_path, screenshots_dir=target)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Save screenshot")
+
+            assert target.is_file()  # untouched — never replaced or removed
+            notices = [n.message for n in app._notifications]
+            assert any(str(target) in message for message in notices)
+            assert not any(
+                "Traceback" in message or "NotADirectoryError" in message for message in notices
+            )
+    finally:
+        await app.shutdown()
+
+
+async def test_save_screenshot_refuses_on_a_permission_failure_writing(tmp_path):
+    target = tmp_path / "screenshots"
+    target.mkdir()
+    target.chmod(0o500)  # read + execute, no write
+    app = make_app(tmp_path, screenshots_dir=target)
+    try:
+        async with app.run_test() as pilot:
+            await run_command(pilot, "Save screenshot")
+
+            assert list(target.glob("*.svg")) == []
+            assert list(target.glob(".*")) == []  # no leftover temp file either
+            notices = [n.message for n in app._notifications]
+            assert any(str(target) in message for message in notices)
+    finally:
+        await app.shutdown()
+        target.chmod(0o700)
+
+
+def test_write_screenshot_is_collision_resistant(tmp_path):
+    directory = tmp_path / "shots"
+    stamp = "20260101T000000000000"
+    first = tui._write_screenshot("<svg>one</svg>", directory, timestamp=stamp)
+    second = tui._write_screenshot("<svg>two</svg>", directory, timestamp=stamp)
+
+    assert first != second
+    assert first.name == f"cfc-{stamp}.svg"
+    assert second.name == f"cfc-{stamp}-2.svg"
+    assert first.read_text(encoding="utf-8") == "<svg>one</svg>"
+    assert second.read_text(encoding="utf-8") == "<svg>two</svg>"
+
+
+def test_write_screenshot_refuses_on_a_replacement_failure_and_leaves_no_partial_file(
+    tmp_path, monkeypatch,
+):
+    directory = tmp_path / "shots"
+    stamp = "20260101T000000000000"
+    real_replace = Path.replace
+
+    def failing_replace(self, target):
+        if self.suffix == ".tmp":
+            raise OSError("simulated replacement failure")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", failing_replace)
+
+    with pytest.raises(tui.ScreenshotError) as exc_info:
+        tui._write_screenshot("<svg/>", directory, timestamp=stamp)
+
+    assert str(directory) in str(exc_info.value)
+    assert list(directory.glob("*.svg")) == []
+    assert list(directory.glob(".*")) == []
