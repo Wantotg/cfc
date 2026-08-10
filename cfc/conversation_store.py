@@ -53,12 +53,16 @@ from cfc.conversation_types import (
     ChatId,
     ChatKind,
     CompletedOutcome,
+    ContextCategory,
+    ContextManifestEntry,
+    ContextSelection,
     ConversationSnapshot,
     FailedOutcome,
     FailureEvidence,
     FailureKind,
     Message,
     MessageId,
+    OpeningMessage,
     ProviderProblem,
     Role,
     TimeoutPhase,
@@ -79,11 +83,19 @@ APPLICATION_ID = 0x63666332
 #: real migration path; there is none yet, so an older or newer value both
 #: refuse rather than guess.
 #:
-#: 2 (this build): `cfc_turns` grows `failure_problem`, `failure_timeout_phase`,
-#: and `failure_status_code` to persist the extended provider-wire failure
+#: 2: `cfc_turns` grows `failure_problem`, `failure_timeout_phase`, and
+#: `failure_status_code` to persist the extended provider-wire failure
 #: vocabulary. A version-1 database takes the existing `SCHEMA_TOO_OLD`
 #: refusal route — there is no migration from 1 to 2.
-SCHEMA_VERSION = 2
+#:
+#: 3 (this build): the named-context foundation (Stage 5 loop 1).
+#: `cfc_chats` grows `selected_user_preferences`, `selected_persona`, and
+#: `selected_model`; `cfc_chat_traits` holds each chat's ordered Trait
+#: selection; `cfc_chat_openings` holds at most one frozen First Message per
+#: chat; `cfc_turn_context` holds each turn's ordered context-source
+#: provenance (never a vault body). A version-2 database takes the same
+#: `SCHEMA_TOO_OLD` refusal route — there is no migration from 2 to 3.
+SCHEMA_VERSION = 3
 
 _RECOVERY_HINT = (
     "preserve anything wanted from it, then move or remove {path} so cfc "
@@ -129,7 +141,28 @@ _SCHEMA_STATEMENTS = (
         kind TEXT NOT NULL CHECK (kind = 'ordinary'),
         title TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        selected_user_preferences TEXT,
+        selected_persona TEXT,
+        selected_model TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE cfc_chat_traits (
+        chat_id TEXT NOT NULL REFERENCES cfc_chats(id),
+        position INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        PRIMARY KEY (chat_id, position),
+        UNIQUE (chat_id, filename)
+    )
+    """,
+    """
+    CREATE TABLE cfc_chat_openings (
+        chat_id TEXT PRIMARY KEY REFERENCES cfc_chats(id),
+        source_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        fingerprint TEXT NOT NULL
     )
     """,
     """
@@ -184,9 +217,23 @@ _SCHEMA_STATEMENTS = (
         UNIQUE (turn_id, turn_position)
     )
     """,
+    """
+    CREATE TABLE cfc_turn_context (
+        turn_id TEXT NOT NULL REFERENCES cfc_turns(id),
+        position INTEGER NOT NULL,
+        category TEXT NOT NULL CHECK (category IN
+            ('system_instructions', 'user_preferences', 'persona', 'trait')),
+        name TEXT NOT NULL,
+        character_count INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        PRIMARY KEY (turn_id, position)
+    )
+    """,
     "CREATE INDEX idx_cfc_turns_chat ON cfc_turns(chat_id)",
     "CREATE INDEX idx_cfc_messages_chat ON cfc_messages(chat_id)",
     "CREATE INDEX idx_cfc_messages_turn ON cfc_messages(turn_id)",
+    "CREATE INDEX idx_cfc_chat_traits_chat ON cfc_chat_traits(chat_id)",
+    "CREATE INDEX idx_cfc_turn_context_turn ON cfc_turn_context(turn_id)",
 )
 
 
@@ -541,14 +588,42 @@ def _recover_interrupted_turns(conn: sqlite3.Connection) -> None:
 
 # --- row <-> record translation (only here) -----------------------------
 
-def _row_to_chat(row) -> Chat:
-    id_, kind, title, created_at, updated_at = row
+def _load_traits(conn: sqlite3.Connection, chat_id: str) -> tuple[str, ...]:
+    rows = conn.execute(
+        "SELECT filename FROM cfc_chat_traits WHERE chat_id = ? ORDER BY position ASC",
+        (chat_id,),
+    ).fetchall()
+    return tuple(row[0] for row in rows)
+
+
+def _load_opening(conn: sqlite3.Connection, chat_id: str) -> OpeningMessage | None:
+    row = conn.execute(
+        "SELECT source_name, content, created_at, fingerprint "
+        "FROM cfc_chat_openings WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    source_name, content, created_at, fingerprint = row
+    return OpeningMessage(
+        source_name=source_name, content=content,
+        created_at=_text_to_dt(created_at), fingerprint=fingerprint,
+    )
+
+
+def _row_to_chat(conn: sqlite3.Connection, row) -> Chat:
+    id_, kind, title, created_at, updated_at, prefs, persona, model = row
     return Chat(
         id=ChatId(id_),
         kind=ChatKind(kind),
         title=title,
         created_at=_text_to_dt(created_at),
         updated_at=_text_to_dt(updated_at),
+        context_selection=ContextSelection(
+            user_preferences=prefs, persona=persona,
+            traits=_load_traits(conn, id_), model=model,
+        ),
+        opening=_load_opening(conn, id_),
     )
 
 
@@ -565,7 +640,22 @@ def _row_to_message(row) -> Message:
     )
 
 
-def _row_to_turn(row) -> Turn:
+def _load_turn_context(conn: sqlite3.Connection, turn_id: str) -> tuple[ContextManifestEntry, ...]:
+    rows = conn.execute(
+        "SELECT category, name, position, character_count, fingerprint "
+        "FROM cfc_turn_context WHERE turn_id = ? ORDER BY position ASC",
+        (turn_id,),
+    ).fetchall()
+    return tuple(
+        ContextManifestEntry(
+            category=ContextCategory(category), name=name, order=position,
+            character_count=character_count, fingerprint=fingerprint,
+        )
+        for category, name, position, character_count, fingerprint in rows
+    )
+
+
+def _row_to_turn(conn: sqlite3.Connection, row) -> Turn:
     (id_, chat_id, position, model, started_at, finished_at,
      outcome_kind, failure_kind, failure_reason,
      failure_problem, failure_timeout_phase, failure_status_code,
@@ -598,6 +688,7 @@ def _row_to_turn(row) -> Turn:
         started_at=_text_to_dt(started_at),
         finished_at=_text_to_dt(finished_at) if finished_at is not None else None,
         outcome=outcome,
+        context_manifest=_load_turn_context(conn, id_),
     )
 
 
@@ -657,42 +748,185 @@ class ConversationStore:
         self.close()
         return False
 
+    _CHAT_COLUMNS = (
+        "id, kind, title, created_at, updated_at, "
+        "selected_user_preferences, selected_persona, selected_model"
+    )
+
     # -- chats -----------------------------------------------------------
 
-    def create_chat(self, title: str) -> Chat:
+    def create_chat(self, title: str, model: str) -> Chat:
+        """`model` becomes this chat's initial selected model — every chat
+        has a usable default model from the moment it exists, since
+        `MODEL` is always available (`cfc.settings`).
+        """
         chat_id = ChatId.new()
         now = utc_now()
         conn = self._conn
         conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute(
-                "INSERT INTO cfc_chats (id, kind, title, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO cfc_chats (id, kind, title, created_at, updated_at, "
+                "selected_user_preferences, selected_persona, selected_model) "
+                "VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)",
                 (chat_id.value, ChatKind.ORDINARY.value, title,
-                 _dt_to_text(now), _dt_to_text(now)),
+                 _dt_to_text(now), _dt_to_text(now), model),
             )
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
         return Chat(id=chat_id, kind=ChatKind.ORDINARY, title=title,
-                    created_at=now, updated_at=now)
+                    created_at=now, updated_at=now,
+                    context_selection=ContextSelection(model=model))
 
     def list_chats(self) -> tuple[Chat, ...]:
         rows = self._conn.execute(
-            "SELECT id, kind, title, created_at, updated_at FROM cfc_chats "
-            "ORDER BY rowid ASC"
+            f"SELECT {self._CHAT_COLUMNS} FROM cfc_chats ORDER BY rowid ASC"
         ).fetchall()
-        return tuple(_row_to_chat(row) for row in rows)
+        return tuple(_row_to_chat(self._conn, row) for row in rows)
 
     def get_chat(self, chat_id: ChatId) -> Chat:
         row = self._conn.execute(
-            "SELECT id, kind, title, created_at, updated_at FROM cfc_chats WHERE id = ?",
+            f"SELECT {self._CHAT_COLUMNS} FROM cfc_chats WHERE id = ?",
             (chat_id.value,),
         ).fetchone()
         if row is None:
             raise UnknownChat(chat_id)
-        return _row_to_chat(row)
+        return _row_to_chat(self._conn, row)
+
+    def _require_chat_exists(self, conn: sqlite3.Connection, chat_id: ChatId) -> None:
+        row = conn.execute("SELECT 1 FROM cfc_chats WHERE id = ?", (chat_id.value,)).fetchone()
+        if row is None:
+            raise UnknownChat(chat_id)
+
+    def _refuse_if_active_turn(self, conn: sqlite3.Connection, chat_id: ChatId) -> None:
+        row = conn.execute(
+            "SELECT id FROM cfc_turns WHERE chat_id = ? AND outcome_kind IS NULL",
+            (chat_id.value,),
+        ).fetchone()
+        if row is not None:
+            raise ActiveTurnExists(chat_id, TurnId(row[0]))
+
+    # -- context selection: refused while a turn is active ------------------
+
+    def set_user_preferences(self, chat_id: ChatId, filename: str | None) -> Chat:
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            conn.execute(
+                "UPDATE cfc_chats SET selected_user_preferences = ? WHERE id = ?",
+                (filename, chat_id.value),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    def set_persona(
+        self, chat_id: ChatId, filename: str | None, opening: OpeningMessage | None = None,
+    ) -> Chat:
+        """Sets `chat_id`'s selected Persona filename. When `opening` is
+        given, it becomes this chat's frozen First Message atomically with
+        this selection — but only if this chat is still eligible right now:
+        no turn of any kind exists yet, and no opening is already stored.
+        Checked inside this call's own transaction so a race with a
+        concurrent `start_turn` cannot both start a turn and freeze a late
+        opening. Ineligible, the Persona selection still applies; `opening`
+        is silently not stored (Concept.md: "A Persona selected after the
+        first user turn never adds an opening retroactively"; "Once an
+        opening exists ... never rewrite").
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            conn.execute(
+                "UPDATE cfc_chats SET selected_persona = ? WHERE id = ?",
+                (filename, chat_id.value),
+            )
+            if opening is not None:
+                has_turn = conn.execute(
+                    "SELECT 1 FROM cfc_turns WHERE chat_id = ? LIMIT 1", (chat_id.value,)
+                ).fetchone()
+                has_opening = conn.execute(
+                    "SELECT 1 FROM cfc_chat_openings WHERE chat_id = ?", (chat_id.value,)
+                ).fetchone()
+                if has_turn is None and has_opening is None:
+                    conn.execute(
+                        "INSERT INTO cfc_chat_openings "
+                        "(chat_id, source_name, content, created_at, fingerprint) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (chat_id.value, opening.source_name, opening.content,
+                         _dt_to_text(opening.created_at), opening.fingerprint),
+                    )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    def add_trait(self, chat_id: ChatId, filename: str) -> Chat:
+        """Appends `filename` after this chat's currently selected Traits.
+        Already-selected exactly this filename is a silent no-op — the
+        `UNIQUE (chat_id, filename)` constraint below makes re-adding
+        idempotent rather than an error.
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            row = conn.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM cfc_chat_traits WHERE chat_id = ?",
+                (chat_id.value,),
+            ).fetchone()
+            conn.execute(
+                "INSERT OR IGNORE INTO cfc_chat_traits (chat_id, position, filename) "
+                "VALUES (?, ?, ?)",
+                (chat_id.value, row[0], filename),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    def remove_trait(self, chat_id: ChatId, filename: str) -> Chat:
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            conn.execute(
+                "DELETE FROM cfc_chat_traits WHERE chat_id = ? AND filename = ?",
+                (chat_id.value, filename),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    def set_model(self, chat_id: ChatId, model: str) -> Chat:
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            conn.execute(
+                "UPDATE cfc_chats SET selected_model = ? WHERE id = ?",
+                (model, chat_id.value),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
 
     # -- turns and messages -----------------------------------------------
 
@@ -711,7 +945,7 @@ class ConversationStore:
         ).fetchall()
         return ConversationSnapshot(
             chat_id=chat_id,
-            turns=tuple(_row_to_turn(row) for row in turn_rows),
+            turns=tuple(_row_to_turn(self._conn, row) for row in turn_rows),
             messages=tuple(_row_to_message(row) for row in message_rows),
         )
 
@@ -726,13 +960,22 @@ class ConversationStore:
             f"SELECT {_TURN_COLUMNS} FROM cfc_turns WHERE id = ?",
             (turn_id.value,),
         ).fetchone()
-        return _row_to_turn(row) if row is not None else None
+        return _row_to_turn(self._conn, row) if row is not None else None
 
-    def start_turn(self, chat_id: ChatId, model: str, user_content: str) -> tuple[Turn, Message]:
+    def start_turn(
+        self, chat_id: ChatId, model: str, user_content: str,
+        context_manifest: tuple[ContextManifestEntry, ...] = (),
+    ) -> tuple[Turn, Message]:
         """Raises `ActiveTurnExists` if `chat_id` already has one active
         turn — checked inside this call's own transaction, so it is
         authoritative even against a racing concurrent call, not merely a
         pre-check a caller could outrun (D-2.0-36).
+
+        `model` and `context_manifest` are the already-resolved model and
+        context-source provenance a caller (`conversation_service`)
+        resolved before calling this — this method persists them, in the
+        same transaction as the turn and its opening user message, and
+        never re-resolves either itself.
         """
         self.get_chat(chat_id)
         conn = self._conn
@@ -765,12 +1008,20 @@ class ConversationStore:
                 (message_id.value, chat_id.value, turn_id.value, user_content,
                  _dt_to_text(message_created_at)),
             )
+            for entry in context_manifest:
+                conn.execute(
+                    "INSERT INTO cfc_turn_context "
+                    "(turn_id, position, category, name, character_count, fingerprint) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (turn_id.value, entry.order, entry.category.value, entry.name,
+                     entry.character_count, entry.fingerprint),
+                )
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
         turn = Turn(id=turn_id, chat_id=chat_id, position=position, model=model,
-                    started_at=started_at)
+                    started_at=started_at, context_manifest=context_manifest)
         message = Message(id=message_id, chat_id=chat_id, turn_id=turn_id,
                            turn_position=0, role=Role.USER, content=user_content,
                            created_at=message_created_at)

@@ -368,6 +368,92 @@ def test_conversation_snapshot_turns_default_to_empty():
     assert snapshot.messages == ()
 
 
+# --- context vocabulary: pure values, no I/O (Stage 5 loop 1) ---------------
+
+def aware_dt() -> datetime.datetime:
+    return aware()
+
+
+def make_source(**overrides) -> ct.SourceRecord:
+    fields = dict(
+        category=ct.ContextCategory.PERSONA,
+        name="muse.md",
+        display_name="muse",
+        body="hello",
+        character_count=5,
+        fingerprint="deadbeef",
+    )
+    fields.update(overrides)
+    return ct.SourceRecord(**fields)
+
+
+def test_context_category_has_exactly_five_members():
+    assert {m.value for m in ct.ContextCategory} == {
+        "system_instructions", "user_preferences", "persona", "trait", "first_message",
+    }
+
+
+def test_source_record_character_count_must_match_body_length():
+    make_source(body="hello", character_count=5)  # does not raise
+    with pytest.raises(ValueError):
+        make_source(body="hello", character_count=4)
+
+
+def test_source_record_is_frozen():
+    record = make_source()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        record.body = "changed"  # noqa
+
+
+def test_context_selection_defaults_are_all_absent():
+    selection = ct.ContextSelection()
+    assert selection.user_preferences is None
+    assert selection.persona is None
+    assert selection.traits == ()
+    assert selection.model is None
+
+
+def test_context_selection_preserves_trait_order():
+    selection = ct.ContextSelection(traits=("b.md", "a.md"))
+    assert selection.traits == ("b.md", "a.md")
+
+
+def test_opening_message_requires_aware_created_at():
+    naive = datetime.datetime(2026, 8, 9, 12, 0, 0)
+    with pytest.raises(ValueError):
+        ct.OpeningMessage(source_name="muse.md", content="hi",
+                           created_at=naive, fingerprint="x")
+    opening = ct.OpeningMessage(source_name="muse.md", content="hi",
+                                 created_at=aware_dt(), fingerprint="x")
+    assert opening.content == "hi"
+
+
+def test_context_plan_ordered_sources_with_nothing_selected_is_just_system_instructions():
+    system = make_source(category=ct.ContextCategory.SYSTEM_INSTRUCTIONS,
+                          name="sys", display_name="System Instructions")
+    plan = ct.ContextPlan(system_instructions=system)
+    assert plan.ordered_sources() == (system,)
+
+
+def test_context_plan_ordered_sources_follows_request_order():
+    system = make_source(category=ct.ContextCategory.SYSTEM_INSTRUCTIONS)
+    prefs = make_source(category=ct.ContextCategory.USER_PREFERENCES, name="prefs.md")
+    persona = make_source(category=ct.ContextCategory.PERSONA, name="muse.md")
+    trait_a = make_source(category=ct.ContextCategory.TRAIT, name="a.md")
+    trait_b = make_source(category=ct.ContextCategory.TRAIT, name="b.md")
+    plan = ct.ContextPlan(
+        system_instructions=system, user_preferences=prefs, persona=persona,
+        traits=(trait_a, trait_b),
+    )
+    assert plan.ordered_sources() == (system, prefs, persona, trait_a, trait_b)
+
+
+def test_context_plan_is_frozen():
+    plan = ct.ContextPlan(system_instructions=make_source())
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        plan.persona = make_source()  # noqa
+
+
 # --- module boundary: no flat runtime, config, provider, or filesystem -----
 
 def test_module_touches_no_flat_runtime_config_or_filesystem():

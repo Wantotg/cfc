@@ -1,13 +1,21 @@
 """conversation_service.py — the one provider-independent owner of a turn's
-lifecycle: creating and reopening ordinary chats, atomically starting a
-turn, awaiting the injected responder, and requesting the repository's one
-terminal transition.
+lifecycle: creating and reopening ordinary chats, resolving a chat's named
+context, atomically starting a turn, awaiting the injected responder, and
+requesting the repository's one terminal transition.
 
 No CLI, REPL, or provider adapter calls the repository directly for any of
 this — `conversation_store.ConversationStore` is a dependency of this
 module alone. An HTTP adapter (`cfc.provider_adapter`) supplies a
-`Responder` (`conversation_types.Responder`); it does not gain its own path
-to `cfc_turns`/`cfc_messages`.
+`Responder` (`cfc.provider_wire.Responder`); it does not gain its own path
+to `cfc_turns`/`cfc_messages`, the vault, or the context resolver.
+
+This module owns the one explicit, presentation-free context-resolver
+dependency (`cfc.context`, driven by an already-resolved `VaultSettings`):
+`preview_context` and every selection/model operation resolve or persist
+through it, and `send_turn` resolves one fresh `ContextPlan` before it
+starts a durable turn — a context refusal therefore causes no provider
+request and no orphaned durable user message. The TUI, the store, and the
+adapter never independently reread a vault file or rebuild context.
 
 `send_turn` is a coroutine. Only the responder await can take real time —
 `start_turn`, the pre-await `snapshot` read, and every finalising call
@@ -19,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from dataclasses import dataclass, field
 
+from cfc import context as context_mod
 from cfc.conversation_store import (
     ConflictingFinalisation,
     ConversationStore,
@@ -31,15 +41,51 @@ from cfc.conversation_types import (
     Chat,
     ChatId,
     Completion,
+    ContextCategory,
+    ContextManifestEntry,
+    ContextPlan,
     ConversationSnapshot,
     Failure,
     FailureEvidence,
     FailureKind,
-    Responder,
-    ResponderResult,
+    OpeningMessage,
+    SourceRecord,
     Turn,
     TurnId,
+    utc_now,
 )
+from cfc.context import FirstMessageLookup, SourceOption
+from cfc.provider_wire import Responder, ResponderResult, build_request_plan
+from cfc.settings import VaultCategorySettings, VaultSettings
+
+
+@dataclass(frozen=True)
+class CategoryState:
+    """One optional context category's current resolved state, for display —
+    never fail-fast the way `build_context_plan` is: a broken Persona must
+    not hide whether Traits are fine. At most one of `source`/
+    `unavailable_reason` is set, and only when `selected_name` is not
+    `None`; all three are absent together for "nothing selected".
+    """
+    category: ContextCategory
+    selected_name: str | None
+    source: SourceRecord | None = None
+    unavailable_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ContextRows:
+    """Every row `tui.py`'s Context modal renders, resolved together in one
+    call so the modal never shows five independently stale reads. `traits`
+    preserves selection order; `first_message` is `None` once a chat already
+    has a frozen `opening` — nothing further to look up once an opening
+    exists.
+    """
+    system_instructions: SourceRecord
+    user_preferences: CategoryState
+    persona: CategoryState
+    traits: tuple[CategoryState, ...] = field(default_factory=tuple)
+    first_message: FirstMessageLookup | None = None
 
 
 #: B-2.0-33: the one stored reason for every internal failure — a responder
@@ -72,14 +118,27 @@ class TurnEndingFailed(ConversationStoreError):
         )
 
 
+#: `ContextCategory` -> the `VaultSettings` field the resolver reads for it.
+#: Named once here so `available_sources`/`set_persona` cannot drift onto two
+#: different mappings.
+_CATEGORY_VAULT_FIELD = {
+    ContextCategory.USER_PREFERENCES: "user_preferences",
+    ContextCategory.PERSONA: "personas",
+    ContextCategory.TRAIT: "traits",
+    ContextCategory.FIRST_MESSAGE: "first_messages",
+}
+
+
 class ConversationService:
-    """Construct with an already-open `ConversationStore` — this module
-    never resolves a database path itself. `open_service` is the
-    convenience constructor for the common case of owning that store too.
+    """Construct with an already-open `ConversationStore` and an already-
+    resolved `VaultSettings` — this module never resolves a database path
+    or a config snapshot itself. `open_service` is the convenience
+    constructor for the common case of owning the store too.
     """
 
-    def __init__(self, store: ConversationStore):
+    def __init__(self, store: ConversationStore, vault: VaultSettings):
         self._store = store
+        self._vault = vault
 
     def close(self) -> None:
         self._store.close()
@@ -93,8 +152,8 @@ class ConversationService:
 
     # -- chats -----------------------------------------------------------
 
-    def create_chat(self, title: str) -> Chat:
-        return self._store.create_chat(title)
+    def create_chat(self, title: str, model: str) -> Chat:
+        return self._store.create_chat(title, model)
 
     def list_chats(self) -> tuple[Chat, ...]:
         return self._store.list_chats()
@@ -108,15 +167,127 @@ class ConversationService:
     def get_turn(self, turn_id: TurnId) -> Turn:
         return self._store.get_turn(turn_id)
 
+    # -- context: preview and selection, through the resolver dependency ----
+
+    def preview_context(self, chat_id: ChatId) -> ContextPlan:
+        """The exact ordered prefix a new turn would use *right now* — a
+        fresh resolution against this chat's current selection, never a
+        cached one. Raises `cfc.context.SourceUnavailable` exactly as
+        `send_turn` would for the same selection (Concept.md's "Inspection
+        describes the next turn").
+        """
+        chat = self._store.get_chat(chat_id)
+        return context_mod.build_context_plan(self._vault, chat.context_selection)
+
+    def _category_settings(self, category: ContextCategory) -> VaultCategorySettings:
+        return getattr(self._vault, _CATEGORY_VAULT_FIELD[category])
+
+    def _resolve_category_state(
+        self, category: ContextCategory, filename: str | None,
+    ) -> CategoryState:
+        if filename is None:
+            return CategoryState(category, None)
+        try:
+            source = context_mod.read_source(category, self._category_settings(category), filename)
+            return CategoryState(category, filename, source=source)
+        except context_mod.SourceUnavailable as exc:
+            return CategoryState(category, filename, unavailable_reason=exc.reason)
+
+    def context_rows(self, chat_id: ChatId) -> ContextRows:
+        """Every row the Context modal renders, resolved independently —
+        never `preview_context`'s fail-fast plan, so one broken selection
+        cannot hide the state of every other row (Concept.md's "The Context
+        modal is both the selector and the inspection route").
+        """
+        chat = self._store.get_chat(chat_id)
+        selection = chat.context_selection
+        first_message = None
+        if chat.opening is None and selection.persona is not None:
+            first_message = context_mod.look_up_first_message(
+                self._vault.first_messages, selection.persona,
+            )
+        return ContextRows(
+            system_instructions=context_mod.system_instructions_record(),
+            user_preferences=self._resolve_category_state(
+                ContextCategory.USER_PREFERENCES, selection.user_preferences),
+            persona=self._resolve_category_state(ContextCategory.PERSONA, selection.persona),
+            traits=tuple(
+                self._resolve_category_state(ContextCategory.TRAIT, filename)
+                for filename in selection.traits
+            ),
+            first_message=first_message,
+        )
+
+    def context_entry_fingerprint_changed(self, entry: ContextManifestEntry) -> bool:
+        """`True` if `entry` names a vault-owned source and a fresh read no
+        longer matches the fingerprint this turn actually used — including
+        a source that has since become entirely unavailable. Always `False`
+        for `SYSTEM_INSTRUCTIONS`, which this build ships fixed.
+        """
+        if entry.category is ContextCategory.SYSTEM_INSTRUCTIONS:
+            return False
+        try:
+            fresh = context_mod.read_source(
+                entry.category, self._category_settings(entry.category), entry.name,
+            )
+        except context_mod.SourceUnavailable:
+            return True
+        return fresh.fingerprint != entry.fingerprint
+
+    def available_sources(self, category: ContextCategory) -> tuple[SourceOption, ...]:
+        """Every currently unambiguous filename this category's configured
+        vault directory offers, for a Context modal's Add/Change picker.
+        """
+        return context_mod.available_sources(self._category_settings(category))
+
+    def set_user_preferences(self, chat_id: ChatId, filename: str | None) -> Chat:
+        return self._store.set_user_preferences(chat_id, filename)
+
+    def set_persona(self, chat_id: ChatId, filename: str | None) -> Chat:
+        """Sets `chat_id`'s Persona selection. When `filename` names a
+        Persona with a usable First Messages companion, that companion is
+        offered to the store as a candidate opening — `ConversationStore.
+        set_persona` remains the sole, atomic authority on whether this
+        chat is still eligible to freeze it (Concept.md: "Only the first
+        eligible Persona selection may freeze it").
+        """
+        opening: OpeningMessage | None = None
+        if filename is not None:
+            lookup = context_mod.look_up_first_message(self._vault.first_messages, filename)
+            if lookup.state is context_mod.FirstMessageState.USABLE:
+                record = lookup.record
+                opening = OpeningMessage(
+                    source_name=record.name, content=record.body,
+                    created_at=utc_now(), fingerprint=record.fingerprint,
+                )
+        return self._store.set_persona(chat_id, filename, opening=opening)
+
+    def add_trait(self, chat_id: ChatId, filename: str) -> Chat:
+        return self._store.add_trait(chat_id, filename)
+
+    def remove_trait(self, chat_id: ChatId, filename: str) -> Chat:
+        return self._store.remove_trait(chat_id, filename)
+
+    def set_model(self, chat_id: ChatId, model: str) -> Chat:
+        return self._store.set_model(chat_id, model)
+
     # -- the turn lifecycle -------------------------------------------------
 
-    async def send_turn(self, chat_id: ChatId, model: str, user_content: str,
+    async def send_turn(self, chat_id: ChatId, user_content: str,
                          responder: Responder) -> Turn:
-        """Start a turn, hand the responder exactly the stored canonical
-        history plus the model, and finalise the one result it returns.
+        """Resolve this chat's fresh context plan and current model, start a
+        turn, hand the responder exactly the resulting request plan, and
+        finalise the one result it returns.
 
-        The responder receives a `ConversationSnapshot` and a model string —
-        nothing that could let it reach `cfc_turns`/`cfc_messages` itself.
+        The context plan is resolved, and the request plan built, from
+        `chat` as read once at the top of this call — before `start_turn`.
+        A `cfc.context.SourceUnavailable` here propagates straight to the
+        caller: no turn is started, so there is nothing for this method to
+        end (mirrors `ActiveTurnExists`, below).
+
+        The responder receives only the finished `RequestPlan` — nothing
+        that could let it reach `cfc_turns`/`cfc_messages`, the vault, or a
+        source body outside what is already on that plan.
 
         **Once this method has started a turn, that turn ends before this
         method does.** Every way out of the body below is covered:
@@ -156,11 +327,17 @@ class ConversationService:
         Only a process that dies outright leaves an active turn behind, and
         `open_store`'s reopen recovery is that case's route.
         """
-        turn, _user_message = self._store.start_turn(chat_id, model, user_content)
+        chat = self._store.get_chat(chat_id)
+        context_plan = context_mod.build_context_plan(self._vault, chat.context_selection)
+        model = chat.context_selection.model
+        manifest = context_plan.to_manifest()
+
+        turn, _user_message = self._store.start_turn(chat_id, model, user_content, manifest)
 
         try:
             snapshot = self._store.snapshot(chat_id)
-            result: ResponderResult = await responder.respond(snapshot, model)
+            plan = build_request_plan(context_plan, chat.opening, snapshot, model)
+            result: ResponderResult = await responder.respond(plan)
             return self._apply_result(turn.id, result)
         except asyncio.CancelledError:
             self._end_unfinished_as_cancelled(turn.id)
@@ -222,8 +399,11 @@ class ConversationService:
         raise TypeError(f"responder returned an unrecognised result: {result!r}")
 
 
-def open_service(path) -> ConversationService:
-    """Open the store at `path` and wrap it in a `ConversationService`.
-    `path` must already be resolved, exactly like `conversation_store.open_store`.
+def open_service(path, vault: VaultSettings) -> ConversationService:
+    """Open the store at `path` and wrap it, with `vault`, in a
+    `ConversationService`. `path` must already be resolved, exactly like
+    `conversation_store.open_store`; `vault` is `cfc.settings.build_vault_
+    settings`'s own already-resolved output — this module never resolves
+    a config snapshot itself.
     """
-    return ConversationService(open_store(path))
+    return ConversationService(open_store(path), vault)

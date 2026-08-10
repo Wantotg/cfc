@@ -1,22 +1,31 @@
 """provider_wire.py — the pure conversion from cfc's stored conversation
-records to one OpenAI-compatible request plan (Q-2.0-29).
+records to one OpenAI-compatible request plan (Q-2.0-29), now including the
+named context prefix (Stage 5 loop 1).
 
 The stored ledger and the provider request answer different questions:
 SQLite records what happened in cfc, the wire request contains only a
 conversation shape a provider can continue safely. This module is that
 seam, and nothing else. It never opens a socket, never touches SQLite, and
-never mutates the `ConversationSnapshot` it is given — it only reads it and
-builds fresh, immutable request-plan values.
+never mutates the `ConversationSnapshot`/`ContextPlan` it is given — it only
+reads them and builds fresh, immutable request-plan values.
 
-The rule this module applies:
+`build_request_plan`'s exact message order:
 
-- both literal messages from every completed turn go on the wire;
-- the user-only message of every failed, cancelled, or interrupted turn is
-  omitted (interrupted turns are `FailedOutcome` underneath — the store
-  never gives them a second shape) and named in the returned omission
-  account instead;
-- the user message of the one current active turn (the turn with no
-  outcome yet) goes on the wire.
+1. cfc System Instructions, selected User Preferences, selected Persona,
+   and selected Traits in stored selection order — one `system` message
+   each, only for a category the `ContextPlan` actually resolved (a blank
+   optional category emits no message; it is never a blank string);
+2. the chat's frozen First Message, as one `assistant` message, when one is
+   given;
+3. the unchanged Stage 3 stored-turn history and omission account:
+
+   - both literal messages from every completed turn go on the wire;
+   - the user-only message of every failed, cancelled, or interrupted turn
+     is omitted (interrupted turns are `FailedOutcome` underneath — the
+     store never gives them a second shape) and named in the returned
+     omission account instead;
+   - the user message of the one current active turn (the turn with no
+     outcome yet) goes on the wire.
 
 An omitted message is never deleted, rewritten, merged into a later prompt,
 or replaced with an invented assistant reply — it stays exactly as stored,
@@ -33,11 +42,15 @@ sort a bad snapshot into plausibility or discard an unexplained row.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from cfc.conversation_types import (
     CompletedOutcome,
+    ContextPlan,
     ConversationSnapshot,
     Message,
+    OpeningMessage,
+    ResponderResult,
     Role,
     Turn,
     TurnId,
@@ -73,11 +86,15 @@ class OmittedTurn:
 
 @dataclass(frozen=True)
 class RequestPlan:
-    """An immutable, OpenAI-compatible request plan. Nothing here is a raw
-    provider dictionary — the adapter (`cfc.provider_adapter`) is the only
-    code that turns this into JSON and sends it. Deliberately narrow: no
-    system/named context, tools, reasoning fields, sampling controls, or
-    stored provider JSON is expressible here.
+    """An immutable, OpenAI-compatible request plan — cfc's own named
+    context prefix (System Instructions, User Preferences, Persona, Traits),
+    a frozen opening when present, then the Stage 3 stored-turn history, all
+    already flattened into `messages` in exact wire order. Nothing here is a
+    raw provider dictionary — the adapter (`cfc.provider_adapter`) is the
+    only code that turns this into JSON and sends it; it receives this exact
+    object and nothing else, never the sources or snapshot it was built
+    from. Deliberately narrow: no tools, reasoning fields, sampling
+    controls, or stored provider JSON is expressible here.
     """
     model: str
     messages: tuple[WireMessage, ...] = field(default_factory=tuple)
@@ -171,10 +188,17 @@ def _require_turn_message_shape(turn: Turn, msgs: list[Message]) -> None:
         raise MalformedSnapshot(f"turn {turn.id} has an unrecognised outcome type: {outcome_name}")
 
 
-def build_request_plan(snapshot: ConversationSnapshot, model: str) -> RequestPlan:
-    """The pure conversion this module exists for. Refuses with
-    `MalformedSnapshot` rather than guessing when `snapshot` is incoherent.
-    Never mutates `snapshot`.
+def build_request_plan(
+    context: ContextPlan, opening: OpeningMessage | None,
+    snapshot: ConversationSnapshot, model: str,
+) -> RequestPlan:
+    """The pure conversion this module exists for: `context`'s resolved
+    sources, `opening` when a chat has one, and `snapshot`'s stored turns,
+    flattened into one ordered `RequestPlan`. Refuses with
+    `MalformedSnapshot` rather than guessing when `snapshot` is incoherent —
+    checked before anything from `context`/`opening` is even read, so a
+    malformed stored history still refuses the same way it always has.
+    Never mutates `context`, `opening`, or `snapshot`.
     """
     turns = snapshot.turns
     messages = snapshot.messages
@@ -185,7 +209,13 @@ def build_request_plan(snapshot: ConversationSnapshot, model: str) -> RequestPla
     for turn in turns:
         _require_turn_message_shape(turn, grouped[turn.id])
 
-    wire_messages: list[WireMessage] = []
+    wire_messages: list[WireMessage] = [
+        WireMessage(role="system", content=source.body)
+        for source in context.ordered_sources()
+    ]
+    if opening is not None:
+        wire_messages.append(WireMessage(role="assistant", content=opening.content))
+
     omitted: list[OmittedTurn] = []
     for turn in turns:
         outcome_name = type(turn.outcome).__name__ if turn.outcome is not None else "active"
@@ -200,3 +230,29 @@ def build_request_plan(snapshot: ConversationSnapshot, model: str) -> RequestPla
     return RequestPlan(
         model=model, messages=tuple(wire_messages), stream=False, omitted=tuple(omitted),
     )
+
+
+class Responder(Protocol):
+    """The injected boundary `conversation_service.send_turn` awaits to
+    produce a turn's answer. Receives only the finished, immutable
+    `RequestPlan` this module just built — never a `ConversationSnapshot`,
+    a `ContextPlan`, a filesystem path, a configuration snapshot, a store,
+    or a UI object — so it cannot read or reconstruct anything beyond what
+    is already on the wire (Work Order Step 3: "the adapter... never the
+    context resolver, filesystem paths, configuration snapshot, store, UI,
+    or source body outside that plan").
+
+    Defined here rather than in `conversation_types` because it types on
+    `RequestPlan`, which that module deliberately does not know about
+    (`conversation_types.py`'s own docstring: "not OpenAI message
+    dictionaries"); `conversation_types.ConversationSnapshot`'s own
+    `Responder`-shaped protocol has been retired along with the
+    snapshot-and-model responder boundary it described.
+
+    `respond` is a coroutine so the service can await real network I/O
+    (`cfc.provider_adapter`) without blocking; a deterministic test
+    responder is still an ordinary `async def`.
+    """
+
+    async def respond(self, plan: RequestPlan) -> ResponderResult:
+        ...

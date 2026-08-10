@@ -46,20 +46,28 @@ from textual.widgets import TextArea
 from textual.worker import Worker
 
 from cfc import config_loader, diagnostics, provider_adapter, settings
-from cfc.conversation_service import ConversationService, open_service
+from cfc import context as context_mod
+from cfc.context import FirstMessageState, SourceOption
+from cfc.conversation_service import CategoryState, ConversationService, ContextRows, open_service
+from cfc import conversation_store
 from cfc.conversation_store import ConversationStoreError
 from cfc.conversation_types import (
     CancelledOutcome,
+    Chat,
     ChatId,
     CompletedOutcome,
+    ContextCategory,
+    ContextManifestEntry,
     ConversationSnapshot,
     FailedOutcome,
     Message as StoredMessage,
-    Responder,
+    OpeningMessage,
     Role,
     Turn,
     TurnId,
 )
+from cfc.provider_wire import Responder
+from cfc.settings import ModelCatalogueEntry
 
 #: At this width and wider, `ChatScreen` keeps the stored-chat switcher
 #: docked beside the conversation; below it, the switcher is removed from
@@ -79,6 +87,19 @@ _WORKER_FAILURE_MESSAGE = (
 
 _BLANK_DRAFT_NOTICE = "A message can't be blank."
 _CHAT_BUSY_NOTICE = "A request is already in progress in this chat; wait or press Esc to cancel it."
+
+
+def _context_unavailable_notice(exc: context_mod.SourceUnavailable) -> str:
+    """Concept.md's "Selected source disappears": a selected file that is
+    missing, unreadable, blank, invalid UTF-8, or otherwise unusable blocks
+    the turn *before* anything is sent or stored, keeps the draft, and
+    names the category and source with a correction route back to Context.
+    """
+    category_label = exc.category.value.replace("_", " ")
+    return (
+        f"cfc could not use the selected {category_label} ({exc.name}): {exc.reason}. "
+        f"Open Context to change or fix the selection."
+    )
 
 #: What an omitted (failed or cancelled) turn's outcome line says about its
 #: future — never that the provider certainly never received the original
@@ -269,6 +290,386 @@ class KeyboardHelpModal(ModalScreen[None]):
             self.dismiss(None)
 
 
+# --- Context: selection, inspection, and one literal preview route --------
+
+class _ClearSelection:
+    """Sentinel `SourcePickerModal` dismisses with when a person explicitly
+    picks **None (clear selection)** — distinct from `None`, this module's
+    existing "closed without choosing anything" meaning (`NewChatModal`,
+    `ChatsModal`, this same picker's own Cancel/Esc route).
+    """
+
+
+_CLEAR_SELECTION = _ClearSelection()
+
+_FINGERPRINT_DISPLAY_CHARS = 12
+
+
+def _short_fingerprint(fingerprint: str) -> str:
+    return fingerprint[:_FINGERPRINT_DISPLAY_CHARS]
+
+
+def _source_record_text(record) -> str:
+    return f"{record.display_name}, {record.character_count} chars, {_short_fingerprint(record.fingerprint)}"
+
+
+def _category_state_text(state: CategoryState) -> str:
+    if state.selected_name is None:
+        return "none selected"
+    if state.source is not None:
+        return _source_record_text(state.source)
+    return f"unavailable ({state.unavailable_reason}) — open to correct"
+
+
+def _first_message_row_text(opening: OpeningMessage | None, lookup) -> str:
+    if opening is not None:
+        return (f"{opening.source_name}, {len(opening.content)} chars, "
+                f"{_short_fingerprint(opening.fingerprint)}")
+    if lookup is None:
+        return "none for no persona selected"
+    if lookup.state is FirstMessageState.ABSENT:
+        return "none for this persona"
+    if lookup.state is FirstMessageState.UNAVAILABLE:
+        return f"unavailable ({lookup.reason}) — open to correct"
+    return "not used — this chat already had turns when the persona was selected"
+
+
+class SourcePreviewModal(ModalScreen[None]):
+    """One source's literal text, Textual markup disabled — reached by
+    selecting any Context row, never editable here (Concept.md: "System
+    Instructions is inspectable but not user-editable in cfc").
+    """
+
+    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+
+    def __init__(self, title: str, body: str) -> None:
+        super().__init__()
+        self._title = title
+        self._body = body
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="source-preview-dialog"):
+            yield Label(self._title, markup=False)
+            with VerticalScroll(id="source-preview-scroll"):
+                yield Static(self._body, id="source-preview-body", markup=False)
+            yield Button("Close", id="source-preview-close")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "source-preview-close":
+            self.dismiss(None)
+
+
+class SourcePickerModal(ModalScreen[object]):
+    """A Change/Add picker: `available_sources`' unambiguous candidates,
+    plus an explicit **None (clear selection)** entry when `allow_clear`
+    (Change only — Add always adds something). Dismisses with the chosen
+    exact filename, `_CLEAR_SELECTION`, or `None` for Cancel/Esc.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, title: str, options: tuple[SourceOption, ...], *, allow_clear: bool) -> None:
+        super().__init__()
+        self._title = title
+        self._options = options
+        self._allow_clear = allow_clear
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="source-picker-dialog"):
+            yield Label(self._title, markup=False)
+            yield ListView(id="source-picker-list")
+            if not self._options and not self._allow_clear:
+                yield Static("Nothing available to select.", id="source-picker-empty", markup=False)
+            yield Button("Cancel", id="source-picker-cancel")
+
+    async def on_mount(self) -> None:
+        list_view = self.query_one("#source-picker-list", ListView)
+        if self._allow_clear:
+            item = ListItem(Static("None (clear selection)", markup=False))
+            item.picked_value = _CLEAR_SELECTION
+            await list_view.append(item)
+        for option in self._options:
+            item = ListItem(Static(option.display_name, markup=False))
+            item.picked_value = option.name
+            await list_view.append(item)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        self.dismiss(event.item.picked_value)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "source-picker-cancel":
+            self.dismiss(None)
+
+
+class ContextModal(ModalScreen[None]):
+    """The selector and inspection route for one chat's named context
+    (Concept.md's "Context is part of Chat, not a hidden startup choice").
+    Lists System Instructions, User Preferences, Persona, each selected
+    Trait, an Add-trait row, and First Message, in request order. Selecting
+    a row opens its literal preview; Change/Add/Remove act on whichever row
+    is currently highlighted, kept in sync by keyboard and mouse alike since
+    both drive the same `ListView` highlight.
+    """
+
+    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+
+    def __init__(self, chat_id: ChatId) -> None:
+        super().__init__()
+        self.chat_id = chat_id
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="context-modal-dialog"):
+            yield Label("Context", markup=False)
+            yield ListView(id="context-modal-list")
+            yield Static("", id="context-modal-error", markup=False)
+            with Horizontal(id="context-modal-actions"):
+                yield Button("Change", id="context-action-change", disabled=True)
+                yield Button("Add", id="context-action-add", disabled=True)
+                yield Button("Remove", id="context-action-remove", disabled=True)
+                yield Button("Close", id="context-action-close")
+
+    async def on_mount(self) -> None:
+        await self.refresh_rows()
+
+    def _mutate_selection(self, mutate: Callable[[], None]) -> bool:
+        """Runs one selection-changing store call, catching the one refusal
+        a concurrent active turn can raise (Concept.md: "refused while that
+        chat has an active turn") — an unhandled `ActiveTurnExists` here
+        would otherwise crash the app rather than showing a bounded notice.
+        Returns whether it actually applied.
+        """
+        try:
+            mutate()
+        except conversation_store.ActiveTurnExists:
+            self.query_one("#context-modal-error", Static).update(
+                "This chat has a request in progress; wait or cancel it before "
+                "changing its context."
+            )
+            return False
+        self.query_one("#context-modal-error", Static).update("")
+        return True
+
+    async def _append_row(self, list_view: ListView, kind: object, text: str) -> None:
+        item = ListItem(Static(text, markup=False))
+        item.row_kind = kind
+        await list_view.append(item)
+
+    async def refresh_rows(self) -> None:
+        list_view = self.query_one("#context-modal-list", ListView)
+        previous_index = list_view.index
+        await list_view.clear()
+        chat = self.app.service.get_chat(self.chat_id)
+        rows: ContextRows = self.app.service.context_rows(self.chat_id)
+
+        await self._append_row(
+            list_view, "system_instructions",
+            f"System Instructions: {_source_record_text(rows.system_instructions)}",
+        )
+        await self._append_row(
+            list_view, "user_preferences",
+            f"User Preferences: {_category_state_text(rows.user_preferences)}",
+        )
+        await self._append_row(list_view, "persona", f"Persona: {_category_state_text(rows.persona)}")
+        for trait in rows.traits:
+            await self._append_row(
+                list_view, ("trait", trait.selected_name),
+                f"Trait: {_category_state_text(trait)}",
+            )
+        await self._append_row(list_view, "add_trait", "Add trait…")
+        await self._append_row(
+            list_view, "first_message",
+            f"First Message: {_first_message_row_text(chat.opening, rows.first_message)}",
+        )
+
+        if previous_index is not None and list_view.children and previous_index < len(list_view.children):
+            list_view.index = previous_index
+        self._update_actions()
+
+    def _current_kind(self) -> object:
+        list_view = self.query_one("#context-modal-list", ListView)
+        item = list_view.highlighted_child
+        return getattr(item, "row_kind", None) if item is not None else None
+
+    def _update_actions(self) -> None:
+        kind = self._current_kind()
+        self.query_one("#context-action-change", Button).disabled = kind not in (
+            "user_preferences", "persona",
+        )
+        self.query_one("#context-action-add", Button).disabled = kind != "add_trait"
+        self.query_one("#context-action-remove", Button).disabled = not (
+            isinstance(kind, tuple) and kind[0] == "trait"
+        )
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        self._update_actions()
+
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Selecting (Enter or click) a row previews it — the same one
+        operation regardless of input device (Work Order Step 4). The
+        Add-trait row's own "preview" is opening its picker, since it has
+        no source of its own to show literal text for.
+        """
+        kind = getattr(event.item, "row_kind", None)
+        if kind == "add_trait":
+            self._begin_add()
+            return
+        chat = self.app.service.get_chat(self.chat_id)
+        rows: ContextRows = self.app.service.context_rows(self.chat_id)
+        if kind == "system_instructions":
+            self._open_preview("System Instructions", rows.system_instructions.body)
+        elif kind == "user_preferences":
+            self._open_category_preview("User Preferences", rows.user_preferences)
+        elif kind == "persona":
+            self._open_category_preview("Persona", rows.persona)
+        elif isinstance(kind, tuple) and kind[0] == "trait":
+            filename = kind[1]
+            state = next((t for t in rows.traits if t.selected_name == filename), None)
+            self._open_category_preview(f"Trait: {filename}", state)
+        elif kind == "first_message":
+            if chat.opening is not None:
+                self._open_preview("First Message", chat.opening.content)
+            else:
+                self._open_preview(
+                    "First Message", _first_message_row_text(None, rows.first_message),
+                )
+
+    def _open_category_preview(self, title: str, state: CategoryState | None) -> None:
+        if state is None or state.selected_name is None:
+            self._open_preview(title, "none selected")
+        elif state.source is not None:
+            self._open_preview(title, state.source.body)
+        else:
+            self._open_preview(title, f"unavailable: {state.unavailable_reason}")
+
+    def _open_preview(self, title: str, body: str) -> None:
+        self.app.push_screen(SourcePreviewModal(title, body))
+
+    def _begin_change(self) -> None:
+        kind = self._current_kind()
+        if kind not in ("user_preferences", "persona"):
+            return
+        category = (ContextCategory.USER_PREFERENCES if kind == "user_preferences"
+                    else ContextCategory.PERSONA)
+        title = "Change User Preferences" if kind == "user_preferences" else "Change Persona"
+        options = self.app.service.available_sources(category)
+
+        async def handle_result(result: object) -> None:
+            if result is None:
+                return
+            filename = None if result is _CLEAR_SELECTION else result
+            if category is ContextCategory.USER_PREFERENCES:
+                self._mutate_selection(lambda: self.app.service.set_user_preferences(
+                    self.chat_id, filename))
+            else:
+                self._mutate_selection(lambda: self.app.service.set_persona(self.chat_id, filename))
+            await self.refresh_rows()
+
+        self.app.push_screen(SourcePickerModal(title, options, allow_clear=True), handle_result)
+
+    def _begin_add(self) -> None:
+        already_selected = {t.selected_name for t in self.app.service.context_rows(self.chat_id).traits}
+        options = tuple(
+            option for option in self.app.service.available_sources(ContextCategory.TRAIT)
+            if option.name not in already_selected
+        )
+
+        async def handle_result(result: object) -> None:
+            if result is None or result is _CLEAR_SELECTION:
+                return
+            self._mutate_selection(lambda: self.app.service.add_trait(self.chat_id, result))
+            await self.refresh_rows()
+
+        self.app.push_screen(SourcePickerModal("Add trait", options, allow_clear=False), handle_result)
+
+    async def _handle_remove(self) -> None:
+        kind = self._current_kind()
+        if not (isinstance(kind, tuple) and kind[0] == "trait"):
+            return
+        self._mutate_selection(lambda: self.app.service.remove_trait(self.chat_id, kind[1]))
+        await self.refresh_rows()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "context-action-close":
+            self.dismiss(None)
+        elif button_id == "context-action-change":
+            self._begin_change()
+        elif button_id == "context-action-add":
+            self._begin_add()
+        elif button_id == "context-action-remove":
+            await self._handle_remove()
+
+
+# --- Model: chat state, the required default always usable ----------------
+
+class ModelModal(ModalScreen[object]):
+    """The available chat-model picker (Concept.md's "Model choice is chat
+    state"). Lists every catalogue entry marked chat-selectable, always
+    including the required default (`MODEL`) even when it is absent from
+    the catalogue, and always including the chat's current model even when
+    it is no longer listed — labelled `not in the current catalogue` rather
+    than hidden (Concept.md: "cfc never silently changes a conversation's
+    model"). Dismisses with the chosen exact provider id, or `None` for
+    Cancel/Esc — choosing the row already marked current is a legitimate,
+    harmless "no-op change".
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, current_model: str, default_model: str, models: "settings.ModelCatalogue") -> None:
+        super().__init__()
+        self._current_model = current_model
+        self._default_model = default_model
+        self._models = models
+
+    def _candidate_ids(self) -> list[str]:
+        ids = [entry.id for entry in self._models.selectable_entries()]
+        if self._default_model not in ids:
+            ids.insert(0, self._default_model)
+        if self._current_model not in ids:
+            ids.append(self._current_model)
+        return ids
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="model-modal-dialog"):
+            yield Label("Model", markup=False)
+            yield ListView(id="model-modal-list")
+            if self._models.unavailable_reason:
+                yield Static(self._models.unavailable_reason, id="model-modal-notice", markup=False)
+            yield Button("Cancel", id="model-modal-cancel")
+
+    async def on_mount(self) -> None:
+        list_view = self.query_one("#model-modal-list", ListView)
+        for model_id in self._candidate_ids():
+            parts = [model_id]
+            if model_id == self._current_model:
+                parts.append("(current)")
+                if self._models.entry_for(model_id) is None:
+                    parts.append("(not in the current catalogue)")
+            item = ListItem(Static(" ".join(parts), markup=False))
+            item.model_id = model_id
+            await list_view.append(item)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        self.dismiss(event.item.model_id)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "model-modal-cancel":
+            self.dismiss(None)
+
+
 # --- the Hub -------------------------------------------------------------
 
 class HubScreen(Screen):
@@ -315,7 +716,7 @@ class HubScreen(Screen):
     def _handle_new_chat_result(self, title: str | None) -> None:
         if title is None:
             return
-        chat = self.app.service.create_chat(title)
+        chat = self.app.service.create_chat(title, self.app.default_model)
         self.app.open_chat(chat.id)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -356,6 +757,7 @@ class ChatScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static(self.chat_title, id="chat-title-bar", markup=False)
+        yield Static("", id="chat-context-bar", markup=False)
         with Horizontal(id="chat-body"):
             yield VerticalScroll(id="chat-transcript")
             yield ListView(id="chat-switcher")
@@ -386,23 +788,32 @@ class ChatScreen(Screen):
     # -- rendering from canonical state ----------------------------------
 
     async def refresh_from_service(self) -> None:
-        """Re-read the store's snapshot and this chat's run state, and
-        rebuild the transcript and status line from them — never an
-        optimistic patch. Called on mount, on resume, and whenever the
-        app-owned worker for this chat changes state.
+        """Re-read the store's chat record and snapshot and this chat's run
+        state, and rebuild the transcript, context bar, and status line from
+        them — never an optimistic patch. Called on mount, on resume, and
+        whenever the app-owned worker for this chat changes state.
         """
+        chat = self.app.service.get_chat(self.chat_id)
         snapshot = self.app.service.snapshot(self.chat_id)
-        await self._render_transcript(snapshot)
+        await self._render_transcript(chat, snapshot)
+        self._render_context_bar(chat)
         self._render_status()
         await self._render_switcher()
 
-    async def _render_transcript(self, snapshot: ConversationSnapshot) -> None:
+    async def _render_transcript(self, chat: Chat, snapshot: ConversationSnapshot) -> None:
         transcript = self.query_one("#chat-transcript", VerticalScroll)
         was_at_bottom = transcript.is_vertical_scroll_end
         await transcript.remove_children()
-        await transcript.mount_all(_transcript_widgets(snapshot))
+        await transcript.mount_all(self._build_transcript_widgets(chat, snapshot))
         if was_at_bottom:
             transcript.scroll_end(animate=False)
+
+    def _build_transcript_widgets(self, chat: Chat, snapshot: ConversationSnapshot) -> list[Widget]:
+        return _transcript_widgets(snapshot, chat.opening, self.app.service, self.app._models)
+
+    def _render_context_bar(self, chat: Chat) -> None:
+        bar = self.query_one("#chat-context-bar", Static)
+        bar.update(_context_bar_text(chat))
 
     def _render_status(self) -> None:
         status_widget = self.query_one("#chat-status", Static)
@@ -502,6 +913,12 @@ class ChatScreen(Screen):
             self._notice = _CHAT_BUSY_NOTICE
             self._render_status()
             return
+        try:
+            self.app.service.preview_context(self.chat_id)
+        except context_mod.SourceUnavailable as exc:
+            self._notice = _context_unavailable_notice(exc)
+            self._render_status()
+            return
         self.app.start_turn(self.chat_id, text)
         self.query_one(Composer).text = ""
         self._notice = ""
@@ -522,31 +939,130 @@ class ChatScreen(Screen):
         if chat_id is not None and chat_id != self.chat_id:
             self.app.open_chat(chat_id)
 
+    # -- Context: cfc-owned command palette only, never a dedicated key -----
 
-def _transcript_widgets(snapshot: ConversationSnapshot) -> list[Widget]:
+    def action_show_context(self) -> None:
+        self.app.push_screen(ContextModal(self.chat_id), self._handle_context_result)
+
+    async def _handle_context_result(self, _result: None) -> None:
+        await self.refresh_from_service()
+        self.query_one(Composer).focus()
+
+    # -- Model: chat state, cfc-owned command palette only -------------------
+
+    def action_show_model(self) -> None:
+        chat = self.app.service.get_chat(self.chat_id)
+        self.app.push_screen(
+            ModelModal(chat.context_selection.model, self.app.default_model, self.app._models),
+            self._handle_model_result,
+        )
+
+    async def _handle_model_result(self, model_id: str | None) -> None:
+        if model_id is not None:
+            try:
+                self.app.service.set_model(self.chat_id, model_id)
+            except conversation_store.ActiveTurnExists:
+                self._notice = (
+                    "This chat has a request in progress; wait or cancel it "
+                    "before changing its model."
+                )
+        await self.refresh_from_service()
+        self.query_one(Composer).focus()
+
+
+def _usage_text(usage) -> str:
+    """Independent input/output/total counts — `not reported` for each
+    missing value, explicit `0` shown unchanged (Concept.md: "Missing
+    counts say `not reported`; explicit zero remains `0`").
+    """
+    def one(value: int | None) -> str:
+        return "not reported" if value is None else str(value)
+    if usage is None:
+        return "usage — input: not reported, output: not reported, total: not reported"
+    return (f"usage — input: {one(usage.input_tokens)}, "
+            f"output: {one(usage.output_tokens)}, total: {one(usage.total_tokens)}")
+
+
+def _limit_text(usage, model: str, models: "settings.ModelCatalogue") -> str | None:
+    """The reported input count against this model's configured context
+    limit, when both are known — descriptive only (Concept.md's "Model
+    metadata becomes authority": never a truncation or safety claim).
+    """
+    if usage is None or usage.input_tokens is None:
+        return None
+    entry = models.entry_for(model)
+    if entry is None or entry.context_limit is None:
+        return None
+    return f"reported input {usage.input_tokens} of configured limit {entry.context_limit}"
+
+
+def _context_provenance_text(
+    manifest: tuple[ContextManifestEntry, ...], service: ConversationService,
+) -> str:
+    """This turn's recorded context sources, in order — category, name, and
+    a `*` marker (with a trailing footnote) on any entry whose live vault
+    fingerprint no longer matches what this turn actually used (Concept.md:
+    "it says that the live source differs... instead of presenting the new
+    words as what an old turn received").
+    """
+    if not manifest:
+        return "context: none"
+    parts = []
+    changed = False
+    for entry in manifest:
+        label = f"{entry.category.value}:{entry.name}"
+        if service.context_entry_fingerprint_changed(entry):
+            label += "*"
+            changed = True
+        parts.append(label)
+    text = "context: " + ", ".join(parts)
+    if changed:
+        text += " (* the live source has changed since this turn)"
+    return text
+
+
+def _transcript_widgets(
+    snapshot: ConversationSnapshot, opening: OpeningMessage | None,
+    service: ConversationService, models: "settings.ModelCatalogue",
+) -> list[Widget]:
     """One `Static` per stored message plus one status line for a turn that
     is active, failed, or cancelled — literal content only, never
     Rich/Textual markup, so a message containing `[bold]` or an ANSI-looking
     string stays inert content (Concept.md's "markup execution" failure
     mode; every `Static` here is built with `markup=False`).
 
-    A failed or cancelled turn additionally gets the omission notice and its
-    own turn-specific **Restore to composer** button (Concept.md's "An
-    omitted message is visible and recoverable"; B-2.0-55/D-2.0-53) — never
-    a generic "retry latest", since several omissions in one chat must stay
-    independently restorable.
+    A frozen `opening`, when present, renders first — history, not a
+    synthetic turn (Concept.md's "First Message is an opening"). A
+    completed turn additionally renders its actual model, independent
+    usage counts, an optional configured-limit comparison, and its recorded
+    context provenance. A failed or cancelled turn gets the omission notice
+    and its own turn-specific **Restore to composer** button (Concept.md's
+    "An omitted message is visible and recoverable"; B-2.0-55/D-2.0-53) —
+    never a generic "retry latest", since several omissions in one chat
+    must stay independently restorable.
     """
     by_turn: dict[str, list[StoredMessage]] = {t.id.value: [] for t in snapshot.turns}
     for message in snapshot.messages:
         by_turn[message.turn_id.value].append(message)
 
     widgets: list[Widget] = []
+    if opening is not None:
+        widgets.append(Static(f"cfc: {opening.content}", markup=False, classes="opening-message"))
     for turn in snapshot.turns:
         for message in by_turn[turn.id.value]:
             speaker = "You" if message.role is Role.USER else "cfc"
             widgets.append(Static(f"{speaker}: {message.content}", markup=False))
         if turn.outcome is None:
             widgets.append(Static("… cfc is working on this turn …", markup=False))
+        elif isinstance(turn.outcome, CompletedOutcome):
+            widgets.append(Static(f"model: {turn.model}", markup=False, classes="turn-evidence"))
+            widgets.append(Static(_usage_text(turn.outcome.usage), markup=False,
+                                   classes="turn-evidence"))
+            limit_text = _limit_text(turn.outcome.usage, turn.model, models)
+            if limit_text is not None:
+                widgets.append(Static(limit_text, markup=False, classes="turn-evidence"))
+            widgets.append(Static(_context_provenance_text(turn.context_manifest, service),
+                                   markup=False, classes="turn-evidence"))
         elif isinstance(turn.outcome, FailedOutcome):
             widgets.append(Static(f"[turn failed: {turn.outcome.evidence.reason}]", markup=False))
             widgets.append(Static(_OMISSION_NOTICE, markup=False))
@@ -562,6 +1078,22 @@ def _restore_button(turn_id: TurnId) -> Button:
     button = Button(_RESTORE_LABEL, id=f"restore-{turn_id.value}", classes="restore-button")
     button.turn_id = turn_id
     return button
+
+
+def _context_bar_text(chat: Chat) -> str:
+    """The Chat screen's always-visible model id and compact context
+    summary (Concept.md: "The Chat screen always shows the selected model
+    by its exact provider ID and a compact context summary" — the exact
+    provider ID, literal, never a friendly label standing in for it).
+    """
+    selection = chat.context_selection
+    parts = [f"model: {selection.model}"]
+    parts.append(f"prefs: {selection.user_preferences or 'none'}")
+    parts.append(f"persona: {selection.persona or 'none'}")
+    trait_count = len(selection.traits)
+    parts.append(f"traits: {trait_count if trait_count else 'none'}")
+    parts.append(f"opening: {'yes' if chat.opening is not None else 'no'}")
+    return " · ".join(parts)
 
 
 def _status_text(run: _TurnRun | None) -> str:
@@ -667,24 +1199,32 @@ def _write_screenshot(svg: str, directory: Path, *, timestamp: str | None = None
 
 class CfcCommandsProvider(Provider):
     """cfc's complete `Ctrl+P` command set: **Keyboard help**, **Save
-    screenshot**, **Quit cfc** — nothing else. Installed in place of (never
-    alongside) Textual's inherited system-commands provider, so Theme, Keys,
-    Maximize/Minimize, generic Screenshot, and immediate Quit are absent by
-    construction rather than filtered out (Concept.md's "cfc owns Ctrl+P").
-    Shared by `CfcApp` and `StartupFailureApp` — the Concept requires the
-    same three commands on Hub, ordinary Chat, help, and startup-failure
-    alike; only a later private-chat screen is deliberately excluded.
+    screenshot**, **Quit cfc** everywhere, plus **Context** and **Model**
+    only when the active screen is an ordinary `ChatScreen` (Work Order Step
+    4: "Context appears only on an ordinary Chat's cfc-owned command
+    palette"). Installed in place of (never alongside) Textual's inherited
+    system-commands provider, so Theme, Keys, Maximize/Minimize, generic
+    Screenshot, and immediate Quit are absent by construction rather than
+    filtered out (Concept.md's "cfc owns Ctrl+P"). Shared by `CfcApp` and
+    `StartupFailureApp` — only a later private-chat screen is deliberately
+    excluded from the chat-only pair.
     """
 
     def _commands(self) -> tuple[tuple[str, Callable, str], ...]:
         app = self.app
-        return (
+        commands: list[tuple[str, Callable, str]] = [
             ("Keyboard help", app.action_show_keyboard_help,
              "Stage 4's keys and the Shift+Enter terminal requirement"),
             ("Save screenshot", app.action_save_screenshot,
              "Export an SVG of the current screen"),
-            ("Quit cfc", app.action_quit, "Close cfc"),
-        )
+        ]
+        if isinstance(self.screen, ChatScreen):
+            commands.append(("Context", self.screen.action_show_context,
+                              "Select and inspect this chat's context"))
+            commands.append(("Model", self.screen.action_show_model,
+                              "Choose this chat's model"))
+        commands.append(("Quit cfc", app.action_quit, "Close cfc"))
+        return tuple(commands)
 
     async def discover(self) -> Hits:
         for name, callback, help_text in self._commands():
@@ -770,17 +1310,28 @@ class CfcApp(_CommandSurfaceMixin, App):
         self, service: ConversationService, responder: Responder, model: str, *,
         theme: settings.ThemeSettings | None = None,
         screenshots_dir: Path | None = None,
+        models: settings.ModelCatalogue | None = None,
     ) -> None:
         super().__init__()
         self.service = service
         self._responder = responder
+        #: `model`'s only remaining job is seeding a *new* chat's initial
+        #: selection (`HubScreen._handle_new_chat_result`) — an existing
+        #: chat's model lives in its own stored `context_selection.model`
+        #: and is never overridden by this default (Concept.md: "Model
+        #: choice is chat state").
         self._model = model
+        self._models = models if models is not None else settings.ModelCatalogue()
         self._theme_settings = theme or settings.ThemeSettings(settings.DEFAULT_TUI_THEME)
         self._screenshots_dir = screenshots_dir or _DEFAULT_SCREENSHOTS_DIR
         self._chat_workers: dict[str, Worker] = {}
         self._turn_runs: dict[str, _TurnRun] = {}
         self._drafts: dict[str, str] = {}
         self._shut_down = False
+
+    @property
+    def default_model(self) -> str:
+        return self._model
 
     def on_mount(self) -> None:
         self.theme = _TEXTUAL_THEME_NAMES[self._theme_settings.name]
@@ -870,7 +1421,7 @@ class CfcApp(_CommandSurfaceMixin, App):
         key = chat_id.value
         try:
             try:
-                turn = await self.service.send_turn(chat_id, self._model, text, self._responder)
+                turn = await self.service.send_turn(chat_id, text, self._responder)
             except asyncio.CancelledError:
                 self._turn_runs[key] = _TurnRun(status="cancelled")
                 raise
@@ -954,7 +1505,7 @@ def build_app(
         return StartupFailureApp(str(exc), diagnostics._settings_error_next_step(exc))
 
     try:
-        service = open_service(built.database_path)
+        service = open_service(built.database_path, built.vault)
     except ConversationStoreError as exc:
         return StartupFailureApp(str(exc))
 
@@ -963,7 +1514,7 @@ def build_app(
     else:
         responder = provider_adapter.OpenAICompatibleAdapter(built.provider)
 
-    return CfcApp(service, responder, built.provider.model, theme=built.theme)
+    return CfcApp(service, responder, built.provider.model, theme=built.theme, models=built.models)
 
 
 def run(config_path: Path | None = None) -> int:

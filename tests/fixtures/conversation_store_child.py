@@ -27,7 +27,7 @@ def main() -> int:
     info_path = Path(sys.argv[3])
 
     store = conversation_store.open_store(db_path)
-    chat = store.create_chat("child-owned chat")
+    chat = store.create_chat("child-owned chat", "fixture-model")
     turn, _message = store.start_turn(chat.id, model="fixture-model",
                                        user_content="hi from the child process")
     info_path.write_text(f"{chat.id.value}\n{turn.id.value}\n", encoding="utf-8")

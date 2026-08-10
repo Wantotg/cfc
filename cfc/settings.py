@@ -11,6 +11,7 @@ raises on the settings 2.0 cannot run without.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -81,11 +82,192 @@ class ThemeSettings:
     invalid_value_notice: str | None = None
 
 
+#: The four 2.0 vault category settings, in the order `build_vault_settings`
+#: validates them — the vault-owned sources a `ContextPlan` can select from.
+#: `VAULT_ROOT` itself is not in this tuple: it is the containment boundary
+#: every one of these must resolve inside, not a category of its own.
+VAULT_CATEGORY_FIELD_NAMES: tuple[str, ...] = (
+    "USER_PREFERENCES_DIR", "PERSONAS_DIR", "TRAITS_DIR", "FIRST_MESSAGES_DIR",
+)
+
+
+@dataclass(frozen=True)
+class VaultCategorySettings:
+    """One configured vault category directory, or the reason it is not
+    usable. `path` is set only when the category is genuinely usable:
+    `VAULT_ROOT` and this field are both set, this field is a non-empty
+    string, and it resolves inside `VAULT_ROOT`. Never raises — an unusable
+    category leaves the optional selector visibly unavailable rather than
+    blocking ordinary chat (Concept.md: "A missing vault leaves ordinary
+    unpersonalised chat usable").
+
+    This is shape validation only, same discipline as the rest of this
+    module: it never checks whether `path` actually exists on disk. Whether
+    a configured directory is real is `cfc.context`'s job, at the moment a
+    selection is actually read.
+    """
+    path: Path | None = None
+    unavailable_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class VaultSettings:
+    root: Path | None
+    user_preferences: VaultCategorySettings
+    personas: VaultCategorySettings
+    traits: VaultCategorySettings
+    first_messages: VaultCategorySettings
+
+
+def _vault_category(
+    values, field_name: str, root: Path | None,
+) -> VaultCategorySettings:
+    raw = values.get(field_name)
+    if raw is None or (isinstance(raw, str) and not raw.strip()) or raw == "PLACEHOLDER":
+        return VaultCategorySettings(unavailable_reason=f"{field_name} is not set")
+    if not isinstance(raw, str):
+        return VaultCategorySettings(
+            unavailable_reason=f"{field_name} must be a string, got {type(raw).__name__}"
+        )
+    if root is None:
+        return VaultCategorySettings(
+            unavailable_reason=f"VAULT_ROOT must be set for {field_name} to be usable"
+        )
+    resolved = Path(raw).expanduser().resolve()
+    if resolved != root and root not in resolved.parents:
+        return VaultCategorySettings(
+            unavailable_reason=f"{field_name} ({resolved}) does not resolve inside VAULT_ROOT ({root})"
+        )
+    return VaultCategorySettings(path=resolved)
+
+
+def build_vault_settings(snapshot) -> VaultSettings:
+    """The optional 2.0 vault category settings: `VAULT_ROOT` plus
+    `USER_PREFERENCES_DIR`/`PERSONAS_DIR`/`TRAITS_DIR`/`FIRST_MESSAGES_DIR`,
+    each independently usable or not. Never raises. `snapshot` is a
+    `config_loader.ConfigSnapshot`.
+
+    `USER_PREFERENCES_DIR` is a 2.0-only setting — deliberately not v1.9.1's
+    `PROMPTS_DIR` (Concept.md: cfc 2.0 calls this material User Preferences
+    even where it points at the same directory v1.9.1 calls a prompt pool).
+    `PERSONAS_DIR`, `TRAITS_DIR`, and `FIRST_MESSAGES_DIR` are the same
+    field names v1.9.1 already reads; 2.0 imposes its own, stricter
+    containment-inside-`VAULT_ROOT` rule on them rather than reusing
+    v1.9.1's own validation.
+    """
+    values = snapshot.values
+    raw_root = values.get("VAULT_ROOT")
+    root: Path | None = None
+    if isinstance(raw_root, str) and raw_root.strip() and raw_root != "PLACEHOLDER":
+        root = Path(raw_root).expanduser().resolve()
+
+    return VaultSettings(
+        root=root,
+        user_preferences=_vault_category(values, "USER_PREFERENCES_DIR", root),
+        personas=_vault_category(values, "PERSONAS_DIR", root),
+        traits=_vault_category(values, "TRAITS_DIR", root),
+        first_messages=_vault_category(values, "FIRST_MESSAGES_DIR", root),
+    )
+
+
+@dataclass(frozen=True)
+class ModelCatalogueEntry:
+    """One `MODELS` record's fields the 2.0 picker consumes: an exact
+    non-blank provider id, whether it is chat-selectable, and an optional
+    positive context limit. Deliberately narrow — this loop does not read
+    `tools`, `routine`, `routine_default`, or `preset_params`; those stay
+    the flat `models.py` boundary's own concern.
+    """
+    id: str
+    selectable: bool
+    context_limit: int | None = None
+
+
+@dataclass(frozen=True)
+class ModelCatalogue:
+    """The validated, ordered `MODELS` catalogue, or an empty one with a
+    bounded `unavailable_reason` when `config.py`'s `MODELS` is malformed.
+    `MODEL` (`ProviderSettings.model`) is never a member requirement of
+    this: it remains usable even when absent here (Concept.md: "The
+    required default is always a usable choice even when it is absent from
+    the optional catalogue").
+    """
+    entries: tuple[ModelCatalogueEntry, ...] = field(default_factory=tuple)
+    unavailable_reason: str | None = None
+
+    def selectable_entries(self) -> tuple[ModelCatalogueEntry, ...]:
+        return tuple(entry for entry in self.entries if entry.selectable)
+
+    def entry_for(self, model_id: str) -> ModelCatalogueEntry | None:
+        return next((entry for entry in self.entries if entry.id == model_id), None)
+
+
+def _malformed_catalogue(detail: str) -> ModelCatalogue:
+    return ModelCatalogue(unavailable_reason=(
+        f"MODELS is configured but not usable as a 2.0 model catalogue: "
+        f"{detail}; the picker is unavailable, but MODEL still works"
+    ))
+
+
+def build_model_catalogue(snapshot) -> ModelCatalogue:
+    """The 2.0 model picker's validated view of `config.py`'s `MODELS` list
+    — the same field the flat `models.py` boundary reads, not a second
+    parallel setting, but read and validated independently here rather than
+    through that module (`models.py` imports `ui.DISPLAY_NAME`, a flat
+    runtime module this package never imports).
+
+    A `MODELS` record's `listed` field (default `True`) is this catalogue's
+    "chat-selectable" marker, and its `limit` field is the optional positive
+    context limit — the same two fields the legacy picker already reads, so
+    an existing `config.py` needs no new field to get a working 2.0
+    catalogue. `id` is required and validated fresh regardless.
+
+    Never raises: an unset or empty `MODELS` is an ordinary empty catalogue;
+    any other malformed shape returns an empty catalogue carrying one
+    bounded `unavailable_reason` instead of blocking ordinary chat.
+    """
+    raw = snapshot.values.get("MODELS")
+    if not raw:
+        return ModelCatalogue()
+    if not isinstance(raw, tuple):
+        return _malformed_catalogue(f"must be a list, got {type(raw).__name__}")
+
+    entries: list[ModelCatalogueEntry] = []
+    seen_ids: set[str] = set()
+    for index, record in enumerate(raw):
+        if not isinstance(record, Mapping):
+            return _malformed_catalogue(f"MODELS[{index}] must be a dict, got {type(record).__name__}")
+        model_id = record.get("id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            return _malformed_catalogue(f"MODELS[{index}] has no usable 'id'")
+        if model_id in seen_ids:
+            return _malformed_catalogue(f"MODELS lists {model_id!r} twice")
+        seen_ids.add(model_id)
+
+        selectable = record.get("listed", True)
+        if not isinstance(selectable, bool):
+            return _malformed_catalogue(
+                f"MODELS[{model_id!r}].listed must be True/False, got {selectable!r}"
+            )
+
+        limit = record.get("limit")
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
+            return _malformed_catalogue(
+                f"MODELS[{model_id!r}].limit must be a positive int or None, got {limit!r}"
+            )
+
+        entries.append(ModelCatalogueEntry(id=model_id, selectable=selectable, context_limit=limit))
+
+    return ModelCatalogue(entries=tuple(entries))
+
+
 @dataclass(frozen=True)
 class BootstrapSettings:
     provider: ProviderSettings
     database_path: Path
     theme: ThemeSettings
+    vault: VaultSettings
+    models: ModelCatalogue
 
 
 def _require_nonempty_str(values, name: str) -> str:
@@ -205,4 +387,6 @@ def build_settings(snapshot) -> BootstrapSettings:
         provider=build_provider(snapshot),
         database_path=build_database_path(snapshot),
         theme=build_theme(snapshot),
+        vault=build_vault_settings(snapshot),
+        models=build_model_catalogue(snapshot),
     )

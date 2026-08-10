@@ -317,3 +317,208 @@ def test_no_2_0_db_path_alias_is_taught_in_the_example_bootstrap_section():
     bootstrap_section, _, _ = text.partition("CHAT_EXPORT_DIR")
     assert "DATABASE_PATH" in bootstrap_section
     assert "DB_PATH" not in bootstrap_section
+
+
+# --- vault category settings: optional, contained, never raising ------------
+
+def test_unset_vault_root_leaves_every_category_unavailable(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.root is None
+    for category in (vault.user_preferences, vault.personas, vault.traits, vault.first_messages):
+        assert category.path is None
+        assert category.unavailable_reason is not None
+
+
+def test_placeholder_vault_root_is_treated_as_unset(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "VAULT_ROOT = 'PLACEHOLDER'\n")
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.root is None
+
+
+def test_a_category_dir_inside_vault_root_is_usable(tmp_path):
+    vault_root = tmp_path / "vault"
+    personas = vault_root / "personas"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nPERSONAS_DIR = {str(personas)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.root == vault_root.resolve()
+    assert vault.personas.path == personas.resolve()
+    assert vault.personas.unavailable_reason is None
+
+
+def test_a_category_dir_outside_vault_root_is_unavailable(tmp_path):
+    vault_root = tmp_path / "vault"
+    outside = tmp_path / "elsewhere"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nPERSONAS_DIR = {str(outside)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.personas.path is None
+    assert "does not resolve inside" in vault.personas.unavailable_reason
+
+
+def test_a_category_dir_set_without_vault_root_is_unavailable(tmp_path):
+    personas = tmp_path / "personas"
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"PERSONAS_DIR = {str(personas)!r}\n")
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.personas.path is None
+    assert "VAULT_ROOT" in vault.personas.unavailable_reason
+
+
+def test_an_unconfigured_category_is_unavailable_but_others_are_unaffected(tmp_path):
+    vault_root = tmp_path / "vault"
+    personas = vault_root / "personas"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nPERSONAS_DIR = {str(personas)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.personas.path is not None
+    assert vault.traits.path is None
+    assert vault.user_preferences.path is None
+
+
+def test_user_preferences_dir_is_its_own_2_0_setting_not_prompts_dir(tmp_path):
+    """A config.py that still only sets the legacy PROMPTS_DIR must not make
+    USER_PREFERENCES_DIR usable — the 2.0 field is its own name."""
+    vault_root = tmp_path / "vault"
+    prompts = vault_root / "prompts"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nPROMPTS_DIR = {str(prompts)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.user_preferences.path is None
+
+
+def test_non_string_category_dir_is_unavailable_not_raising(tmp_path):
+    vault_root = tmp_path / "vault"
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nTRAITS_DIR = 5\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.traits.path is None
+    assert "must be a string" in vault.traits.unavailable_reason
+
+
+def test_build_vault_settings_never_raises_and_never_touches_disk(tmp_path):
+    vault_root = tmp_path / "does" / "not" / "exist"
+    personas = vault_root / "personas"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nPERSONAS_DIR = {str(personas)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.personas.path == personas.resolve()
+    assert not vault_root.exists()
+
+
+# --- model catalogue: listed/limit reused, malformed is bounded -------------
+
+def test_unset_models_is_an_empty_catalogue(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.entries == ()
+    assert catalogue.unavailable_reason is None
+
+
+def test_models_entries_default_selectable_true_when_listed_unset(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = [dict(id='m/one')]\n")
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.entries == (settings.ModelCatalogueEntry(id="m/one", selectable=True),)
+
+
+def test_models_entry_reads_listed_and_limit(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + "MODELS = [dict(id='m/one', listed=False, limit=128000)]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    entry = catalogue.entry_for("m/one")
+    assert entry.selectable is False
+    assert entry.context_limit == 128000
+    assert catalogue.selectable_entries() == ()
+
+
+def test_models_preserves_declared_order(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='b'), dict(id='a')]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert [e.id for e in catalogue.entries] == ["b", "a"]
+
+
+@pytest.mark.parametrize("bad_models", [
+    "not-a-list",
+    "[dict(id='a')]",  # a string, not an actual list — config_loader freezes real lists only
+])
+def test_models_wrong_top_level_type_is_malformed(tmp_path, bad_models):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"MODELS = {bad_models!r}\n")
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.entries == ()
+    assert catalogue.unavailable_reason is not None
+
+
+def test_models_entry_not_a_dict_is_malformed(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = ['bare-string-id']\n")
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
+def test_models_missing_id_is_malformed(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = [dict(listed=True)]\n")
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
+def test_models_blank_id_is_malformed(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = [dict(id='   ')]\n")
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
+def test_models_duplicate_id_is_malformed(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='a'), dict(id='a')]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
+def test_models_non_bool_listed_is_malformed(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='a', listed='yes')]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
+@pytest.mark.parametrize("bad_limit", [0, -1, 1.5, True])
+def test_models_invalid_limit_is_malformed(tmp_path, bad_limit):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + f"MODELS = [dict(id='a', limit={bad_limit!r})]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
+def test_malformed_models_never_raises_and_leaves_default_model_untouched(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = [dict(id='a'), dict(id='a')]\n")
+    built = settings.build_settings(snapshot)
+    assert built.provider.model == "fixture-model"
+    assert built.models.unavailable_reason is not None
+
+
+# --- build_settings: vault and models included -------------------------------
+
+def test_build_settings_includes_vault_and_models(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = [dict(id='fixture-model')]\n")
+    built = settings.build_settings(snapshot)
+    assert built.vault.root is None
+    assert built.models.entries == (
+        settings.ModelCatalogueEntry(id="fixture-model", selectable=True),
+    )

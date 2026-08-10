@@ -1,13 +1,18 @@
 """provider_adapter.py — the bounded OpenAI-compatible responder
-(`cfc.conversation_types.Responder`) that makes the Stage 3 kernel usable
-with one real, non-streaming chat provider over `httpx`.
+(`cfc.provider_wire.Responder`) that makes the Stage 3+5 kernel usable with
+one real, non-streaming chat provider over `httpx`.
 
 `OpenAICompatibleAdapter` is constructed from immutable `ProviderSettings`
 (`cfc.settings`) and, in tests only, an injected `httpx` transport — never a
 store, a database path, a configuration module, the vault, an authority
-object, or a UI callback. It makes exactly one attempt per `respond` call:
-no retry, no model fallback, no provider discovery, and no request editing
-beyond what `cfc.provider_wire.build_request_plan` already decided.
+object, or a UI callback. `respond` receives only the finished, immutable
+`RequestPlan` `conversation_service` already built through
+`cfc.provider_wire.build_request_plan` — this module never builds one
+itself, never sees a `ConversationSnapshot` or `ContextPlan`, and never
+reads a source body outside what is already serialised into that plan. It
+makes exactly one attempt per `respond` call: no retry, no model fallback,
+no provider discovery, and no request editing beyond what the plan already
+decided.
 
 Every way a call can end becomes one of `Completion`, `Failure`, or an
 `asyncio.CancelledError` left to propagate — never a raw `httpx` exception,
@@ -34,7 +39,7 @@ from cfc.conversation_types import (
     TimeoutPhase,
     Usage,
 )
-from cfc.provider_wire import RequestPlan, build_request_plan
+from cfc.provider_wire import RequestPlan
 from cfc.settings import ProviderSettings
 
 #: Distinct timeout budgets per `httpx` phase. `READ` is longer than the
@@ -195,19 +200,15 @@ class OpenAICompatibleAdapter:
     async def __aexit__(self, *exc_info) -> None:
         await self.aclose()
 
-    async def respond(self, snapshot, model: str) -> ResponderResult:
-        """Build the request plan, make exactly one HTTP attempt, and
-        translate the outcome. `provider_wire.MalformedSnapshot` — the
-        stored history itself is incoherent — is deliberately not caught
-        here: it is not a provider-wire failure, so it propagates to
-        `conversation_service`'s generic internal-failure handling instead
-        of being reported as if the provider had refused something.
+    async def respond(self, plan: RequestPlan) -> ResponderResult:
+        """Serialise `plan` — already built and validated by
+        `conversation_service` through `provider_wire.build_request_plan`
+        — and make exactly one HTTP attempt, translating the outcome.
 
-        Task cancellation while `self._client.post` is in flight is
-        likewise not caught: it propagates so `conversation_service` can
-        finalise the turn as `CancelledOutcome` itself.
+        Task cancellation while `self._client.post` is in flight is not
+        caught: it propagates so `conversation_service` can finalise the
+        turn as `CancelledOutcome` itself.
         """
-        plan: RequestPlan = build_request_plan(snapshot, model)
         body = {
             "model": plan.model,
             "messages": [{"role": message.role, "content": message.content}

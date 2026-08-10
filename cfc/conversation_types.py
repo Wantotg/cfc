@@ -19,7 +19,7 @@ import datetime
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol, Union
+from typing import Union
 
 
 def utc_now() -> datetime.datetime:
@@ -81,6 +81,137 @@ class MessageId:
         return self.value
 
 
+# --- context: named selection, resolved sources, and a turn's frozen
+# --- opening (Stage 5 loop 1) ------------------------------------------
+
+class ContextCategory(Enum):
+    """The five source kinds a `ContextPlan` can carry. `SYSTEM_INSTRUCTIONS`
+    is cfc-owned and always resolvable; the other four are vault-owned
+    Markdown, each independently optional. `FIRST_MESSAGE` never appears in
+    a `ContextPlan` (the frozen opening is conversation content, not
+    provenance — see `OpeningMessage`) but is one of the five rows the
+    Context modal lists, so it stays in this vocabulary rather than a
+    parallel one `tui.py` would have to keep in sync by hand.
+    """
+    SYSTEM_INSTRUCTIONS = "system_instructions"
+    USER_PREFERENCES = "user_preferences"
+    PERSONA = "persona"
+    TRAIT = "trait"
+    FIRST_MESSAGE = "first_message"
+
+
+@dataclass(frozen=True)
+class SourceRecord:
+    """One context source, read once and never re-read for the plan that
+    carries it: cfc's own System Instructions, or one vault-owned Markdown
+    file. `name` is the exact stored identity (a fixed name for System
+    Instructions, the exact filename for a vault source); `display_name` is
+    what a person sees (the filename's stem for a vault source). `body` is
+    the literal text this source resolved to at the moment it was read —
+    never truncated, reformatted, or re-fetched later by anything holding
+    this record.
+    """
+    category: ContextCategory
+    name: str
+    display_name: str
+    body: str
+    character_count: int
+    fingerprint: str
+
+    def __post_init__(self) -> None:
+        if self.character_count != len(self.body):
+            raise ValueError("character_count must equal len(body)")
+
+
+@dataclass(frozen=True)
+class ContextSelection:
+    """A chat's durable context choices: exact vault filenames, never
+    bodies. `user_preferences` and `persona` are each at most one filename;
+    `traits` preserves the order they were selected in. `model` is the
+    chat's current default model id for a future turn — a turn always
+    stores the model it actually used on its own `Turn.model`, so this
+    field never rewrites a past turn's evidence.
+    """
+    user_preferences: str | None = None
+    persona: str | None = None
+    traits: tuple[str, ...] = field(default_factory=tuple)
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class OpeningMessage:
+    """A chat's frozen First Message: a Persona's same-filename companion,
+    snapshotted once as the chat's opening assistant message. Conversation
+    content, not context provenance (Concept.md's "First Message is an
+    opening, not a synthetic turn") — it is never rebuilt from a later
+    vault edit, deletion, or Persona change.
+    """
+    source_name: str
+    content: str
+    created_at: datetime.datetime
+    fingerprint: str
+
+    def __post_init__(self) -> None:
+        _require_aware("created_at", self.created_at)
+
+
+@dataclass(frozen=True)
+class ContextManifestEntry:
+    """One recorded row of a turn's context provenance: which source, in
+    what order, how large, and its fingerprint at the moment that turn
+    started — never the body itself. If a source later changes, comparing
+    a fresh read's fingerprint against this one is how inspection notices
+    (Concept.md's "If a source later changes...").
+    """
+    category: ContextCategory
+    name: str
+    order: int
+    character_count: int
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class ContextPlan:
+    """One immutable, freshly resolved context plan: cfc's own System
+    Instructions plus whatever a chat's current selection resolved to, at
+    the moment this plan was built. Never mutated and never partially
+    rebuilt — a caller that wants a plan reflecting a later edit builds a
+    fresh one.
+    """
+    system_instructions: SourceRecord
+    user_preferences: SourceRecord | None = None
+    persona: SourceRecord | None = None
+    traits: tuple[SourceRecord, ...] = field(default_factory=tuple)
+
+    def ordered_sources(self) -> tuple[SourceRecord, ...]:
+        """Every resolved source in exact provider request order: System
+        Instructions, User Preferences, Persona, then Traits in selection
+        order. The one ordering `provider_wire` and the Context modal's
+        preview both read, so they cannot independently drift apart.
+        """
+        sources = [self.system_instructions]
+        if self.user_preferences is not None:
+            sources.append(self.user_preferences)
+        if self.persona is not None:
+            sources.append(self.persona)
+        sources.extend(self.traits)
+        return tuple(sources)
+
+    def to_manifest(self) -> tuple[ContextManifestEntry, ...]:
+        """This plan's ordered sources, minus their bodies — the shape
+        `ConversationStore.start_turn` persists as one turn's provenance
+        (never a vault body; Concept.md's "It deliberately does not copy
+        all source bodies into SQLite").
+        """
+        return tuple(
+            ContextManifestEntry(
+                category=source.category, name=source.name, order=index,
+                character_count=source.character_count, fingerprint=source.fingerprint,
+            )
+            for index, source in enumerate(self.ordered_sources())
+        )
+
+
 # --- chat metadata --------------------------------------------------------
 
 class ChatKind(Enum):
@@ -100,6 +231,8 @@ class Chat:
     title: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    context_selection: ContextSelection = field(default_factory=lambda: ContextSelection())
+    opening: OpeningMessage | None = None
 
     def __post_init__(self) -> None:
         _require_aware("created_at", self.created_at)
@@ -280,6 +413,7 @@ class Turn:
     started_at: datetime.datetime
     finished_at: datetime.datetime | None = None
     outcome: TurnOutcome | None = None
+    context_manifest: tuple[ContextManifestEntry, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         _require_aware("started_at", self.started_at)
@@ -343,21 +477,8 @@ class Cancellation:
 
 
 #: What an injected responder returns: exactly one of a completion, a
-#: failure, or a cancellation.
+#: failure, or a cancellation. The `Responder` protocol itself now lives in
+#: `cfc.provider_wire` (Stage 5 loop 1): it types on `RequestPlan`, which
+#: this module deliberately does not know about (see this module's own
+#: docstring: "not OpenAI message dictionaries").
 ResponderResult = Union[Completion, Failure, Cancellation]
-
-
-class Responder(Protocol):
-    """The injected boundary the conversation service awaits to produce a
-    turn's answer. Receives only an immutable stored-conversation snapshot
-    and the selected model — never a SQLite connection, never a general
-    authority object — so it cannot read or write anything this loop does
-    not explicitly hand it.
-
-    `respond` is a coroutine so the service can await real network I/O
-    (`cfc.provider_adapter`) without blocking; a deterministic test
-    responder is still an ordinary `async def`.
-    """
-
-    async def respond(self, snapshot: ConversationSnapshot, model: str) -> ResponderResult:
-        ...

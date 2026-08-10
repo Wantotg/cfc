@@ -86,3 +86,65 @@ Composer {
     width: 80%;
     padding: 1 2;
 }
+
+#chat-context-bar {
+    dock: top;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+.opening-message, .turn-evidence {
+    color: $text-muted;
+}
+
+#context-modal-dialog, #source-preview-dialog, #source-picker-dialog {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#context-modal-list, #source-picker-list {
+    height: auto;
+    max-height: 16;
+}
+
+#context-modal-actions {
+    height: auto;
+    align: left middle;
+}
+
+#source-preview-scroll {
+    height: auto;
+    max-height: 20;
+    border: solid $panel-lighten-2;
+    padding: 0 1;
+}
+
+#model-modal-dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#model-modal-list {
+    height: auto;
+    max-height: 16;
+}
+
+#model-modal-notice {
+    color: $warning;
+    height: auto;
+}
+
+#context-modal-error {
+    color: $error;
+    height: auto;
+}

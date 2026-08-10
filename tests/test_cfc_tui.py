@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from cfc import conversation_store, provider_wire, settings, tui
+from cfc import conversation_store, settings, tui
 from cfc.conversation_service import open_service
 from cfc.conversation_types import (
     Cancellation,
@@ -26,6 +26,7 @@ from cfc.conversation_types import (
     FailureEvidence,
     FailureKind,
     Role,
+    Usage,
 )
 
 
@@ -36,8 +37,8 @@ class FixedResponder:
         self._result = result
         self.calls = []
 
-    async def respond(self, snapshot, model):
-        self.calls.append((snapshot, model))
+    async def respond(self, plan):
+        self.calls.append(plan)
         return self._result
 
 
@@ -50,7 +51,7 @@ class SlowResponder:
         self.released = asyncio.Event()
         self.result = Completion(content="released")
 
-    async def respond(self, snapshot, model):
+    async def respond(self, plan):
         self.started.set()
         await self.released.wait()
         return self.result
@@ -60,7 +61,7 @@ class RaisingResponder:
     def __init__(self, exc: Exception):
         self._exc = exc
 
-    async def respond(self, snapshot, model):
+    async def respond(self, plan):
         raise self._exc
 
 
@@ -75,9 +76,9 @@ class ManualResponder:
         self._events: dict[int, asyncio.Event] = {}
         self._results: dict[int, object] = {}
 
-    async def respond(self, snapshot, model):
+    async def respond(self, plan):
         index = len(self.calls)
-        self.calls.append((snapshot, model))
+        self.calls.append(plan)
         event = asyncio.Event()
         self._events[index] = event
         await event.wait()
@@ -134,21 +135,45 @@ def _no_network_responder_factory(provider_settings):
     return FixedResponder(Completion(content="unused"))
 
 
-def open_test_service(tmp_path: Path):
-    return open_service(tmp_path / "direct" / "chat.db")
+def empty_vault() -> settings.VaultSettings:
+    unavailable = settings.VaultCategorySettings(unavailable_reason="not configured")
+    return settings.VaultSettings(root=None, user_preferences=unavailable, personas=unavailable,
+                                   traits=unavailable, first_messages=unavailable)
+
+
+def real_vault(tmp_path: Path, *, prefs=None, personas=None, traits=None,
+                first_messages=None) -> settings.VaultSettings:
+    def cat(path):
+        if path is None:
+            return settings.VaultCategorySettings(unavailable_reason="not configured")
+        return settings.VaultCategorySettings(path=path)
+    return settings.VaultSettings(root=tmp_path, user_preferences=cat(prefs), personas=cat(personas),
+                                   traits=cat(traits), first_messages=cat(first_messages))
+
+
+def write_source(directory: Path, name: str, body: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(body, encoding="utf-8")
+
+
+def open_test_service(tmp_path: Path, vault: settings.VaultSettings | None = None):
+    return open_service(tmp_path / "direct" / "chat.db", vault or empty_vault())
 
 
 def make_app(
     tmp_path: Path, responder=None, model: str = "fixture-model", *,
     theme: settings.ThemeSettings | None = None,
     screenshots_dir: Path | None = None,
+    vault: settings.VaultSettings | None = None,
+    models: settings.ModelCatalogue | None = None,
 ) -> tui.CfcApp:
-    service = open_test_service(tmp_path)
+    service = open_test_service(tmp_path, vault)
     if responder is None:
         responder = FixedResponder(Completion(content="the answer"))
     return tui.CfcApp(
         service, responder, model,
         theme=theme, screenshots_dir=screenshots_dir or (tmp_path / "screenshots"),
+        models=models,
     )
 
 
@@ -333,7 +358,7 @@ async def test_duplicate_titles_remain_distinct_stored_chats(tmp_path):
 async def test_selecting_a_hub_row_opens_the_same_stored_chat(tmp_path):
     app = make_app(tmp_path)
     try:
-        chat = app.service.create_chat("existing")
+        chat = app.service.create_chat("existing", "fixture-model")
         async with app.run_test() as pilot:
             await pilot.pause()
             list_view = app.screen.query_one("#hub-chat-list", tui.ListView)
@@ -350,7 +375,7 @@ async def test_selecting_a_hub_row_opens_the_same_stored_chat(tmp_path):
 async def test_mouse_selection_of_a_hub_row_does_the_same_as_keyboard(tmp_path):
     app = make_app(tmp_path)
     try:
-        chat = app.service.create_chat("existing")
+        chat = app.service.create_chat("existing", "fixture-model")
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.click("ListItem")
@@ -1141,8 +1166,7 @@ async def test_a_later_request_omits_the_failed_turns_user_message(tmp_path):
             responder.release(1, Completion(content="ok"))
             await pilot.pause()
 
-            second_snapshot, second_model = responder.calls[1]
-            plan = provider_wire.build_request_plan(second_snapshot, second_model)
+            plan = responder.calls[1]
             wire_user_texts = [m.content for m in plan.messages if m.role == "user"]
             assert "first, will fail" not in wire_user_texts
             assert "second, will succeed" in wire_user_texts
@@ -1429,6 +1453,8 @@ async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_the_hub(tmp_path):
 
 
 async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_a_chat_screen(tmp_path):
+    """An ordinary Chat's palette gains Context and Model on top of the
+    three commands every screen shares (Work Order Steps 4 and 5)."""
     app = make_app(tmp_path)
     try:
         async with app.run_test() as pilot:
@@ -1437,7 +1463,7 @@ async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_a_chat_screen(tmp_p
             await pilot.pause()
             await pilot.pause()
             assert await command_palette_option_names(app) == [
-                "Keyboard help", "Quit cfc", "Save screenshot",
+                "Context", "Keyboard help", "Model", "Quit cfc", "Save screenshot",
             ]
     finally:
         await app.shutdown()
@@ -1588,3 +1614,618 @@ def test_write_screenshot_refuses_on_a_replacement_failure_and_leaves_no_partial
     assert str(directory) in str(exc_info.value)
     assert list(directory.glob("*.svg")) == []
     assert list(directory.glob(".*")) == []
+
+
+# === Context modal: selector, inspector, and one literal preview route =====
+
+def context_modal_row_texts(app) -> list[str]:
+    modal = app.screen
+    assert isinstance(modal, tui.ContextModal)
+    return [str(s.content) for s in modal.query("#context-modal-list Static")]
+
+
+async def open_context_modal(pilot) -> tui.ContextModal:
+    await run_command(pilot, "Context")
+    return pilot.app.screen
+
+
+async def select_row(pilot, index: int) -> None:
+    list_view = pilot.app.screen.query_one("#context-modal-list", tui.ListView)
+    list_view.index = index
+    await pilot.pause()
+
+
+async def test_context_modal_lists_rows_in_request_order_with_nothing_selected(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            modal = await open_context_modal(pilot)
+            assert isinstance(modal, tui.ContextModal)
+            rows = context_modal_row_texts(app)
+            assert rows[0].startswith("System Instructions:")
+            assert rows[1] == "User Preferences: none selected"
+            assert rows[2] == "Persona: none selected"
+            assert rows[3] == "Add trait…"
+            assert rows[4].startswith("First Message:")
+    finally:
+        await app.shutdown()
+
+
+async def test_selecting_a_row_via_keyboard_opens_its_literal_preview(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await select_row(pilot, 0)  # System Instructions
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePreviewModal)
+            body = app.screen.query_one("#source-preview-body", tui.Static)
+            from cfc import context as context_mod
+            assert str(body.content) == context_mod.SYSTEM_INSTRUCTIONS_TEXT
+    finally:
+        await app.shutdown()
+
+
+async def test_selecting_a_row_via_mouse_does_the_same_as_keyboard(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            items = list(app.screen.query("#context-modal-list ListItem"))
+            await pilot.click(items[0])
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePreviewModal)
+    finally:
+        await app.shutdown()
+
+
+async def test_esc_closes_only_the_top_modal_through_preview_then_picker_then_context(tmp_path):
+    """Nested-Escape (Work Order Step 4): Preview -> Context -> Chat, and
+    Picker -> Context -> Chat, each Esc closing exactly one layer.
+    """
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            context_screen = app.screen
+
+            await select_row(pilot, 0)  # System Instructions
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePreviewModal)
+            await pilot.press("escape")  # layer 0: closes the preview only
+            await pilot.pause()
+            assert app.screen is context_screen
+
+            await select_row(pilot, 1)  # User Preferences
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            await pilot.press("escape")  # layer 0: closes the picker only
+            await pilot.pause()
+            assert app.screen is context_screen
+
+            await pilot.press("escape")  # layer 1: closes Context, back to Chat
+            await pilot.pause()
+            assert app.screen is screen
+    finally:
+        await app.shutdown()
+
+
+async def test_change_is_disabled_for_a_row_it_does_not_apply_to(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await select_row(pilot, 0)  # System Instructions: not user-editable
+            assert app.screen.query_one("#context-action-change", tui.Button).disabled is True
+            await select_row(pilot, 1)  # User Preferences: editable
+            assert app.screen.query_one("#context-action-change", tui.Button).disabled is False
+    finally:
+        await app.shutdown()
+
+
+async def test_changing_user_preferences_persists_and_survives_reopen(tmp_path):
+    prefs_dir = tmp_path / "prefs"
+    write_source(prefs_dir, "formal.md", "Be formal.")
+    vault = real_vault(tmp_path, prefs=prefs_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            chat_id = screen.chat_id
+            await open_context_modal(pilot)
+            await select_row(pilot, 1)  # User Preferences
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            options = list(app.screen.query("#source-picker-list ListItem"))
+            await pilot.click(options[-1])  # the real "formal" option, after "None"
+            await pilot.pause()
+
+            rows = context_modal_row_texts(app)
+            assert rows[1] == "User Preferences: formal, 10 chars, " + \
+                app.service.context_rows(chat_id).user_preferences.source.fingerprint[:12]
+
+            await pilot.press("escape")  # close Context
+            await pilot.pause()
+            assert app.service.get_chat(chat_id).context_selection.user_preferences == "formal.md"
+
+            await app.pop_screen()
+            await pilot.pause()
+            app.open_chat(chat_id)
+            await pilot.pause()
+            assert app.service.get_chat(chat_id).context_selection.user_preferences == "formal.md"
+    finally:
+        await app.shutdown()
+
+
+async def test_change_can_clear_a_selection_with_the_none_option(tmp_path):
+    prefs_dir = tmp_path / "prefs"
+    write_source(prefs_dir, "formal.md", "Be formal.")
+    vault = real_vault(tmp_path, prefs=prefs_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_user_preferences(screen.chat_id, "formal.md")
+
+            await open_context_modal(pilot)
+            await select_row(pilot, 1)
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            options = list(app.screen.query("#source-picker-list ListItem"))
+            await pilot.click(options[0])  # "None (clear selection)"
+            await pilot.pause()
+
+            rows = context_modal_row_texts(app)
+            assert rows[1] == "User Preferences: none selected"
+            assert app.service.get_chat(screen.chat_id).context_selection.user_preferences is None
+    finally:
+        await app.shutdown()
+
+
+async def test_add_and_remove_trait_updates_the_row_list_and_selection_order(tmp_path):
+    traits_dir = tmp_path / "traits"
+    write_source(traits_dir, "dry.md", "dry")
+    write_source(traits_dir, "warm.md", "warm")
+    vault = real_vault(tmp_path, traits=traits_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+
+            await select_row(pilot, 3)  # Add trait row, before any trait exists
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            first_options = list(app.screen.query("#source-picker-list ListItem"))
+            assert len(first_options) == 2  # no "None" option for Add
+            await pilot.click(first_options[0])
+            await pilot.pause()
+
+            rows = context_modal_row_texts(app)
+            assert any(r.startswith("Trait: dry,") for r in rows)
+            assert app.service.get_chat(screen.chat_id).context_selection.traits == ("dry.md",)
+
+            trait_index = next(i for i, r in enumerate(rows) if r.startswith("Trait: dry,"))
+            await select_row(pilot, trait_index)
+            await pilot.click("#context-action-remove")
+            await pilot.pause()
+            assert app.service.get_chat(screen.chat_id).context_selection.traits == ()
+    finally:
+        await app.shutdown()
+
+
+async def test_persona_selection_freezes_a_usable_first_message_and_renders_it_as_history(tmp_path):
+    personas_dir = tmp_path / "personas"
+    first_messages_dir = tmp_path / "first_messages"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    write_source(first_messages_dir, "muse.md", "Hello, I am Muse.")
+    vault = real_vault(tmp_path, personas=personas_dir, first_messages=first_messages_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await select_row(pilot, 2)  # Persona
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            options = list(app.screen.query("#source-picker-list ListItem"))
+            await pilot.click(options[-1])  # the real "muse" persona
+            await pilot.pause()
+
+            rows = context_modal_row_texts(app)
+            first_message_row = next(r for r in rows if r.startswith("First Message:"))
+            assert "Hello, I am Muse." not in first_message_row  # row shows metadata, not the body
+            assert "chars" in first_message_row
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is screen
+            lines = transcript_lines(screen)
+            assert "cfc: Hello, I am Muse." in lines
+
+            chat = app.service.get_chat(screen.chat_id)
+            assert chat.opening is not None
+            assert chat.opening.content == "Hello, I am Muse."
+    finally:
+        await app.shutdown()
+
+
+async def test_persona_selection_with_no_companion_leaves_first_message_absent(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            assert app.service.get_chat(screen.chat_id).opening is None
+
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            first_message_row = next(r for r in rows if r.startswith("First Message:"))
+            assert first_message_row == "First Message: none for this persona"
+    finally:
+        await app.shutdown()
+
+
+async def test_a_bad_selected_source_blocks_send_and_keeps_the_draft(tmp_path):
+    personas_dir = tmp_path / "personas"
+    personas_dir.mkdir()  # "ghost.md" does not exist inside it
+    vault = real_vault(tmp_path, personas=personas_dir)
+    responder = FixedResponder(Completion(content="must not be sent"))
+    app = make_app(tmp_path, responder=responder, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "ghost.md")
+
+            await type_text(pilot, "hello there")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            composer = screen.query_one(tui.Composer)
+            assert composer.text == "hello there"  # draft kept intact
+            assert responder.calls == []
+            status = str(screen.query_one("#chat-status", tui.Static).content)
+            assert "persona" in status
+            assert "ghost.md" in status
+            assert "Context" in status
+            assert app.service.snapshot(screen.chat_id).turns == ()
+    finally:
+        await app.shutdown()
+
+
+async def test_context_modal_renders_hostile_names_and_bodies_as_literal_text(tmp_path):
+    personas_dir = tmp_path / "personas"
+    hostile_name = "[bold red]evil.md"  # no literal "/" — that is not a legal POSIX filename
+    write_source(personas_dir, hostile_name, "[red]not a colour[/red]")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, hostile_name)
+
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            persona_row = next(r for r in rows if r.startswith("Persona:"))
+            assert "[bold red]evil" in persona_row  # the display name, literal text
+
+            await select_row(pilot, 2)
+            await pilot.press("enter")
+            await pilot.pause()
+            body = app.screen.query_one("#source-preview-body", tui.Static)
+            assert str(body.content) == "[red]not a colour[/red]"
+    finally:
+        await app.shutdown()
+
+
+async def test_composer_regains_focus_after_closing_context_modal(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert screen.query_one(tui.Composer).has_focus
+    finally:
+        await app.shutdown()
+
+
+async def test_the_outbound_plan_matches_the_context_modal_preview_exactly(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            preview = app.service.preview_context(screen.chat_id)
+
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            plan = responder.calls[0]
+            preview_bodies = [s.body for s in preview.ordered_sources()]
+            plan_prefix = [m.content for m in plan.messages[:len(preview_bodies)]]
+            assert plan_prefix == preview_bodies
+    finally:
+        await app.shutdown()
+
+
+# === Model modal: chat state, the required default always usable ===========
+
+def catalogue(*entries: settings.ModelCatalogueEntry) -> settings.ModelCatalogue:
+    return settings.ModelCatalogue(entries=entries)
+
+
+def model_modal_labels(app) -> list[str]:
+    modal = app.screen
+    assert isinstance(modal, tui.ModelModal)
+    return [str(s.content) for s in modal.query("#model-modal-list Static")]
+
+
+async def test_model_modal_marks_the_current_model_and_offers_the_default(tmp_path):
+    models = catalogue(
+        settings.ModelCatalogueEntry(id="fixture-model", selectable=True),
+        settings.ModelCatalogueEntry(id="other-model", selectable=True),
+    )
+    app = make_app(tmp_path, models=models)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await run_command(pilot, "Model")
+            assert isinstance(app.screen, tui.ModelModal)
+            labels = model_modal_labels(app)
+            assert "fixture-model (current)" in labels
+            assert "other-model" in labels
+    finally:
+        await app.shutdown()
+
+
+async def test_selecting_a_model_via_keyboard_persists_and_updates_the_context_bar(tmp_path):
+    models = catalogue(settings.ModelCatalogueEntry(id="other-model", selectable=True))
+    app = make_app(tmp_path, models=models)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await run_command(pilot, "Model")
+            list_view = app.screen.query_one("#model-modal-list", tui.ListView)
+            list_view.index = 1  # "fixture-model (current)" is offered first as the default
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.screen is screen
+            assert app.service.get_chat(screen.chat_id).context_selection.model == "other-model"
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "model: other-model" in bar
+    finally:
+        await app.shutdown()
+
+
+async def test_selecting_a_model_via_mouse_does_the_same_as_keyboard(tmp_path):
+    models = catalogue(settings.ModelCatalogueEntry(id="other-model", selectable=True))
+    app = make_app(tmp_path, models=models)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await run_command(pilot, "Model")
+            items = list(app.screen.query("#model-modal-list ListItem"))
+            other_item = next(i for i in items if "other-model" in str(i.query_one(tui.Static).content))
+            await pilot.click(other_item)
+            await pilot.pause()
+            assert app.service.get_chat(screen.chat_id).context_selection.model == "other-model"
+    finally:
+        await app.shutdown()
+
+
+async def test_esc_cancels_the_model_modal_without_changing_the_selection(tmp_path):
+    models = catalogue(settings.ModelCatalogueEntry(id="other-model", selectable=True))
+    app = make_app(tmp_path, models=models)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await run_command(pilot, "Model")
+            assert isinstance(app.screen, tui.ModelModal)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is screen
+            assert app.service.get_chat(screen.chat_id).context_selection.model == "fixture-model"
+    finally:
+        await app.shutdown()
+
+
+async def test_model_modal_labels_an_out_of_catalogue_current_model(tmp_path):
+    models = catalogue(settings.ModelCatalogueEntry(id="other-model", selectable=True))
+    app = make_app(tmp_path, models=models)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await run_command(pilot, "Model")
+            labels = model_modal_labels(app)
+            assert "fixture-model (current) (not in the current catalogue)" in labels
+    finally:
+        await app.shutdown()
+
+
+async def test_model_modal_renders_a_literal_hostile_provider_id(tmp_path):
+    hostile_id = "[bold red]evil-model"
+    models = catalogue(settings.ModelCatalogueEntry(id=hostile_id, selectable=True))
+    app = make_app(tmp_path, models=models)
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await run_command(pilot, "Model")
+            labels = model_modal_labels(app)
+            assert any(hostile_id in label for label in labels)
+    finally:
+        await app.shutdown()
+
+
+async def test_changing_the_model_does_not_relabel_past_turns(tmp_path):
+    models = catalogue(settings.ModelCatalogueEntry(id="other-model", selectable=True))
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder, models=models)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await run_command(pilot, "Model")
+            list_view = app.screen.query_one("#model-modal-list", tui.ListView)
+            list_view.index = 1
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            turn = app.service.snapshot(screen.chat_id).turns[0]
+            assert turn.model == "fixture-model"  # the model it actually used, unchanged
+            assert app.service.get_chat(screen.chat_id).context_selection.model == "other-model"
+            lines = transcript_lines(screen)
+            assert any(line == "model: fixture-model" for line in lines)
+    finally:
+        await app.shutdown()
+
+
+# === completed-turn evidence: model, usage, limit, context provenance ======
+
+async def test_turn_evidence_shows_not_reported_for_absent_usage_and_explicit_zero(tmp_path):
+    responder = FixedResponder(Completion(
+        content="ok", usage=Usage(input_tokens=0, output_tokens=None, total_tokens=5),
+    ))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert "usage — input: 0, output: not reported, total: 5" in lines
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_evidence_shows_all_not_reported_when_usage_is_entirely_absent(tmp_path):
+    responder = FixedResponder(Completion(content="ok", usage=None))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert "usage — input: not reported, output: not reported, total: not reported" in lines
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_evidence_shows_a_limit_comparison_when_the_catalogue_has_one(tmp_path):
+    models = catalogue(settings.ModelCatalogueEntry(
+        id="fixture-model", selectable=True, context_limit=128000,
+    ))
+    responder = FixedResponder(Completion(content="ok", usage=Usage(input_tokens=42)))
+    app = make_app(tmp_path, responder=responder, models=models)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert "reported input 42 of configured limit 128000" in lines
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_evidence_has_no_limit_line_without_a_configured_limit(tmp_path):
+    responder = FixedResponder(Completion(content="ok", usage=Usage(input_tokens=42)))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert not any(line.startswith("reported input") for line in lines)
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_evidence_context_provenance_lists_categories_in_order(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            provenance = next(line for line in lines if line.startswith("context:"))
+            assert provenance == "context: system_instructions:cfc-system-instructions-v1, persona:muse.md"
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_evidence_flags_a_context_source_that_changed_since_the_turn(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "version one")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            unchanged_provenance = next(
+                line for line in transcript_lines(screen) if line.startswith("context:")
+            )
+            assert "*" not in unchanged_provenance
+
+            write_source(personas_dir, "muse.md", "version two")
+            await app.pop_screen()
+            await pilot.pause()
+            app.open_chat(screen.chat_id)
+            await pilot.pause()
+
+            changed_provenance = next(
+                line for line in transcript_lines(app.screen) if line.startswith("context:")
+            )
+            assert "persona:muse.md*" in changed_provenance
+            assert "live source has changed" in changed_provenance
+    finally:
+        await app.shutdown()

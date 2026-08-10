@@ -25,6 +25,58 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-10 — The named-context foundation: selections, a resolver, one accepted request plan, and Context/Model in the TUI (`W-07`, Stage 5 loop 1)
+An ordinary stored chat now has one inspectable, provider-independent context
+path instead of an unpersonalised default. `cfc/context.py` (new) is the
+shared vault Markdown reader for User Preferences, Persona, Traits, and First
+Message — immediate, regular, contained, non-blank UTF-8 `.md` files only,
+refusing an escaping symlink, invalid UTF-8, a blank file, or a sibling
+display-name collision — plus cfc's own versioned System Instructions
+resource, always available even with no vault configured.
+`cfc/conversation_types.py` gains the pure vocabulary (`ContextCategory`,
+`SourceRecord`, `ContextSelection`, `OpeningMessage`, `ContextPlan`,
+`ContextManifestEntry`) and extends `Chat`/`Turn`; `cfc/settings.py` gains
+optional, never-raising vault category settings (`VAULT_ROOT`,
+`USER_PREFERENCES_DIR`, `PERSONAS_DIR`, `TRAITS_DIR`, `FIRST_MESSAGES_DIR`,
+each validated as contained inside the vault) and a validated model
+catalogue that reuses the existing `MODELS` list's `listed`/`limit` fields
+rather than adding a competing setting. `cfc/conversation_store.py` bumps to
+schema version 3: `cfc_chats` carries each chat's singular
+selections/model, `cfc_chat_traits` its ordered Trait filenames,
+`cfc_chat_openings` at most one frozen First Message, and `cfc_turn_context`
+each turn's ordered source provenance — category, filename, order,
+character count, fingerprint, never a vault body. A Persona selection
+freezes an eligible First Message companion atomically with the selection,
+authoritatively and only once, inside the store's own transaction.
+`cfc/conversation_service.py` carries the one explicit context-resolver
+dependency: `send_turn` resolves a fresh plan before `start_turn` (so a bad
+selection produces no turn and no orphaned message), and
+`cfc/provider_wire.py`'s `build_request_plan` now takes that plan plus an
+optional frozen opening, producing System Instructions, selected User
+Preferences/Persona/Traits as `system` messages, the opening as one
+`assistant` message, then the unchanged Stage 3 history — the `Responder`
+protocol moves here from `conversation_types` since it now types on
+`RequestPlan`, and `cfc/provider_adapter.py` is cut down to serialising and
+transporting that exact plan, nothing else. `cfc/tui.py` adds a Context
+command (System Instructions/User Preferences/Persona/Traits/First Message
+rows, literal preview, Change/Add/Remove, layered `Esc`) and a Model command
+(the catalogue's selectable entries, the required default always offered,
+an out-of-catalogue current model labelled rather than hidden) to the
+cfc-owned palette only on an ordinary Chat screen; the Chat header shows the
+exact model and a compact context summary, and a completed turn's evidence
+now shows its actual model, independent usage counts (`not reported` per
+missing value, explicit `0` unchanged), an optional configured-limit
+comparison, and its recorded context provenance — flagged when a live
+source's fingerprint no longer matches what that turn actually used.
+Proved with `.venv/bin/python -m pytest` (681 passed) and
+`python tests/golden.py check` (516 lines identical); schema-version refusal
+is proved for both a version-1 and a version-2 database under the new
+version 3, and every new/changed suite uses only temporary configs, vaults,
+and databases.
+- Files: cfc/context.py (new), cfc/conversation_service.py, cfc/conversation_store.py, cfc/conversation_types.py, cfc/provider_adapter.py, cfc/provider_wire.py, cfc/settings.py, cfc/tui.py, cfc/tui.tcss, config.example.py, tests/test_cfc_context.py (new), tests/test_cfc_conversation_service.py, tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_types.py, tests/test_cfc_provider_adapter.py, tests/test_cfc_provider_wire.py, tests/test_cfc_settings.py, tests/test_cfc_tui.py, tests/fixtures/conversation_store_child.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-10 — Recoverable chat navigation: screen replacement, omitted-turn restore, theme, and a cfc-owned command palette (`B-2.0-55`, `D-2.0-49`, `D-2.0-53`, `D-2.0-56`, `W-2.0-54`)
 v2.0 Stage 4, loop three. `CfcApp.open_chat` now replaces the active
 `ChatScreen` when switching to a different stored chat instead of pushing

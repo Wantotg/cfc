@@ -18,15 +18,20 @@ import pytest
 from cfc import conversation_store as store_mod
 from cfc.conversation_types import (
     CancelledOutcome,
+    ChatId,
     CompletedOutcome,
+    ContextCategory,
+    ContextManifestEntry,
     FailedOutcome,
     FailureEvidence,
     FailureKind,
+    OpeningMessage,
     ProviderProblem,
     Role,
     TimeoutPhase,
     TurnId,
     Usage,
+    utc_now,
 )
 
 CHILD_SCRIPT = Path(__file__).resolve().parent / "fixtures" / "conversation_store_child.py"
@@ -95,7 +100,7 @@ def test_fresh_open_creates_a_current_database(tmp_path):
 def test_reopen_through_a_new_connection_sees_the_same_database(tmp_path):
     path = db_path(tmp_path)
     store = store_mod.open_store(path)
-    chat = store.create_chat("first session")
+    chat = store.create_chat("first session", "fixture-model")
     store.close()
 
     reopened = store_mod.open_store(path)
@@ -326,9 +331,8 @@ def test_empty_and_populated_unclaimed_recovery_wording_differ(tmp_path):
 
 
 def test_a_schema_version_one_database_refuses_as_too_old(tmp_path):
-    """This loop bumps `SCHEMA_VERSION` from 1 to 2 (new failure-evidence
-    columns, no migration). A real database created by the prior build must
-    take the existing visible refusal route, not be silently reinterpreted.
+    """A pre-2.0-loop database (schema version 1) must still take the
+    existing visible refusal route under the current, higher SCHEMA_VERSION.
     """
     path = db_path(tmp_path)
     _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=1)
@@ -339,6 +343,26 @@ def test_a_schema_version_one_database_refuses_as_too_old(tmp_path):
 
     assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
     assert path.read_bytes() == before
+
+
+def test_a_schema_version_two_database_refuses_as_too_old(tmp_path):
+    """This loop bumps `SCHEMA_VERSION` from 2 to 3 (the named-context
+    foundation: chat selections, one frozen opening per chat, and per-turn
+    context provenance — no migration). A real database created by the
+    prior build must take the existing visible refusal route, not be
+    silently reinterpreted, `ALTER`ed, or have its sidecars touched.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=2)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+    assert path.read_bytes() == before
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
 
 
 # --- a header-valid target still owes SQLite's own integrity check --------
@@ -549,7 +573,7 @@ def test_fresh_initialisation_failure_does_not_touch_a_preexisting_file(tmp_path
 def test_reopen_recovers_a_single_active_turn_to_interrupted_failure(tmp_path):
     path = db_path(tmp_path)
     store = store_mod.open_store(path)
-    chat = store.create_chat("t")
+    chat = store.create_chat("t", "fixture-model")
     turn, _msg = store.start_turn(chat.id, model="m", user_content="hi")
     store.close()  # simulates the process disappearing mid-turn
 
@@ -569,7 +593,7 @@ def test_reopen_recovers_a_single_active_turn_to_interrupted_failure(tmp_path):
 def test_recovery_does_not_repeat_on_a_later_uneventful_reopen(tmp_path):
     path = db_path(tmp_path)
     store = store_mod.open_store(path)
-    chat = store.create_chat("t")
+    chat = store.create_chat("t", "fixture-model")
     turn, _ = store.start_turn(chat.id, model="m", user_content="hi")
     store.close()
 
@@ -672,7 +696,7 @@ def test_foreign_keys_are_enforced_for_turns(tmp_path):
 def test_foreign_keys_are_enforced_for_messages(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
                 "INSERT INTO cfc_messages "
@@ -701,7 +725,7 @@ def test_chat_kind_constraint_rejects_non_ordinary(tmp_path):
 def test_turn_position_uniqueness_is_enforced_per_chat(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q")
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
@@ -716,7 +740,7 @@ def test_turn_position_uniqueness_is_enforced_per_chat(tmp_path):
 def test_message_turn_position_uniqueness_is_enforced_per_turn(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q")
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
@@ -734,7 +758,7 @@ def test_message_turn_position_uniqueness_is_enforced_per_turn(tmp_path):
 def test_round_trip_through_a_new_connection_preserves_everything(tmp_path):
     path = db_path(tmp_path)
     store = store_mod.open_store(path)
-    chat = store.create_chat("round trip")
+    chat = store.create_chat("round trip", "fixture-model")
     turn1, _ = store.start_turn(chat.id, model="m1", user_content="first question")
     store.complete_turn(turn1.id, "first answer",
                          Usage(input_tokens=3, output_tokens=5, total_tokens=8))
@@ -764,7 +788,7 @@ def test_round_trip_through_a_new_connection_preserves_everything(tmp_path):
 def test_snapshot_carries_ordered_turns_alongside_messages(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn1, _ = store.start_turn(chat.id, "m1", "q1")
         store.complete_turn(turn1.id, "a1")
         turn2, _ = store.start_turn(chat.id, "m2", "q2")
@@ -783,7 +807,7 @@ def test_snapshot_carries_ordered_turns_alongside_messages(tmp_path):
 def test_provider_wire_failure_detail_round_trips_through_a_new_connection(tmp_path):
     path = db_path(tmp_path)
     store = store_mod.open_store(path)
-    chat = store.create_chat("c")
+    chat = store.create_chat("c", "fixture-model")
 
     timeout_turn, _ = store.start_turn(chat.id, "m", "q1")
     store.fail_turn(timeout_turn.id, FailureEvidence(
@@ -834,7 +858,7 @@ def test_provider_wire_failure_detail_round_trips_through_a_new_connection(tmp_p
 def test_failed_and_cancelled_turns_remain_distinct_and_carry_no_assistant_row(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
 
         t1, _ = store.start_turn(chat.id, "m", "q1")
         failed = store.fail_turn(t1.id, FailureEvidence(FailureKind.RESPONDER, "declared"))
@@ -859,7 +883,7 @@ def test_failed_and_cancelled_turns_remain_distinct_and_carry_no_assistant_row(t
 def test_a_later_turn_is_permitted_after_every_terminal_state(tmp_path, finalize):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q1")
         finalize(store, turn.id)
         turn2, _ = store.start_turn(chat.id, "m", "q2")
@@ -874,7 +898,7 @@ def test_a_later_turn_is_permitted_after_every_terminal_state(tmp_path, finalize
 def test_starting_a_second_turn_in_the_same_chat_before_the_first_ends_refuses(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         first, _ = store.start_turn(chat.id, "m", "q1")
 
         with pytest.raises(store_mod.ActiveTurnExists) as exc_info:
@@ -898,7 +922,7 @@ def test_starting_a_second_turn_in_the_same_chat_before_the_first_ends_refuses(t
 def test_a_terminal_turn_no_longer_blocks_starting_another(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q1")
         store.cancel_turn(turn.id)
 
@@ -911,8 +935,8 @@ def test_a_terminal_turn_no_longer_blocks_starting_another(tmp_path):
 def test_different_chats_may_each_have_one_independent_active_turn(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat_a = store.create_chat("a")
-        chat_b = store.create_chat("b")
+        chat_a = store.create_chat("a", "fixture-model")
+        chat_b = store.create_chat("b", "fixture-model")
         turn_a, _ = store.start_turn(chat_a.id, "m", "qa")
         turn_b, _ = store.start_turn(chat_b.id, "m", "qb")
         assert turn_a.chat_id == chat_a.id
@@ -926,7 +950,7 @@ def test_different_chats_may_each_have_one_independent_active_turn(tmp_path):
 def test_repeated_identical_finalisation_is_idempotent(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q")
         usage = Usage(input_tokens=1, output_tokens=2, total_tokens=3)
 
@@ -946,7 +970,7 @@ def test_repeated_identical_finalisation_is_idempotent(tmp_path):
 def test_conflicting_finalisation_refuses_and_leaves_the_original_outcome(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q")
         original = store.complete_turn(turn.id, "first answer")
 
@@ -976,7 +1000,7 @@ def test_finalising_an_unknown_turn_refuses(tmp_path):
 def test_final_write_failure_leaves_the_turn_recoverable(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
-        chat = store.create_chat("c")
+        chat = store.create_chat("c", "fixture-model")
         turn, _ = store.start_turn(chat.id, "m", "q")
 
         store._conn = _FailOnce(store._conn, "UPDATE cfc_turns SET finished_at")
@@ -992,6 +1016,283 @@ def test_final_write_failure_leaves_the_turn_recoverable(tmp_path):
         assert isinstance(finalised.outcome, CompletedOutcome)
     finally:
         store.close()
+
+
+# --- context selection: persisted, contained per chat -----------------------
+
+def manifest(*, persona="muse.md") -> tuple[ContextManifestEntry, ...]:
+    return (
+        ContextManifestEntry(category=ContextCategory.SYSTEM_INSTRUCTIONS,
+                              name="cfc-system-instructions-v1", order=0,
+                              character_count=42, fingerprint="sysfp"),
+        ContextManifestEntry(category=ContextCategory.PERSONA, name=persona, order=1,
+                              character_count=12, fingerprint="personafp"),
+    )
+
+
+def test_create_chat_stores_the_initial_model_and_no_other_selection(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        assert chat.context_selection.model == "fixture-model"
+        assert chat.context_selection.user_preferences is None
+        assert chat.context_selection.persona is None
+        assert chat.context_selection.traits == ()
+        assert chat.opening is None
+    finally:
+        store.close()
+
+
+def test_set_user_preferences_persists_and_returns_the_updated_chat(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        updated = store.set_user_preferences(chat.id, "prefs.md")
+        assert updated.context_selection.user_preferences == "prefs.md"
+        assert store.get_chat(chat.id).context_selection.user_preferences == "prefs.md"
+
+        cleared = store.set_user_preferences(chat.id, None)
+        assert cleared.context_selection.user_preferences is None
+    finally:
+        store.close()
+
+
+def test_set_persona_without_opening_leaves_opening_absent(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        updated = store.set_persona(chat.id, "muse.md")
+        assert updated.context_selection.persona == "muse.md"
+        assert updated.opening is None
+    finally:
+        store.close()
+
+
+def test_set_persona_with_opening_freezes_it_atomically(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        opening = OpeningMessage(source_name="muse.md", content="Hello, I am Muse.",
+                                  created_at=utc_now(), fingerprint="fp1")
+        updated = store.set_persona(chat.id, "muse.md", opening=opening)
+        assert updated.context_selection.persona == "muse.md"
+        assert updated.opening == opening
+        assert store.get_chat(chat.id).opening == opening
+    finally:
+        store.close()
+
+
+def test_set_persona_after_a_turn_never_adds_an_opening_retroactively(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "hello")
+        store.complete_turn(turn.id, "hi there")  # a turn now exists and has finished
+
+        late_opening = OpeningMessage(source_name="muse.md", content="too late",
+                                       created_at=utc_now(), fingerprint="fp2")
+        updated = store.set_persona(chat.id, "muse.md", opening=late_opening)
+        assert updated.context_selection.persona == "muse.md"
+        assert updated.opening is None
+    finally:
+        store.close()
+
+
+def test_an_existing_opening_is_never_rewritten_by_a_later_persona_change(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        first_opening = OpeningMessage(source_name="muse.md", content="original",
+                                        created_at=utc_now(), fingerprint="fp-original")
+        store.set_persona(chat.id, "muse.md", opening=first_opening)
+
+        replacement_opening = OpeningMessage(source_name="sage.md", content="replacement",
+                                              created_at=utc_now(), fingerprint="fp-replacement")
+        updated = store.set_persona(chat.id, "sage.md", opening=replacement_opening)
+        assert updated.context_selection.persona == "sage.md"  # selection did change
+        assert updated.opening == first_opening  # opening did not
+    finally:
+        store.close()
+
+
+def test_traits_preserve_add_order_and_are_independently_removable(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store.add_trait(chat.id, "dry.md")
+        store.add_trait(chat.id, "warm.md")
+        updated = store.add_trait(chat.id, "curious.md")
+        assert updated.context_selection.traits == ("dry.md", "warm.md", "curious.md")
+
+        after_remove = store.remove_trait(chat.id, "warm.md")
+        assert after_remove.context_selection.traits == ("dry.md", "curious.md")
+    finally:
+        store.close()
+
+
+def test_re_adding_an_already_selected_trait_is_idempotent(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store.add_trait(chat.id, "dry.md")
+        updated = store.add_trait(chat.id, "dry.md")
+        assert updated.context_selection.traits == ("dry.md",)
+    finally:
+        store.close()
+
+
+def test_set_model_updates_the_chats_default_model(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        updated = store.set_model(chat.id, "other-model")
+        assert updated.context_selection.model == "other-model"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("mutator_name,args", [
+    ("set_user_preferences", ("prefs.md",)),
+    ("set_persona", ("muse.md",)),
+    ("add_trait", ("dry.md",)),
+    ("remove_trait", ("dry.md",)),
+    ("set_model", ("other-model",)),
+])
+def test_selection_changes_refuse_while_a_turn_is_active(tmp_path, mutator_name, args):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store.start_turn(chat.id, "m", "hello")
+        mutator = getattr(store, mutator_name)
+        with pytest.raises(store_mod.ActiveTurnExists):
+            mutator(chat.id, *args)
+    finally:
+        store.close()
+
+
+def test_selection_changes_on_an_unknown_chat_raise_unknown_chat(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        with pytest.raises(store_mod.UnknownChat):
+            store.set_model(ChatId.new(), "other-model")
+    finally:
+        store.close()
+
+
+# --- per-turn context manifest: ordered, no vault body, all-or-nothing -----
+
+def test_start_turn_persists_and_returns_the_context_manifest(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        entries = manifest()
+        turn, _ = store.start_turn(chat.id, "m", "hi", context_manifest=entries)
+        assert turn.context_manifest == entries
+
+        reread = store.get_turn(turn.id)
+        assert reread.context_manifest == entries
+    finally:
+        store.close()
+
+
+def test_context_manifest_never_stores_a_source_body(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    chat = store.create_chat("c", "fixture-model")
+    store.start_turn(chat.id, "m", "hi", context_manifest=manifest())
+
+    raw = sqlite3.connect(str(path))
+    try:
+        columns = [row[1] for row in raw.execute("PRAGMA table_info(cfc_turn_context)")]
+        assert "body" not in columns
+        row = raw.execute(
+            "SELECT category, name, character_count, fingerprint FROM cfc_turn_context "
+            "ORDER BY position ASC"
+        ).fetchall()
+        assert row[1] == ("persona", "muse.md", 12, "personafp")
+    finally:
+        raw.close()
+        store.close()
+
+
+def test_context_manifest_is_scoped_to_its_own_turn(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn1, _ = store.start_turn(chat.id, "m", "q1", context_manifest=manifest(persona="a.md"))
+        store.complete_turn(turn1.id, "a1")
+        turn2, _ = store.start_turn(chat.id, "m", "q2", context_manifest=manifest(persona="b.md"))
+
+        assert store.get_turn(turn1.id).context_manifest[1].name == "a.md"
+        assert store.get_turn(turn2.id).context_manifest[1].name == "b.md"
+    finally:
+        store.close()
+
+
+def test_starting_a_turn_is_all_or_nothing_on_a_late_failure(tmp_path):
+    """The manifest insert happens inside `start_turn`'s own transaction —
+    a failure there must leave no turn, no user message, and no partial
+    manifest row behind, the same all-or-nothing guarantee `start_turn`
+    already gave its turn+message insert.
+    """
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store._conn = _FailOnce(store._conn, "INSERT INTO cfc_turn_context")
+        with pytest.raises(sqlite3.OperationalError):
+            store.start_turn(chat.id, "m", "hi", context_manifest=manifest())
+
+        snapshot = store.snapshot(chat.id)
+        assert snapshot.turns == ()
+        assert snapshot.messages == ()
+    finally:
+        store.close()
+
+
+# --- two chats, distinct selections, round trip through a reopened store ---
+
+def test_two_chats_round_trip_distinct_selections_opening_and_manifests(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+
+    chat_a = store.create_chat("chat a", "model-a")
+    store.set_user_preferences(chat_a.id, "prefs-a.md")
+    opening_a = OpeningMessage(source_name="muse.md", content="Hello from A",
+                                created_at=utc_now(), fingerprint="fp-a")
+    store.set_persona(chat_a.id, "muse.md", opening=opening_a)
+    store.add_trait(chat_a.id, "dry.md")
+    store.add_trait(chat_a.id, "warm.md")
+    turn_a, _ = store.start_turn(chat_a.id, "model-a", "hi from a",
+                                  context_manifest=manifest(persona="muse.md"))
+
+    chat_b = store.create_chat("chat b", "model-b")
+    store.set_persona(chat_b.id, "sage.md")  # no opening companion for sage
+    store.add_trait(chat_b.id, "warm.md")
+    store.add_trait(chat_b.id, "dry.md")  # reverse order from chat a
+    turn_b, _ = store.start_turn(chat_b.id, "model-b", "hi from b",
+                                  context_manifest=manifest(persona="sage.md"))
+    store.close()
+
+    reopened = store_mod.open_store(path)
+    try:
+        got_a = reopened.get_chat(chat_a.id)
+        assert got_a.context_selection.user_preferences == "prefs-a.md"
+        assert got_a.context_selection.persona == "muse.md"
+        assert got_a.context_selection.traits == ("dry.md", "warm.md")
+        assert got_a.context_selection.model == "model-a"
+        assert got_a.opening == opening_a
+
+        got_b = reopened.get_chat(chat_b.id)
+        assert got_b.context_selection.user_preferences is None
+        assert got_b.context_selection.persona == "sage.md"
+        assert got_b.context_selection.traits == ("warm.md", "dry.md")
+        assert got_b.context_selection.model == "model-b"
+        assert got_b.opening is None
+
+        assert reopened.get_turn(turn_a.id).context_manifest[1].name == "muse.md"
+        assert reopened.get_turn(turn_b.id).context_manifest[1].name == "sage.md"
+    finally:
+        reopened.close()
 
 
 # --- explicit temporary targets only ----------------------------------------

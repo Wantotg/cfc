@@ -120,6 +120,14 @@ PROMPTS_DIR = "PLACEHOLDER"
 PERSONAS_DIR = "PLACEHOLDER"
 TRAITS_DIR = "PLACEHOLDER"
 
+# The 2.0 Textual client's own name for a chat's selectable behavioural
+# material — optional, and deliberately a separate setting from PROMPTS_DIR
+# above rather than an alias for it, even though it is often the same
+# folder. The 2.0 bootstrap reads USER_PREFERENCES_DIR, PERSONAS_DIR, and
+# TRAITS_DIR the same way: each must resolve inside VAULT_ROOT or its 2.0
+# selector reports itself unavailable rather than failing ordinary chat.
+# USER_PREFERENCES_DIR = "PLACEHOLDER"
+
 # Optional opening lines for a persona, one .md file per persona filename —
 # `muse.md` here is the First Message for the persona `muse.md`. Not a fourth
 # pool: it isn't attachable and has no name of its own, only the persona's.

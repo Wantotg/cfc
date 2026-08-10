@@ -21,19 +21,14 @@ from cfc import conversation_service as service_mod
 from cfc import provider_adapter
 from cfc.conversation_types import (
     CancelledOutcome,
-    ChatId,
     Completion,
-    ConversationSnapshot,
     Failure,
-    MessageId,
     ProviderProblem,
     Role,
-    Message,
-    Turn,
-    TurnId,
     Usage,
 )
-from cfc.settings import ProviderSettings
+from cfc.provider_wire import RequestPlan, WireMessage
+from cfc.settings import ProviderSettings, VaultCategorySettings, VaultSettings
 
 API_KEY = "sk-test-do-not-leak-me"
 
@@ -49,14 +44,19 @@ def aware() -> datetime.datetime:
     return datetime.datetime(2026, 8, 9, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
 
-def active_snapshot(content: str = "hello") -> ConversationSnapshot:
-    chat_id = ChatId.new()
-    turn_id = TurnId.new()
-    turn = Turn(id=turn_id, chat_id=chat_id, position=0, model="fixture-model",
-                started_at=aware())
-    message = Message(id=MessageId.new(), chat_id=chat_id, turn_id=turn_id, turn_position=0,
-                       role=Role.USER, content=content, created_at=aware())
-    return ConversationSnapshot(chat_id=chat_id, turns=(turn,), messages=(message,))
+def active_plan(content: str = "hello", model: str = "fixture-model") -> RequestPlan:
+    """The adapter now receives only a finished `RequestPlan` — these
+    fixtures build one directly rather than through
+    `provider_wire.build_request_plan`, since that conversion has its own
+    dedicated proof in `test_cfc_provider_wire.py`.
+    """
+    return RequestPlan(model=model, messages=(WireMessage(role="user", content=content),))
+
+
+def empty_vault() -> VaultSettings:
+    unavailable = VaultCategorySettings(unavailable_reason="not configured")
+    return VaultSettings(root=None, user_preferences=unavailable, personas=unavailable,
+                          traits=unavailable, first_messages=unavailable)
 
 
 def json_response(status_code: int, body: dict) -> httpx.Response:
@@ -82,7 +82,7 @@ def test_sends_exactly_one_post_to_chat_completions_with_bearer_auth_and_plan_js
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot("hello"), "fixture-model")
+            return await adapter.respond(active_plan("hello"))
 
     result = run(scenario())
 
@@ -112,7 +112,7 @@ def test_makes_exactly_one_attempt_no_retry(tmp_path):
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -139,7 +139,7 @@ def test_usage_translation_covers_complete_partial_zero_and_omitted(usage_body, 
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Completion)
@@ -156,7 +156,7 @@ def test_an_http_refusal_becomes_typed_status_evidence_with_no_body_stored(statu
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -180,7 +180,7 @@ def test_every_2xx_status_is_eligible_for_success(status_code):
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     if status_code == 204:
@@ -206,7 +206,7 @@ def test_a_3xx_status_is_typed_http_evidence_not_malformed(status_code):
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -224,7 +224,7 @@ def test_an_object_error_envelope_gets_distinct_wording_and_no_provider_text():
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -241,7 +241,7 @@ def test_a_non_object_error_key_falls_back_to_the_generic_unsupported_route(erro
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -254,7 +254,7 @@ def test_an_ordinary_unsupported_shape_is_still_distinct_from_the_error_envelope
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -278,7 +278,7 @@ def test_whole_floats_and_decimal_strings_are_accepted_usage_spellings(usage_bod
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Completion)
@@ -317,7 +317,7 @@ def test_an_invalid_usage_count_rejects_the_whole_response_as_malformed(usage_bo
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -332,7 +332,7 @@ def test_all_absent_usage_still_remains_none():
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Completion)
@@ -348,7 +348,7 @@ def test_invalid_json_body_is_a_malformed_response_failure():
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -374,7 +374,7 @@ def test_valid_json_with_no_usable_assistant_content_is_malformed_not_a_completi
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -397,7 +397,7 @@ def test_each_timeout_phase_is_translated_distinctly(raise_exc, expected_phase):
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -413,7 +413,7 @@ def test_a_connection_failure_is_translated_distinctly_from_a_timeout():
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -456,7 +456,7 @@ def test_no_evidence_ever_contains_the_api_key_or_a_response_body(scenario_name)
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
-            return await adapter.respond(active_snapshot(), "fixture-model")
+            return await adapter.respond(active_plan())
 
     result = run(scenario())
     assert isinstance(result, Failure)
@@ -479,14 +479,14 @@ def test_cancellation_in_flight_is_stored_as_cancelled_with_no_partial_message_a
     transport = httpx.MockTransport(handler)
 
     async def scenario():
-        service = service_mod.open_service(tmp_path / "chat.db")
+        service = service_mod.open_service(tmp_path / "chat.db", empty_vault())
         try:
-            chat = service.create_chat("c")
+            chat = service.create_chat("c", "fixture-model")
             async with provider_adapter.OpenAICompatibleAdapter(
                 settings(), transport=transport
             ) as adapter:
                 task = asyncio.ensure_future(
-                    service.send_turn(chat.id, "fixture-model", "hello", adapter)
+                    service.send_turn(chat.id, "hello", adapter)
                 )
                 await in_flight.wait()
                 task.cancel()
