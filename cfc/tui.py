@@ -46,7 +46,7 @@ from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, St
 from textual.widgets import TextArea
 from textual.worker import Worker
 
-from cfc import config_loader, diagnostics, provider_adapter, settings
+from cfc import chat_export, config_loader, diagnostics, provider_adapter, settings
 from cfc import context as context_mod
 from cfc.context import FirstMessageState, SourceOption
 from cfc.conversation_service import CategoryState, ConversationService, ContextRows, open_service
@@ -56,6 +56,7 @@ from cfc.conversation_types import (
     CancelledOutcome,
     Chat,
     ChatId,
+    ChatKind,
     CompletedOutcome,
     ContextCategory,
     ContextManifestEntry,
@@ -97,6 +98,25 @@ _APPEARANCE_NOT_SAVED_NOTICE = (
     "cfc could not save this appearance choice. The current appearance is "
     "unchanged."
 )
+
+
+#: Concept.md's "Main is unconfigured before creation": the Hub's Main
+#: action stays visible and stays on the Hub, naming the setting to correct
+#: rather than pushing a screen for a chat that was never created.
+def _main_unavailable_notice(exc: context_mod.SourceUnavailable) -> str:
+    return (
+        f"cfc could not create Main: {exc.reason} Correct MAIN_CHAT_DIR or "
+        f"the vault, then try again."
+    )
+
+
+_EXPORT_ACTIVE_TURN_NOTICE = (
+    "This chat has a request in progress; wait or cancel it, then export again."
+)
+
+
+def _export_failed_notice(exc: chat_export.ExportError) -> str:
+    return f"Export failed: {exc}"
 
 
 def _context_unavailable_notice(exc: context_mod.SourceUnavailable) -> str:
@@ -349,6 +369,17 @@ def _category_state_text(state: CategoryState) -> str:
     return f"unavailable ({state.unavailable_reason}) — open to correct"
 
 
+def _attachment_row_text(attachment: "CategoryState | object") -> str:
+    """One Attachments-section row's text: the same literal-body-or-
+    unavailable-reason shape `_category_state_text` gives every other
+    source, applied to `conversation_service.AttachmentRow` — never
+    `_category_state_text` itself, since an attachment has no "unavailable
+    category" concept (it is always a plain vault-relative path)."""
+    if attachment.source is not None:
+        return f"{attachment.relative_path} — {_source_record_text(attachment.source)}"
+    return f"{attachment.relative_path} — unavailable ({attachment.unavailable_reason})"
+
+
 def _first_message_row_text(
     opening: OpeningMessage | None, lookup, category_unavailable_reason: str | None = None,
 ) -> str:
@@ -514,22 +545,44 @@ class ContextModal(ModalScreen[None]):
         await list_view.clear()
         chat = self.app.service.get_chat(self.chat_id)
         rows: ContextRows = self.app.service.context_rows(self.chat_id)
+        is_main = chat.kind is ChatKind.MAIN
 
         await self._append_row(
             list_view, "system_instructions",
             f"System Instructions: {_source_record_text(rows.system_instructions)}",
         )
+        if is_main:
+            await self._append_row(
+                list_view, "main_system_prompt",
+                f"Main System Prompt: {_category_state_text(rows.main_system_prompt)}",
+            )
+            await self._append_row(
+                list_view, "main_persona",
+                f"Main Persona: {_category_state_text(rows.main_persona)}",
+            )
         await self._append_row(
             list_view, "user_preferences",
             f"User Preferences: {_category_state_text(rows.user_preferences)}",
         )
-        await self._append_row(list_view, "persona", f"Persona: {_category_state_text(rows.persona)}")
+        if not is_main:
+            #: Main never selects the shared Persona category — its
+            #: persona is the fixed `Main Persona` row above
+            #: (`ContextCategory`'s own docstring).
+            await self._append_row(
+                list_view, "persona", f"Persona: {_category_state_text(rows.persona)}",
+            )
         for trait in rows.traits:
             await self._append_row(
                 list_view, ("trait", trait.selected_name),
                 f"Trait: {_category_state_text(trait)}",
             )
         await self._append_row(list_view, "add_trait", self._add_trait_row_text())
+        for attachment in rows.attachments:
+            await self._append_row(
+                list_view, ("attachment", attachment.relative_path),
+                f"Attachment: {_attachment_row_text(attachment)}",
+            )
+        await self._append_row(list_view, "add_attachment", self._add_attachment_row_text())
         await self._append_row(
             list_view, "first_message",
             "First Message: " + _first_message_row_text(
@@ -552,6 +605,17 @@ class ContextModal(ModalScreen[None]):
             return "Add trait…"
         return f"Add trait… unavailable ({reason}) — {_CATEGORY_CONFIG_ROUTE}"
 
+    def _add_attachment_row_text(self) -> str:
+        """The whole-vault-root equivalent of `_add_trait_row_text`
+        (B-2.0-62): an unusable `VAULT_ROOT` is named on this row itself,
+        not only inside the picker a person would otherwise have to open
+        first to learn why it is empty.
+        """
+        reason = self.app.service.attachments_unavailable_reason()
+        if reason is None:
+            return "Add attachment…"
+        return f"Add attachment… unavailable ({reason}) — {_CATEGORY_CONFIG_ROUTE}"
+
     def _current_kind(self) -> object:
         list_view = self.query_one("#context-modal-list", ListView)
         item = list_view.highlighted_child
@@ -562,9 +626,11 @@ class ContextModal(ModalScreen[None]):
         self.query_one("#context-action-change", Button).disabled = kind not in (
             "user_preferences", "persona",
         )
-        self.query_one("#context-action-add", Button).disabled = kind != "add_trait"
+        self.query_one("#context-action-add", Button).disabled = kind not in (
+            "add_trait", "add_attachment",
+        )
         self.query_one("#context-action-remove", Button).disabled = not (
-            isinstance(kind, tuple) and kind[0] == "trait"
+            isinstance(kind, tuple) and kind[0] in ("trait", "attachment")
         )
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
@@ -578,12 +644,19 @@ class ContextModal(ModalScreen[None]):
         """
         kind = getattr(event.item, "row_kind", None)
         if kind == "add_trait":
-            self._begin_add()
+            self._begin_add_trait()
+            return
+        if kind == "add_attachment":
+            self._begin_add_attachment()
             return
         chat = self.app.service.get_chat(self.chat_id)
         rows: ContextRows = self.app.service.context_rows(self.chat_id)
         if kind == "system_instructions":
             self._open_preview("System Instructions", rows.system_instructions.body)
+        elif kind == "main_system_prompt":
+            self._open_category_preview("Main System Prompt", rows.main_system_prompt)
+        elif kind == "main_persona":
+            self._open_category_preview("Main Persona", rows.main_persona)
         elif kind == "user_preferences":
             self._open_category_preview("User Preferences", rows.user_preferences)
         elif kind == "persona":
@@ -592,6 +665,11 @@ class ContextModal(ModalScreen[None]):
             filename = kind[1]
             state = next((t for t in rows.traits if t.selected_name == filename), None)
             self._open_category_preview(f"Trait: {filename}", state)
+        elif isinstance(kind, tuple) and kind[0] == "attachment":
+            relative_path = kind[1]
+            attachment = next(
+                (a for a in rows.attachments if a.relative_path == relative_path), None)
+            self._open_attachment_preview(relative_path, attachment)
         elif kind == "first_message":
             if chat.opening is not None:
                 self._open_preview("First Message", chat.opening.content)
@@ -614,6 +692,14 @@ class ContextModal(ModalScreen[None]):
             self._open_preview(title, state.source.body)
         else:
             self._open_preview(title, f"unavailable: {state.unavailable_reason}")
+
+    def _open_attachment_preview(self, relative_path: str, attachment: object | None) -> None:
+        title = f"Attachment: {relative_path}"
+        if attachment is None or attachment.source is None:
+            reason = attachment.unavailable_reason if attachment is not None else "not selected"
+            self._open_preview(title, f"unavailable: {reason}")
+        else:
+            self._open_preview(title, attachment.source.body)
 
     def _open_preview(self, title: str, body: str) -> None:
         self.app.push_screen(SourcePreviewModal(title, body))
@@ -644,7 +730,7 @@ class ContextModal(ModalScreen[None]):
         self.app.push_screen(
             SourcePickerModal(title, options, allow_clear=True, notice=notice), handle_result)
 
-    def _begin_add(self) -> None:
+    def _begin_add_trait(self) -> None:
         already_selected = {t.selected_name for t in self.app.service.context_rows(self.chat_id).traits}
         options = tuple(
             option for option in self.app.service.available_sources(ContextCategory.TRAIT)
@@ -663,11 +749,43 @@ class ContextModal(ModalScreen[None]):
         self.app.push_screen(
             SourcePickerModal("Add trait", options, allow_clear=False, notice=notice), handle_result)
 
+    def _begin_add_attachment(self) -> None:
+        """Reuses `SourcePickerModal` exactly like `_begin_add_trait`
+        (Work Order: "attachment choice reuses the existing list-selection
+        modal") — `available_attachments` already returns `SourceOption`s
+        keyed by vault-relative path, so no separate picker type is needed.
+        """
+        already_selected = {
+            a.relative_path for a in self.app.service.context_rows(self.chat_id).attachments
+        }
+        options = tuple(
+            option for option in self.app.service.available_attachments()
+            if option.name not in already_selected
+        )
+        notice = self.app.service.attachments_unavailable_reason()
+        if notice is not None:
+            notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
+
+        async def handle_result(result: object) -> None:
+            if result is None or result is _CLEAR_SELECTION:
+                return
+            self._mutate_selection(lambda: self.app.service.add_attachment(self.chat_id, result))
+            await self.refresh_rows()
+
+        self.app.push_screen(
+            SourcePickerModal("Add attachment", options, allow_clear=False, notice=notice),
+            handle_result,
+        )
+
     async def _handle_remove(self) -> None:
         kind = self._current_kind()
-        if not (isinstance(kind, tuple) and kind[0] == "trait"):
+        if not (isinstance(kind, tuple) and kind[0] in ("trait", "attachment")):
             return
-        self._mutate_selection(lambda: self.app.service.remove_trait(self.chat_id, kind[1]))
+        row_kind, identity = kind
+        if row_kind == "trait":
+            self._mutate_selection(lambda: self.app.service.remove_trait(self.chat_id, identity))
+        else:
+            self._mutate_selection(lambda: self.app.service.remove_attachment(self.chat_id, identity))
         await self.refresh_rows()
 
     def action_close(self) -> None:
@@ -680,7 +798,10 @@ class ContextModal(ModalScreen[None]):
         elif button_id == "context-action-change":
             self._begin_change()
         elif button_id == "context-action-add":
-            self._begin_add()
+            if self._current_kind() == "add_attachment":
+                self._begin_add_attachment()
+            else:
+                self._begin_add_trait()
         elif button_id == "context-action-remove":
             await self._handle_remove()
 
@@ -756,7 +877,7 @@ class HubScreen(Screen):
     next time a person sees it.
     """
 
-    BINDINGS = [Binding("n", "new_chat", "New chat")]
+    BINDINGS = [Binding("n", "new_chat", "New chat"), Binding("m", "main", "Main")]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="hub-body"):
@@ -765,7 +886,10 @@ class HubScreen(Screen):
                 id="hub-empty", markup=False,
             )
             yield ListView(id="hub-chat-list")
-            yield Button("New chat", id="hub-new-chat-button")
+            yield Static("", id="hub-notice", markup=False)
+            with Horizontal(id="hub-actions"):
+                yield Button("New chat", id="hub-new-chat-button")
+                yield Button("Main", id="hub-main-button")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -795,12 +919,31 @@ class HubScreen(Screen):
         chat = self.app.service.create_chat(title, self.app.default_model)
         self.app.open_chat(chat.id)
 
+    def action_main(self) -> None:
+        """The Hub's own Main action (Concept.md: "always exposes Main as
+        its own action, beside ordinary new-chat creation"). A creation
+        refusal — an unusable `MAIN_CHAT_DIR`/`VAULT_ROOT`, or a bad fixed
+        file in the bundle — stays right here on the Hub, names the
+        correction route, and creates no row; an existing Main always
+        reopens, even with a currently broken live profile
+        (`ConversationService.get_or_create_main`'s own fast reopen path).
+        """
+        try:
+            chat = self.app.service.get_or_create_main(self.app.default_model)
+        except context_mod.SourceUnavailable as exc:
+            self.query_one("#hub-notice", Static).update(_main_unavailable_notice(exc))
+            return
+        self.query_one("#hub-notice", Static).update("")
+        self.app.open_chat(chat.id)
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         self.app.open_chat(event.item.chat_id)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "hub-new-chat-button":
             self.action_new_chat()
+        elif event.button.id == "hub-main-button":
+            self.action_main()
 
 
 # --- Chat ------------------------------------------------------------------
@@ -1061,6 +1204,27 @@ class ChatScreen(Screen):
         await self.refresh_from_service()
         self.query_one(Composer).focus()
 
+    # -- Export Markdown: one manual, cfc-owned command palette action ------
+
+    def action_export_markdown(self) -> None:
+        """Concept.md: "Invoking it is the complete manual approval" — no
+        destination prompt, no automatic trigger anywhere else. Renders
+        success only after the file actually exists (`path` is the real
+        published location); every refusal — active turn, unset/invalid
+        `CHAT_EXPORT_DIR`, a bad destination, or a write/publish failure —
+        stays on this screen's own status line and leaves the composer and
+        stored chat untouched.
+        """
+        try:
+            path = self.app.service.export_chat(self.chat_id)
+        except conversation_store.ActiveTurnExists:
+            self._notice = _EXPORT_ACTIVE_TURN_NOTICE
+        except chat_export.ExportError as exc:
+            self._notice = _export_failed_notice(exc)
+        else:
+            self._notice = f"Exported to {path}"
+        self._render_status()
+
 
 def _usage_text(usage) -> str:
     """Independent input/output/total counts — `not reported` for each
@@ -1319,6 +1483,8 @@ class CfcCommandsProvider(Provider):
                               "Select and inspect this chat's context"))
             commands.append(("Model", self.screen.action_show_model,
                               "Choose this chat's model"))
+            commands.append(("Export Markdown", self.screen.action_export_markdown,
+                              "Export this chat to a standalone Markdown file"))
         commands.append(("Quit cfc", app.action_quit, "Close cfc"))
         return tuple(commands)
 
@@ -1726,7 +1892,7 @@ def build_app(
         return StartupFailureApp(str(exc), diagnostics._settings_error_next_step(exc), theme=theme)
 
     try:
-        service = open_service(built.database_path, built.vault)
+        service = open_service(built.database_path, built.vault, built.chat_export.path)
     except ConversationStoreError as exc:
         return StartupFailureApp(str(exc), theme=theme)
 

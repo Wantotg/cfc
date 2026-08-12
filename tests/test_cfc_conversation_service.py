@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from cfc import chat_export
 from cfc import context as context_mod
 from cfc import conversation_service as service_mod
 from cfc import conversation_store
@@ -46,17 +47,18 @@ def run(coro):
 def empty_vault() -> VaultSettings:
     unavailable = VaultCategorySettings(unavailable_reason="not configured")
     return VaultSettings(root=None, user_preferences=unavailable, personas=unavailable,
-                          traits=unavailable, first_messages=unavailable)
+                          traits=unavailable, first_messages=unavailable, main_chat=unavailable)
 
 
 def real_vault(tmp_path: Path, *, prefs=None, personas=None, traits=None,
-                first_messages=None) -> VaultSettings:
+                first_messages=None, main_chat=None) -> VaultSettings:
     def cat(path):
         if path is None:
             return VaultCategorySettings(unavailable_reason="not configured")
         return VaultCategorySettings(path=path)
     return VaultSettings(root=tmp_path, user_preferences=cat(prefs), personas=cat(personas),
-                          traits=cat(traits), first_messages=cat(first_messages))
+                          traits=cat(traits), first_messages=cat(first_messages),
+                          main_chat=cat(main_chat))
 
 
 def write(directory: Path, name: str, body: str) -> None:
@@ -1077,6 +1079,221 @@ def test_context_entry_fingerprint_changed_is_always_false_for_system_instructio
         service.close()
 
 
+# --- Main: get-or-create, profile resolution, and turn parity --------------
+
+def main_bundle(main_dir: Path, *, first_message="Hello from Main.") -> None:
+    write(main_dir, "system prompt.md", "Main's system prompt.")
+    write(main_dir, "persona.md", "Main's persona.")
+    write(main_dir, "first message.md", first_message)
+
+
+def test_get_or_create_main_creates_once_and_freezes_the_opening(tmp_path):
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir)
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir))
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        assert chat.kind is service_mod.ChatKind.MAIN
+        assert chat.title == "Main"
+        assert chat.opening.content == "Hello from Main."
+
+        reopened = service.get_or_create_main("fixture-model")
+        assert reopened.id == chat.id
+    finally:
+        service.close()
+
+
+def test_get_or_create_main_never_creates_a_row_when_the_bundle_is_broken(tmp_path):
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()  # none of the three files exist
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir))
+    try:
+        with pytest.raises(context_mod.SourceUnavailable):
+            service.get_or_create_main("fixture-model")
+        assert service._store.find_main() is None
+    finally:
+        service.close()
+
+
+def test_get_or_create_main_reopen_never_rereads_the_creation_bundle(tmp_path):
+    """Concept.md: "that action reopens it even when its live profile is
+    currently broken" — an existing Main is found by `find_main` before this
+    method would even look at MAIN_CHAT_DIR again."""
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir)
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir))
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        # break the live profile entirely — a reopen must still succeed
+        (main_dir / "system prompt.md").unlink()
+        (main_dir / "persona.md").unlink()
+        (main_dir / "first message.md").unlink()
+
+        reopened = service.get_or_create_main("fixture-model")
+        assert reopened.id == chat.id
+        assert reopened.opening.content == "Hello from Main."
+    finally:
+        service.close()
+
+
+def test_main_send_turn_resolves_profile_and_shared_selection_in_order(tmp_path):
+    main_dir = tmp_path / "main"
+    prefs_dir = tmp_path / "prefs"
+    main_bundle(main_dir)
+    write(prefs_dir, "p.md", "prefs body")
+    vault = real_vault(tmp_path, main_chat=main_dir, prefs=prefs_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault)
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        service.set_user_preferences(chat.id, "p.md")
+        responder = FixedResponder(Completion(content="ok"))
+
+        turn = run(service.send_turn(chat.id, "hi", responder))
+
+        assert [e.category for e in turn.context_manifest] == [
+            ContextCategory.SYSTEM_INSTRUCTIONS, ContextCategory.MAIN_SYSTEM_PROMPT,
+            ContextCategory.MAIN_PERSONA, ContextCategory.USER_PREFERENCES,
+        ]
+        plan = responder.calls[0]
+        assert any(m.content == "Main's system prompt." for m in plan.messages)
+        assert any(m.content == "Hello from Main." and m.role == "assistant" for m in plan.messages)
+    finally:
+        service.close()
+
+
+def test_main_send_turn_refuses_before_start_turn_when_live_profile_is_broken(tmp_path):
+    """Concept.md: "Send refuses before persistence or HTTP, preserves the
+    draft" — an existing Main's broken live profile must not reach the
+    responder or leave a stray turn/message."""
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir)
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir))
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        (main_dir / "system prompt.md").unlink()
+        responder = FixedResponder(Completion(content="must not run"))
+
+        with pytest.raises(context_mod.SourceUnavailable):
+            run(service.send_turn(chat.id, "hi", responder))
+
+        assert responder.calls == []
+        assert service.snapshot(chat.id).turns == ()
+    finally:
+        service.close()
+
+
+def test_context_rows_for_main_includes_profile_rows_ordinary_chat_does_not(tmp_path):
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir)
+    vault = real_vault(tmp_path, main_chat=main_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault)
+    try:
+        main_chat = service.get_or_create_main("fixture-model")
+        main_rows = service.context_rows(main_chat.id)
+        assert main_rows.main_system_prompt.source.body == "Main's system prompt."
+        assert main_rows.main_persona.source.body == "Main's persona."
+
+        ordinary_chat = service.create_chat("c", "fixture-model")
+        ordinary_rows = service.context_rows(ordinary_chat.id)
+        assert ordinary_rows.main_system_prompt is None
+        assert ordinary_rows.main_persona is None
+    finally:
+        service.close()
+
+
+# --- attachments: discovery, selection, resolution, provenance -------------
+
+def test_available_attachments_discovers_vault_relative_md_files(tmp_path):
+    write(tmp_path / "notes", "idea.md", "an idea")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        options = service.available_attachments()
+        assert [o.name for o in options] == ["notes/idea.md"]
+    finally:
+        service.close()
+
+
+def test_add_and_remove_attachment_are_reachable_through_the_service(tmp_path):
+    write(tmp_path, "a.md", "a")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        after_add = service.add_attachment(chat.id, "a.md")
+        assert after_add.context_selection.attachments == ("a.md",)
+        after_remove = service.remove_attachment(chat.id, "a.md")
+        assert after_remove.context_selection.attachments == ()
+    finally:
+        service.close()
+
+
+def test_ordinary_send_turn_places_attachments_after_the_shared_selection(tmp_path):
+    write(tmp_path, "a.md", "attachment body")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "a.md")
+        responder = FixedResponder(Completion(content="ok"))
+
+        turn = run(service.send_turn(chat.id, "hi", responder))
+
+        assert turn.context_manifest[-1].category is ContextCategory.ATTACHMENT
+        assert turn.context_manifest[-1].name == "a.md"
+        plan = responder.calls[0]
+        attachment_message = next(m for m in plan.messages if "attachment body" in m.content)
+        assert attachment_message.role == "user"
+    finally:
+        service.close()
+
+
+def test_an_unusable_attachment_reaches_neither_store_nor_responder(tmp_path):
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "ghost.md")
+        responder = FixedResponder(Completion(content="must not run"))
+
+        with pytest.raises(context_mod.SourceUnavailable):
+            run(service.send_turn(chat.id, "hi", responder))
+
+        assert responder.calls == []
+        assert service.snapshot(chat.id).turns == ()
+    finally:
+        service.close()
+
+
+def test_context_rows_resolves_each_attachment_independently(tmp_path):
+    write(tmp_path, "good.md", "good body")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "good.md")
+        service.add_attachment(chat.id, "ghost.md")
+
+        rows = service.context_rows(chat.id)
+        by_path = {row.relative_path: row for row in rows.attachments}
+        assert by_path["good.md"].source.body == "good body"
+        assert by_path["ghost.md"].source is None
+        assert by_path["ghost.md"].unavailable_reason is not None
+    finally:
+        service.close()
+
+
+def test_context_entry_fingerprint_changed_detects_an_attachment_edit(tmp_path):
+    write(tmp_path, "a.md", "version one")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "a.md")
+        turn = run(service.send_turn(chat.id, "hi", FixedResponder(Completion(content="ok"))))
+        entry = turn.context_manifest[-1]
+
+        assert service.context_entry_fingerprint_changed(entry) is False
+        write(tmp_path, "a.md", "version two")
+        assert service.context_entry_fingerprint_changed(entry) is True
+    finally:
+        service.close()
+
+
 def test_add_remove_trait_and_set_model_are_reachable_through_the_service(tmp_path):
     service = open_service(tmp_path)
     try:
@@ -1093,6 +1310,52 @@ def test_add_remove_trait_and_set_model_are_reachable_through_the_service(tmp_pa
 
         after_prefs = service.set_user_preferences(chat.id, "prefs.md")
         assert after_prefs.context_selection.user_preferences == "prefs.md"
+    finally:
+        service.close()
+
+
+# --- export: the one service operation, active-turn refused ----------------
+
+def test_export_chat_is_reachable_through_the_service(tmp_path):
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    service = service_mod.ConversationService(
+        conversation_store.open_store(db_path(tmp_path)), empty_vault(), export_dir,
+    )
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        run(service.send_turn(chat.id, "hi", FixedResponder(Completion(content="ok"))))
+
+        path = service.export_chat(chat.id)
+
+        assert path.exists()
+        assert "hi" in path.read_text(encoding="utf-8")
+    finally:
+        service.close()
+
+
+def test_export_chat_refuses_with_active_turn_exists_while_a_turn_is_active(tmp_path):
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    service = service_mod.ConversationService(
+        conversation_store.open_store(db_path(tmp_path)), empty_vault(), export_dir,
+    )
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service._store.start_turn(chat.id, "fixture-model", "hi")
+
+        with pytest.raises(conversation_store.ActiveTurnExists):
+            service.export_chat(chat.id)
+    finally:
+        service.close()
+
+
+def test_export_chat_reports_a_bounded_destination_error_when_unconfigured(tmp_path):
+    service = open_service(tmp_path)  # no export_dir given
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        with pytest.raises(chat_export.DestinationUnusable):
+            service.export_chat(chat.id)
     finally:
         service.close()
 

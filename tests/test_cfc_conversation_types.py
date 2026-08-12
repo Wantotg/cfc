@@ -301,8 +301,12 @@ def test_status_code_is_rejected_without_the_http_status_problem():
 
 # --- ChatKind: cannot express a private durable chat ------------------------
 
-def test_chat_kind_has_exactly_one_member():
-    assert list(ct.ChatKind) == [ct.ChatKind.ORDINARY]
+def test_chat_kind_has_exactly_two_members():
+    """Stage 5 loop 3: `MAIN` joins `ORDINARY` as one distinguished durable
+    row in the same ledger — `conversation_store`'s own singleton invariant
+    keeps it to at most one, not a third member here.
+    """
+    assert list(ct.ChatKind) == [ct.ChatKind.ORDINARY, ct.ChatKind.MAIN]
 
 
 def test_chat_kind_has_no_private_value():
@@ -387,9 +391,10 @@ def make_source(**overrides) -> ct.SourceRecord:
     return ct.SourceRecord(**fields)
 
 
-def test_context_category_has_exactly_five_members():
+def test_context_category_has_exactly_eight_members():
     assert {m.value for m in ct.ContextCategory} == {
         "system_instructions", "user_preferences", "persona", "trait", "first_message",
+        "main_system_prompt", "main_persona", "attachment",
     }
 
 

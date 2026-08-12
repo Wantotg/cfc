@@ -417,6 +417,110 @@ def test_build_vault_settings_never_raises_and_never_touches_disk(tmp_path):
     assert not vault_root.exists()
 
 
+# --- MAIN_CHAT_DIR: shape-only, same containment rule as a vault category ---
+
+def test_unset_main_chat_dir_is_unavailable(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.main_chat.path is None
+    assert vault.main_chat.unavailable_reason is not None
+
+
+def test_main_chat_dir_inside_vault_root_is_usable(tmp_path):
+    vault_root = tmp_path / "vault"
+    main_chat = vault_root / "main"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nMAIN_CHAT_DIR = {str(main_chat)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.main_chat.path == main_chat.resolve()
+    assert vault.main_chat.unavailable_reason is None
+
+
+def test_main_chat_dir_outside_vault_root_is_unavailable(tmp_path):
+    vault_root = tmp_path / "vault"
+    outside = tmp_path / "elsewhere"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nMAIN_CHAT_DIR = {str(outside)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.main_chat.path is None
+    assert "does not resolve inside" in vault.main_chat.unavailable_reason
+
+
+def test_main_chat_dir_set_without_vault_root_is_unavailable(tmp_path):
+    main_chat = tmp_path / "main"
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"MAIN_CHAT_DIR = {str(main_chat)!r}\n")
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.main_chat.path is None
+    assert "VAULT_ROOT" in vault.main_chat.unavailable_reason
+
+
+def test_main_chat_dir_is_independent_of_other_vault_categories(tmp_path):
+    vault_root = tmp_path / "vault"
+    main_chat = vault_root / "main"
+    personas = vault_root / "personas"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"VAULT_ROOT = {str(vault_root)!r}\nMAIN_CHAT_DIR = {str(main_chat)!r}\n"
+        f"PERSONAS_DIR = {str(personas)!r}\n",
+    )
+    vault = settings.build_vault_settings(snapshot)
+    assert vault.main_chat.path is not None
+    assert vault.personas.path is not None
+    assert vault.traits.path is None
+
+
+# --- CHAT_EXPORT_DIR: shape-only, independent of VAULT_ROOT -----------------
+
+def test_unset_chat_export_dir_is_unavailable(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    export = settings.build_export_settings(snapshot)
+    assert export.path is None
+    assert export.unavailable_reason is not None
+
+
+def test_blank_chat_export_dir_is_unavailable(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "CHAT_EXPORT_DIR = '   '\n")
+    export = settings.build_export_settings(snapshot)
+    assert export.path is None
+
+
+def test_placeholder_chat_export_dir_is_unavailable(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "CHAT_EXPORT_DIR = 'PLACEHOLDER'\n")
+    export = settings.build_export_settings(snapshot)
+    assert export.path is None
+
+
+def test_chat_export_dir_is_resolved_without_touching_disk(tmp_path):
+    destination = tmp_path / "does" / "not" / "exist" / "exports"
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"CHAT_EXPORT_DIR = {str(destination)!r}\n")
+    export = settings.build_export_settings(snapshot)
+    assert export.path == destination.resolve()
+    assert export.unavailable_reason is None
+    assert not destination.exists()
+
+
+def test_chat_export_dir_needs_no_vault_root_at_all(tmp_path):
+    """Concept.md: "It is independent of VAULT_ROOT" — no VAULT_ROOT set at
+    all still leaves CHAT_EXPORT_DIR independently usable."""
+    destination = tmp_path / "exports"
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"CHAT_EXPORT_DIR = {str(destination)!r}\n")
+    export = settings.build_export_settings(snapshot)
+    vault = settings.build_vault_settings(snapshot)
+    assert export.path == destination.resolve()
+    assert vault.root is None
+
+
+def test_non_string_chat_export_dir_is_unavailable_not_raising(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "CHAT_EXPORT_DIR = 5\n")
+    export = settings.build_export_settings(snapshot)
+    assert export.path is None
+    assert "must be a string" in export.unavailable_reason
+
+
 # --- model catalogue: listed/limit reused, malformed is bounded -------------
 
 def test_unset_models_is_an_empty_catalogue(tmp_path):
@@ -548,3 +652,10 @@ def test_build_settings_includes_vault_and_models(tmp_path):
     assert built.models.entries == (
         settings.ModelCatalogueEntry(id="fixture-model", selectable=True),
     )
+
+
+def test_build_settings_includes_chat_export(tmp_path):
+    destination = tmp_path / "exports"
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"CHAT_EXPORT_DIR = {str(destination)!r}\n")
+    built = settings.build_settings(snapshot)
+    assert built.chat_export.path == destination.resolve()

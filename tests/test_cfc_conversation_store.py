@@ -19,6 +19,7 @@ from cfc import conversation_store as store_mod
 from cfc.conversation_types import (
     CancelledOutcome,
     ChatId,
+    ChatKind,
     CompletedOutcome,
     ContextCategory,
     ContextManifestEntry,
@@ -1141,6 +1142,53 @@ def test_re_adding_an_already_selected_trait_is_idempotent(tmp_path):
         store.close()
 
 
+def test_attachments_preserve_add_order_and_are_independently_removable(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store.add_attachment(chat.id, "notes/a.md")
+        store.add_attachment(chat.id, "notes/b.md")
+        updated = store.add_attachment(chat.id, "c.md")
+        assert updated.context_selection.attachments == ("notes/a.md", "notes/b.md", "c.md")
+
+        after_remove = store.remove_attachment(chat.id, "notes/b.md")
+        assert after_remove.context_selection.attachments == ("notes/a.md", "c.md")
+    finally:
+        store.close()
+
+
+def test_re_adding_an_already_selected_attachment_is_idempotent(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store.add_attachment(chat.id, "notes/a.md")
+        updated = store.add_attachment(chat.id, "notes/a.md")
+        assert updated.context_selection.attachments == ("notes/a.md",)
+    finally:
+        store.close()
+
+
+def test_removing_an_attachment_a_past_turn_used_leaves_the_turns_manifest_intact(tmp_path):
+    """Concept.md: "A removed attachment disappears only from future plans;
+    past turn manifests remain inspectable"."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        store.add_attachment(chat.id, "notes/a.md")
+        entries = (
+            ContextManifestEntry(category=ContextCategory.ATTACHMENT, name="notes/a.md",
+                                  order=0, character_count=5, fingerprint="fp"),
+        )
+        turn, _ = store.start_turn(chat.id, "m", "hi", context_manifest=entries)
+        store.complete_turn(turn.id, "ok")
+
+        store.remove_attachment(chat.id, "notes/a.md")
+        assert store.get_chat(chat.id).context_selection.attachments == ()
+        assert store.get_turn(turn.id).context_manifest == entries
+    finally:
+        store.close()
+
+
 def test_set_model_updates_the_chats_default_model(tmp_path):
     store = store_mod.open_store(db_path(tmp_path))
     try:
@@ -1156,6 +1204,8 @@ def test_set_model_updates_the_chats_default_model(tmp_path):
     ("set_persona", ("muse.md",)),
     ("add_trait", ("dry.md",)),
     ("remove_trait", ("dry.md",)),
+    ("add_attachment", ("notes/a.md",)),
+    ("remove_attachment", ("notes/a.md",)),
     ("set_model", ("other-model",)),
 ])
 def test_selection_changes_refuse_while_a_turn_is_active(tmp_path, mutator_name, args):
@@ -1177,6 +1227,124 @@ def test_selection_changes_on_an_unknown_chat_raise_unknown_chat(tmp_path):
             store.set_model(ChatId.new(), "other-model")
     finally:
         store.close()
+
+
+def test_attachment_changes_on_an_unknown_chat_raise_unknown_chat(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        with pytest.raises(store_mod.UnknownChat):
+            store.add_attachment(ChatId.new(), "notes/a.md")
+        with pytest.raises(store_mod.UnknownChat):
+            store.remove_attachment(ChatId.new(), "notes/a.md")
+    finally:
+        store.close()
+
+
+# --- Main: one database-enforced singleton row ------------------------------
+
+def main_opening(content: str = "Hello from Main.") -> OpeningMessage:
+    return OpeningMessage(source_name="first message.md", content=content,
+                           created_at=utc_now(), fingerprint="main-fp")
+
+
+def test_find_main_is_none_before_main_is_ever_created(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        assert store.find_main() is None
+    finally:
+        store.close()
+
+
+def test_get_or_create_main_creates_the_singleton_row_with_its_frozen_opening(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.get_or_create_main("fixture-model", main_opening())
+        assert chat.kind is ChatKind.MAIN
+        assert chat.title == "Main"
+        assert chat.opening.content == "Hello from Main."
+        assert store.find_main() == chat
+    finally:
+        store.close()
+
+
+def test_get_or_create_main_reopens_the_same_row_without_creating_another(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        first = store.get_or_create_main("fixture-model", main_opening("first"))
+        second = store.get_or_create_main("fixture-model", main_opening("second (ignored)"))
+        assert second.id == first.id
+        assert second.opening.content == "first"  # the later bundle is never used
+        rows = store._conn.execute("SELECT COUNT(*) FROM cfc_chats WHERE kind = 'main'").fetchone()
+        assert rows[0] == 1
+    finally:
+        store.close()
+
+
+def test_get_or_create_main_reopens_even_when_the_store_call_is_repeated_many_times(tmp_path):
+    """Simulates "two callers try to create Main" (Concept.md) within one
+    process: every call resolves to the exact same canonical identity, and
+    the schema's own partial unique index is what makes that true rather
+    than any ordering this test happens to exercise."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chats = [store.get_or_create_main("fixture-model", main_opening()) for _ in range(5)]
+        assert len({c.id for c in chats}) == 1
+    finally:
+        store.close()
+
+
+def test_a_second_main_row_is_rejected_at_the_schema_level(tmp_path):
+    """The partial unique index is the singleton's real authority — proven
+    directly against the schema, independent of `get_or_create_main`'s own
+    application-level check."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store.get_or_create_main("fixture-model", main_opening())
+        with pytest.raises(sqlite3.IntegrityError):
+            now = store_mod._dt_to_text(utc_now())
+            store._conn.execute(
+                "INSERT INTO cfc_chats (id, kind, title, created_at, updated_at, "
+                "selected_user_preferences, selected_persona, selected_model) "
+                "VALUES (?, 'main', 'Main', ?, ?, NULL, NULL, ?)",
+                (ChatId.new().value, now, now, "m"),
+            )
+    finally:
+        store.close()
+
+
+def test_ordinary_chats_are_unaffected_by_the_main_singleton_constraint(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store.create_chat("one", "fixture-model")
+        store.create_chat("two", "fixture-model")
+        assert len(store.list_chats()) == 2
+    finally:
+        store.close()
+
+
+def test_create_chat_never_creates_a_main_row(tmp_path):
+    """Concept.md: "generic new-chat creation can create only ordinary
+    chats"."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        store.create_chat("c", "fixture-model")
+        assert store.find_main() is None
+    finally:
+        store.close()
+
+
+def test_main_reopens_through_a_new_connection(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    created = store.get_or_create_main("fixture-model", main_opening())
+    store.close()
+
+    reopened = store_mod.open_store(path)
+    try:
+        assert reopened.find_main().id == created.id
+        assert reopened.find_main().opening == created.opening
+    finally:
+        reopened.close()
 
 
 # --- per-turn context manifest: ordered, no vault body, all-or-nothing -----
@@ -1407,6 +1575,27 @@ def test_a_schema_version_three_database_refuses_as_too_old(tmp_path):
     """
     path = db_path(tmp_path)
     _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=3)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+    assert path.read_bytes() == before
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+
+# --- Stage 5 loop 3: schema bump refuses the loop-two (version 4) schema ---
+
+def test_a_schema_version_four_database_refuses_as_too_old(tmp_path):
+    """This loop bumps `SCHEMA_VERSION` from 4 to 5 (the Main singleton and
+    attachments). A real loop-two database must take the existing visible
+    refusal route, not be silently reinterpreted, `ALTER`ed, or have its
+    sidecars touched.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=4)
     before = path.read_bytes()
 
     with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:

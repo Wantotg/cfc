@@ -97,13 +97,23 @@ APPLICATION_ID = 0x63666332
 #: (never a vault body). A version-2 database takes the same
 #: `SCHEMA_TOO_OLD` refusal route — there is no migration from 2 to 3.
 #:
-#: 4 (this build): configuration truth and durable appearance (Stage 5 loop
-#: 2). `cfc_appearance` grows one constrained singleton row (`id = 1`)
-#: holding cfc's own optional durable palette override — absent (`NULL`),
-#: `'dark'`, or `'light'` — never a generic preferences table. A version-3
-#: database takes the same `SCHEMA_TOO_OLD` refusal route — there is no
-#: migration from 3 to 4.
-SCHEMA_VERSION = 4
+#: 4: configuration truth and durable appearance (Stage 5 loop 2).
+#: `cfc_appearance` grows one constrained singleton row (`id = 1`) holding
+#: cfc's own optional durable palette override — absent (`NULL`), `'dark'`,
+#: or `'light'` — never a generic preferences table. A version-3 database
+#: takes the same `SCHEMA_TOO_OLD` refusal route — there is no migration
+#: from 3 to 4.
+#:
+#: 5 (this build): readable-vault completion (Stage 5 loop 3). `cfc_chats.
+#: kind` accepts `'main'` alongside `'ordinary'`, and a partial unique index
+#: (`idx_cfc_chats_main_singleton`) enforces at most one `'main'` row —
+#: SQLite itself, not application code, is the singleton's authority.
+#: `cfc_chat_attachments` holds each chat's ordered, duplicate-free selected
+#: vault-relative attachment paths (never a body). `cfc_turn_context.category`
+#: grows `'main_system_prompt'`, `'main_persona'`, and `'attachment'`. A
+#: version-4 database takes the same `SCHEMA_TOO_OLD` refusal route — there
+#: is no migration from 4 to 5.
+SCHEMA_VERSION = 5
 
 _RECOVERY_HINT = (
     "preserve anything wanted from it, then move or remove {path} so cfc "
@@ -146,7 +156,7 @@ _SCHEMA_STATEMENTS = (
     """
     CREATE TABLE cfc_chats (
         id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL CHECK (kind = 'ordinary'),
+        kind TEXT NOT NULL CHECK (kind IN ('ordinary', 'main')),
         title TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -155,6 +165,11 @@ _SCHEMA_STATEMENTS = (
         selected_model TEXT NOT NULL
     )
     """,
+    # A partial unique index, not an application-level check: SQLite itself
+    # is the singleton's one authority (Concept.md: "SQLite enforces at most
+    # one Main row"), so a raced second 'main' insert fails at this
+    # constraint no matter what any caller checked first.
+    "CREATE UNIQUE INDEX idx_cfc_chats_main_singleton ON cfc_chats(kind) WHERE kind = 'main'",
     """
     CREATE TABLE cfc_chat_traits (
         chat_id TEXT NOT NULL REFERENCES cfc_chats(id),
@@ -162,6 +177,15 @@ _SCHEMA_STATEMENTS = (
         filename TEXT NOT NULL,
         PRIMARY KEY (chat_id, position),
         UNIQUE (chat_id, filename)
+    )
+    """,
+    """
+    CREATE TABLE cfc_chat_attachments (
+        chat_id TEXT NOT NULL REFERENCES cfc_chats(id),
+        position INTEGER NOT NULL,
+        relative_path TEXT NOT NULL,
+        PRIMARY KEY (chat_id, position),
+        UNIQUE (chat_id, relative_path)
     )
     """,
     """
@@ -230,7 +254,8 @@ _SCHEMA_STATEMENTS = (
         turn_id TEXT NOT NULL REFERENCES cfc_turns(id),
         position INTEGER NOT NULL,
         category TEXT NOT NULL CHECK (category IN
-            ('system_instructions', 'user_preferences', 'persona', 'trait')),
+            ('system_instructions', 'user_preferences', 'persona', 'trait',
+             'main_system_prompt', 'main_persona', 'attachment')),
         name TEXT NOT NULL,
         character_count INTEGER NOT NULL,
         fingerprint TEXT NOT NULL,
@@ -247,6 +272,7 @@ _SCHEMA_STATEMENTS = (
     "CREATE INDEX idx_cfc_messages_chat ON cfc_messages(chat_id)",
     "CREATE INDEX idx_cfc_messages_turn ON cfc_messages(turn_id)",
     "CREATE INDEX idx_cfc_chat_traits_chat ON cfc_chat_traits(chat_id)",
+    "CREATE INDEX idx_cfc_chat_attachments_chat ON cfc_chat_attachments(chat_id)",
     "CREATE INDEX idx_cfc_turn_context_turn ON cfc_turn_context(turn_id)",
     "INSERT INTO cfc_appearance (id, override) VALUES (1, NULL)",
 )
@@ -633,6 +659,14 @@ def _load_traits(conn: sqlite3.Connection, chat_id: str) -> tuple[str, ...]:
     return tuple(row[0] for row in rows)
 
 
+def _load_attachments(conn: sqlite3.Connection, chat_id: str) -> tuple[str, ...]:
+    rows = conn.execute(
+        "SELECT relative_path FROM cfc_chat_attachments WHERE chat_id = ? ORDER BY position ASC",
+        (chat_id,),
+    ).fetchall()
+    return tuple(row[0] for row in rows)
+
+
 def _load_opening(conn: sqlite3.Connection, chat_id: str) -> OpeningMessage | None:
     row = conn.execute(
         "SELECT source_name, content, created_at, fingerprint "
@@ -659,6 +693,7 @@ def _row_to_chat(conn: sqlite3.Connection, row) -> Chat:
         context_selection=ContextSelection(
             user_preferences=prefs, persona=persona,
             traits=_load_traits(conn, id_), model=model,
+            attachments=_load_attachments(conn, id_),
         ),
         opening=_load_opening(conn, id_),
     )
@@ -958,6 +993,125 @@ class ConversationStore:
             conn.execute(
                 "UPDATE cfc_chats SET selected_model = ? WHERE id = ?",
                 (model, chat_id.value),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    # -- attachments: ordered, duplicate-free, refused while a turn is
+    # -- active — the same discipline as add_trait/remove_trait -------------
+
+    def add_attachment(self, chat_id: ChatId, relative_path: str) -> Chat:
+        """Appends `relative_path` after this chat's currently selected
+        attachments. Already-selected exactly this path is a silent no-op —
+        the `UNIQUE (chat_id, relative_path)` constraint makes re-adding
+        idempotent rather than an error, mirroring `add_trait`.
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            row = conn.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM cfc_chat_attachments "
+                "WHERE chat_id = ?",
+                (chat_id.value,),
+            ).fetchone()
+            conn.execute(
+                "INSERT OR IGNORE INTO cfc_chat_attachments (chat_id, position, relative_path) "
+                "VALUES (?, ?, ?)",
+                (chat_id.value, row[0], relative_path),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    def remove_attachment(self, chat_id: ChatId, relative_path: str) -> Chat:
+        """Removes `relative_path` from this chat's current selection only
+        — past turn manifests that already recorded it are untouched
+        (Concept.md: "A removed attachment disappears only from future
+        plans; past turn manifests remain inspectable").
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._require_chat_exists(conn, chat_id)
+            self._refuse_if_active_turn(conn, chat_id)
+            conn.execute(
+                "DELETE FROM cfc_chat_attachments WHERE chat_id = ? AND relative_path = ?",
+                (chat_id.value, relative_path),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return self.get_chat(chat_id)
+
+    # -- Main: one database-enforced singleton row ---------------------------
+
+    def find_main(self) -> Chat | None:
+        """The existing Main chat, or `None` if it has never been created.
+        A plain read — no transaction, no lock beyond SQLite's own implicit
+        one — since a caller that needs a race-safe answer uses
+        `get_or_create_main` instead.
+        """
+        row = self._conn.execute(
+            f"SELECT {self._CHAT_COLUMNS} FROM cfc_chats WHERE kind = 'main'"
+        ).fetchone()
+        return _row_to_chat(self._conn, row) if row is not None else None
+
+    def get_or_create_main(self, model: str, opening: OpeningMessage) -> Chat:
+        """Returns the singleton Main chat, creating it — with `opening` as
+        its frozen First Message, stored atomically with the row itself —
+        if it does not exist yet.
+
+        `opening` must already be resolved by the caller
+        (`conversation_service.get_or_create_main`, from `cfc.context.
+        resolve_main_creation_bundle`'s First Message): this method never
+        reads a vault file, so a creation refusal upstream never reaches
+        here and never leaves a partial row.
+
+        Race-safe by construction, not by a pre-check this call trusts: the
+        insert relies on `idx_cfc_chats_main_singleton`, the schema's own
+        partial unique index. A losing insert's `sqlite3.IntegrityError` is
+        caught and the winner's already-committed row is read and returned
+        instead — two callers racing to create Main always resolve to the
+        same canonical identity, never a second chat and never a raw SQLite
+        error reaching the caller (Concept.md: "Two callers try to create
+        Main").
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing = conn.execute("SELECT id FROM cfc_chats WHERE kind = 'main'").fetchone()
+            if existing is not None:
+                conn.commit()
+                return self.get_chat(ChatId(existing[0]))
+
+            chat_id = ChatId.new()
+            now = utc_now()
+            try:
+                conn.execute(
+                    "INSERT INTO cfc_chats (id, kind, title, created_at, updated_at, "
+                    "selected_user_preferences, selected_persona, selected_model) "
+                    "VALUES (?, 'main', 'Main', ?, ?, NULL, NULL, ?)",
+                    (chat_id.value, _dt_to_text(now), _dt_to_text(now), model),
+                )
+            except sqlite3.IntegrityError:
+                row = conn.execute("SELECT id FROM cfc_chats WHERE kind = 'main'").fetchone()
+                conn.commit()
+                return self.get_chat(ChatId(row[0]))
+
+            conn.execute(
+                "INSERT INTO cfc_chat_openings "
+                "(chat_id, source_name, content, created_at, fingerprint) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (chat_id.value, opening.source_name, opening.content,
+                 _dt_to_text(opening.created_at), opening.fingerprint),
             )
             conn.commit()
         except BaseException:

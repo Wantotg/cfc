@@ -410,6 +410,100 @@ def test_full_context_plus_opening_precedes_stored_turn_history_exactly():
     )
 
 
+# --- Main profile sources and labelled attachments (Stage 5 loop 3) --------
+
+def main_context() -> ContextPlan:
+    return ContextPlan(
+        system_instructions=make_source(ContextCategory.SYSTEM_INSTRUCTIONS, body="sys", name="sys"),
+        main_system_prompt=make_source(
+            ContextCategory.MAIN_SYSTEM_PROMPT, body="main sp", name="system prompt.md"),
+        main_persona=make_source(
+            ContextCategory.MAIN_PERSONA, body="main persona", name="persona.md"),
+    )
+
+
+def test_main_profile_sources_land_after_system_instructions_as_system_messages():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0, user="hi")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)])
+
+    plan = wire.build_request_plan(main_context(), None, snapshot, "fixture-model")
+
+    assert plan.messages[:3] == (
+        wire.WireMessage(role="system", content="sys"),
+        wire.WireMessage(role="system", content="main sp"),
+        wire.WireMessage(role="system", content="main persona"),
+    )
+
+
+def test_ordinary_plan_never_emits_main_profile_messages():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0, user="hi")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)])
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+    assert plan.messages == (
+        wire.WireMessage(role="system", content="sys"),
+        wire.WireMessage(role="user", content="hi"),
+    )
+
+
+def test_attachments_are_labelled_user_messages_never_system():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0, user="hi")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)])
+    context = ContextPlan(
+        system_instructions=make_source(ContextCategory.SYSTEM_INSTRUCTIONS, body="sys", name="sys"),
+        attachments=(
+            make_source(ContextCategory.ATTACHMENT, body="attachment body", name="notes/a.md"),
+        ),
+    )
+
+    plan = wire.build_request_plan(context, None, snapshot, "fixture-model")
+
+    attachment_message = plan.messages[1]
+    assert attachment_message.role == "user"
+    assert "notes/a.md" in attachment_message.content
+    assert "attachment body" in attachment_message.content
+    assert "untrusted reference material" in attachment_message.content
+
+
+def test_attachments_never_appear_in_ordered_sources():
+    """`ordered_sources()` is the system-role prefix only — attachments are
+    sent as `user` messages after the opening, never grouped with it (see
+    `ContextPlan.ordered_sources`'s own docstring)."""
+    context = ContextPlan(
+        system_instructions=make_source(ContextCategory.SYSTEM_INSTRUCTIONS, body="sys", name="sys"),
+        attachments=(make_source(ContextCategory.ATTACHMENT, body="a", name="a.md"),),
+    )
+    assert ContextCategory.ATTACHMENT not in [s.category for s in context.ordered_sources()]
+    assert context.all_sources()[-1].category is ContextCategory.ATTACHMENT
+
+
+def test_exact_wire_order_is_context_then_opening_then_attachments_then_history():
+    chat_id = ChatId.new()
+    t0, m0 = completed(chat_id, 0, user="q0", assistant="a0")
+    snapshot = build_snapshot(chat_id, [(t0, m0)])
+    opening = make_opening("opening text")
+    context = ContextPlan(
+        system_instructions=make_source(ContextCategory.SYSTEM_INSTRUCTIONS, body="sys", name="sys"),
+        attachments=(
+            make_source(ContextCategory.ATTACHMENT, body="first body", name="first.md"),
+            make_source(ContextCategory.ATTACHMENT, body="second body", name="second.md"),
+        ),
+    )
+
+    plan = wire.build_request_plan(context, opening, snapshot, "fixture-model")
+
+    assert plan.messages[0] == wire.WireMessage(role="system", content="sys")
+    assert plan.messages[1] == wire.WireMessage(role="assistant", content="opening text")
+    assert plan.messages[2].role == "user" and "first.md" in plan.messages[2].content
+    assert plan.messages[3].role == "user" and "second.md" in plan.messages[3].content
+    assert plan.messages[4] == wire.WireMessage(role="user", content="q0")
+    assert plan.messages[5] == wire.WireMessage(role="assistant", content="a0")
+
+
 def test_malformed_snapshot_refuses_before_context_or_opening_matter():
     """A malformed stored history refuses the same way regardless of what
     context or opening would otherwise have been prepended — validation

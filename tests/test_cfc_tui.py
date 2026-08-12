@@ -138,17 +138,19 @@ def _no_network_responder_factory(provider_settings):
 def empty_vault() -> settings.VaultSettings:
     unavailable = settings.VaultCategorySettings(unavailable_reason="not configured")
     return settings.VaultSettings(root=None, user_preferences=unavailable, personas=unavailable,
-                                   traits=unavailable, first_messages=unavailable)
+                                   traits=unavailable, first_messages=unavailable,
+                                   main_chat=unavailable)
 
 
 def real_vault(tmp_path: Path, *, prefs=None, personas=None, traits=None,
-                first_messages=None) -> settings.VaultSettings:
+                first_messages=None, main_chat=None) -> settings.VaultSettings:
     def cat(path):
         if path is None:
             return settings.VaultCategorySettings(unavailable_reason="not configured")
         return settings.VaultCategorySettings(path=path)
     return settings.VaultSettings(root=tmp_path, user_preferences=cat(prefs), personas=cat(personas),
-                                   traits=cat(traits), first_messages=cat(first_messages))
+                                   traits=cat(traits), first_messages=cat(first_messages),
+                                   main_chat=cat(main_chat))
 
 
 def write_source(directory: Path, name: str, body: str) -> None:
@@ -156,8 +158,10 @@ def write_source(directory: Path, name: str, body: str) -> None:
     (directory / name).write_text(body, encoding="utf-8")
 
 
-def open_test_service(tmp_path: Path, vault: settings.VaultSettings | None = None):
-    return open_service(tmp_path / "direct" / "chat.db", vault or empty_vault())
+def open_test_service(
+    tmp_path: Path, vault: settings.VaultSettings | None = None, export_dir: Path | None = None,
+):
+    return open_service(tmp_path / "direct" / "chat.db", vault or empty_vault(), export_dir)
 
 
 def make_app(
@@ -166,8 +170,9 @@ def make_app(
     screenshots_dir: Path | None = None,
     vault: settings.VaultSettings | None = None,
     models: settings.ModelCatalogue | None = None,
+    export_dir: Path | None = None,
 ) -> tui.CfcApp:
-    service = open_test_service(tmp_path, vault)
+    service = open_test_service(tmp_path, vault, export_dir)
     if responder is None:
         responder = FixedResponder(Completion(content="the answer"))
     return tui.CfcApp(
@@ -1473,7 +1478,7 @@ async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_a_chat_screen(tmp_p
             await pilot.pause()
             assert await command_palette_option_names(app) == sorted([
                 *_DEFAULT_APPEARANCE_COMMANDS,
-                "Context", "Keyboard help", "Model", "Quit cfc", "Save screenshot",
+                "Context", "Export Markdown", "Keyboard help", "Model", "Quit cfc", "Save screenshot",
             ])
     finally:
         await app.shutdown()
@@ -1962,7 +1967,8 @@ async def test_context_modal_lists_rows_in_request_order_with_nothing_selected(t
             assert rows[1] == "User Preferences: none selected"
             assert rows[2] == "Persona: none selected"
             assert rows[3] == "Add trait…"
-            assert rows[4].startswith("First Message:")
+            assert rows[4] == "Add attachment…"
+            assert rows[5].startswith("First Message:")
     finally:
         await app.shutdown()
 
@@ -2086,7 +2092,8 @@ async def test_an_unconfigured_category_row_names_its_reason_not_none_selected(t
                 "— correct config.py to use this category"
             )
             assert rows[3] == "Add trait…"  # the one category that works stays ordinary
-            assert rows[4] == (
+            assert rows[4] == "Add attachment…"  # VAULT_ROOT is set, so this stays ordinary too
+            assert rows[5] == (
                 "First Message: unavailable (FIRST_MESSAGES_DIR is not set) "
                 "— correct config.py to use this category"
             )
@@ -2776,7 +2783,7 @@ async def test_turn_evidence_context_provenance_lists_categories_in_order(tmp_pa
 
             lines = transcript_lines(screen)
             provenance = next(line for line in lines if line.startswith("context:"))
-            assert provenance == "context: system_instructions:cfc-system-instructions-v1, persona:muse.md"
+            assert provenance == "context: system_instructions:cfc-system-instructions-v2, persona:muse.md"
     finally:
         await app.shutdown()
 
@@ -2811,5 +2818,383 @@ async def test_turn_evidence_flags_a_context_source_that_changed_since_the_turn(
             )
             assert "persona:muse.md*" in changed_provenance
             assert "live source has changed" in changed_provenance
+    finally:
+        await app.shutdown()
+
+
+# === Main: the Hub's own action (Stage 5 loop 3) ============================
+
+def write_main_bundle(directory: Path, *, first_message: str = "Hello from Main.") -> None:
+    write_source(directory, "system prompt.md", "Main's system prompt.")
+    write_source(directory, "persona.md", "Main's persona.")
+    write_source(directory, "first message.md", first_message)
+
+
+async def test_main_action_creates_and_opens_main_via_keyboard(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert app.screen.chat_title == "Main"
+            lines = transcript_lines(app.screen)
+            assert "cfc: Hello from Main." in lines
+    finally:
+        await app.shutdown()
+
+
+async def test_main_action_creates_and_opens_main_via_mouse(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.click("#hub-main-button")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert app.screen.chat_title == "Main"
+    finally:
+        await app.shutdown()
+
+
+async def test_main_action_reopens_the_same_chat_not_a_second_one(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            first_id = app.screen.chat_id
+
+            await app.pop_screen()
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert app.screen.chat_id == first_id
+            assert len(app.service.list_chats()) == 1
+    finally:
+        await app.shutdown()
+
+
+async def test_main_action_with_no_main_chat_dir_stays_on_the_hub(tmp_path):
+    app = make_app(tmp_path, vault=empty_vault())
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.HubScreen)
+            notice = app.screen.query_one("#hub-notice", tui.Static)
+            assert "MAIN_CHAT_DIR" in str(notice.content)
+            assert app.service.list_chats() == ()
+    finally:
+        await app.shutdown()
+
+
+async def test_main_action_with_a_broken_creation_bundle_creates_no_row(tmp_path):
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()  # none of the three files exist
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.HubScreen)
+            assert app.service.list_chats() == ()
+    finally:
+        await app.shutdown()
+
+
+async def test_main_is_visible_and_reachable_from_the_chats_switcher(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            await open_new_chat(app, pilot, title="an ordinary chat")
+
+            await pilot.press("f2")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.ChatsModal)
+            titles = [str(w.content) for w in app.screen.query("#chats-modal-list Static")]
+            assert "Main" in titles
+    finally:
+        await app.shutdown()
+
+
+async def test_main_action_reopens_even_when_the_live_profile_later_breaks(tmp_path):
+    """Concept.md: "that action reopens it even when its live profile is
+    currently broken, because loss of context readiness must not hide
+    readable stored history"."""
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            first_id = app.screen.chat_id
+            await app.pop_screen()
+            await pilot.pause()
+
+            (main_dir / "system prompt.md").unlink()
+            (main_dir / "persona.md").unlink()
+
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ChatScreen)
+            assert app.screen.chat_id == first_id
+    finally:
+        await app.shutdown()
+
+
+# === Context modal: Main profile rows and Attachments (Stage 5 loop 3) =====
+
+async def test_context_modal_shows_main_profile_rows_only_for_main(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            assert any(r.startswith("Main System Prompt:") for r in rows)
+            assert any(r.startswith("Main Persona:") for r in rows)
+            assert not any(r.startswith("Persona:") for r in rows)  # shared category hidden
+
+            await pilot.press("escape")
+            await pilot.pause()
+            await app.pop_screen()
+            await pilot.pause()
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            ordinary_rows = context_modal_row_texts(app)
+            assert not any(r.startswith("Main System Prompt:") for r in ordinary_rows)
+            assert any(r.startswith("Persona:") for r in ordinary_rows)
+    finally:
+        await app.shutdown()
+
+
+async def test_selecting_main_system_prompt_row_opens_its_literal_preview(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            rows_screen = await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            index = next(i for i, r in enumerate(rows) if r.startswith("Main System Prompt:"))
+            await select_row(pilot, index)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.SourcePreviewModal)
+            body = app.screen.query_one("#source-preview-body", tui.Static)
+            assert str(body.content) == "Main's system prompt."
+    finally:
+        await app.shutdown()
+
+
+async def test_attachments_section_lists_add_row_when_nothing_selected(tmp_path):
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            assert "Add attachment…" in rows
+            assert not any(r.startswith("Attachment:") for r in rows)
+    finally:
+        await app.shutdown()
+
+
+async def test_add_attachment_via_keyboard_then_preview_and_remove_it(tmp_path):
+    write_source(tmp_path, "notes.md", "an idea worth keeping")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            add_index = rows.index("Add attachment…")
+            await select_row(pilot, add_index)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            option = app.screen.query_one("#source-picker-list", tui.ListView).children[0]
+            await pilot.click(option)  # the one offered option, "notes.md"
+            await pilot.pause()
+
+            rows = context_modal_row_texts(app)
+            assert any(r.startswith("Attachment: notes.md") for r in rows)
+            assert app.service.get_chat(screen.chat_id).context_selection.attachments == (
+                "notes.md",
+            )
+
+            attachment_index = next(i for i, r in enumerate(rows) if r.startswith("Attachment:"))
+            await select_row(pilot, attachment_index)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePreviewModal)
+            body = app.screen.query_one("#source-preview-body", tui.Static)
+            assert str(body.content) == "an idea worth keeping"
+
+            await pilot.press("escape")  # close preview
+            await pilot.pause()
+            await select_row(pilot, attachment_index)
+            await pilot.click("#context-action-remove")
+            await pilot.pause()
+
+            assert app.service.get_chat(screen.chat_id).context_selection.attachments == ()
+    finally:
+        await app.shutdown()
+
+
+async def test_add_attachment_via_mouse_matches_keyboard(tmp_path):
+    write_source(tmp_path, "notes.md", "an idea")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            add_index = rows.index("Add attachment…")
+            await select_row(pilot, add_index)
+            await pilot.click("#context-action-add")
+            await pilot.pause()
+            options = list(app.screen.query("#source-picker-list ListItem"))
+            await pilot.click(options[0])
+            await pilot.pause()
+
+            assert app.service.get_chat(screen.chat_id).context_selection.attachments == (
+                "notes.md",
+            )
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_add_remove_refuses_while_a_turn_is_active(tmp_path):
+    write_source(tmp_path, "notes.md", "an idea")
+    responder = SlowResponder()
+    app = make_app(tmp_path, responder=responder, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.add_attachment(screen.chat_id, "notes.md")
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+            await responder.started.wait()
+
+            await open_context_modal(pilot)
+            rows = context_modal_row_texts(app)
+            attachment_index = next(i for i, r in enumerate(rows) if r.startswith("Attachment:"))
+            await select_row(pilot, attachment_index)
+            await pilot.click("#context-action-remove")
+            await pilot.pause()
+
+            assert "request in progress" in str(
+                app.screen.query_one("#context-modal-error", tui.Static).content)
+            assert app.service.get_chat(screen.chat_id).context_selection.attachments == (
+                "notes.md",
+            )
+
+            responder.released.set()
+    finally:
+        await app.shutdown()
+
+
+# === Export Markdown: manual, cfc-owned command palette action =============
+
+async def test_export_markdown_via_command_palette_reports_the_published_path(tmp_path):
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    app = make_app(tmp_path, export_dir=export_dir)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await run_command(pilot, "Export Markdown")
+
+            status = screen.query_one("#chat-status", tui.Static)
+            assert "Exported to" in str(status.content)
+            exported = list(export_dir.iterdir())
+            assert len(exported) == 1
+            assert "hi" in exported[0].read_text(encoding="utf-8")
+    finally:
+        await app.shutdown()
+
+
+async def test_export_markdown_refuses_while_a_turn_is_active_with_wait_or_cancel_guidance(tmp_path):
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    responder = SlowResponder()
+    app = make_app(tmp_path, responder=responder, export_dir=export_dir)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+            await responder.started.wait()
+
+            await run_command(pilot, "Export Markdown")
+
+            status = screen.query_one("#chat-status", tui.Static)
+            assert "wait or cancel" in str(status.content)
+            assert list(export_dir.iterdir()) == []
+
+            responder.released.set()
+    finally:
+        await app.shutdown()
+
+
+async def test_export_markdown_reports_a_bounded_error_when_unconfigured(tmp_path):
+    app = make_app(tmp_path)  # no export_dir given
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+
+            await run_command(pilot, "Export Markdown")
+
+            status = screen.query_one("#chat-status", tui.Static)
+            assert "Export failed" in str(status.content)
+            assert "CHAT_EXPORT_DIR" in str(status.content)
+    finally:
+        await app.shutdown()
+
+
+async def test_export_markdown_preserves_the_composer_draft(tmp_path):
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    app = make_app(tmp_path, export_dir=export_dir)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "an unsent draft")
+
+            await run_command(pilot, "Export Markdown")
+
+            assert screen.query_one(tui.Composer).text == "an unsent draft"
+            assert screen.query_one(tui.Composer).has_focus
     finally:
         await app.shutdown()

@@ -25,6 +25,59 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-12 — Readable-vault completion: Main, attachments, export (`W-07`, Stage 5 loop 3)
+The three remaining Stage 5 capabilities land together. `ChatKind.MAIN` is
+one distinguished row in the same chat ledger as ordinary chats — the same
+`ChatScreen`, turn path, and provider wire — with a database-enforced
+singleton (`conversation_store`'s new partial unique index) rather than an
+application-level check: `get_or_create_main` resolves and reads only when
+Main does not exist yet, so reopening an existing Main never re-reads a
+broken live profile, and creation itself resolves `system prompt.md`,
+`persona.md`, and `first message.md` as one bundle before anything is
+persisted, freezing the First Message the same way an ordinary Persona
+selection already does. Main's System Prompt and Persona are fresh,
+non-selectable sources on every later turn — new `ContextCategory.
+MAIN_SYSTEM_PROMPT`/`MAIN_PERSONA` members, resolved first in `ContextPlan.
+ordered_sources()` — while the shared Persona category stays unused for
+Main, since Main's persona is this fixed file, not a vault pick.
+
+Both ordinary and Main chats can now select ordered, duplicate-free Markdown
+attachments — vault-relative paths only, discovered by walking real
+directories (never a symlinked file or directory) and read fresh at every
+turn. The provider wire sends each as a cfc-labelled `user` reference
+message, after the frozen opening and before stored history, never as a
+`system` message masquerading as a cfc instruction; the fixed System
+Instructions text (bumped to v2) now says so explicitly. A bad or vanished
+attachment refuses before any durable user message or provider request, the
+same fail-fast discipline every other selected source already has.
+
+A new presentation-free `cfc.chat_export` module renders one standalone
+Markdown snapshot — literal turns, terminal status, model/usage evidence,
+and ordered context/attachment provenance without copying any source body —
+and publishes it atomically to `CHAT_EXPORT_DIR` (a setting independent of
+`VAULT_ROOT`) under a collision-safe generated name. `ConversationService.
+export_chat` is the one operation: it refuses while a turn is active with
+the same `ActiveTurnExists` every other selection change already raises, and
+never touches SQLite, the provider, or Qdrant/embeddings either way. The Hub
+gains a **Main** action beside New chat; the Context modal gains Main's
+read-only profile rows and an Attachments section (Add/Remove/preview
+through the existing picker — no new prompt, so this does not close `D-04`);
+the `Ctrl+P` palette gains **Export Markdown** on every durable Chat.
+
+`conversation_store` bumps to schema version 5: `cfc_chats.kind` accepts
+`'main'`, `cfc_chat_attachments` holds each chat's ordered selection, and
+`cfc_turn_context.category` grows the three new source kinds. A version-4
+database takes the existing `SCHEMA_TOO_OLD` refusal route.
+
+Proved with the full suite at **913 passed** and the unchanged 516-line
+golden baseline. Cas's real-provider playtest (Main/attachment/export
+end-to-end, with and without embedding/Qdrant configured) and the Debugger's
+parent-stage audit remain outstanding — a green loop here is not a Stage 5
+close.
+- Files: cfc/settings.py, cfc/conversation_types.py, cfc/context.py, cfc/conversation_store.py, cfc/conversation_service.py, cfc/provider_wire.py, cfc/chat_export.py, cfc/tui.py, tests/test_cfc_settings.py, tests/test_cfc_conversation_types.py, tests/test_cfc_context.py, tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_service.py, tests/test_cfc_provider_wire.py, tests/test_cfc_chat_export.py, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-10 — Configuration truth and durable appearance (`D-25`, `D-2.0-59`, `W-2.0-58`, `W-07`, Stage 5 loop 2)
 `cfc doctor` now answers the setup question completely instead of stopping at
 one coarse vault row. Four new rows (User Preferences, Personas, Traits,

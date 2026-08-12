@@ -118,6 +118,11 @@ class VaultSettings:
     personas: VaultCategorySettings
     traits: VaultCategorySettings
     first_messages: VaultCategorySettings
+    #: Main's one fixed profile directory — not a member of
+    #: `VAULT_CATEGORY_FIELD_NAMES`: that tuple is the vault-owned sources a
+    #: `ContextSelection` can *pick from*, and Main's profile is never picked
+    #: from — it names one fixed directory with a fixed file list.
+    main_chat: VaultCategorySettings = field(default_factory=VaultCategorySettings)
 
 
 def _vault_category(
@@ -144,9 +149,9 @@ def _vault_category(
 
 def build_vault_settings(snapshot) -> VaultSettings:
     """The optional 2.0 vault category settings: `VAULT_ROOT` plus
-    `USER_PREFERENCES_DIR`/`PERSONAS_DIR`/`TRAITS_DIR`/`FIRST_MESSAGES_DIR`,
-    each independently usable or not. Never raises. `snapshot` is a
-    `config_loader.ConfigSnapshot`.
+    `USER_PREFERENCES_DIR`/`PERSONAS_DIR`/`TRAITS_DIR`/`FIRST_MESSAGES_DIR`/
+    `MAIN_CHAT_DIR`, each independently usable or not. Never raises.
+    `snapshot` is a `config_loader.ConfigSnapshot`.
 
     `USER_PREFERENCES_DIR` is a 2.0-only setting — deliberately not v1.9.1's
     `PROMPTS_DIR` (Concept.md: cfc 2.0 calls this material User Preferences
@@ -155,6 +160,13 @@ def build_vault_settings(snapshot) -> VaultSettings:
     field names v1.9.1 already reads; 2.0 imposes its own, stricter
     containment-inside-`VAULT_ROOT` rule on them rather than reusing
     v1.9.1's own validation.
+
+    `MAIN_CHAT_DIR` is a 2.0-only setting: it names Main's one fixed
+    profile directory (`system prompt.md`, `persona.md`, `first message.md`
+    inside it — `cfc.context`'s job to read, never this module's). It reuses
+    `_vault_category`'s shape/containment rule rather than a bespoke one:
+    Main's profile is exactly as much "a vault category directory" as the
+    other four, just with a fixed, non-selectable file list.
     """
     values = snapshot.values
     raw_root = values.get("VAULT_ROOT")
@@ -168,7 +180,45 @@ def build_vault_settings(snapshot) -> VaultSettings:
         personas=_vault_category(values, "PERSONAS_DIR", root),
         traits=_vault_category(values, "TRAITS_DIR", root),
         first_messages=_vault_category(values, "FIRST_MESSAGES_DIR", root),
+        main_chat=_vault_category(values, "MAIN_CHAT_DIR", root),
     )
+
+
+@dataclass(frozen=True)
+class ExportSettings:
+    """`CHAT_EXPORT_DIR`'s validated shape: a resolved `Path` when it is
+    configured as a non-empty string, or an `unavailable_reason` when it is
+    not. Deliberately independent of `VaultSettings` and `VAULT_ROOT`
+    (Concept.md: "It is independent of `VAULT_ROOT`: an export is a
+    user-requested readable copy, not authority to edit a context source") —
+    this field is never checked for containment inside the vault, and never
+    falls back to `VAULT_ROOT` when unset.
+
+    Same shape-only discipline as `VaultCategorySettings`: this never checks
+    whether the directory actually exists, is writable, or is even a
+    directory at all. `cfc.chat_export.validate_destination` is where an
+    export actually confirms the target is usable, at the moment export is
+    requested — a directory created after startup, or removed since, must
+    still be judged by its state right now, not a startup snapshot.
+    """
+    path: Path | None = None
+    unavailable_reason: str | None = None
+
+
+def build_export_settings(snapshot) -> ExportSettings:
+    """The optional `CHAT_EXPORT_DIR` setting. Never raises: an unset,
+    blank, placeholder, or wrong-typed value leaves export unavailable
+    without blocking ordinary chat, the same discipline `_vault_category`
+    already applies to the vault categories.
+    """
+    raw = snapshot.values.get("CHAT_EXPORT_DIR")
+    if raw is None or (isinstance(raw, str) and not raw.strip()) or raw == "PLACEHOLDER":
+        return ExportSettings(unavailable_reason="CHAT_EXPORT_DIR is not set")
+    if not isinstance(raw, str):
+        return ExportSettings(
+            unavailable_reason=f"CHAT_EXPORT_DIR must be a string, got {type(raw).__name__}"
+        )
+    return ExportSettings(path=Path(raw).expanduser().resolve())
 
 
 @dataclass(frozen=True)
@@ -269,6 +319,7 @@ class BootstrapSettings:
     theme: ThemeSettings
     vault: VaultSettings
     models: ModelCatalogue
+    chat_export: ExportSettings
 
 
 def _require_nonempty_str(values, name: str) -> str:
@@ -429,4 +480,5 @@ def build_settings(snapshot) -> BootstrapSettings:
         theme=build_theme(snapshot),
         vault=build_vault_settings(snapshot),
         models=build_model_catalogue(snapshot),
+        chat_export=build_export_settings(snapshot),
     )

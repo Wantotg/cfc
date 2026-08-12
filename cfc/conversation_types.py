@@ -85,19 +85,33 @@ class MessageId:
 # --- opening (Stage 5 loop 1) ------------------------------------------
 
 class ContextCategory(Enum):
-    """The five source kinds a `ContextPlan` can carry. `SYSTEM_INSTRUCTIONS`
-    is cfc-owned and always resolvable; the other four are vault-owned
-    Markdown, each independently optional. `FIRST_MESSAGE` never appears in
-    a `ContextPlan` (the frozen opening is conversation content, not
-    provenance — see `OpeningMessage`) but is one of the five rows the
-    Context modal lists, so it stays in this vocabulary rather than a
-    parallel one `tui.py` would have to keep in sync by hand.
+    """The source kinds a `ContextPlan` can carry. `SYSTEM_INSTRUCTIONS` is
+    cfc-owned and always resolvable; `USER_PREFERENCES`/`PERSONA`/`TRAIT` are
+    vault-owned Markdown a chat selects, each independently optional.
+    `FIRST_MESSAGE` never appears in a `ContextPlan` (the frozen opening is
+    conversation content, not provenance — see `OpeningMessage`) but is one
+    of the rows the Context modal lists, so it stays in this vocabulary
+    rather than a parallel one `tui.py` would have to keep in sync by hand.
+
+    `MAIN_SYSTEM_PROMPT` and `MAIN_PERSONA` (Stage 5 loop 3) are Main's own
+    fixed profile files (`system prompt.md`, `persona.md` in `MAIN_CHAT_DIR`)
+    — never selected, always resolved fresh for a Main chat, and distinct
+    from `PERSONA`: a Main chat's `ContextSelection.persona` stays unused,
+    since Main's persona is this fixed file, not a vault pick.
+
+    `ATTACHMENT` (Stage 5 loop 3) is one selected vault-relative Markdown
+    file, for both ordinary and Main chats — reference material, not a
+    system-owned or Main-owned source (see `ContextPlan.ordered_sources`'s
+    own docstring for why it is never grouped with the others).
     """
     SYSTEM_INSTRUCTIONS = "system_instructions"
     USER_PREFERENCES = "user_preferences"
     PERSONA = "persona"
     TRAIT = "trait"
     FIRST_MESSAGE = "first_message"
+    MAIN_SYSTEM_PROMPT = "main_system_prompt"
+    MAIN_PERSONA = "main_persona"
+    ATTACHMENT = "attachment"
 
 
 @dataclass(frozen=True)
@@ -131,11 +145,18 @@ class ContextSelection:
     chat's current default model id for a future turn — a turn always
     stores the model it actually used on its own `Turn.model`, so this
     field never rewrites a past turn's evidence.
+
+    `attachments` (Stage 5 loop 3) is the ordered, duplicate-free set of
+    exact vault-relative Markdown paths selected as reference material —
+    shared by ordinary and Main chats alike. `persona` stays unused for a
+    Main chat: Main's persona is its own fixed profile file, not a
+    selection this field expresses (`ContextCategory`'s own docstring).
     """
     user_preferences: str | None = None
     persona: str | None = None
     traits: tuple[str, ...] = field(default_factory=tuple)
     model: str | None = None
+    attachments: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -177,19 +198,40 @@ class ContextPlan:
     the moment this plan was built. Never mutated and never partially
     rebuilt — a caller that wants a plan reflecting a later edit builds a
     fresh one.
+
+    `main_system_prompt`/`main_persona` (Stage 5 loop 3) are set only for a
+    Main chat's plan — Main's own fixed profile files, freshly resolved
+    every time, never a vault selection. `attachments` is set for either
+    chat kind: the chat's currently selected reference material, resolved
+    and frozen for this one plan.
     """
     system_instructions: SourceRecord
+    main_system_prompt: SourceRecord | None = None
+    main_persona: SourceRecord | None = None
     user_preferences: SourceRecord | None = None
     persona: SourceRecord | None = None
     traits: tuple[SourceRecord, ...] = field(default_factory=tuple)
+    attachments: tuple[SourceRecord, ...] = field(default_factory=tuple)
 
     def ordered_sources(self) -> tuple[SourceRecord, ...]:
-        """Every resolved source in exact provider request order: System
-        Instructions, User Preferences, Persona, then Traits in selection
-        order. The one ordering `provider_wire` and the Context modal's
-        preview both read, so they cannot independently drift apart.
+        """Every resolved *system-role* source in exact provider request
+        order: System Instructions, Main's System Prompt and Persona (when
+        this is a Main plan), User Preferences, Persona, then Traits in
+        selection order. The one ordering `provider_wire` and the Context
+        modal's preview both read, so they cannot independently drift apart.
+
+        Deliberately excludes `attachments`: those are sent as labelled
+        `user` reference messages, not `system` messages, and are placed
+        after the chat's frozen opening rather than among these sources
+        (Concept.md's "exact wire order" — see `provider_wire.build_request_
+        plan`). A caller that wants every provenance-bearing source
+        together, in the plan's one true order, uses `all_sources` instead.
         """
         sources = [self.system_instructions]
+        if self.main_system_prompt is not None:
+            sources.append(self.main_system_prompt)
+        if self.main_persona is not None:
+            sources.append(self.main_persona)
         if self.user_preferences is not None:
             sources.append(self.user_preferences)
         if self.persona is not None:
@@ -197,8 +239,16 @@ class ContextPlan:
         sources.extend(self.traits)
         return tuple(sources)
 
+    def all_sources(self) -> tuple[SourceRecord, ...]:
+        """`ordered_sources()` followed by `attachments` — every source this
+        plan resolved, in the one order `to_manifest` records. Not wire
+        order (attachments interleave after the opening on the wire; see
+        `ordered_sources`'s own docstring) — this is provenance order.
+        """
+        return self.ordered_sources() + self.attachments
+
     def to_manifest(self) -> tuple[ContextManifestEntry, ...]:
-        """This plan's ordered sources, minus their bodies — the shape
+        """This plan's sources, minus their bodies — the shape
         `ConversationStore.start_turn` persists as one turn's provenance
         (never a vault body; Concept.md's "It deliberately does not copy
         all source bodies into SQLite").
@@ -208,20 +258,26 @@ class ContextPlan:
                 category=source.category, name=source.name, order=index,
                 character_count=source.character_count, fingerprint=source.fingerprint,
             )
-            for index, source in enumerate(self.ordered_sources())
+            for index, source in enumerate(self.all_sources())
         )
 
 
 # --- chat metadata --------------------------------------------------------
 
 class ChatKind(Enum):
-    """The durable chat kinds these types can express. Deliberately one
-    member: private chat is locally ephemeral by structure (`HANDOVER.md`
-    rule 7), so there is no `PRIVATE` value here for a caller to reach for.
-    A later loop that gives Main its own durable path adds a member here;
-    it does not repurpose this one.
+    """The durable chat kinds these types can express. Private chat is
+    locally ephemeral by structure (`HANDOVER.md` rule 7), so there is no
+    `PRIVATE` value here for a caller to reach for.
+
+    `MAIN` (Stage 5 loop 3) is one distinguished row in the same ledger as
+    `ORDINARY` chats — the same `Chat`/`Turn`/`Message` shapes, the same
+    store, service, and provider path. Exactly one `MAIN` row can exist
+    (`conversation_store`'s own singleton invariant); nothing in this module
+    enforces that itself, since this module expresses shapes, not repository
+    invariants.
     """
     ORDINARY = "ordinary"
+    MAIN = "main"
 
 
 @dataclass(frozen=True)
