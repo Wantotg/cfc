@@ -112,6 +112,40 @@ mapping once instead of keeping two copies in sync.
 Proved with 20 new tests in `test_cfc_tui.py`.
 - Files: cfc/tui.py, cfc/tui.tcss, README.md, tests/test_cfc_tui.py
 - Status: shipped
+- Commit: 8f7d933
+
+## 2026-08-16 — A truthful, race-safe Markdown export (`B-2.0-74`, `D-2.0-75`, `B-2.0-78`, `B-2.0-79`, Stage 5 loop 4)
+`chat_export` bumps to format `v2`. One timezone-aware local instant is now
+read once per export (`_local_now()`) and feeds both the filename (its
+local wall-clock form, not UTC — B-2.0-74) and the document metadata (that
+same instant, with its real local offset). The context-provenance block is
+one valid nested Markdown list — every per-turn metadata line shares the
+same `-` marker, and a non-empty manifest's entries are indented as a
+proper sub-list under `- context:` rather than the bare unmarked line that
+used to end the enclosing list and start a wrongly-flat second one
+(D-2.0-75). A `FailureKind.INTERRUPTED` turn now exports with its own
+`status: interrupted` rather than being flattened into `status: failed`
+(B-2.0-79); completed, failed, cancelled, and active statuses are otherwise
+unchanged.
+
+Choosing the final export filename and claiming it are now the same atomic
+step (B-2.0-78): `_reserve_destination` exclusively creates the destination
+with `O_CREAT | O_EXCL` before anything is rendered, rather than merely
+checking `exists()` and trusting that check to still hold by the time
+`os.replace` runs. A competing writer racing for the exact same name now
+always loses that race cleanly — its own claim attempt fails and it
+advances to its own next suffix — instead of either side's `os.replace`
+silently overwriting the other's finished export. Every failure after the
+claim (a temp-write failure, a publish failure, or anything else) cleans up
+both the temporary file and this invocation's own empty claim; a
+pre-existing export at any other name is never touched.
+
+Proved with 6 new tests in `test_cfc_chat_export.py`, including a
+deterministic race test that injects a competing creator at the exact
+claim boundary and confirms the competitor's file survives untouched with
+no leaked temporary or claim material.
+- Files: cfc/chat_export.py, tests/test_cfc_chat_export.py
+- Status: shipped
 - Commit: pending
 
 ## 2026-08-12 — Readable-vault completion: Main, attachments, export (`W-07`, Stage 5 loop 3)

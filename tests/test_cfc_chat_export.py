@@ -74,6 +74,14 @@ def failed_turn(chat_id, position, *, user="q", reason="boom"):
     return turn, [user_message(chat_id, turn_id, user)]
 
 
+def interrupted_turn(chat_id, position, *, user="q", reason="cfc restarted while this turn was active"):
+    turn_id = TurnId.new()
+    evidence = FailureEvidence(FailureKind.INTERRUPTED, reason)
+    turn = Turn(id=turn_id, chat_id=chat_id, position=position, model="fixture-model",
+                started_at=aware(), finished_at=aware(2), outcome=FailedOutcome(evidence))
+    return turn, [user_message(chat_id, turn_id, user)]
+
+
 def cancelled_turn(chat_id, position, *, user="q"):
     turn_id = TurnId.new()
     turn = Turn(id=turn_id, chat_id=chat_id, position=position, model="fixture-model",
@@ -106,6 +114,10 @@ def test_render_includes_export_metadata():
     assert "chat kind: ordinary" in body
     assert "title: My Chat" in body
     assert "opening: none" in body
+
+
+def test_export_format_version_is_v2():
+    assert chat_export.EXPORT_FORMAT_VERSION == "v2"
 
 
 def test_render_includes_the_frozen_opening_before_any_turn():
@@ -141,6 +153,21 @@ def test_render_marks_a_failed_turn_with_no_assistant_reply():
     body = chat_export.render_markdown(chat, None, snapshot, exported_at=aware())
 
     assert "status: failed (connection refused)" in body
+
+
+def test_render_marks_an_interrupted_turn_distinctly_from_failed():
+    """B-2.0-79: `FailureKind.INTERRUPTED` gets its own status word, not
+    `failed` — the export contract distinguishes failed, cancelled, and
+    interrupted turns, and the reason text alone was not enough.
+    """
+    chat = make_chat()
+    turn, msgs = interrupted_turn(chat.id, 0)
+    snapshot = build_snapshot(chat.id, [(turn, msgs)])
+
+    body = chat_export.render_markdown(chat, None, snapshot, exported_at=aware())
+
+    assert "status: interrupted (cfc restarted while this turn was active)" in body
+    assert "status: failed" not in body
 
 
 def test_render_marks_a_cancelled_turn():
@@ -226,14 +253,47 @@ def test_render_reports_ordered_provenance_without_a_source_body():
     assert "secret attachment body" not in body  # never copied in
 
 
-def test_render_with_no_context_manifest_says_none():
+def test_render_provenance_is_one_valid_nested_markdown_list():
+    """D-2.0-75: every metadata line in a turn's block, `context:` included,
+    shares the same `-` marker, and a non-empty manifest's own entries are
+    indented as a proper nested sub-list under `- context:` rather than a
+    bare unlisted line that split one list into two.
+    """
+    chat = make_chat()
+    manifest = (
+        ContextManifestEntry(category=ContextCategory.SYSTEM_INSTRUCTIONS, name="sys",
+                              order=0, character_count=42, fingerprint="sysfp"),
+        ContextManifestEntry(category=ContextCategory.ATTACHMENT, name="notes/a.md",
+                              order=1, character_count=7, fingerprint="attachfp"),
+    )
+    turn, msgs = completed_turn(chat.id, 0, manifest=manifest)
+    snapshot = build_snapshot(chat.id, [(turn, msgs)])
+
+    body = chat_export.render_markdown(chat, None, snapshot, exported_at=aware())
+    lines = body.splitlines()
+
+    model_index = lines.index("- model: fixture-model")
+    assert lines[model_index + 1].startswith("- status:")
+    assert lines[model_index + 2].startswith("- usage:")
+    context_index = model_index + 3
+    assert lines[context_index] == "- context:"
+    assert lines[context_index + 1] == (
+        "  - system_instructions: sys (42 chars, fingerprint sysfp)"
+    )
+    assert lines[context_index + 2] == (
+        "  - attachment: notes/a.md (7 chars, fingerprint attachfp)"
+    )
+    assert lines[context_index + 3] == ""  # the list ends cleanly before the next section
+
+
+def test_render_with_no_context_manifest_says_none_as_a_bulleted_line():
     chat = make_chat()
     turn, msgs = completed_turn(chat.id, 0, manifest=())
     snapshot = build_snapshot(chat.id, [(turn, msgs)])
 
     body = chat_export.render_markdown(chat, None, snapshot, exported_at=aware())
 
-    assert "context: none" in body
+    assert "- context: none" in body.splitlines()
 
 
 def test_render_main_chat_kind_is_literal():
@@ -341,6 +401,74 @@ def test_export_chat_never_overwrites_and_advances_a_numeric_suffix(tmp_path):
     second.write_text("second export", encoding="utf-8")
 
     assert first.read_text(encoding="utf-8") == "existing export, must not be touched"
+
+
+def test_export_chat_filename_uses_local_time_metadata_matches_same_instant(tmp_path):
+    """B-2.0-74: one timezone-aware local instant feeds both the filename
+    (its local wall-clock form) and the document metadata (that exact
+    instant, with its offset) — a fixed non-UTC offset here proves the
+    filename is not silently converted to UTC first.
+    """
+    chat = make_chat()
+    snapshot = build_snapshot(chat.id, [])
+    fixed = datetime.datetime(
+        2026, 8, 16, 23, 30, 45, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30)),
+    )
+
+    path = chat_export.export_chat(tmp_path, chat, None, snapshot, now=fixed)
+
+    assert path.name.startswith("20260816T233045-")  # local wall clock, not shifted to UTC
+    content = path.read_text(encoding="utf-8")
+    assert f"export time: {fixed.isoformat()}" in content
+    assert "+05:30" in content
+
+
+def test_export_chat_repeated_local_hour_advances_a_numeric_suffix(tmp_path):
+    """The same local wall-clock second, requested twice for the same chat
+    (e.g. two exports in the same second, or a clock that repeats across a
+    DST fold), advances the suffix rather than colliding.
+    """
+    chat = make_chat()
+    snapshot = build_snapshot(chat.id, [])
+    fixed = datetime.datetime(2026, 8, 16, 10, 0, 0, tzinfo=datetime.timezone.utc)
+
+    first = chat_export.export_chat(tmp_path, chat, None, snapshot, now=fixed)
+    second = chat_export.export_chat(tmp_path, chat, None, snapshot, now=fixed)
+
+    assert first != second
+    assert second.stem.endswith("-2")
+    assert first.exists() and second.exists()
+
+
+def test_export_chat_racing_creator_gets_a_later_suffix_not_overwritten(tmp_path, monkeypatch):
+    """B-2.0-78: a competing writer that claims the exact target name in
+    the instant between this invocation choosing it and claiming it must
+    not have its file silently replaced by `os.replace` — either this
+    invocation gets a later owned suffix, or a typed refusal, and the
+    competitor's file is untouched either way with nothing leaked.
+    """
+    chat = make_chat()
+    snapshot = build_snapshot(chat.id, [])
+    fixed_now = aware()
+    filename = chat_export._export_filename("ordinary", chat.title, chat.id.value, fixed_now)
+    competitor_path = tmp_path / filename
+    competitor_content = "a competitor's real export, must survive untouched"
+    real_claim = chat_export._claim_destination
+
+    def racing_claim(candidate):
+        if candidate.name == filename and not competitor_path.exists():
+            competitor_path.write_text(competitor_content, encoding="utf-8")
+        return real_claim(candidate)
+
+    monkeypatch.setattr(chat_export, "_claim_destination", racing_claim)
+
+    path = chat_export.export_chat(tmp_path, chat, None, snapshot, now=fixed_now)
+
+    assert path != competitor_path
+    assert path.stem.endswith("-2")
+    assert competitor_path.read_text(encoding="utf-8") == competitor_content
+    leftover = sorted(p.name for p in tmp_path.iterdir())
+    assert leftover == sorted([competitor_path.name, path.name])  # nothing else leaked
 
 
 def test_export_chat_collision_exhausted_raises_named_error(tmp_path, monkeypatch):
