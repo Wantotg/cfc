@@ -60,6 +60,21 @@ From the hub, type a chat id to open a conversation, `n` for a new chat, `p`
 for a private chat, or `q` to quit. Inside a chat, `/q` returns to the hub.
 Type `/help` for the command list.
 
+## Multiline input
+
+Both the flat client above and the 2.0 Textual client (`python -m cfc`) send
+on Enter and insert a newline on Shift+Enter. Shift+Enter needs a terminal
+that reports modified Enter through the Kitty keyboard protocol — kitty,
+WezTerm, and iTerm2 do this natively. Windows Terminal does not, but you can
+teach it to: add this entry to its `settings.json`'s `"actions"` array —
+
+```json
+{ "command": { "action": "sendInput", "input": "\u001b[13;2u" }, "keys": "shift+enter" }
+```
+
+Without a terminal that reports modified Enter, Shift+Enter behaves like
+Enter — cfc adds no fallback newline key.
+
 ## Read next
 
 - [`User guide`](documents/USER%20GUIDE.md) — setup details, input, commands,

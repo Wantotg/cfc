@@ -95,8 +95,25 @@ Composer {
     color: $text-muted;
 }
 
-.opening-message, .turn-evidence {
+.opening-message {
     color: $text-muted;
+}
+
+.turn-details-button {
+    width: auto;
+    min-width: 0;
+    color: $text-muted;
+    background: transparent;
+    border: none;
+}
+
+#turn-details-dialog {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
 }
 
 #context-modal-dialog, #source-preview-dialog, #source-picker-dialog {
@@ -146,5 +163,24 @@ Composer {
 
 #context-modal-error {
     color: $error;
+    height: auto;
+}
+
+#attachment-picker-dialog {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#attachment-picker-list {
+    height: auto;
+    max-height: 16;
+}
+
+#attachment-picker-status {
+    color: $text-muted;
     height: auto;
 }

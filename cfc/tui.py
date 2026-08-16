@@ -277,18 +277,17 @@ _KEYBOARD_HELP_LINES = (
     "Ctrl+Q — quits cfc",
 )
 
+#: D-2.0-61: the raw Windows Terminal settings.json mapping used to sit
+#: inline here, dropped into the middle of an otherwise readable overview.
+#: It now lives once, in README.md's "Multiline input" section — this note
+#: points there instead of repeating it, so the mapping has one home
+#: (HANDOVER.md's "one home per fact") rather than two copies to keep in
+#: sync.
 _KEYBOARD_HELP_TERMINAL_NOTE = (
     "Shift+Enter needs a terminal that reports modified Enter through the "
     "Kitty keyboard protocol. Without one, Shift+Enter behaves like Enter — "
-    "cfc adds no fallback newline key."
-)
-
-#: The literal, tested Windows Terminal mapping. Its escape spelling is
-#: shown as text, exactly as it must appear in settings.json - never as a
-#: live escape character (Work Order Step 4).
-_KEYBOARD_HELP_WINDOWS_TERMINAL = (
-    "Windows Terminal — add this entry to settings.json's \"actions\" array:\n"
-    '{ "command": { "action": "sendInput", "input": "\\u001b[13;2u" }, "keys": "shift+enter" }'
+    "cfc adds no fallback newline key. Windows Terminal needs one extra "
+    "setting; see README.md's \"Multiline input\" section for it."
 )
 
 
@@ -306,10 +305,6 @@ class KeyboardHelpModal(ModalScreen[None]):
             for line in _KEYBOARD_HELP_LINES:
                 yield Static(line, markup=False)
             yield Static(_KEYBOARD_HELP_TERMINAL_NOTE, markup=False)
-            yield Static(
-                _KEYBOARD_HELP_WINDOWS_TERMINAL,
-                id="keyboard-help-windows-terminal", markup=False,
-            )
             yield Button("Close", id="keyboard-help-close")
 
     def action_dismiss_help(self) -> None:
@@ -431,6 +426,56 @@ class SourcePreviewModal(ModalScreen[None]):
             self.dismiss(None)
 
 
+class TurnDetailsModal(ModalScreen[None]):
+    """Read-only historical evidence for one completed turn (W-2.0-67:
+    "per-turn evidence outweighs the conversation it annotates"). Opened
+    from that turn's own **Turn details** action rather than shown inline
+    for every completed turn in the transcript.
+
+    Everything shown is that turn's *stored* record — `turn.model`,
+    `turn.outcome.usage`, and `turn.context_manifest` — never today's live
+    state substituted for it: a configured-limit comparison uses the
+    catalogue's *current* entry (a limit is model metadata, not history,
+    the same descriptive-only rule the old inline evidence already used),
+    but the reported usage and context manifest are exactly what this turn
+    actually used. A manifest entry is marked when its live vault
+    fingerprint no longer matches this turn's own fingerprint — the same
+    `context_entry_fingerprint_changed` comparison the Context modal
+    already uses, which reads a fresh fingerprint to compare, never a body,
+    and never writes anything back to SQLite.
+    """
+
+    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+
+    def __init__(self, turn: Turn, service: ConversationService, models: "settings.ModelCatalogue") -> None:
+        super().__init__()
+        self._turn = turn
+        self._service = service
+        self._models = models
+
+    def compose(self) -> ComposeResult:
+        turn = self._turn
+        usage = turn.outcome.usage if isinstance(turn.outcome, CompletedOutcome) else None
+        with Vertical(id="turn-details-dialog"):
+            yield Label(f"Turn details — {turn.model}", markup=False)
+            yield Static(f"model: {turn.model}", markup=False)
+            yield Static(_usage_text(usage), markup=False)
+            limit_text = _limit_text(usage, turn.model, self._models)
+            if limit_text is not None:
+                yield Static(limit_text, markup=False)
+            yield Static(
+                _context_provenance_text(turn.context_manifest, self._service), markup=False,
+            )
+            yield Button("Close", id="turn-details-close")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "turn-details-close":
+            self.dismiss(None)
+
+
 class SourcePickerModal(ModalScreen[object]):
     """A Change/Add picker: `available_sources`' unambiguous candidates,
     plus an explicit **None (clear selection)** entry when `allow_clear`
@@ -457,7 +502,17 @@ class SourcePickerModal(ModalScreen[object]):
     def compose(self) -> ComposeResult:
         with Vertical(id="source-picker-dialog"):
             yield Label(self._title, markup=False)
-            yield ListView(id="source-picker-list")
+            #: `initial_index=None` (B-2.0-70): Textual's own default
+            #: (`initial_index=0`) would auto-highlight the first row —
+            #: "None (clear selection)" on a Change picker — the instant
+            #: this mounts, so pressing Enter without moving first would
+            #: silently clear a live choice. `None` leaves nothing
+            #: highlighted; `ListView.action_select_cursor` is itself a
+            #: no-op while nothing is highlighted, so Enter here does
+            #: nothing until an arrow key makes a deliberate choice. Mouse
+            #: click and keyboard confirmation still end at the same
+            #: `on_list_view_selected` handler below either way.
+            yield ListView(id="source-picker-list", initial_index=None)
             if self._notice is not None:
                 yield Static(self._notice, id="source-picker-notice", markup=False)
             elif not self._options and not self._allow_clear:
@@ -484,6 +539,144 @@ class SourcePickerModal(ModalScreen[object]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "source-picker-cancel":
             self.dismiss(None)
+
+
+class AttachmentPickerModal(ModalScreen[object]):
+    """The Add-attachment picker (B-2.0-72, W-2.0-73): unlike
+    `SourcePickerModal`, discovery walks the whole configured vault and can
+    take real time against a real vault (about 2.7s observed), so this opens
+    immediately with a focused filter input and a `scanning…` status rather
+    than blocking the event loop until the walk finishes. The walk itself
+    (`ConversationService.available_attachments`) runs in a worker off the
+    Textual event loop; filtering re-slices that one completed result rather
+    than re-walking the vault. Dismisses with the chosen exact vault-relative
+    path or `None` for Cancel/Esc — `SourcePickerModal`'s own two-shape
+    contract, minus the "None (clear selection)" row, which Add never offers.
+
+    `_generation` is bumped on every dismissal path and checked before a
+    background result is applied: closing the picker cannot make it cancel
+    an in-flight filesystem walk outright, but it always invalidates a
+    result that arrives after close, so a slow discovery can never paint a
+    list or steal focus in a screen the person already left.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, title: str, already_selected: frozenset[str], notice: str | None = None) -> None:
+        super().__init__()
+        self._title = title
+        self._already_selected = already_selected
+        self._notice = notice
+        self._all_options: tuple[SourceOption, ...] | None = None
+        self._scan_failed: str | None = None
+        self._generation = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="attachment-picker-dialog"):
+            yield Label(self._title, markup=False)
+            if self._notice is None:
+                yield Input(placeholder="Filter by path…", id="attachment-picker-filter")
+            #: `initial_index=None` for the same B-2.0-70 reason as
+            #: `SourcePickerModal` — see that class's own comment.
+            yield ListView(id="attachment-picker-list", initial_index=None)
+            yield Static("", id="attachment-picker-status", markup=False)
+            yield Button("Cancel", id="attachment-picker-cancel")
+
+    async def on_mount(self) -> None:
+        if self._notice is not None:
+            self._set_status(self._notice)
+            return
+        self.query_one("#attachment-picker-filter", Input).focus()
+        self._set_status("scanning…")
+        self.run_worker(
+            self._discover(), exclusive=True, exit_on_error=False, group="attachment-discovery",
+        )
+
+    def on_key(self, event: events.Key) -> None:
+        """The filter input keeps keyboard focus on open (Work Order: "opens
+        with its focused... filter"), so `Down` from there needs to hand
+        off to the list explicitly — `Input` has no built-in list navigation
+        of its own. One `Down` press both moves focus and creates the first
+        deliberate highlight (`ListView.action_cursor_down`'s own "nothing
+        highlighted yet" rule), matching `SourcePickerModal`'s "arrow
+        movement creates a deliberate highlight" (B-2.0-70) rather than
+        requiring an extra keypress just to leave the filter.
+        """
+        if event.key != "down" or not isinstance(self.focused, Input):
+            return
+        list_view = self.query_one("#attachment-picker-list", ListView)
+        if len(list_view) == 0:
+            return
+        event.stop()
+        list_view.focus()
+        list_view.action_cursor_down()
+
+    async def _discover(self) -> None:
+        generation = self._generation
+        try:
+            options = await asyncio.to_thread(self.app.service.available_attachments)
+        except Exception:  # noqa: BLE001 — a bounded-failure state, never a raw traceback
+            if generation == self._generation and self.is_attached:
+                self._scan_failed = "attachment discovery failed; try again"
+                self._set_status(self._scan_failed)
+            return
+        if generation != self._generation or not self.is_attached:
+            return  # this picker closed (or restarted a scan) before the walk finished
+        self._all_options = tuple(
+            option for option in options if option.name not in self._already_selected
+        )
+        await self._refresh_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "attachment-picker-filter":
+            self.run_worker(
+                self._refresh_list(), exclusive=True, exit_on_error=False, group="attachment-filter",
+            )
+
+    async def _refresh_list(self) -> None:
+        list_view = self.query_one("#attachment-picker-list", ListView)
+        await list_view.clear()
+        if self._all_options is None:
+            self._set_status(self._scan_failed or "scanning…")
+            return
+        if not self._all_options:
+            self._set_status("no attachments found")
+            return
+        query = self.query_one("#attachment-picker-filter", Input).value.strip().lower()
+        matches = tuple(o for o in self._all_options if query in o.name.lower())
+        for option in matches:
+            item = ListItem(Static(option.display_name, markup=False))
+            item.picked_value = option.name
+            await list_view.append(item)
+        if not matches:
+            self._set_status("no matches")
+        else:
+            self._set_status(f"{len(matches)} of {len(self._all_options)}")
+
+    def _set_status(self, text: str) -> None:
+        self.query_one("#attachment-picker-status", Static).update(text)
+
+    def _dismiss_and_invalidate(self, result: object) -> None:
+        """Bumps `_generation` first — so even a discovery result that was
+        already past its last `await` and about to apply itself is still
+        caught by the check in `_discover` — then cancels this screen's own
+        workers specifically (`workers.cancel_node`, not the app-wide
+        `self.workers`, which would reach every other screen's background
+        work too, including a live chat turn) before dismissing.
+        """
+        self._generation += 1
+        self.workers.cancel_node(self)
+        self.dismiss(result)
+
+    def action_cancel(self) -> None:
+        self._dismiss_and_invalidate(None)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        self._dismiss_and_invalidate(event.item.picked_value)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "attachment-picker-cancel":
+            self._dismiss_and_invalidate(None)
 
 
 class ContextModal(ModalScreen[None]):
@@ -517,11 +710,22 @@ class ContextModal(ModalScreen[None]):
         await self.refresh_rows()
 
     def _mutate_selection(self, mutate: Callable[[], None]) -> bool:
-        """Runs one selection-changing store call, catching the one refusal
-        a concurrent active turn can raise (Concept.md: "refused while that
-        chat has an active turn") — an unhandled `ActiveTurnExists` here
-        would otherwise crash the app rather than showing a bounded notice.
-        Returns whether it actually applied.
+        """Runs one selection-changing store call, catching the two bounded
+        refusals it can raise — an unhandled one here would otherwise crash
+        the app rather than showing a bounded notice. Returns whether it
+        actually applied.
+
+        - `ActiveTurnExists` (Concept.md: "refused while that chat has an
+          active turn").
+        - `context_mod.SourceUnavailable` — `ConversationService.
+          add_attachment`'s own validate-before-persist refusal (B-2.0-76):
+          a selection-time refusal now, not only a turn-time one, so this
+          modal must show it the same bounded way rather than let it
+          propagate past the button press that triggered it.
+
+        Neither case touches the Chat screen underneath: this modal's own
+        error line updates, the current context selection and the
+        composer's draft are both untouched either way.
         """
         try:
             mutate()
@@ -529,6 +733,11 @@ class ContextModal(ModalScreen[None]):
             self.query_one("#context-modal-error", Static).update(
                 "This chat has a request in progress; wait or cancel it before "
                 "changing its context."
+            )
+            return False
+        except context_mod.SourceUnavailable as exc:
+            self.query_one("#context-modal-error", Static).update(
+                f"Couldn't add that attachment: {exc.reason}"
             )
             return False
         self.query_one("#context-modal-error", Static).update("")
@@ -750,30 +959,28 @@ class ContextModal(ModalScreen[None]):
             SourcePickerModal("Add trait", options, allow_clear=False, notice=notice), handle_result)
 
     def _begin_add_attachment(self) -> None:
-        """Reuses `SourcePickerModal` exactly like `_begin_add_trait`
-        (Work Order: "attachment choice reuses the existing list-selection
-        modal") — `available_attachments` already returns `SourceOption`s
-        keyed by vault-relative path, so no separate picker type is needed.
+        """Opens `AttachmentPickerModal` instead of the synchronous
+        `SourcePickerModal` `_begin_add_trait` uses (B-2.0-72): a real vault
+        walk took about 2.7 seconds with no progress shown, so this only
+        does the cheap, synchronous "is `VAULT_ROOT` even configured" check
+        here — the expensive walk itself happens inside the picker, off the
+        event loop, once it has already opened.
         """
-        already_selected = {
+        already_selected = frozenset(
             a.relative_path for a in self.app.service.context_rows(self.chat_id).attachments
-        }
-        options = tuple(
-            option for option in self.app.service.available_attachments()
-            if option.name not in already_selected
         )
         notice = self.app.service.attachments_unavailable_reason()
         if notice is not None:
             notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
 
         async def handle_result(result: object) -> None:
-            if result is None or result is _CLEAR_SELECTION:
+            if result is None:
                 return
             self._mutate_selection(lambda: self.app.service.add_attachment(self.chat_id, result))
             await self.refresh_rows()
 
         self.app.push_screen(
-            SourcePickerModal("Add attachment", options, allow_clear=False, notice=notice),
+            AttachmentPickerModal("Add attachment", already_selected, notice=notice),
             handle_result,
         )
 
@@ -1031,7 +1238,7 @@ class ChatScreen(Screen):
             chat = self.app.service.get_chat(self.chat_id)
             snapshot = self.app.service.snapshot(self.chat_id)
             await self._render_transcript(chat, snapshot)
-            self._render_context_bar(chat)
+            self._render_context_bar(chat, snapshot)
             self._render_status()
             await self._render_switcher()
 
@@ -1046,9 +1253,9 @@ class ChatScreen(Screen):
     def _build_transcript_widgets(self, chat: Chat, snapshot: ConversationSnapshot) -> list[Widget]:
         return _transcript_widgets(snapshot, chat.opening, self.app.service, self.app._models)
 
-    def _render_context_bar(self, chat: Chat) -> None:
+    def _render_context_bar(self, chat: Chat, snapshot: ConversationSnapshot) -> None:
         bar = self.query_one("#chat-context-bar", Static)
-        bar.update(_context_bar_text(chat))
+        bar.update(_context_bar_text(chat, snapshot))
 
     def _render_status(self) -> None:
         status_widget = self.query_one("#chat-status", Static)
@@ -1081,13 +1288,23 @@ class ChatScreen(Screen):
         self.app.open_chat(chat_id)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Routes a transcript **Restore to composer** press — the only
-        `Button`s this screen mounts carry a `turn_id` attribute
-        (`_restore_button`); anything else is ignored rather than assumed.
+        """Routes a transcript button press — every `Button` this screen
+        mounts carries a `turn_id` attribute (`_restore_button`,
+        `_turn_details_button`); anything else is ignored rather than
+        assumed. `is_turn_details` (set only by `_turn_details_button`)
+        distinguishes the two rather than guessing from the button's id.
         """
         turn_id = getattr(event.button, "turn_id", None)
-        if turn_id is not None:
+        if turn_id is None:
+            return
+        if getattr(event.button, "is_turn_details", False):
+            self._open_turn_details(turn_id)
+        else:
             self._restore_turn(turn_id)
+
+    def _open_turn_details(self, turn_id: TurnId) -> None:
+        turn = self.app.service.get_turn(turn_id)
+        self.app.push_screen(TurnDetailsModal(turn, self.app.service, self.app._models))
 
     def _restore_turn(self, turn_id: TurnId) -> None:
         """**Restore to composer**'s handler (Concept.md's "An omitted
@@ -1289,13 +1506,16 @@ def _transcript_widgets(
 
     A frozen `opening`, when present, renders first — history, not a
     synthetic turn (Concept.md's "First Message is an opening"). A
-    completed turn additionally renders its actual model, independent
-    usage counts, an optional configured-limit comparison, and its recorded
-    context provenance. A failed or cancelled turn gets the omission notice
-    and its own turn-specific **Restore to composer** button (Concept.md's
-    "An omitted message is visible and recoverable"; B-2.0-55/D-2.0-53) —
-    never a generic "retry latest", since several omissions in one chat
-    must stay independently restorable.
+    completed turn renders one focusable **Turn details** action rather
+    than its evidence inline (W-2.0-67: "per-turn evidence outweighs the
+    conversation it annotates") — `TurnDetailsModal` is where its actual
+    model, independent usage counts, an optional configured-limit
+    comparison, and its recorded context provenance are read, on demand,
+    per turn. A failed or cancelled turn gets the omission notice and its
+    own turn-specific **Restore to composer** button (Concept.md's "An
+    omitted message is visible and recoverable"; B-2.0-55/D-2.0-53) — never
+    a generic "retry latest", since several omissions in one chat must stay
+    independently restorable.
     """
     by_turn: dict[str, list[StoredMessage]] = {t.id.value: [] for t in snapshot.turns}
     for message in snapshot.messages:
@@ -1311,14 +1531,7 @@ def _transcript_widgets(
         if turn.outcome is None:
             widgets.append(Static("… cfc is working on this turn …", markup=False))
         elif isinstance(turn.outcome, CompletedOutcome):
-            widgets.append(Static(f"model: {turn.model}", markup=False, classes="turn-evidence"))
-            widgets.append(Static(_usage_text(turn.outcome.usage), markup=False,
-                                   classes="turn-evidence"))
-            limit_text = _limit_text(turn.outcome.usage, turn.model, models)
-            if limit_text is not None:
-                widgets.append(Static(limit_text, markup=False, classes="turn-evidence"))
-            widgets.append(Static(_context_provenance_text(turn.context_manifest, service),
-                                   markup=False, classes="turn-evidence"))
+            widgets.append(_turn_details_button(turn))
         elif isinstance(turn.outcome, FailedOutcome):
             widgets.append(Static(f"[turn failed: {turn.outcome.evidence.reason}]", markup=False))
             widgets.append(Static(_OMISSION_NOTICE, markup=False))
@@ -1336,19 +1549,64 @@ def _restore_button(turn_id: TurnId) -> Button:
     return button
 
 
-def _context_bar_text(chat: Chat) -> str:
-    """The Chat screen's always-visible model id and compact context
-    summary (Concept.md: "The Chat screen always shows the selected model
-    by its exact provider ID and a compact context summary" — the exact
-    provider ID, literal, never a friendly label standing in for it).
+def _turn_details_button(turn: Turn) -> Button:
+    """One focusable action per completed turn, opening `TurnDetailsModal`
+    — mirrors `_restore_button`'s shape (an id-bearing `Button` carrying
+    the turn identity as an attribute) but marked `is_turn_details` so
+    `ChatScreen.on_button_pressed` can route the two kinds of transcript
+    button to their different handlers without guessing from the id alone.
+    """
+    button = Button("Turn details", id=f"turn-details-{turn.id.value}", classes="turn-details-button")
+    button.turn_id = turn.id
+    button.is_turn_details = True
+    return button
+
+
+def _latest_completed_usage(snapshot: ConversationSnapshot):
+    """This chat's most recent `CompletedOutcome.usage`, or `None` if no
+    turn has completed yet — walked backward since usage is only ever
+    stored on a completed turn (a failed or cancelled one carries none), so
+    that is the only meaningful sense of "latest usage" for the compact bar.
+    """
+    for turn in reversed(snapshot.turns):
+        if isinstance(turn.outcome, CompletedOutcome):
+            return turn.outcome.usage
+    return None
+
+
+def _context_bar_text(chat: Chat, snapshot: ConversationSnapshot) -> str:
+    """The Chat screen's always-visible model id, latest usage, and compact
+    context summary (Concept.md: "The Chat screen always shows the selected
+    model by its exact provider ID and a compact context summary" — the
+    exact provider ID, literal, never a friendly label standing in for it).
+
+    `usage` reuses `_usage_text`'s own `not reported`/explicit-`0` rules,
+    prefixed with `none yet` only when no turn has completed at all — a
+    distinct fact from a completed turn that reported nothing. Main's
+    Persona is its own fixed, non-selectable profile file, never the shared
+    `selected_persona` field ordinary chats use (`ChatKind.MAIN`'s own
+    docstring), so this names that fixed profile explicitly rather than
+    reading `none` off a selection Main never populates. `opening` reports
+    `frozen` once a First Message exists — a chat's frozen opening never
+    unfreezes — else `none`.
     """
     selection = chat.context_selection
     parts = [f"model: {selection.model}"]
+
+    latest_usage = _latest_completed_usage(snapshot)
+    has_completed = any(isinstance(t.outcome, CompletedOutcome) for t in snapshot.turns)
+    parts.append("usage: none yet" if not has_completed else _usage_text(latest_usage))
+
     parts.append(f"prefs: {selection.user_preferences or 'none'}")
-    parts.append(f"persona: {selection.persona or 'none'}")
+    if chat.kind is ChatKind.MAIN:
+        parts.append("persona: Main's fixed persona")
+    else:
+        parts.append(f"persona: {selection.persona or 'none'}")
     trait_count = len(selection.traits)
     parts.append(f"traits: {trait_count if trait_count else 'none'}")
-    parts.append(f"opening: {'yes' if chat.opening is not None else 'no'}")
+    attachment_count = len(selection.attachments)
+    parts.append(f"attachments: {attachment_count if attachment_count else 'none'}")
+    parts.append(f"opening: {'frozen' if chat.opening is not None else 'none'}")
     return " · ".join(parts)
 
 

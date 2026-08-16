@@ -13,11 +13,13 @@ database, touches the vault, or contacts a network.
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
 
 from cfc import conversation_store, settings, tui
+from cfc.context import SourceOption
 from cfc.conversation_service import open_service
 from cfc.conversation_types import (
     Cancellation,
@@ -63,6 +65,33 @@ class RaisingResponder:
 
     async def respond(self, plan):
         raise self._exc
+
+
+class ControlledDiscovery:
+    """A stand-in for `ConversationService.available_attachments`, run
+    through `AttachmentPickerModal`'s own `asyncio.to_thread` exactly like
+    the real method — so this blocks on a real `threading.Event`, not an
+    `asyncio.Event`, which would need a running loop in the worker thread
+    that calls it and does not have one. `started` fires once the call is
+    under way, letting a test observe the picker's `scanning…` state before
+    releasing it; `calls` counts invocations, proving a filter edit reuses
+    the one completed result instead of re-scanning.
+    """
+
+    def __init__(self, options=(), exc: Exception | None = None):
+        self._options = options
+        self._exc = exc
+        self.started = threading.Event()
+        self.released = threading.Event()
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        self.started.set()
+        self.released.wait()
+        if self._exc is not None:
+            raise self._exc
+        return self._options
 
 
 class ManualResponder:
@@ -423,6 +452,26 @@ def transcript_lines(screen) -> list[str]:
 
 async def type_text(pilot, text: str) -> None:
     await pilot.press(*text)
+
+
+async def open_turn_details(pilot, screen, index: int = 0) -> "tui.TurnDetailsModal":
+    """Clicks the `index`-th **Turn details** button in `screen`'s
+    transcript and returns the opened modal — the driven route every
+    turn-evidence test now goes through, since that evidence no longer
+    renders inline (W-2.0-67).
+    """
+    buttons = list(screen.query(".turn-details-button"))
+    await pilot.click(buttons[index])
+    await pilot.pause()
+    modal = pilot.app.screen
+    assert isinstance(modal, tui.TurnDetailsModal)
+    return modal
+
+
+def turn_details_lines(app) -> list[str]:
+    modal = app.screen
+    assert isinstance(modal, tui.TurnDetailsModal)
+    return [str(s.content) for s in modal.query("#turn-details-dialog Static")]
 
 
 async def open_new_chat(app, pilot, title: str = "c") -> tui.ChatScreen:
@@ -1497,25 +1546,45 @@ async def test_ctrl_p_reaches_exactly_the_cfc_command_set_on_startup_failure(tmp
         ]
 
 
-async def test_keyboard_help_command_opens_with_the_literal_mapping_and_escape_closes_it(tmp_path):
+async def test_keyboard_help_command_opens_with_short_sentences_and_escape_closes_it(tmp_path):
+    """D-2.0-61: help reads as short usage sentences, the raw Windows
+    Terminal settings.json mapping no longer sits inline, and the terminal
+    note points to README.md's own section instead of repeating it.
+    """
     app = make_app(tmp_path)
     try:
         async with app.run_test() as pilot:
             await run_command(pilot, "Keyboard help")
             assert isinstance(app.screen, tui.KeyboardHelpModal)
 
-            mapping = app.screen.query_one("#keyboard-help-windows-terminal", tui.Static)
-            rendered = str(mapping.content)
-            assert '\\u001b[13;2u' in rendered  # the literal JSON spelling
-            assert "\x1b" not in rendered       # never a live escape byte
-            assert "sendInput" in rendered
-            assert "shift+enter" in rendered
+            lines = [str(s.content) for s in app.screen.query("#keyboard-help-dialog Static")]
+            body = "\n".join(lines)
+            assert not app.screen.query("#keyboard-help-windows-terminal")
+            assert "sendInput" not in body       # no raw mapping JSON in the modal
+            assert "\x1b" not in body            # never a live escape byte
+            assert "README.md" in body
+            assert "Multiline input" in body
+            for line in (
+                "Enter — send the composer's text as a new turn",
+                "Shift+Enter — insert a newline in the composer",
+                "Esc — closes an open modal, else cancels an active turn, else "
+                "returns to the Hub",
+            ):
+                assert line in lines
 
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, tui.KeyboardHelpModal)
     finally:
         await app.shutdown()
+
+
+def test_readme_documents_the_windows_terminal_multiline_input_mapping():
+    readme = (settings.REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "## Multiline input" in readme
+    assert "sendInput" in readme
+    assert '\\u001b[13;2u' in readme  # the literal JSON spelling
+    assert "\x1b" not in readme      # never a live escape byte
 
 
 async def test_quit_command_follows_the_existing_orderly_shutdown(tmp_path):
@@ -1939,6 +2008,19 @@ async def select_row(pilot, index: int) -> None:
     await pilot.pause()
 
 
+async def wait_for_attachment_scan(pilot, picker) -> None:
+    """`AttachmentPickerModal`'s discovery runs in a background worker
+    (`asyncio.to_thread`), so a pilot-driven test polls its completion —
+    `_all_options` set, or `_scan_failed` set on the bounded-failure route —
+    rather than assuming one `pilot.pause()` covers a real thread hop.
+    """
+    for _ in range(300):
+        if picker._all_options is not None or picker._scan_failed is not None:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("attachment discovery did not finish in time")
+
+
 def configured_empty_vault(tmp_path: Path) -> settings.VaultSettings:
     """All four categories configured and usable, every directory empty —
     the "you have chosen nothing yet" vault, as distinct from `empty_vault`,
@@ -2097,6 +2179,46 @@ async def test_an_unconfigured_category_row_names_its_reason_not_none_selected(t
                 "First Message: unavailable (FIRST_MESSAGES_DIR is not set) "
                 "— correct config.py to use this category"
             )
+    finally:
+        await app.shutdown()
+
+
+async def test_source_picker_opens_with_no_row_highlighted_and_enter_alone_selects_nothing(
+    tmp_path,
+):
+    """B-2.0-70: Textual's own default (`initial_index=0`) would highlight
+    the first row — `None (clear selection)` on a Change picker — the
+    instant the picker mounts, so pressing Enter without moving first would
+    silently clear a live choice. Proved on the Persona Change picker,
+    which is exactly the picker the bug report named; Add-trait and
+    Add-attachment share this same class/route (`AttachmentPickerModal`'s
+    own dedicated tests cover its own filter-focused variant).
+    """
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    app = make_app(tmp_path, vault=real_vault(tmp_path, personas=personas_dir))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+
+            await open_context_modal(pilot)
+            await select_row(pilot, 2)  # Persona
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)
+            list_view = app.screen.query_one("#source-picker-list", tui.ListView)
+            assert list_view.index is None
+
+            await pilot.press("enter")  # no arrow movement first
+            await pilot.pause()
+            assert isinstance(app.screen, tui.SourcePickerModal)  # still open — Enter did nothing
+            assert app.service.get_chat(screen.chat_id).context_selection.persona == "muse.md"
+
+            await pilot.press("down")  # a deliberate highlight: row 0, "None (clear selection)"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.service.get_chat(screen.chat_id).context_selection.persona is None
     finally:
         await app.shutdown()
 
@@ -2669,6 +2791,94 @@ async def test_model_modal_renders_a_literal_hostile_provider_id(tmp_path):
         await app.shutdown()
 
 
+# === the compact context bar: current model, usage, and selection state ===
+
+async def test_context_bar_shows_none_yet_before_any_completed_turn(tmp_path):
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "usage: none yet" in bar
+    finally:
+        await app.shutdown()
+
+
+async def test_context_bar_shows_the_latest_completed_usage_not_reported_and_zero(tmp_path):
+    responder = FixedResponder(Completion(
+        content="ok", usage=Usage(input_tokens=0, output_tokens=None, total_tokens=5),
+    ))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "usage — input: 0, output: not reported, total: 5" in bar
+    finally:
+        await app.shutdown()
+
+
+async def test_context_bar_shows_attachment_count(tmp_path):
+    write_source(tmp_path, "a.md", "a")
+    write_source(tmp_path, "b.md", "b")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "attachments: none" in bar
+
+            app.service.add_attachment(screen.chat_id, "a.md")
+            app.service.add_attachment(screen.chat_id, "b.md")
+            await screen.refresh_from_service()
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "attachments: 2" in bar
+    finally:
+        await app.shutdown()
+
+
+async def test_context_bar_names_mains_fixed_persona_rather_than_none(tmp_path):
+    main_dir = tmp_path / "main"
+    write_main_bundle(main_dir)
+    app = make_app(tmp_path, vault=real_vault(tmp_path, main_chat=main_dir))
+    try:
+        async with app.run_test() as pilot:
+            await pilot.press("m")
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, tui.ChatScreen)
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "persona: Main's fixed persona" in bar
+            assert "persona: none" not in bar
+    finally:
+        await app.shutdown()
+
+
+async def test_context_bar_shows_frozen_opening_state(tmp_path):
+    personas_dir = tmp_path / "personas"
+    first_messages_dir = tmp_path / "first_messages"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    write_source(first_messages_dir, "muse.md", "Hello, I am Muse.")
+    vault = real_vault(tmp_path, personas=personas_dir, first_messages=first_messages_dir)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "opening: none" in bar
+
+            app.service.set_persona(screen.chat_id, "muse.md")
+            await screen.refresh_from_service()
+            bar = str(screen.query_one("#chat-context-bar", tui.Static).content)
+            assert "opening: frozen" in bar
+    finally:
+        await app.shutdown()
+
+
 async def test_changing_the_model_does_not_relabel_past_turns(tmp_path):
     models = catalogue(settings.ModelCatalogueEntry(id="other-model", selectable=True))
     responder = FixedResponder(Completion(content="ok"))
@@ -2690,15 +2900,80 @@ async def test_changing_the_model_does_not_relabel_past_turns(tmp_path):
             turn = app.service.snapshot(screen.chat_id).turns[0]
             assert turn.model == "fixture-model"  # the model it actually used, unchanged
             assert app.service.get_chat(screen.chat_id).context_selection.model == "other-model"
-            lines = transcript_lines(screen)
-            assert any(line == "model: fixture-model" for line in lines)
+            await open_turn_details(pilot, screen)
+            assert any(line == "model: fixture-model" for line in turn_details_lines(app))
     finally:
         await app.shutdown()
 
 
-# === completed-turn evidence: model, usage, limit, context provenance ======
+# === completed-turn evidence: one Turn details action, read-only (W-2.0-67) =
 
-async def test_turn_evidence_shows_not_reported_for_absent_usage_and_explicit_zero(tmp_path):
+async def test_transcript_shows_one_turn_details_action_not_inline_evidence(tmp_path):
+    responder = FixedResponder(Completion(content="ok", usage=Usage(input_tokens=42)))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            lines = transcript_lines(screen)
+            assert not any(line.startswith("model:") for line in lines)
+            assert not any(line.startswith("usage —") for line in lines)
+            assert not any(line.startswith("context:") for line in lines)
+            assert len(screen.query(".turn-details-button")) == 1
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_details_opens_via_keyboard_and_mouse_to_the_same_modal(tmp_path):
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            button = screen.query_one(".turn-details-button", tui.Button)
+            button.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.TurnDetailsModal)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is screen
+
+            # re-query: closing the modal re-rendered the transcript from
+            # canonical state, so the earlier button reference is stale
+            await pilot.click(screen.query_one(".turn-details-button", tui.Button))
+            await pilot.pause()
+            assert isinstance(app.screen, tui.TurnDetailsModal)
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_details_esc_closes_only_the_modal_returning_to_chat(tmp_path):
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await open_turn_details(pilot, screen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is screen
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_details_shows_not_reported_for_absent_usage_and_explicit_zero(tmp_path):
     responder = FixedResponder(Completion(
         content="ok", usage=Usage(input_tokens=0, output_tokens=None, total_tokens=5),
     ))
@@ -2710,13 +2985,13 @@ async def test_turn_evidence_shows_not_reported_for_absent_usage_and_explicit_ze
             await pilot.press("enter")
             await pilot.pause()
 
-            lines = transcript_lines(screen)
-            assert "usage — input: 0, output: not reported, total: 5" in lines
+            await open_turn_details(pilot, screen)
+            assert "usage — input: 0, output: not reported, total: 5" in turn_details_lines(app)
     finally:
         await app.shutdown()
 
 
-async def test_turn_evidence_shows_all_not_reported_when_usage_is_entirely_absent(tmp_path):
+async def test_turn_details_shows_all_not_reported_when_usage_is_entirely_absent(tmp_path):
     responder = FixedResponder(Completion(content="ok", usage=None))
     app = make_app(tmp_path, responder=responder)
     try:
@@ -2726,13 +3001,16 @@ async def test_turn_evidence_shows_all_not_reported_when_usage_is_entirely_absen
             await pilot.press("enter")
             await pilot.pause()
 
-            lines = transcript_lines(screen)
-            assert "usage — input: not reported, output: not reported, total: not reported" in lines
+            await open_turn_details(pilot, screen)
+            assert (
+                "usage — input: not reported, output: not reported, total: not reported"
+                in turn_details_lines(app)
+            )
     finally:
         await app.shutdown()
 
 
-async def test_turn_evidence_shows_a_limit_comparison_when_the_catalogue_has_one(tmp_path):
+async def test_turn_details_shows_a_limit_comparison_when_the_catalogue_has_one(tmp_path):
     models = catalogue(settings.ModelCatalogueEntry(
         id="fixture-model", selectable=True, context_limit=128000,
     ))
@@ -2745,13 +3023,13 @@ async def test_turn_evidence_shows_a_limit_comparison_when_the_catalogue_has_one
             await pilot.press("enter")
             await pilot.pause()
 
-            lines = transcript_lines(screen)
-            assert "reported input 42 of configured limit 128000" in lines
+            await open_turn_details(pilot, screen)
+            assert "reported input 42 of configured limit 128000" in turn_details_lines(app)
     finally:
         await app.shutdown()
 
 
-async def test_turn_evidence_has_no_limit_line_without_a_configured_limit(tmp_path):
+async def test_turn_details_has_no_limit_line_without_a_configured_limit(tmp_path):
     responder = FixedResponder(Completion(content="ok", usage=Usage(input_tokens=42)))
     app = make_app(tmp_path, responder=responder)
     try:
@@ -2761,13 +3039,13 @@ async def test_turn_evidence_has_no_limit_line_without_a_configured_limit(tmp_pa
             await pilot.press("enter")
             await pilot.pause()
 
-            lines = transcript_lines(screen)
-            assert not any(line.startswith("reported input") for line in lines)
+            await open_turn_details(pilot, screen)
+            assert not any(line.startswith("reported input") for line in turn_details_lines(app))
     finally:
         await app.shutdown()
 
 
-async def test_turn_evidence_context_provenance_lists_categories_in_order(tmp_path):
+async def test_turn_details_context_provenance_lists_categories_in_order(tmp_path):
     personas_dir = tmp_path / "personas"
     write_source(personas_dir, "muse.md", "You are Muse.")
     vault = real_vault(tmp_path, personas=personas_dir)
@@ -2781,14 +3059,15 @@ async def test_turn_evidence_context_provenance_lists_categories_in_order(tmp_pa
             await pilot.press("enter")
             await pilot.pause()
 
-            lines = transcript_lines(screen)
+            await open_turn_details(pilot, screen)
+            lines = turn_details_lines(app)
             provenance = next(line for line in lines if line.startswith("context:"))
             assert provenance == "context: system_instructions:cfc-system-instructions-v2, persona:muse.md"
     finally:
         await app.shutdown()
 
 
-async def test_turn_evidence_flags_a_context_source_that_changed_since_the_turn(tmp_path):
+async def test_turn_details_flags_a_context_source_that_changed_since_the_turn(tmp_path):
     personas_dir = tmp_path / "personas"
     write_source(personas_dir, "muse.md", "version one")
     vault = real_vault(tmp_path, personas=personas_dir)
@@ -2802,10 +3081,13 @@ async def test_turn_evidence_flags_a_context_source_that_changed_since_the_turn(
             await pilot.press("enter")
             await pilot.pause()
 
+            await open_turn_details(pilot, screen)
             unchanged_provenance = next(
-                line for line in transcript_lines(screen) if line.startswith("context:")
+                line for line in turn_details_lines(app) if line.startswith("context:")
             )
             assert "*" not in unchanged_provenance
+            await pilot.press("escape")
+            await pilot.pause()
 
             write_source(personas_dir, "muse.md", "version two")
             await app.pop_screen()
@@ -2813,8 +3095,9 @@ async def test_turn_evidence_flags_a_context_source_that_changed_since_the_turn(
             app.open_chat(screen.chat_id)
             await pilot.pause()
 
+            await open_turn_details(pilot, app.screen)
             changed_provenance = next(
-                line for line in transcript_lines(app.screen) if line.startswith("context:")
+                line for line in turn_details_lines(app) if line.startswith("context:")
             )
             assert "persona:muse.md*" in changed_provenance
             assert "live source has changed" in changed_provenance
@@ -3036,9 +3319,17 @@ async def test_add_attachment_via_keyboard_then_preview_and_remove_it(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
 
-            assert isinstance(app.screen, tui.SourcePickerModal)
-            option = app.screen.query_one("#source-picker-list", tui.ListView).children[0]
-            await pilot.click(option)  # the one offered option, "notes.md"
+            assert isinstance(app.screen, tui.AttachmentPickerModal)
+            picker = app.screen
+            await wait_for_attachment_scan(pilot, picker)
+            # B-2.0-70: opens with nothing highlighted — Enter alone (no
+            # arrow movement) must not select the one offered option.
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is picker
+
+            await pilot.press("down")  # a deliberate highlight
+            await pilot.press("enter")
             await pilot.pause()
 
             rows = context_modal_row_texts(app)
@@ -3078,7 +3369,10 @@ async def test_add_attachment_via_mouse_matches_keyboard(tmp_path):
             await select_row(pilot, add_index)
             await pilot.click("#context-action-add")
             await pilot.pause()
-            options = list(app.screen.query("#source-picker-list ListItem"))
+            picker = app.screen
+            assert isinstance(picker, tui.AttachmentPickerModal)
+            await wait_for_attachment_scan(pilot, picker)
+            options = list(app.screen.query("#attachment-picker-list ListItem"))
             await pilot.click(options[0])
             await pilot.pause()
 
@@ -3116,6 +3410,254 @@ async def test_attachment_add_remove_refuses_while_a_turn_is_active(tmp_path):
             )
 
             responder.released.set()
+    finally:
+        await app.shutdown()
+
+
+# === Attachment picker: responsive discovery, filter, and refusal ==========
+# (B-2.0-70, B-2.0-72, B-2.0-76, W-2.0-73)
+
+async def open_attachment_picker(pilot) -> "tui.AttachmentPickerModal":
+    rows = context_modal_row_texts(pilot.app)
+    await select_row(pilot, rows.index("Add attachment…"))
+    await pilot.click("#context-action-add")
+    await pilot.pause()
+    picker = pilot.app.screen
+    assert isinstance(picker, tui.AttachmentPickerModal)
+    return picker
+
+
+async def test_attachment_picker_opens_immediately_and_shows_scanning_first(tmp_path, monkeypatch):
+    """B-2.0-72: the picker itself must appear before the walk finishes,
+    with an honest `scanning…` state, not a frozen interface.
+    """
+    write_source(tmp_path, "notes.md", "an idea")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    discovery = ControlledDiscovery((SourceOption("notes.md", "notes.md"),))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            monkeypatch.setattr(app.service, "available_attachments", discovery)
+            picker = await open_attachment_picker(pilot)
+
+            await asyncio.get_running_loop().run_in_executor(None, discovery.started.wait)
+            await pilot.pause()
+            status = picker.query_one("#attachment-picker-status", tui.Static)
+            assert "scanning" in str(status.content)
+            assert not list(picker.query("#attachment-picker-list ListItem"))
+
+            discovery.released.set()
+            await wait_for_attachment_scan(pilot, picker)
+            await pilot.pause()
+            assert len(list(picker.query("#attachment-picker-list ListItem"))) == 1
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_filter_narrows_case_insensitively_by_path(tmp_path):
+    write_source(tmp_path / "notes", "Idea.md", "one")
+    write_source(tmp_path, "other.md", "two")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+            assert len(list(picker.query("#attachment-picker-list ListItem"))) == 2
+
+            picker.query_one("#attachment-picker-filter", tui.Input).focus()
+            await type_text(pilot, "idea")
+            await pilot.pause()
+            names = [item.picked_value for item in picker.query("#attachment-picker-list ListItem")]
+            assert names == ["notes/Idea.md"]
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_filter_with_no_matches_shows_a_bounded_state(tmp_path):
+    write_source(tmp_path, "notes.md", "an idea")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            picker.query_one("#attachment-picker-filter", tui.Input).focus()
+            await type_text(pilot, "zzz-nothing-matches")
+            await pilot.pause()
+
+            assert not list(picker.query("#attachment-picker-list ListItem"))
+            status = picker.query_one("#attachment-picker-status", tui.Static)
+            assert "no matches" in str(status.content)
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_clearing_the_filter_reuses_the_cached_scan(tmp_path, monkeypatch):
+    write_source(tmp_path, "notes.md", "an idea")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            calls = []
+            monkeypatch.setattr(
+                app.service, "available_attachments",
+                lambda: calls.append(1) or (SourceOption("notes.md", "notes.md"),),
+            )
+
+            field = picker.query_one("#attachment-picker-filter", tui.Input)
+            field.focus()
+            await type_text(pilot, "notes")
+            await pilot.pause()
+            for _ in range(len("notes")):
+                await pilot.press("backspace")
+            await pilot.pause()
+
+            names = [item.picked_value for item in picker.query("#attachment-picker-list ListItem")]
+            assert names == ["notes.md"]
+            assert calls == []  # filtering never re-triggers discovery
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_excludes_a_hidden_directory(tmp_path):
+    write_source(tmp_path / ".obsidian", "workspace.md", "hidden")
+    write_source(tmp_path, "real.md", "real")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            names = [item.picked_value for item in picker.query("#attachment-picker-list ListItem")]
+            assert names == ["real.md"]
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_empty_vault_shows_a_bounded_empty_state(tmp_path):
+    app = make_app(tmp_path, vault=real_vault(tmp_path))  # VAULT_ROOT set, nothing in it
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            assert not list(picker.query("#attachment-picker-list ListItem"))
+            status = picker.query_one("#attachment-picker-status", tui.Static)
+            assert "no attachments found" in str(status.content)
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_bounded_failure_state_when_discovery_raises(tmp_path, monkeypatch):
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    discovery = ControlledDiscovery(exc=RuntimeError("simulated discovery failure"))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            monkeypatch.setattr(app.service, "available_attachments", discovery)
+            picker = await open_attachment_picker(pilot)
+            discovery.released.set()
+            await wait_for_attachment_scan(pilot, picker)
+            await pilot.pause()
+
+            status = picker.query_one("#attachment-picker-status", tui.Static)
+            assert "failed" in str(status.content)
+            assert "RuntimeError" not in str(status.content)  # bounded, never a raw traceback
+            assert app.screen is picker  # the app survives; no crash
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_discards_a_late_result_after_close(tmp_path, monkeypatch):
+    write_source(tmp_path, "notes.md", "an idea")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    discovery = ControlledDiscovery((SourceOption("notes.md", "notes.md"),))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            monkeypatch.setattr(app.service, "available_attachments", discovery)
+            picker = await open_attachment_picker(pilot)
+            await asyncio.get_running_loop().run_in_executor(None, discovery.started.wait)
+
+            await pilot.press("escape")  # close before discovery finishes
+            await pilot.pause()
+            assert isinstance(app.screen, tui.ContextModal)
+
+            discovery.released.set()  # the walk "finishes" after the picker is gone
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+
+            # nothing crashed, and the closed picker never painted a list
+            assert picker._all_options is None
+            assert isinstance(app.screen, tui.ContextModal)
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_selection_time_refusal_preserves_context_and_draft(tmp_path):
+    """B-2.0-76: a file that validated at scan time can still vanish before
+    the person confirms it. `add_attachment`'s own new refusal must surface
+    as a bounded modal message, not a crash, and must not disturb the
+    chat's current selection or the composer's draft underneath.
+    """
+    write_source(tmp_path, "gone.md", "here for now")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await type_text(pilot, "draft in progress")
+            picker = None
+
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            (tmp_path / "gone.md").unlink()  # vanishes after the scan, before selection
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, tui.ContextModal)
+            error = app.screen.query_one("#context-modal-error", tui.Static)
+            assert "Couldn't add that attachment" in str(error.content)
+            assert app.service.get_chat(screen.chat_id).context_selection.attachments == ()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is screen
+            assert screen.query_one(tui.Composer).text == "draft in progress"
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_esc_closes_only_the_picker_returning_to_context(tmp_path):
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            context_screen = app.screen
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is context_screen
     finally:
         await app.shutdown()
 

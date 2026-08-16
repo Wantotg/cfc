@@ -65,6 +65,53 @@ version-5 database takes the existing `SCHEMA_TOO_OLD` refusal route.
 Proved with the full suite at **959 passed** (46 new).
 - Files: cfc/settings.py, cfc/context.py, cfc/conversation_store.py, cfc/conversation_service.py, cfc/diagnostics.py, cfc/tui.py, tests/test_cfc_settings.py, tests/test_cfc_context.py, tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_service.py, tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
 - Status: shipped
+- Commit: 419dba9
+
+## 2026-08-16 — Deliberate pickers, responsive attachment discovery, and per-turn evidence on demand (`B-2.0-70`, `B-2.0-72`, `W-2.0-73`, `D-2.0-61`, `W-2.0-67`, Stage 5 loop 4)
+Every Change/Add picker (`SourcePickerModal`, covering Persona, User
+Preferences, and Add trait) now opens with `initial_index=None`: Textual's
+own default auto-highlighted the first row — **None (clear selection)** on
+a Change picker — so pressing Enter without moving first silently cleared a
+live choice (B-2.0-70). Arrow movement still creates the first deliberate
+highlight, and click/keyboard confirmation still end at the same
+`on_list_view_selected` handler either way.
+
+Add attachment gets its own `AttachmentPickerModal` instead of reusing that
+same class: a real vault walk took about 2.7 seconds with no progress shown
+(B-2.0-72), so this opens immediately with a focused, case-insensitive
+vault-relative-path filter and an honest `scanning…`/empty/no-match/
+bounded-failure status, while the walk itself runs in a background worker
+(`asyncio.to_thread`) that filtering reuses rather than re-triggers.
+Closing the picker invalidates a late-arriving result by generation check
+and cancels this screen's own workers specifically. Discovery also prunes a
+hidden directory (`.git`, `.obsidian`, tool working directories) before
+`os.walk` descends into it, not merely after (`W-2.0-73`, landed in the
+resolver alongside `context.py`'s other changes in this loop's first
+commit). `ConversationService.add_attachment`'s new validate-before-persist
+refusal (also this loop) now surfaces here as a bounded modal message
+rather than an unhandled exception, leaving the current selection and the
+composer's draft untouched.
+
+Completed-turn evidence (model, usage, limit comparison, context
+provenance) no longer renders inline for every completed turn — repeated
+per-turn evidence outweighed the conversation it annotates (W-2.0-67).
+Each completed turn instead gets one focusable **Turn details** action,
+opening a read-only `TurnDetailsModal` with that turn's stored evidence;
+failed/cancelled turns keep their existing omission notice and **Restore to
+composer** button unchanged. The always-visible context bar above the
+transcript now also names the latest completed turn's usage (`none yet`
+before any turn completes, reusing the same `not reported`/explicit-`0`
+rules), the selected attachment count, and Main's fixed Persona by name
+rather than reporting `none` for a selection Main never populates.
+
+Keyboard help drops the raw Windows Terminal `settings.json` mapping that
+used to sit inline, mid-overview (D-2.0-61's loop-three finding); it now
+points to README.md's new "Multiline input" section, which documents the
+mapping once instead of keeping two copies in sync.
+
+Proved with 20 new tests in `test_cfc_tui.py`.
+- Files: cfc/tui.py, cfc/tui.tcss, README.md, tests/test_cfc_tui.py
+- Status: shipped
 - Commit: pending
 
 ## 2026-08-12 — Readable-vault completion: Main, attachments, export (`W-07`, Stage 5 loop 3)
