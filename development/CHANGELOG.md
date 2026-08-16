@@ -38,8 +38,8 @@ persisted, freezing the First Message the same way an ordinary Persona
 selection already does. Main's System Prompt and Persona are fresh,
 non-selectable sources on every later turn — new `ContextCategory.
 MAIN_SYSTEM_PROMPT`/`MAIN_PERSONA` members, resolved first in `ContextPlan.
-ordered_sources()` — while the shared Persona category stays unused for
-Main, since Main's persona is this fixed file, not a vault pick.
+ordered_sources()` — and the Context modal presents that fixed profile as
+read-only rather than offering Main the shared Persona picker.
 
 Both ordinary and Main chats can now select ordered, duplicate-free Markdown
 attachments — vault-relative paths only, discovered by walking real
@@ -70,13 +70,13 @@ the `Ctrl+P` palette gains **Export Markdown** on every durable Chat.
 database takes the existing `SCHEMA_TOO_OLD` refusal route.
 
 Proved with the full suite at **913 passed** and the unchanged 516-line
-golden baseline. Cas's real-provider playtest (Main/attachment/export
-end-to-end, with and without embedding/Qdrant configured) and the Debugger's
-parent-stage audit remain outstanding — a green loop here is not a Stage 5
-close.
+golden baseline. Cas's real-provider playtest proved Main, model switching,
+cancellation, and manual export against the configured provider and vault.
+Selected attachments were not exercised, so the Stage 5 parent audit remains
+open; a green loop is not a Stage 5 close.
 - Files: cfc/settings.py, cfc/conversation_types.py, cfc/context.py, cfc/conversation_store.py, cfc/conversation_service.py, cfc/provider_wire.py, cfc/chat_export.py, cfc/tui.py, tests/test_cfc_settings.py, tests/test_cfc_conversation_types.py, tests/test_cfc_context.py, tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_service.py, tests/test_cfc_provider_wire.py, tests/test_cfc_chat_export.py, tests/test_cfc_tui.py
 - Status: shipped
-- Commit: pending
+- Commit: 380a005
 
 ## 2026-08-10 — Configuration truth and durable appearance (`D-25`, `D-2.0-59`, `W-2.0-58`, `W-07`, Stage 5 loop 2)
 `cfc doctor` now answers the setup question completely instead of stopping at

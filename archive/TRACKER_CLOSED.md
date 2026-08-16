@@ -13,6 +13,8 @@ at the top.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| N-2.0-81 | bounded snapshot/render refusal has no untrusted input to bound | nothing owed; the export snapshot comes from the canonical store, so there is no untrusted input at that boundary. The existing `TypeError` guard is a programming-error guard and should remain visible rather than becoming a friendly refusal | 2026-08-16 |
+| N-2.0-80 | concurrent Main creation is unreachable under one process and one connection | nothing owed; the database lock is held for the store lifetime, so the public architecture cannot expose two concurrent creators. The unique index and repeated `get_or_create_main` convergence are the relevant proof; if 2.1 adds multiple processes or pooled connections, this becomes a new finding | 2026-08-16 |
 | B-2.0-63 | a corrupt 2.0 database made `cfc doctor` die in a traceback | shipped in `f132dea`; read-only SQLite inspection now converts malformed, truncated, and incomplete targets into bounded diagnostic evidence, while preserving the target and its directory | 2026-08-10 |
 | B-2.0-64 | doctor reported a rejected `TUI_THEME` as though it had been honoured | shipped in `f132dea`; the rejected setting is reported as the built-in fallback with a bounded correction route, without printing the rejected value | 2026-08-10 |
 | B-2.0-65 | the diagnostics and doctor tests read the live database | shipped in `f132dea`; in-process diagnostics use isolated temporary targets and doctor subprocesses use an isolated `HOME`, with proof that Cas's default path is not read | 2026-08-10 |

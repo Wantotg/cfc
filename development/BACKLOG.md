@@ -21,10 +21,21 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 Keyboard help lists bindings as reference rows and drops a raw Windows Terminal
 JSON fragment into the middle of them. The interaction works, but the requested
-overview is not readable normal-language guidance. Rewrite the copy as short
+overview is not readable normal-language guidance. The loop-three playtest
+reported the same surface again and adds a requirement to point readers to the
+repository's explanation instead of inlining the JSON. Rewrite the copy as short
 sentences while retaining the tested key behaviour and terminal requirement.
-This is wording work for the Stage 10 release-facing documentation pass, not a
-reason to reopen the shipped Stage 4 interaction.
+This is wording work for the Stage 5 loop-four pass, not a reason to reopen the
+shipped Stage 4 interaction.
+
+## D-2.0-75 · Export metadata breaks its own Markdown list
+
+**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
+
+The export's provenance section emits a bare `context:` line inside a bullet
+list. Markdown renderers therefore end one list, show that line as a paragraph,
+and begin another list. Prefix the line with the same list marker as the
+surrounding metadata.
 
 ## D-2.0-43 · Provider evidence checks can discard a usable answer, and one malformed usage shape walks past them
 
