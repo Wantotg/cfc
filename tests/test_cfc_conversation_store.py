@@ -1607,6 +1607,44 @@ def test_a_schema_version_four_database_refuses_as_too_old(tmp_path):
         assert not (path.parent / (path.name + suffix)).exists()
 
 
+# --- Stage 5 loop 4: schema bump refuses the loop-three (version 5) schema -
+
+def test_a_schema_version_five_database_refuses_as_too_old(tmp_path):
+    """This loop bumps `SCHEMA_VERSION` from 5 to 6: no table or column
+    changes, but a frozen `cfc_chat_openings` row from a version-5 database
+    may hold a First Message whose `{{user}}`/`{{AI}}` tokens were never
+    substituted (B-2.0-71). There is no way to tell that apart from a
+    deliberately literal opening after the fact and no in-place migration,
+    so a real loop-three database must take the existing visible refusal
+    route, not be silently reinterpreted, `ALTER`ed, or have its sidecars
+    touched.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=5)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+    assert path.read_bytes() == before
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+
+def test_a_fresh_database_is_created_at_the_new_schema_version(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    try:
+        raw = sqlite3.connect(str(path))
+        try:
+            assert raw.execute("PRAGMA user_version").fetchone()[0] == 6
+        finally:
+            raw.close()
+    finally:
+        store.close()
+
+
 # --- inspect_appearance_override: read-only, never creates or blocks -------
 
 def test_inspect_appearance_override_absent_target_creates_nothing(tmp_path):

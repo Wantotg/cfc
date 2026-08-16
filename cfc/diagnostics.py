@@ -1,11 +1,11 @@
-"""diagnostics.py — the thirteen-row inventory `cfc doctor` renders: runtime,
+"""diagnostics.py — the fourteen-row inventory `cfc doctor` renders: runtime,
 configuration, chat provider, 2.0 database target, vault, embeddings, file
 tools, the four Stage 5 vault categories (User Preferences, Personas,
-Traits, First Messages), the model catalogue, and appearance. The first
-four are required — `required_rows_ok` is an exact allow-list, so `doctor`
-exits non-zero unless every one of them is `READY`, not merely absent of
-`ERROR`. Every other row is optional: absence is `UNAVAILABLE`, and neither
-that nor `NOT_CHECKED` blocks the exit code.
+Traits, First Messages), the model catalogue, display names, and appearance.
+The first four are required — `required_rows_ok` is an exact allow-list, so
+`doctor` exits non-zero unless every one of them is `READY`, not merely
+absent of `ERROR`. Every other row is optional: absence is `UNAVAILABLE`,
+and neither that nor `NOT_CHECKED` blocks the exit code.
 
 Every check here is local and structural, same as `settings.py`, which this
 module calls for most rows, and `cfc.context`, which the four vault-category
@@ -40,7 +40,7 @@ REQUIRED_ROW_NAMES = ("runtime", "configuration", "chat provider", "2.0 database
 OPTIONAL_ROW_NAMES = (
     "vault", "embeddings", "file tools",
     "user preferences", "personas", "traits", "first messages",
-    "model catalogue", "appearance",
+    "model catalogue", "display names", "appearance",
 )
 ROW_ORDER = REQUIRED_ROW_NAMES + OPTIONAL_ROW_NAMES
 
@@ -128,6 +128,7 @@ def diagnose(config_path: Path | None = None) -> tuple[Row, ...]:
     vault_settings = settings.build_vault_settings(snapshot)
     rows.extend(_vault_category_rows(vault_settings))
     rows.append(_model_catalogue_row(snapshot))
+    rows.append(_display_names_row(snapshot))
     rows.append(_appearance_row(snapshot))
     return tuple(rows)
 
@@ -303,6 +304,25 @@ def _model_catalogue_row(snapshot) -> Row:
         return Row("model catalogue", State.UNAVAILABLE,
                     f"MODELS lists {len(catalogue.entries)} model(s), none chat-selectable")
     return Row("model catalogue", State.READY, f"{len(selectable)} selectable model(s)")
+
+
+# --- display names: {{user}}/{{AI}} substitution, always resolvable -------
+
+def _display_names_row(snapshot) -> Row:
+    """Always resolvable, never `UNAVAILABLE`: `USER_DISPLAY_NAME` and
+    `AI_DISPLAY_NAME` each have a documented default, so there is always an
+    effective value to report — `ERROR` names exactly which setting is
+    invalid without blocking the other or ordinary chat (B-2.0-71's own
+    "an invalid value leaves the token literal", not a reason to refuse).
+    """
+    resolved = settings.build_display_name_settings(snapshot)
+    notices = [n for n in (resolved.user_invalid_notice, resolved.ai_invalid_notice) if n]
+    if notices:
+        return Row("display names", State.ERROR, "; ".join(notices),
+                    next_step="Correct USER_DISPLAY_NAME/AI_DISPLAY_NAME in config.py, "
+                              "or remove the invalid one to use its default.")
+    return Row("display names", State.READY,
+                f"{{{{user}}}} -> {resolved.user_name!r}, {{{{AI}}}} -> {resolved.ai_name!r}")
 
 
 # --- appearance: the effective dark/light value and its source ------------

@@ -334,16 +334,17 @@ def test_doctor_never_prints_a_traceback(tmp_path):
 
 # --- next_step / not-checked: no cure duplication, subordinate rendering ----
 
-def test_doctor_no_config_shows_one_cure_and_five_not_checked_rows(tmp_path):
+def test_doctor_no_config_shows_one_cure_and_every_dependent_row_not_checked(tmp_path):
     """D-2.0-07 end to end: a missing config produces exactly one error
-    (configuration) with the copy-and-fill next step, five `not checked`
-    dependent rows with no next step of their own, and exit 1.
+    (configuration) with the copy-and-fill next step, one `not checked`
+    dependent row per remaining row with no next step of their own, and
+    exit 1.
     """
     missing_path = tmp_path / "does_not_exist.py"
     result = run_cfc(["doctor"], cwd=tmp_path, extra_env=config_env(missing_path))
     assert result.returncode == 1
     assert result.stdout.count("error") == 1
-    assert result.stdout.count("not checked") == 11
+    assert result.stdout.count("not checked") == 12
     assert result.stdout.count("config.example.py") == 1
 
 

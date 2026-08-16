@@ -25,6 +25,48 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-16 — Display names and a second Main-Persona boundary (`B-2.0-71`, `B-2.0-76`, `B-2.0-77`, `W-2.0-73`, Stage 5 loop 4)
+`{{user}}`/`{{AI}}` substitution now reaches the 2.0 vault-owned template
+sources — User Preferences, Persona, Traits, First Messages, and Main's
+System Prompt/Persona — the same two exact, case-sensitive tokens the flat
+`names.py` module already substitutes, applied once at `cfc.context`'s
+decoded-source boundary so a resolved body, its character count, and its
+fingerprint always agree. `cfc.settings.build_display_name_settings`
+resolves `USER_DISPLAY_NAME`/`AI_DISPLAY_NAME` independently, each falling
+back to its documented default when unset and leaving its own token literal
+when invalid; `cfc doctor` gains a **display names** row reporting both.
+Attachment text, the fixed System Instructions, messages, tool content, and
+exports stay literal — this is template substitution, not a general
+rewrite. Attachment discovery also prunes a hidden directory (`.git`,
+`.obsidian`, …) before `os.walk` descends into it rather than after
+(`W-2.0-73`), and `read_attachment` now proves every path component is real
+(not just the final one) before it settles on one canonical vault-relative
+identity for the record it returns.
+
+`ConversationService.add_attachment` validates and canonicalises through
+`cfc.context.read_attachment` before it ever reaches the store (`B-2.0-76`):
+a never-existed or otherwise unusable path is refused at selection time,
+leaving the store untouched, and an equivalent spelling of an
+already-selected file reduces to the store's existing duplicate-free
+identity rather than looking like a second attachment. `set_persona` now
+refuses a set or a clear on Main before any store write (`B-2.0-77`), and
+`cfc.context.build_context_plan` independently ignores a stored shared
+Persona whenever a plan is Main's — a second, defensive boundary against an
+already-impossible stored value, proved directly against deliberately
+malformed development data rather than only through the service's own new
+refusal; neither path silently repairs the stored row.
+
+`conversation_store` bumps to schema version 6: no table or column changes,
+but a frozen `cfc_chat_openings` row from a version-5 database may hold a
+First Message whose tokens were never substituted, and there is no way to
+tell that apart from a deliberately literal opening after the fact — a
+version-5 database takes the existing `SCHEMA_TOO_OLD` refusal route.
+
+Proved with the full suite at **959 passed** (46 new).
+- Files: cfc/settings.py, cfc/context.py, cfc/conversation_store.py, cfc/conversation_service.py, cfc/diagnostics.py, cfc/tui.py, tests/test_cfc_settings.py, tests/test_cfc_context.py, tests/test_cfc_conversation_store.py, tests/test_cfc_conversation_service.py, tests/test_cfc_diagnostics.py, tests/test_cfc_doctor_cli.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-12 — Readable-vault completion: Main, attachments, export (`W-07`, Stage 5 loop 3)
 The three remaining Stage 5 capabilities land together. `ChatKind.MAIN` is
 one distinguished row in the same chat ledger as ordinary chats — the same

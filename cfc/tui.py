@@ -1892,7 +1892,9 @@ def build_app(
         return StartupFailureApp(str(exc), diagnostics._settings_error_next_step(exc), theme=theme)
 
     try:
-        service = open_service(built.database_path, built.vault, built.chat_export.path)
+        service = open_service(
+            built.database_path, built.vault, built.chat_export.path, built.display_names,
+        )
     except ConversationStoreError as exc:
         return StartupFailureApp(str(exc), theme=theme)
 

@@ -59,7 +59,7 @@ from cfc.conversation_types import (
 )
 from cfc.context import FirstMessageLookup, SourceOption
 from cfc.provider_wire import Responder, ResponderResult, build_request_plan
-from cfc.settings import VaultCategorySettings, VaultSettings
+from cfc.settings import DisplayNameSettings, VaultCategorySettings, VaultSettings
 
 
 @dataclass(frozen=True)
@@ -129,6 +129,22 @@ class ContextRows:
 _INTERNAL_FAILURE_REASON = "an internal error interrupted this turn before it could finish"
 
 
+class MainPersonaNotSelectable(ConversationStoreError):
+    """`ConversationService.set_persona` refused: `chat_id` is Main, whose
+    Persona is its own fixed `persona.md` profile file, never a
+    user-selected shared Persona (B-2.0-77). Refused before any store
+    write — a set and a clear alike — so a caller that bypasses the Context
+    modal (which already hides this action for Main) cannot persist a
+    stored shared Persona on Main even once. The UI hiding the picker is
+    therefore not the only authority boundary; this is the one that still
+    holds if that hiding is ever wrong or bypassed.
+    """
+
+    def __init__(self, chat_id: ChatId):
+        self.chat_id = chat_id
+        super().__init__(f"chat {chat_id} is Main; it has no selectable shared Persona")
+
+
 class TurnEndingFailed(ConversationStoreError):
     """B-2.0-32: the store's own SQLite boundary raised while this call was
     trying to record a turn's ending — a closed connection, full disk, or
@@ -169,7 +185,10 @@ class ConversationService:
     constructor for the common case of owning the store too.
     """
 
-    def __init__(self, store: ConversationStore, vault: VaultSettings, export_dir=None):
+    def __init__(
+        self, store: ConversationStore, vault: VaultSettings, export_dir=None,
+        display_names: DisplayNameSettings | None = None,
+    ):
         self._store = store
         self._vault = vault
         #: `cfc.settings.ExportSettings.path` — a `Path | None`, resolved
@@ -178,6 +197,13 @@ class ConversationService:
         #: read from a config snapshot: this module never resolves its own
         #: settings, the same discipline `vault` already follows.
         self._export_dir = export_dir
+        #: `cfc.settings.DisplayNameSettings` or `None` — `None` (the
+        #: default) means every named template source below is read
+        #: literally, exactly as before this setting existed; production
+        #: callers (`open_service`, from `built.display_names`) always pass
+        #: a real, resolved value. Never applied to attachments, which
+        #: `cfc.context` reads literally regardless of what is passed here.
+        self._display_names = display_names
 
     def close(self) -> None:
         self._store.close()
@@ -243,7 +269,9 @@ class ConversationService:
         describes the next turn").
         """
         chat = self._store.get_chat(chat_id)
-        return context_mod.build_context_plan(self._vault, chat.context_selection, chat.kind)
+        return context_mod.build_context_plan(
+            self._vault, chat.context_selection, chat.kind, self._display_names,
+        )
 
     def _category_settings(self, category: ContextCategory) -> VaultCategorySettings:
         return getattr(self._vault, _CATEGORY_VAULT_FIELD[category])
@@ -264,7 +292,9 @@ class ConversationService:
         if filename is None:
             return CategoryState(category, None, category_unavailable_reason=unusable)
         try:
-            source = context_mod.read_source(category, self._category_settings(category), filename)
+            source = context_mod.read_source(
+                category, self._category_settings(category), filename, self._display_names,
+            )
             return CategoryState(category, filename, source=source,
                                   category_unavailable_reason=unusable)
         except context_mod.SourceUnavailable as exc:
@@ -282,7 +312,7 @@ class ConversationService:
         """
         unusable = self._vault.main_chat.unavailable_reason
         try:
-            source = resolver(self._vault.main_chat)
+            source = resolver(self._vault.main_chat, self._display_names)
             return CategoryState(category, filename, source=source,
                                   category_unavailable_reason=unusable)
         except context_mod.SourceUnavailable as exc:
@@ -307,7 +337,7 @@ class ConversationService:
         first_message = None
         if chat.opening is None and selection.persona is not None:
             first_message = context_mod.look_up_first_message(
-                self._vault.first_messages, selection.persona,
+                self._vault.first_messages, selection.persona, self._display_names,
             )
         main_system_prompt = None
         main_persona = None
@@ -348,14 +378,17 @@ class ConversationService:
             return False
         try:
             if entry.category is ContextCategory.MAIN_SYSTEM_PROMPT:
-                fresh = context_mod.resolve_main_system_prompt(self._vault.main_chat)
+                fresh = context_mod.resolve_main_system_prompt(
+                    self._vault.main_chat, self._display_names,
+                )
             elif entry.category is ContextCategory.MAIN_PERSONA:
-                fresh = context_mod.resolve_main_persona(self._vault.main_chat)
+                fresh = context_mod.resolve_main_persona(self._vault.main_chat, self._display_names)
             elif entry.category is ContextCategory.ATTACHMENT:
                 fresh = context_mod.read_attachment(self._vault.root, entry.name)
             else:
                 fresh = context_mod.read_source(
                     entry.category, self._category_settings(entry.category), entry.name,
+                    self._display_names,
                 )
         except context_mod.SourceUnavailable:
             return True
@@ -387,7 +420,21 @@ class ConversationService:
         return "VAULT_ROOT is not set"
 
     def add_attachment(self, chat_id: ChatId, relative_path: str) -> Chat:
-        return self._store.add_attachment(chat_id, relative_path)
+        """Validates and canonicalises `relative_path` before it ever
+        reaches the store (B-2.0-76): `context_mod.read_attachment` proves
+        it is a readable, in-boundary Markdown file and reduces it to its
+        one canonical vault-relative identity, and only that identity is
+        persisted. Raises `context_mod.SourceUnavailable` on refusal,
+        leaving the current selection and store untouched — the same
+        refusal a broken selection already raises at turn time, just moved
+        to the moment of selection instead of being saved unvalidated and
+        discovered later. Re-adding an equivalent spelling of an
+        already-selected file canonicalises to the same identity, so the
+        store's own duplicate-free `add_attachment` still treats it as an
+        idempotent no-op.
+        """
+        record = context_mod.read_attachment(self._vault.root, relative_path)
+        return self._store.add_attachment(chat_id, record.name)
 
     def remove_attachment(self, chat_id: ChatId, relative_path: str) -> Chat:
         return self._store.remove_attachment(chat_id, relative_path)
@@ -402,10 +449,20 @@ class ConversationService:
         set_persona` remains the sole, atomic authority on whether this
         chat is still eligible to freeze it (Concept.md: "Only the first
         eligible Persona selection may freeze it").
+
+        Raises `MainPersonaNotSelectable` before any store write when
+        `chat_id` is Main — a set (`filename` given) and a clear
+        (`filename=None`) alike (B-2.0-77): Main's persona is its own fixed
+        `persona.md` profile, never a stored shared selection.
         """
+        chat = self._store.get_chat(chat_id)
+        if chat.kind is ChatKind.MAIN:
+            raise MainPersonaNotSelectable(chat_id)
         opening: OpeningMessage | None = None
         if filename is not None:
-            lookup = context_mod.look_up_first_message(self._vault.first_messages, filename)
+            lookup = context_mod.look_up_first_message(
+                self._vault.first_messages, filename, self._display_names,
+            )
             if lookup.state is context_mod.FirstMessageState.USABLE:
                 record = lookup.record
                 opening = OpeningMessage(
@@ -452,7 +509,7 @@ class ConversationService:
         if existing is not None:
             return existing
         _system_prompt, _persona, first_message = context_mod.resolve_main_creation_bundle(
-            self._vault.main_chat,
+            self._vault.main_chat, self._display_names,
         )
         opening = OpeningMessage(
             source_name=first_message.name, content=first_message.body,
@@ -534,7 +591,7 @@ class ConversationService:
         """
         chat = self._store.get_chat(chat_id)
         context_plan = context_mod.build_context_plan(
-            self._vault, chat.context_selection, chat.kind,
+            self._vault, chat.context_selection, chat.kind, self._display_names,
         )
         model = chat.context_selection.model
         manifest = context_plan.to_manifest()
@@ -606,12 +663,16 @@ class ConversationService:
         raise TypeError(f"responder returned an unrecognised result: {result!r}")
 
 
-def open_service(path, vault: VaultSettings, export_dir=None) -> ConversationService:
-    """Open the store at `path` and wrap it, with `vault` and `export_dir`,
-    in a `ConversationService`. `path` must already be resolved, exactly
-    like `conversation_store.open_store`; `vault` is `cfc.settings.
-    build_vault_settings`'s own already-resolved output and `export_dir` is
-    `cfc.settings.ExportSettings.path` — this module never resolves a
-    config snapshot itself.
+def open_service(
+    path, vault: VaultSettings, export_dir=None,
+    display_names: DisplayNameSettings | None = None,
+) -> ConversationService:
+    """Open the store at `path` and wrap it, with `vault`, `export_dir`, and
+    `display_names`, in a `ConversationService`. `path` must already be
+    resolved, exactly like `conversation_store.open_store`; `vault` is
+    `cfc.settings.build_vault_settings`'s own already-resolved output,
+    `export_dir` is `cfc.settings.ExportSettings.path`, and `display_names`
+    is `cfc.settings.build_display_name_settings`'s own already-resolved
+    output — this module never resolves a config snapshot itself.
     """
-    return ConversationService(open_store(path), vault, export_dir)
+    return ConversationService(open_store(path), vault, export_dir, display_names)

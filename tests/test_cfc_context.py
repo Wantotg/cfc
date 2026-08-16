@@ -13,7 +13,7 @@ import pytest
 
 from cfc import context
 from cfc.conversation_types import ChatKind, ContextCategory, ContextSelection
-from cfc.settings import VaultCategorySettings, VaultSettings
+from cfc.settings import DisplayNameSettings, VaultCategorySettings, VaultSettings
 
 #: Permission bits do not restrict root, which would make the unreadable-
 #: directory case below silently readable instead of refused.
@@ -163,6 +163,94 @@ def test_read_source_duplicate_display_name_is_unavailable(tmp_path):
     with pytest.raises(context.SourceUnavailable) as exc_info:
         context.read_source(ContextCategory.PERSONA, category(directory), "Muse.md")
     assert "display name" in exc_info.value.reason
+
+
+# --- {{user}}/{{AI}} substitution: named template sources only -------------
+
+def test_read_source_substitutes_display_name_tokens(tmp_path):
+    directory = tmp_path / "prefs"
+    write(directory, "p.md", "hello {{user}}, this is {{AI}}")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    record = context.read_source(ContextCategory.USER_PREFERENCES, category(directory), "p.md", names)
+    assert record.body == "hello Cas, this is Balthazar"
+    assert record.character_count == len(record.body)
+    assert record.fingerprint == hashlib.sha256(record.body.encode("utf-8")).hexdigest()
+
+
+def test_read_source_leaves_tokens_literal_with_no_display_names_given(tmp_path):
+    directory = tmp_path / "prefs"
+    write(directory, "p.md", "hello {{user}}")
+    record = context.read_source(ContextCategory.USER_PREFERENCES, category(directory), "p.md")
+    assert record.body == "hello {{user}}"
+
+
+def test_read_source_leaves_only_the_invalid_names_own_token_literal(tmp_path):
+    directory = tmp_path / "prefs"
+    write(directory, "p.md", "hello {{user}}, {{AI}}")
+    names = DisplayNameSettings(user_name=None, ai_name="Balthazar")
+    record = context.read_source(ContextCategory.USER_PREFERENCES, category(directory), "p.md", names)
+    assert record.body == "hello {{user}}, Balthazar"
+
+
+def test_apply_display_names_is_a_single_non_recursive_pass():
+    """A configured name containing the other token's literal text is never
+    rescanned as a second substitution — the single-walk discipline the flat
+    `names.apply` already uses.
+    """
+    names = DisplayNameSettings(user_name="{{AI}}", ai_name="Balthazar")
+    assert context.apply_display_names("{{user}} and {{AI}}", names) == "{{AI}} and Balthazar"
+
+
+def test_resolve_main_system_prompt_substitutes_display_names(tmp_path):
+    directory = tmp_path / "main"
+    write(directory, "system prompt.md", "You are {{AI}}, talking to {{user}}.")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    record = context.resolve_main_system_prompt(category(directory), names)
+    assert record.body == "You are Balthazar, talking to Cas."
+
+
+def test_resolve_main_persona_substitutes_display_names(tmp_path):
+    directory = tmp_path / "main"
+    write(directory, "persona.md", "{{AI}} speaking to {{user}}")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    record = context.resolve_main_persona(category(directory), names)
+    assert record.body == "Balthazar speaking to Cas"
+
+
+def test_look_up_first_message_substitutes_display_names(tmp_path):
+    directory = tmp_path / "first_messages"
+    write(directory, "muse.md", "Hello {{user}}!")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    lookup = context.look_up_first_message(category(directory), "muse.md", names)
+    assert lookup.state is context.FirstMessageState.USABLE
+    assert lookup.record.body == "Hello Cas!"
+
+
+def test_read_attachment_never_substitutes_display_name_tokens(tmp_path):
+    write(tmp_path, "note.md", "hello {{user}}")
+    record = context.read_attachment(tmp_path, "note.md")
+    assert record.body == "hello {{user}}"
+
+
+def test_build_context_plan_substitutes_every_named_source_but_not_attachments(tmp_path):
+    write(tmp_path / "prefs", "p.md", "prefs for {{user}}")
+    write(tmp_path / "personas", "muse.md", "persona of {{AI}}")
+    write(tmp_path / "traits", "warm.md", "warm with {{user}}")
+    write(tmp_path, "note.md", "attachment for {{user}}")
+    vault = vault_settings(
+        tmp_path, prefs=tmp_path / "prefs", personas=tmp_path / "personas",
+        traits=tmp_path / "traits",
+    )
+    selection = ContextSelection(
+        user_preferences="p.md", persona="muse.md", traits=("warm.md",),
+        attachments=("note.md",), model="fixture-model",
+    )
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    plan = context.build_context_plan(vault, selection, ChatKind.ORDINARY, names)
+    assert plan.user_preferences.body == "prefs for Cas"
+    assert plan.persona.body == "persona of Balthazar"
+    assert plan.traits[0].body == "warm with Cas"
+    assert plan.attachments[0].body == "attachment for {{user}}"
 
 
 # --- available_sources: listing, collisions excluded ------------------------
@@ -521,6 +609,38 @@ def test_discover_attachments_does_not_descend_into_symlinked_directories(tmp_pa
     assert [o.name for o in options] == ["real.md"]
 
 
+def test_discover_attachments_prunes_a_hidden_directory_before_descent(tmp_path):
+    write(tmp_path / ".obsidian", "workspace.md", "hidden")
+    write(tmp_path, "real.md", "real")
+    options = context.discover_attachments(tmp_path)
+    assert [o.name for o in options] == ["real.md"]
+
+
+def test_discover_attachments_never_scans_inside_a_hidden_directory(tmp_path, monkeypatch):
+    """Proves the hidden directory is pruned from `os.walk`'s own descent
+    (W-2.0-73) rather than merely filtered out of the result afterwards: a
+    tool working directory like `.git` is often the single largest and
+    slowest-to-scan subtree in a real vault, and every entry beneath it
+    must go unstatted, not just unlisted.
+    """
+    hidden = tmp_path / ".git"
+    write(hidden, "config.md", "never read")
+    write(tmp_path, "real.md", "real")
+
+    real_scandir = os.scandir
+    visited: list[str] = []
+
+    def spying_scandir(path="."):
+        visited.append(os.fspath(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", spying_scandir)
+    options = context.discover_attachments(tmp_path)
+
+    assert [o.name for o in options] == ["real.md"]
+    assert str(hidden) not in visited
+
+
 def test_discover_attachments_with_no_vault_root_is_empty():
     assert context.discover_attachments(None) == ()
 
@@ -536,6 +656,13 @@ def test_read_attachment_returns_literal_body_and_fingerprint(tmp_path):
     assert record.name == "notes/idea.md"
     assert record.display_name == "notes/idea.md"
     assert record.body == "an idea\n"
+
+
+def test_read_attachment_canonicalizes_redundant_separators_to_one_identity(tmp_path):
+    write(tmp_path / "notes", "idea.md", "an idea\n")
+    record = context.read_attachment(tmp_path, "notes//idea.md")
+    assert record.name == "notes/idea.md"
+    assert record.display_name == "notes/idea.md"
 
 
 def test_read_attachment_unavailable_with_no_vault_root():

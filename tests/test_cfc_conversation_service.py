@@ -37,7 +37,7 @@ from cfc.conversation_types import (
     TurnState,
     Usage,
 )
-from cfc.settings import VaultCategorySettings, VaultSettings
+from cfc.settings import DisplayNameSettings, VaultCategorySettings, VaultSettings
 
 
 def run(coro):
@@ -1079,6 +1079,96 @@ def test_context_entry_fingerprint_changed_is_always_false_for_system_instructio
         service.close()
 
 
+# --- display names: threaded from open_service into every named source ----
+
+def test_preview_context_substitutes_display_names_when_configured(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write(personas_dir, "muse.md", "You are {{AI}}, and you are talking to {{user}}.")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    service = service_mod.open_service(
+        db_path(tmp_path), real_vault(tmp_path, personas=personas_dir), display_names=names,
+    )
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.set_persona(chat.id, "muse.md")
+        plan = service.preview_context(chat.id)
+        assert plan.persona.body == "You are Balthazar, and you are talking to Cas."
+    finally:
+        service.close()
+
+
+def test_send_turn_hands_the_responder_a_display_name_substituted_body(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write(personas_dir, "muse.md", "Hello {{user}}, I am {{AI}}.")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    service = service_mod.open_service(
+        db_path(tmp_path), real_vault(tmp_path, personas=personas_dir), display_names=names,
+    )
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.set_persona(chat.id, "muse.md")
+        responder = FixedResponder(Completion(content="ok"))
+        run(service.send_turn(chat.id, "hi", responder))
+        plan = responder.calls[0]
+        assert any(m.role == "system" and m.content == "Hello Cas, I am Balthazar." for m in plan.messages)
+    finally:
+        service.close()
+
+
+def test_set_persona_freezes_a_display_name_substituted_first_message(tmp_path):
+    personas_dir = tmp_path / "personas"
+    first_messages_dir = tmp_path / "first_messages"
+    write(personas_dir, "muse.md", "You are Muse.")
+    write(first_messages_dir, "muse.md", "Hello {{user}}, I am {{AI}}.")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    vault = real_vault(tmp_path, personas=personas_dir, first_messages=first_messages_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault, display_names=names)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        updated = service.set_persona(chat.id, "muse.md")
+        assert updated.opening.content == "Hello Cas, I am Balthazar."
+    finally:
+        service.close()
+
+
+def test_context_rows_agree_with_preview_on_a_substituted_body(tmp_path):
+    """The resolved body, preview/request body, length, and fingerprint all
+    agree — the Work Order's own proof requirement for this feature.
+    """
+    personas_dir = tmp_path / "personas"
+    write(personas_dir, "muse.md", "Hello {{user}}")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    service = service_mod.open_service(
+        db_path(tmp_path), real_vault(tmp_path, personas=personas_dir), display_names=names,
+    )
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.set_persona(chat.id, "muse.md")
+
+        preview = service.preview_context(chat.id)
+        rows = service.context_rows(chat.id)
+
+        assert rows.persona.source.body == preview.persona.body == "Hello Cas"
+        assert rows.persona.source.character_count == preview.persona.character_count == len("Hello Cas")
+        assert rows.persona.source.fingerprint == preview.persona.fingerprint
+    finally:
+        service.close()
+
+
+def test_attachments_are_never_display_name_substituted_through_the_service(tmp_path):
+    write(tmp_path, "note.md", "hello {{user}}")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    vault = real_vault(tmp_path)
+    service = service_mod.open_service(db_path(tmp_path), vault, display_names=names)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "note.md")
+        rows = service.context_rows(chat.id)
+        assert rows.attachments[0].source.body == "hello {{user}}"
+    finally:
+        service.close()
+
+
 # --- Main: get-or-create, profile resolution, and turn parity --------------
 
 def main_bundle(main_dir: Path, *, first_message="Hello from Main.") -> None:
@@ -1099,6 +1189,20 @@ def test_get_or_create_main_creates_once_and_freezes_the_opening(tmp_path):
 
         reopened = service.get_or_create_main("fixture-model")
         assert reopened.id == chat.id
+    finally:
+        service.close()
+
+
+def test_get_or_create_main_substitutes_display_names_in_the_frozen_opening(tmp_path):
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir, first_message="Hello {{user}}, I am {{AI}}.")
+    names = DisplayNameSettings(user_name="Cas", ai_name="Balthazar")
+    service = service_mod.open_service(
+        db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir), display_names=names,
+    )
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        assert chat.opening.content == "Hello Cas, I am Balthazar."
     finally:
         service.close()
 
@@ -1157,6 +1261,68 @@ def test_main_send_turn_resolves_profile_and_shared_selection_in_order(tmp_path)
         plan = responder.calls[0]
         assert any(m.content == "Main's system prompt." for m in plan.messages)
         assert any(m.content == "Hello from Main." and m.role == "assistant" for m in plan.messages)
+    finally:
+        service.close()
+
+
+def test_set_persona_refuses_on_main_before_any_store_write(tmp_path):
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir)
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir))
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        with pytest.raises(service_mod.MainPersonaNotSelectable):
+            service.set_persona(chat.id, "muse.md")
+        assert service.get_chat(chat.id).context_selection.persona is None
+    finally:
+        service.close()
+
+
+def test_set_persona_refuses_a_clear_on_main_too(tmp_path):
+    main_dir = tmp_path / "main"
+    main_bundle(main_dir)
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path, main_chat=main_dir))
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        with pytest.raises(service_mod.MainPersonaNotSelectable):
+            service.set_persona(chat.id, None)
+    finally:
+        service.close()
+
+
+def test_main_context_plan_ignores_an_impossible_stored_shared_persona(tmp_path):
+    """A stored `selected_persona` on a Main row is impossible through
+    `set_persona` now, but this proves the independent read-side guard
+    (B-2.0-77) against exactly that impossible state — reached here by
+    writing it directly, bypassing the service the same way stale data
+    from before this fix would.
+    """
+    main_dir = tmp_path / "main"
+    personas_dir = tmp_path / "personas"
+    main_bundle(main_dir)
+    write(personas_dir, "muse.md", "You are Muse.")
+    vault = real_vault(tmp_path, main_chat=main_dir, personas=personas_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault)
+    try:
+        chat = service.get_or_create_main("fixture-model")
+        service._store._conn.execute(
+            "UPDATE cfc_chats SET selected_persona = ? WHERE id = ?",
+            ("muse.md", chat.id.value),
+        )
+
+        plan = service.preview_context(chat.id)
+        assert plan.persona is None
+        assert plan.main_persona is not None
+
+        responder = FixedResponder(Completion(content="ok"))
+        turn = run(service.send_turn(chat.id, "hi", responder))
+        assert ContextCategory.PERSONA not in [e.category for e in turn.context_manifest]
+
+        # never silently repaired on the stored row itself
+        row = service._store._conn.execute(
+            "SELECT selected_persona FROM cfc_chats WHERE id = ?", (chat.id.value,),
+        ).fetchone()
+        assert row[0] == "muse.md"
     finally:
         service.close()
 
@@ -1245,11 +1411,58 @@ def test_ordinary_send_turn_places_attachments_after_the_shared_selection(tmp_pa
         service.close()
 
 
-def test_an_unusable_attachment_reaches_neither_store_nor_responder(tmp_path):
+def test_add_attachment_canonicalizes_before_persisting(tmp_path):
+    write(tmp_path / "notes", "idea.md", "an idea")
     service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
     try:
         chat = service.create_chat("c", "fixture-model")
-        service.add_attachment(chat.id, "ghost.md")
+        after_add = service.add_attachment(chat.id, "notes//idea.md")
+        assert after_add.context_selection.attachments == ("notes/idea.md",)
+    finally:
+        service.close()
+
+
+def test_add_attachment_with_an_equivalent_spelling_is_a_canonical_no_op(tmp_path):
+    write(tmp_path / "notes", "idea.md", "an idea")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "notes/idea.md")
+        again = service.add_attachment(chat.id, "notes//idea.md")
+        assert again.context_selection.attachments == ("notes/idea.md",)
+    finally:
+        service.close()
+
+
+def test_adding_an_unusable_attachment_is_refused_before_it_reaches_the_store(tmp_path):
+    """B-2.0-76: `add_attachment` validates before it ever persists — a
+    never-existed path is refused at selection time, not saved unvalidated
+    and only discovered broken at turn time.
+    """
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        with pytest.raises(context_mod.SourceUnavailable):
+            service.add_attachment(chat.id, "ghost.md")
+
+        assert service.get_chat(chat.id).context_selection.attachments == ()
+    finally:
+        service.close()
+
+
+def test_a_selected_attachment_broken_after_selection_still_blocks_a_turn(tmp_path):
+    """A file that existed and validated at selection time can still be
+    removed from the vault afterwards; that later break is still caught,
+    fail-fast, before any provider call — the store just never holds a
+    path that was never valid in the first place (B-2.0-76's own "a later
+    turn refuses a missing file" case, now genuinely later).
+    """
+    write(tmp_path, "gone.md", "here for now")
+    service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.add_attachment(chat.id, "gone.md")
+        (tmp_path / "gone.md").unlink()
         responder = FixedResponder(Completion(content="must not run"))
 
         with pytest.raises(context_mod.SourceUnavailable):
@@ -1263,17 +1476,19 @@ def test_an_unusable_attachment_reaches_neither_store_nor_responder(tmp_path):
 
 def test_context_rows_resolves_each_attachment_independently(tmp_path):
     write(tmp_path, "good.md", "good body")
+    write(tmp_path, "gone.md", "here for now")
     service = service_mod.open_service(db_path(tmp_path), real_vault(tmp_path))
     try:
         chat = service.create_chat("c", "fixture-model")
         service.add_attachment(chat.id, "good.md")
-        service.add_attachment(chat.id, "ghost.md")
+        service.add_attachment(chat.id, "gone.md")
+        (tmp_path / "gone.md").unlink()
 
         rows = service.context_rows(chat.id)
         by_path = {row.relative_path: row for row in rows.attachments}
         assert by_path["good.md"].source.body == "good body"
-        assert by_path["ghost.md"].source is None
-        assert by_path["ghost.md"].unavailable_reason is not None
+        assert by_path["gone.md"].source is None
+        assert by_path["gone.md"].unavailable_reason is not None
     finally:
         service.close()
 

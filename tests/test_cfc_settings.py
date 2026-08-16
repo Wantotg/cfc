@@ -257,6 +257,73 @@ def test_a_non_string_tui_theme_also_falls_back_to_dark_with_a_bounded_notice(tm
     assert "TUI_THEME" in theme.invalid_value_notice
 
 
+# --- display names: optional, defaulted, per-field bounded diagnostics ------
+
+def test_unset_display_names_use_documented_defaults(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    names = settings.build_display_name_settings(snapshot)
+    assert names.user_name == settings.DEFAULT_USER_DISPLAY_NAME
+    assert names.ai_name == settings.DEFAULT_AI_DISPLAY_NAME
+    assert names.user_invalid_notice is None
+    assert names.ai_invalid_notice is None
+
+
+def test_valid_display_names_are_used_as_configured(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "USER_DISPLAY_NAME = 'Cas'\nAI_DISPLAY_NAME = 'Balthazar'\n",
+    )
+    names = settings.build_display_name_settings(snapshot)
+    assert names.user_name == "Cas"
+    assert names.ai_name == "Balthazar"
+    assert names.user_invalid_notice is None
+    assert names.ai_invalid_notice is None
+
+
+@pytest.mark.parametrize("field_name,token", [
+    ("USER_DISPLAY_NAME", "{{user}}"), ("AI_DISPLAY_NAME", "{{AI}}"),
+])
+@pytest.mark.parametrize("bad_literal", [
+    "''", "'  '", "5", "'a\\nb'", "'" + "x" * 41 + "'",
+])
+def test_an_invalid_display_name_leaves_that_name_none_with_a_bounded_notice(
+    tmp_path, field_name, token, bad_literal,
+):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"{field_name} = {bad_literal}\n")
+    names = settings.build_display_name_settings(snapshot)
+    name = names.user_name if field_name == "USER_DISPLAY_NAME" else names.ai_name
+    notice = names.user_invalid_notice if field_name == "USER_DISPLAY_NAME" else names.ai_invalid_notice
+    assert name is None
+    assert notice is not None
+    assert field_name in notice
+    assert token in notice
+
+
+def test_an_invalid_user_display_name_does_not_affect_a_valid_ai_display_name(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "USER_DISPLAY_NAME = ''\nAI_DISPLAY_NAME = 'Balthazar'\n",
+    )
+    names = settings.build_display_name_settings(snapshot)
+    assert names.user_name is None
+    assert names.user_invalid_notice is not None
+    assert names.ai_name == "Balthazar"
+    assert names.ai_invalid_notice is None
+
+
+def test_display_name_at_the_length_limit_is_valid(tmp_path):
+    exactly_max = "x" * settings.DISPLAY_NAME_MAX_LEN
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"USER_DISPLAY_NAME = {exactly_max!r}\n")
+    names = settings.build_display_name_settings(snapshot)
+    assert names.user_name == exactly_max
+    assert names.user_invalid_notice is None
+
+
+def test_build_settings_carries_display_names_through(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "USER_DISPLAY_NAME = 'Cas'\n")
+    built = settings.build_settings(snapshot)
+    assert built.display_names.user_name == "Cas"
+    assert built.display_names.ai_name == settings.DEFAULT_AI_DISPLAY_NAME
+
+
 # --- build_settings: all three parts together --------------------------------
 
 def test_build_settings_combines_provider_and_database(tmp_path):

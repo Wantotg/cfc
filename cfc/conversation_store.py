@@ -113,7 +113,19 @@ APPLICATION_ID = 0x63666332
 #: grows `'main_system_prompt'`, `'main_persona'`, and `'attachment'`. A
 #: version-4 database takes the same `SCHEMA_TOO_OLD` refusal route — there
 #: is no migration from 4 to 5.
-SCHEMA_VERSION = 5
+#:
+#: 6 (this build): readable-vault hardening (Stage 5 loop 4). No table or
+#: column changes — the schema shape is identical to 5. What changed is the
+#: *meaning* of a frozen `cfc_chat_openings` row: `cfc.context` now applies
+#: `{{user}}`/`{{AI}}` substitution to a First Message's decoded body before
+#: it is frozen (B-2.0-71), so a version-5 database may hold an opening whose
+#: `content` still carries the literal, unsubstituted tokens. There is no way
+#: to tell that apart from a deliberately literal opening after the fact, and
+#: no in-place migration rewrites frozen content, so a version-5 database
+#: takes the same `SCHEMA_TOO_OLD` refusal route as every earlier
+#: incompatible version — export or note anything wanted from it, then let
+#: cfc create a fresh version-6 database.
+SCHEMA_VERSION = 6
 
 _RECOVERY_HINT = (
     "preserve anything wanted from it, then move or remove {path} so cfc "

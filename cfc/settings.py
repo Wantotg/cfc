@@ -184,6 +184,88 @@ def build_vault_settings(snapshot) -> VaultSettings:
     )
 
 
+#: `USER_DISPLAY_NAME`/`AI_DISPLAY_NAME`'s effective defaults when
+#: `config.py` sets neither — the same values the flat `names.py` module
+#: already ships (`DEFAULT_USER`/`DEFAULT_AI`), named again here rather than
+#: imported, since this module never imports the flat runtime.
+DEFAULT_USER_DISPLAY_NAME = "You"
+DEFAULT_AI_DISPLAY_NAME = "Cooking for Cats"
+
+#: Not measured, chosen: long enough for a real name or short title, short
+#: enough that a pasted paragraph is obviously not one and reads as the
+#: config error it is rather than being sent to a model as someone's name.
+#: Mirrors `names.MAX_LEN`.
+DISPLAY_NAME_MAX_LEN = 40
+
+#: The two exact, case-sensitive tokens `cfc.context` substitutes in a
+#: template source's decoded body — named once here so `diagnostics.py` and
+#: any caller reporting on this setting quote the same literal spelling
+#: `cfc.context.apply_display_names` actually matches.
+USER_DISPLAY_TOKEN = "{{user}}"
+AI_DISPLAY_TOKEN = "{{AI}}"
+
+
+@dataclass(frozen=True)
+class DisplayNameSettings:
+    """The resolved `USER_DISPLAY_NAME`/`AI_DISPLAY_NAME` settings —
+    `cfc.context`'s one input for substituting `{{user}}`/`{{AI}}` in a
+    template source's decoded body.
+
+    `user_name`/`ai_name` are the effective default when the setting is
+    unset, the configured value when it validates, or `None` when it is set
+    but invalid — `None` means `cfc.context.apply_display_names` leaves that
+    token literal rather than guessing, matching the flat `names.py`
+    module's own "an invalid value leaves the token untouched" rule.
+    `user_invalid_notice`/`ai_invalid_notice` are set only in that last
+    case, bounded and safe to show directly (never the rejected value's
+    content beyond the length `problem` already reports).
+    """
+    user_name: str | None
+    ai_name: str | None
+    user_invalid_notice: str | None = None
+    ai_invalid_notice: str | None = None
+
+
+def _display_name_problem(value, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return f"{field_name} must be a string, got {type(value).__name__}"
+    if "\n" in value or "\r" in value:
+        return f"{field_name} must be a single line"
+    if not value.strip():
+        return f"{field_name} must not be blank"
+    if len(value) > DISPLAY_NAME_MAX_LEN:
+        return f"{field_name} is {len(value)} characters, over the {DISPLAY_NAME_MAX_LEN} limit"
+    return None
+
+
+def _resolve_one_display_name(raw, field_name: str, token: str, default: str):
+    problem = _display_name_problem(raw, field_name)
+    if problem is not None:
+        notice = f"{problem}; {token} is left literal until config.py is corrected."
+        return None, notice
+    return (raw if raw is not None else default), None
+
+
+def build_display_name_settings(snapshot) -> DisplayNameSettings:
+    """The optional `USER_DISPLAY_NAME`/`AI_DISPLAY_NAME` settings, each
+    resolved independently — never raises: an invalid one leaves its own
+    token literal without blocking the other name or ordinary chat, the
+    same discipline every other optional builder in this module follows.
+    """
+    values = snapshot.values
+    user_name, user_notice = _resolve_one_display_name(
+        values.get("USER_DISPLAY_NAME"), "USER_DISPLAY_NAME",
+        USER_DISPLAY_TOKEN, DEFAULT_USER_DISPLAY_NAME,
+    )
+    ai_name, ai_notice = _resolve_one_display_name(
+        values.get("AI_DISPLAY_NAME"), "AI_DISPLAY_NAME",
+        AI_DISPLAY_TOKEN, DEFAULT_AI_DISPLAY_NAME,
+    )
+    return DisplayNameSettings(user_name, ai_name, user_notice, ai_notice)
+
+
 @dataclass(frozen=True)
 class ExportSettings:
     """`CHAT_EXPORT_DIR`'s validated shape: a resolved `Path` when it is
@@ -320,6 +402,7 @@ class BootstrapSettings:
     vault: VaultSettings
     models: ModelCatalogue
     chat_export: ExportSettings
+    display_names: DisplayNameSettings
 
 
 def _require_nonempty_str(values, name: str) -> str:
@@ -481,4 +564,5 @@ def build_settings(snapshot) -> BootstrapSettings:
         vault=build_vault_settings(snapshot),
         models=build_model_catalogue(snapshot),
         chat_export=build_export_settings(snapshot),
+        display_names=build_display_name_settings(snapshot),
     )

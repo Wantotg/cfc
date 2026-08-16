@@ -22,6 +22,7 @@ from enum import Enum
 from pathlib import Path
 
 from cfc.conversation_types import ChatKind, ContextCategory, ContextPlan, ContextSelection, SourceRecord
+from cfc.settings import AI_DISPLAY_TOKEN, USER_DISPLAY_TOKEN
 
 #: Bumped only when the text itself changes — named here, not derived from a
 #: file mtime or a git hash, so a stored turn's provenance names an exact,
@@ -100,6 +101,45 @@ def _fingerprint(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def apply_display_names(text: str, display_names) -> str:
+    """Substitute `{{user}}`/`{{AI}}` in `text` with `display_names`'s
+    resolved names — `display_names` is a `cfc.settings.DisplayNameSettings`
+    or `None`. `None` means no settings were resolved for this call (the
+    default for every reader below) and leaves every token untouched, the
+    same as a `DisplayNameSettings` whose own field is `None` because the
+    configured value was invalid.
+
+    One walk over the original text, exactly like the flat `names.apply`
+    this mirrors: a configured name containing the other token's literal
+    text is never rescanned as a second substitution, and this is never
+    called on attachment text, the fixed System Instructions, messages,
+    tool content, or an export — only on a template source's decoded body,
+    from `_resolve_file_body`.
+    """
+    if not text or display_names is None:
+        return text
+    replacements = {}
+    if display_names.user_name is not None:
+        replacements[USER_DISPLAY_TOKEN] = display_names.user_name
+    if display_names.ai_name is not None:
+        replacements[AI_DISPLAY_TOKEN] = display_names.ai_name
+    if not replacements:
+        return text
+
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        for token, value in replacements.items():
+            if text.startswith(token, i):
+                out.append(value)
+                i += len(token)
+                break
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
 def _is_md_name(name: str) -> bool:
     return name.lower().endswith(".md") and len(name) > 3
 
@@ -111,12 +151,15 @@ def _display_name(filename: str) -> str:
     return filename[:-3]
 
 
-def _resolve_file_body(directory: Path, filename: str) -> str | None:
+def _resolve_file_body(directory: Path, filename: str, display_names=None) -> str | None:
     """`None` if `filename` does not exist directly inside `directory` — an
-    ordinary, unremarkable absence. Otherwise the literal, validated UTF-8
-    body. Raises `_SourceProblem` for every other disqualifying shape: not a
-    plain filename, not `.md` (case-insensitively), a symlink, not a regular
-    file, not valid UTF-8, or blank after decoding.
+    ordinary, unremarkable absence. Otherwise the decoded UTF-8 body, with
+    `display_names`'s `{{user}}`/`{{AI}}` substitution already applied at
+    this decoded-source boundary, before any caller builds a `SourceRecord`
+    from it — so the body, its character count, and its fingerprint always
+    agree. Raises `_SourceProblem` for every other disqualifying shape: not
+    a plain filename, not `.md` (case-insensitively), a symlink, not a
+    regular file, not valid UTF-8, or blank after decoding and substitution.
     """
     if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
         raise _SourceProblem("is not a plain filename")
@@ -139,6 +182,7 @@ def _resolve_file_body(directory: Path, filename: str) -> str | None:
         body = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise _SourceProblem("is not valid UTF-8")
+    body = apply_display_names(body, display_names)
     if not body.strip():
         raise _SourceProblem("is blank")
     return body
@@ -180,7 +224,9 @@ def system_instructions_record() -> SourceRecord:
     )
 
 
-def read_source(category: ContextCategory, category_settings, filename: str) -> SourceRecord:
+def read_source(
+    category: ContextCategory, category_settings, filename: str, display_names=None,
+) -> SourceRecord:
     """Read exactly `filename` from `category_settings`'s configured
     directory. Raises `SourceUnavailable` if the category has no configured
     directory, the file does not exist, or it disqualifies itself for any
@@ -191,7 +237,7 @@ def read_source(category: ContextCategory, category_settings, filename: str) -> 
                                  "no vault category directory is configured")
     directory = category_settings.path
     try:
-        body = _resolve_file_body(directory, filename)
+        body = _resolve_file_body(directory, filename, display_names)
     except _SourceProblem as exc:
         raise SourceUnavailable(category, filename, exc.reason) from exc
     if body is None:
@@ -213,18 +259,21 @@ def read_source(category: ContextCategory, category_settings, filename: str) -> 
     )
 
 
-def _read_main_file(main_chat_settings, filename: str, category: ContextCategory) -> SourceRecord:
+def _read_main_file(
+    main_chat_settings, filename: str, category: ContextCategory, display_names=None,
+) -> SourceRecord:
     """The one reader `resolve_main_system_prompt`/`resolve_main_persona`/
     `resolve_main_first_message` share: exactly `filename` inside
-    `main_chat_settings.path`, with the same literal-body, UTF-8, blank,
-    symlink, and regular-file rules `read_source` applies — but no
-    sibling-collision check, since Main's three filenames are fixed, never
-    chosen from a list of candidates that could collide.
+    `main_chat_settings.path`, with the same decoded-body, UTF-8, blank,
+    symlink, regular-file, and `display_names` substitution rules
+    `read_source` applies — but no sibling-collision check, since Main's
+    three filenames are fixed, never chosen from a list of candidates that
+    could collide.
     """
     if main_chat_settings is None or main_chat_settings.path is None:
         raise SourceUnavailable(category, filename, "no MAIN_CHAT_DIR is configured")
     try:
-        body = _resolve_file_body(main_chat_settings.path, filename)
+        body = _resolve_file_body(main_chat_settings.path, filename, display_names)
     except _SourceProblem as exc:
         raise SourceUnavailable(category, filename, exc.reason) from exc
     if body is None:
@@ -235,24 +284,27 @@ def _read_main_file(main_chat_settings, filename: str, category: ContextCategory
     )
 
 
-def resolve_main_system_prompt(main_chat_settings) -> SourceRecord:
+def resolve_main_system_prompt(main_chat_settings, display_names=None) -> SourceRecord:
     """Main's `system prompt.md`, read fresh — for every preview and every
     turn a Main chat starts, never cached (Concept.md: "For every later
     preview and turn, Main freshly resolves `system prompt.md`").
     """
     return _read_main_file(
         main_chat_settings, MAIN_SYSTEM_PROMPT_FILENAME, ContextCategory.MAIN_SYSTEM_PROMPT,
+        display_names,
     )
 
 
-def resolve_main_persona(main_chat_settings) -> SourceRecord:
+def resolve_main_persona(main_chat_settings, display_names=None) -> SourceRecord:
     """Main's `persona.md`, read fresh — the same freshness rule as
     `resolve_main_system_prompt`.
     """
-    return _read_main_file(main_chat_settings, MAIN_PERSONA_FILENAME, ContextCategory.MAIN_PERSONA)
+    return _read_main_file(
+        main_chat_settings, MAIN_PERSONA_FILENAME, ContextCategory.MAIN_PERSONA, display_names,
+    )
 
 
-def resolve_main_first_message(main_chat_settings) -> SourceRecord:
+def resolve_main_first_message(main_chat_settings, display_names=None) -> SourceRecord:
     """Main's `first message.md`, read only once, at Main's creation — the
     caller snapshots this into a frozen `OpeningMessage`
     (`conversation_service.get_or_create_main`); this function itself does
@@ -261,10 +313,13 @@ def resolve_main_first_message(main_chat_settings) -> SourceRecord:
     """
     return _read_main_file(
         main_chat_settings, MAIN_FIRST_MESSAGE_FILENAME, ContextCategory.FIRST_MESSAGE,
+        display_names,
     )
 
 
-def resolve_main_creation_bundle(main_chat_settings) -> tuple[SourceRecord, SourceRecord, SourceRecord]:
+def resolve_main_creation_bundle(
+    main_chat_settings, display_names=None,
+) -> tuple[SourceRecord, SourceRecord, SourceRecord]:
     """Main's complete creation bundle: System Prompt, Persona, First
     Message, resolved in that fixed order — the exact order Concept.md lists
     them in, and the order a creation failure names "the first bad fixed
@@ -272,9 +327,9 @@ def resolve_main_creation_bundle(main_chat_settings) -> tuple[SourceRecord, Sour
     used; no later file in the bundle is even attempted once one fails, so a
     caller never has to reconcile "some files read, one didn't."
     """
-    system_prompt = resolve_main_system_prompt(main_chat_settings)
-    persona = resolve_main_persona(main_chat_settings)
-    first_message = resolve_main_first_message(main_chat_settings)
+    system_prompt = resolve_main_system_prompt(main_chat_settings, display_names)
+    persona = resolve_main_persona(main_chat_settings, display_names)
+    first_message = resolve_main_first_message(main_chat_settings, display_names)
     return system_prompt, persona, first_message
 
 
@@ -307,17 +362,28 @@ def available_sources(category_settings) -> tuple[SourceOption, ...]:
 # --- attachments: vault-relative Markdown, discovered and read directly
 # --- (Stage 5 loop 3) — not a category directory, the whole vault -----------
 
+def _is_hidden_name(name: str) -> bool:
+    return name.startswith(".")
+
+
 def _walk_real_files(root: Path):
-    """Every regular filesystem entry beneath `root`, walking only real
-    directories: `os.walk`'s default `followlinks=False` never descends into
-    a symlinked directory, so an attachment cannot be discovered through one
-    (Concept.md: "Discovery walks only real directories... It does not
-    follow symlink files or symlink directories"). An unreadable
-    subdirectory is silently skipped rather than failing the whole walk —
-    the same "never fail one candidate's problem onto every other listing"
-    discipline `_sibling_display_names` already applies.
+    """Every regular filesystem entry beneath `root`, walking only real,
+    visible directories: `os.walk`'s default `followlinks=False` never
+    descends into a symlinked directory, so an attachment cannot be
+    discovered through one (Concept.md: "Discovery walks only real
+    directories... It does not follow symlink files or symlink
+    directories"). A hidden directory (dot-prefixed — `.git`, `.obsidian`,
+    tool working directories) is pruned from `dirnames` in place before
+    `os.walk` descends into it (B-2.0-72's companion `W-2.0-73`: attachment
+    discovery must not offer the whole vault, hidden tool directories
+    included), so its contents are never even statted, not merely filtered
+    out afterwards. An unreadable subdirectory is silently skipped rather
+    than failing the whole walk — the same "never fail one candidate's
+    problem onto every other listing" discipline `_sibling_display_names`
+    already applies.
     """
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False, onerror=lambda exc: None):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=lambda exc: None):
+        dirnames[:] = [name for name in dirnames if not _is_hidden_name(name)]
         for name in filenames:
             yield Path(dirpath) / name
 
@@ -358,30 +424,57 @@ def _is_contained_relative_path(candidate: str) -> bool:
     return ".." not in parts and "." not in parts
 
 
+def _real_path_components(root: Path, relative_path: str) -> bool:
+    """`True` if no component of `relative_path`, walked one directory at a
+    time from `root`, is itself a symlink — an ancestor directory included,
+    not just the final file (B-2.0-76: two spellings that traverse the same
+    symlinked ancestor must not each look like a distinct, real identity).
+    A component that does not exist yet is never a symlink; the caller's own
+    existence check runs after this one.
+    """
+    current = root
+    for part in Path(relative_path).parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    return True
+
+
 def read_attachment(vault_root: Path | None, relative_path: str) -> SourceRecord:
     """Reads exactly `relative_path` (a vault-relative POSIX path, exactly
     as `discover_attachments`/a stored selection names it) as one
     attachment. Raises `SourceUnavailable` for every disqualifying shape
     Concept.md names: no configured `VAULT_ROOT`, a path that is not a
     plain contained relative path (absolute, backslashed, or `..`/`.`
-    traversal), a non-`.md` name, a symlink anywhere on the way to the
-    file, a missing/non-regular target, a target whose freshly resolved
-    real path escapes `vault_root` (a symlinked *ancestor* directory, not
-    just the final component), unreadable content, invalid UTF-8, or a
-    blank body.
+    traversal), a symlink anywhere on the way to the file (an ancestor
+    directory included), a non-`.md` name, a missing/non-regular target, a
+    target whose freshly resolved real path escapes `vault_root`,
+    unreadable content, invalid UTF-8, or a blank body.
+
+    Attachment text is read literally — never `display_names` substituted;
+    it is untrusted reference material the person selected, not cfc-owned
+    template text (`cfc.context.apply_display_names`'s own docstring).
+
+    On success, `name`/`display_name` are `resolved`'s own vault-relative
+    POSIX identity — not the literal `relative_path` argument — so two
+    equivalent spellings of the same real file (redundant separators, a
+    `.` segment survived by containment, differing case on a
+    case-insensitive filesystem) canonicalise to one selection identity
+    (B-2.0-76) rather than each looking like a distinct attachment.
     """
     category = ContextCategory.ATTACHMENT
     if vault_root is None:
         raise SourceUnavailable(category, relative_path, "no VAULT_ROOT is configured")
     if not _is_contained_relative_path(relative_path):
         raise SourceUnavailable(category, relative_path, "is not a contained vault-relative path")
+
+    root = vault_root.resolve()
+    if not _real_path_components(root, relative_path):
+        raise SourceUnavailable(category, relative_path, "is a symlink, which cfc does not follow")
     if not _is_md_name(Path(relative_path).name):
         raise SourceUnavailable(category, relative_path, "is not a .md file")
 
-    root = vault_root.resolve()
     candidate = root / relative_path
-    if candidate.is_symlink():
-        raise SourceUnavailable(category, relative_path, "is a symlink, which cfc does not follow")
     if not candidate.exists():
         raise SourceUnavailable(category, relative_path, "does not exist")
     if not candidate.is_file():
@@ -404,8 +497,9 @@ def read_attachment(vault_root: Path | None, relative_path: str) -> SourceRecord
     if not body.strip():
         raise SourceUnavailable(category, relative_path, "is blank")
 
+    canonical = resolved.relative_to(root).as_posix()
     return SourceRecord(
-        category=category, name=relative_path, display_name=relative_path,
+        category=category, name=canonical, display_name=canonical,
         body=body, character_count=len(body), fingerprint=_fingerprint(body),
     )
 
@@ -498,7 +592,9 @@ class FirstMessageLookup:
     reason: str | None = None
 
 
-def look_up_first_message(category_settings, persona_filename: str) -> FirstMessageLookup:
+def look_up_first_message(
+    category_settings, persona_filename: str, display_names=None,
+) -> FirstMessageLookup:
     """The First Messages companion for `persona_filename`, looked up by
     that exact filename — never by display name, so this lookup is
     independent of the sibling-collision rule `read_source` applies to an
@@ -517,7 +613,7 @@ def look_up_first_message(category_settings, persona_filename: str) -> FirstMess
             reason=reason or "no First Messages directory is configured",
         )
     try:
-        body = _resolve_file_body(category_settings.path, persona_filename)
+        body = _resolve_file_body(category_settings.path, persona_filename, display_names)
     except _SourceProblem as exc:
         return FirstMessageLookup(FirstMessageState.UNAVAILABLE, reason=exc.reason)
     if body is None:
@@ -531,37 +627,54 @@ def look_up_first_message(category_settings, persona_filename: str) -> FirstMess
 
 
 def build_context_plan(
-    vault, selection: ContextSelection, kind: ChatKind = ChatKind.ORDINARY,
+    vault, selection: ContextSelection, kind: ChatKind = ChatKind.ORDINARY, display_names=None,
 ) -> ContextPlan:
     """The one fresh, immutable plan a preview or a turn start uses. Reads
     System Instructions, Main's fixed profile when `kind` is `ChatKind.MAIN`,
     plus whatever `selection` currently names — traits and attachments in
     request order — raising `SourceUnavailable` on the first source that
-    cannot be used. `vault` is a `cfc.settings.VaultSettings`.
+    cannot be used. `vault` is a `cfc.settings.VaultSettings`; `display_names`
+    is a `cfc.settings.DisplayNameSettings` or `None`.
 
     Resolution order matches Concept.md's "The fixed cfc System Instructions
     remain first; Main's system prompt and Persona follow; optional shared
     User Preferences and Traits follow": Main's profile is read before the
     shared selection, so a broken Main profile is reported before cfc even
     looks at User Preferences/Traits/attachments.
+
+    `display_names` substitution reaches every named template source above
+    (System Instructions excepted, which is fixed and never carries a
+    token) but never attachments: `resolve_attachments` reads those
+    literally, since selected attachment text is untrusted reference
+    material, not cfc-owned template text.
+
+    Main's own fixed Persona (`main_persona`, above) is the only Persona a
+    Main plan ever carries: `selection.persona` is defensively ignored
+    whenever `kind` is `ChatKind.MAIN`, even if a stored row somehow still
+    carries one (B-2.0-77) — `ConversationService.set_persona` refuses to
+    persist one there, but this is the second, independent boundary that
+    keeps an already-impossible stored value from ever reaching a Main
+    request; it is never silently repaired on the stored row itself.
     """
     main_system_prompt = None
     main_persona = None
     if kind is ChatKind.MAIN:
-        main_system_prompt = resolve_main_system_prompt(vault.main_chat)
-        main_persona = resolve_main_persona(vault.main_chat)
+        main_system_prompt = resolve_main_system_prompt(vault.main_chat, display_names)
+        main_persona = resolve_main_persona(vault.main_chat, display_names)
 
     user_preferences = None
     if selection.user_preferences is not None:
         user_preferences = read_source(
             ContextCategory.USER_PREFERENCES, vault.user_preferences,
-            selection.user_preferences,
+            selection.user_preferences, display_names,
         )
     persona = None
-    if selection.persona is not None:
-        persona = read_source(ContextCategory.PERSONA, vault.personas, selection.persona)
+    if kind is not ChatKind.MAIN and selection.persona is not None:
+        persona = read_source(
+            ContextCategory.PERSONA, vault.personas, selection.persona, display_names,
+        )
     traits = tuple(
-        read_source(ContextCategory.TRAIT, vault.traits, filename)
+        read_source(ContextCategory.TRAIT, vault.traits, filename, display_names)
         for filename in selection.traits
     )
     attachments = resolve_attachments(vault.root, selection.attachments)

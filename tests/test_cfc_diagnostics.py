@@ -169,11 +169,11 @@ def test_database_target_error_carries_a_next_step(tmp_path):
     assert "DATABASE_PATH" in row.next_step
 
 
-def test_missing_config_file_gives_one_error_and_five_not_checked_rows(tmp_path):
+def test_missing_config_file_gives_one_error_and_every_dependent_row_not_checked(tmp_path):
     """D-2.0-07. Downstream rows that never actually ran a check must not
     be `ERROR` — that state is reserved for a row this module diagnosed and
-    found broken. The configuration row alone carries the cure; the five
-    dependent rows explain only that their prerequisite failed, with no
+    found broken. The configuration row alone carries the cure; every
+    dependent row explains only that their prerequisite failed, with no
     `next_step` of their own (no duplicate cure) — and every one of them
     still fails `required_rows_ok` where it matters (the two required ones).
     """
@@ -189,7 +189,7 @@ def test_missing_config_file_gives_one_error_and_five_not_checked_rows(tmp_path)
     assert "config.py" in config_row.next_step
 
     dependent_names = diagnostics.REQUIRED_ROW_NAMES[2:] + diagnostics.OPTIONAL_ROW_NAMES
-    assert len(dependent_names) == 11
+    assert len(dependent_names) == 12
     for name in dependent_names:
         row = by_name(rows, name)
         assert row.state == diagnostics.State.NOT_CHECKED, name
@@ -548,6 +548,54 @@ def test_model_catalogue_row_never_prints_the_configuration_record(tmp_path):
     row = by_name(diagnostics.diagnose(path), "model catalogue")
     assert marker not in row.detail
     assert marker not in (row.next_step or "")
+
+
+# --- display names row: always resolvable, per-field bounded diagnostics ---
+
+def test_display_names_row_ready_with_defaults_when_unset(tmp_path):
+    path = write_config(tmp_path, VALID_BODY)
+    row = by_name(diagnostics.diagnose(path), "display names")
+    assert row.state == diagnostics.State.READY
+    assert row.next_step is None
+    assert "You" in row.detail
+    assert "Cooking for Cats" in row.detail
+
+
+def test_display_names_row_ready_with_configured_valid_names(tmp_path):
+    path = write_config(
+        tmp_path, VALID_BODY + "USER_DISPLAY_NAME = 'Cas'\nAI_DISPLAY_NAME = 'Balthazar'\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "display names")
+    assert row.state == diagnostics.State.READY
+    assert "Cas" in row.detail
+    assert "Balthazar" in row.detail
+
+
+def test_display_names_row_error_when_one_name_is_invalid(tmp_path):
+    path = write_config(tmp_path, VALID_BODY + "USER_DISPLAY_NAME = ''\n")
+    row = by_name(diagnostics.diagnose(path), "display names")
+    assert row.state == diagnostics.State.ERROR
+    assert "USER_DISPLAY_NAME" in row.detail
+    assert row.next_step is not None
+    assert "USER_DISPLAY_NAME" in row.next_step
+
+
+def test_display_names_row_error_never_blocks_required_rows_ok(tmp_path):
+    path = write_config(tmp_path, VALID_BODY + "AI_DISPLAY_NAME = 5\n")
+    rows = diagnostics.diagnose(path)
+    row = by_name(rows, "display names")
+    assert row.state == diagnostics.State.ERROR
+    assert diagnostics.required_rows_ok(rows) is True
+
+
+def test_display_names_row_names_both_invalid_names_together(tmp_path):
+    path = write_config(
+        tmp_path, VALID_BODY + "USER_DISPLAY_NAME = ''\nAI_DISPLAY_NAME = ''\n",
+    )
+    row = by_name(diagnostics.diagnose(path), "display names")
+    assert row.state == diagnostics.State.ERROR
+    assert "USER_DISPLAY_NAME" in row.detail
+    assert "AI_DISPLAY_NAME" in row.detail
 
 
 # --- appearance row: effective value, source, and safe non-inspection ------
