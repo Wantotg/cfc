@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from dataclasses import dataclass, field
+from enum import Enum
 
 from cfc import chat_export
 from cfc import context as context_mod
@@ -60,6 +61,19 @@ from cfc.conversation_types import (
 from cfc.context import FirstMessageLookup, SourceOption
 from cfc.provider_wire import Responder, ResponderResult, build_request_plan
 from cfc.settings import DisplayNameSettings, VaultCategorySettings, VaultSettings
+
+
+class ContextEntryStatus(Enum):
+    """`context_entry_status`'s tri-state result (B-2.0-82): a completed
+    turn's frozen manifest entry, compared against a fresh read of the same
+    source right now, is either still exactly what it was, has changed, or
+    can no longer be read at all — three distinct facts `Turn details` must
+    show as such rather than folding "changed" and "unavailable" into one
+    generic blame.
+    """
+    UNCHANGED = "unchanged"
+    CHANGED = "changed"
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -367,6 +381,23 @@ class ConversationService:
             ),
         )
 
+    def _resolve_entry_fresh_source(self, entry: ContextManifestEntry) -> SourceRecord:
+        """A fresh read of whatever live source `entry` names, resolved the
+        same way `build_context_plan` would resolve it right now. Raises
+        `context_mod.SourceUnavailable` exactly when that live source can no
+        longer be read at all — the one comparison point both
+        `context_entry_fingerprint_changed` and `context_entry_status` share.
+        """
+        if entry.category is ContextCategory.MAIN_SYSTEM_PROMPT:
+            return context_mod.resolve_main_system_prompt(self._vault.main_chat, self._display_names)
+        if entry.category is ContextCategory.MAIN_PERSONA:
+            return context_mod.resolve_main_persona(self._vault.main_chat, self._display_names)
+        if entry.category is ContextCategory.ATTACHMENT:
+            return context_mod.read_attachment(self._vault.root, entry.name)
+        return context_mod.read_source(
+            entry.category, self._category_settings(entry.category), entry.name, self._display_names,
+        )
+
     def context_entry_fingerprint_changed(self, entry: ContextManifestEntry) -> bool:
         """`True` if `entry` names a vault-owned or Main-profile source and
         a fresh read no longer matches the fingerprint this turn actually
@@ -377,22 +408,30 @@ class ConversationService:
         if entry.category is ContextCategory.SYSTEM_INSTRUCTIONS:
             return False
         try:
-            if entry.category is ContextCategory.MAIN_SYSTEM_PROMPT:
-                fresh = context_mod.resolve_main_system_prompt(
-                    self._vault.main_chat, self._display_names,
-                )
-            elif entry.category is ContextCategory.MAIN_PERSONA:
-                fresh = context_mod.resolve_main_persona(self._vault.main_chat, self._display_names)
-            elif entry.category is ContextCategory.ATTACHMENT:
-                fresh = context_mod.read_attachment(self._vault.root, entry.name)
-            else:
-                fresh = context_mod.read_source(
-                    entry.category, self._category_settings(entry.category), entry.name,
-                    self._display_names,
-                )
+            fresh = self._resolve_entry_fresh_source(entry)
         except context_mod.SourceUnavailable:
             return True
         return fresh.fingerprint != entry.fingerprint
+
+    def context_entry_status(self, entry: ContextManifestEntry) -> ContextEntryStatus:
+        """B-2.0-82: the tri-state comparison `Turn details` renders — a
+        fresh read of `entry`'s live source is either still the same
+        fingerprint (`UNCHANGED`), a different one (`CHANGED`), or currently
+        unreadable at all (`UNAVAILABLE`). Unlike
+        `context_entry_fingerprint_changed`, "changed" and "unavailable"
+        stay distinct facts rather than one collapsed boolean, so the modal
+        never blames "the source" generically for both. Always `UNCHANGED`
+        for `SYSTEM_INSTRUCTIONS`, which this build ships fixed.
+        """
+        if entry.category is ContextCategory.SYSTEM_INSTRUCTIONS:
+            return ContextEntryStatus.UNCHANGED
+        try:
+            fresh = self._resolve_entry_fresh_source(entry)
+        except context_mod.SourceUnavailable:
+            return ContextEntryStatus.UNAVAILABLE
+        if fresh.fingerprint != entry.fingerprint:
+            return ContextEntryStatus.CHANGED
+        return ContextEntryStatus.UNCHANGED
 
     def available_sources(self, category: ContextCategory) -> tuple[SourceOption, ...]:
         """Every currently unambiguous filename this category's configured

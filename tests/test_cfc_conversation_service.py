@@ -1079,6 +1079,59 @@ def test_context_entry_fingerprint_changed_is_always_false_for_system_instructio
         service.close()
 
 
+def test_context_entry_status_is_unchanged_when_the_live_source_still_matches(tmp_path):
+    personas_dir = tmp_path / "personas"
+    write(personas_dir, "muse.md", "version one")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.set_persona(chat.id, "muse.md")
+        turn = run(service.send_turn(chat.id, "hi", FixedResponder(Completion(content="ok"))))
+        persona_entry = next(e for e in turn.context_manifest if e.category is ContextCategory.PERSONA)
+        assert service.context_entry_status(persona_entry) is service_mod.ContextEntryStatus.UNCHANGED
+    finally:
+        service.close()
+
+
+def test_context_entry_status_distinguishes_changed_from_unavailable(tmp_path):
+    """B-2.0-82: a fingerprint mismatch (the vault text is now different)
+    and a source that can no longer be read at all are two distinct facts
+    `Turn details` must not fold into one generic "blame the source".
+    """
+    personas_dir = tmp_path / "personas"
+    write(personas_dir, "muse.md", "version one")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    service = service_mod.open_service(db_path(tmp_path), vault)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        service.set_persona(chat.id, "muse.md")
+        turn = run(service.send_turn(chat.id, "hi", FixedResponder(Completion(content="ok"))))
+        persona_entry = next(e for e in turn.context_manifest if e.category is ContextCategory.PERSONA)
+
+        assert service.context_entry_status(persona_entry) is service_mod.ContextEntryStatus.UNCHANGED
+
+        write(personas_dir, "muse.md", "version two")
+        assert service.context_entry_status(persona_entry) is service_mod.ContextEntryStatus.CHANGED
+
+        (personas_dir / "muse.md").unlink()
+        assert service.context_entry_status(persona_entry) is service_mod.ContextEntryStatus.UNAVAILABLE
+    finally:
+        service.close()
+
+
+def test_context_entry_status_is_always_unchanged_for_system_instructions(tmp_path):
+    service = open_service(tmp_path)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        turn = run(service.send_turn(chat.id, "hi", FixedResponder(Completion(content="ok"))))
+        system_entry = turn.context_manifest[0]
+        assert system_entry.category is ContextCategory.SYSTEM_INSTRUCTIONS
+        assert service.context_entry_status(system_entry) is service_mod.ContextEntryStatus.UNCHANGED
+    finally:
+        service.close()
+
+
 # --- display names: threaded from open_service into every named source ----
 
 def test_preview_context_substitutes_display_names_when_configured(tmp_path):

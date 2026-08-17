@@ -49,7 +49,9 @@ from textual.worker import Worker
 from cfc import chat_export, config_loader, diagnostics, provider_adapter, settings
 from cfc import context as context_mod
 from cfc.context import FirstMessageState, SourceOption
-from cfc.conversation_service import CategoryState, ConversationService, ContextRows, open_service
+from cfc.conversation_service import (
+    CategoryState, ContextEntryStatus, ConversationService, ContextRows, open_service,
+)
 from cfc import conversation_store
 from cfc.conversation_store import ConversationStoreError
 from cfc.conversation_types import (
@@ -117,6 +119,14 @@ _EXPORT_ACTIVE_TURN_NOTICE = (
 
 def _export_failed_notice(exc: chat_export.ExportError) -> str:
     return f"Export failed: {exc}"
+
+
+def _attachment_discovery_unavailable_notice(exc: context_mod.SourceUnavailable) -> str:
+    """B-2.0-83: a missing or unreadable `VAULT_ROOT`, or a subtree beneath
+    it, becomes this bounded, visible failure — never the same empty status
+    an honestly empty vault already shows, and never a silent partial list.
+    """
+    return f"VAULT_ROOT unavailable: {exc.reason}"
 
 
 def _context_unavailable_notice(exc: context_mod.SourceUnavailable) -> str:
@@ -438,11 +448,10 @@ class TurnDetailsModal(ModalScreen[None]):
     catalogue's *current* entry (a limit is model metadata, not history,
     the same descriptive-only rule the old inline evidence already used),
     but the reported usage and context manifest are exactly what this turn
-    actually used. A manifest entry is marked when its live vault
-    fingerprint no longer matches this turn's own fingerprint — the same
-    `context_entry_fingerprint_changed` comparison the Context modal
-    already uses, which reads a fresh fingerprint to compare, never a body,
-    and never writes anything back to SQLite.
+    actually used. Each manifest entry renders its recorded size and
+    fingerprint and is marked `changed` or `unavailable` against a fresh
+    read of its live source (`ConversationService.context_entry_status`,
+    B-2.0-82) — never a body, and never written back to SQLite.
     """
 
     BINDINGS = [Binding("escape", "close", "Close", show=False)]
@@ -554,8 +563,8 @@ class AttachmentPickerModal(ModalScreen[object]):
     """The Add-attachment picker (B-2.0-72, W-2.0-73): unlike
     `SourcePickerModal`, discovery walks the whole configured vault and can
     take real time against a real vault (about 2.7s observed), so this opens
-    immediately with a focused filter input and a `scanning…` status rather
-    than blocking the event loop until the walk finishes. The walk itself
+    immediately with a focused filter input and a `Scanning vault…` status
+    rather than blocking the event loop until the walk finishes. The walk itself
     (`ConversationService.available_attachments`) runs in a worker off the
     Textual event loop; filtering re-slices that one completed result rather
     than re-walking the vault. Dismisses with the chosen exact vault-relative
@@ -596,7 +605,7 @@ class AttachmentPickerModal(ModalScreen[object]):
             self._set_status(self._notice)
             return
         self.query_one("#attachment-picker-filter", Input).focus()
-        self._set_status("scanning…")
+        self._set_status("Scanning vault…")
         self.run_worker(
             self._discover(), exclusive=True, exit_on_error=False, group="attachment-discovery",
         )
@@ -624,6 +633,11 @@ class AttachmentPickerModal(ModalScreen[object]):
         generation = self._generation
         try:
             options = await asyncio.to_thread(self.app.service.available_attachments)
+        except context_mod.SourceUnavailable as exc:
+            if generation == self._generation and self.is_attached:
+                self._scan_failed = _attachment_discovery_unavailable_notice(exc)
+                self._set_status(self._scan_failed)
+            return
         except Exception:  # noqa: BLE001 — a bounded-failure state, never a raw traceback
             if generation == self._generation and self.is_attached:
                 self._scan_failed = "attachment discovery failed; try again"
@@ -646,10 +660,10 @@ class AttachmentPickerModal(ModalScreen[object]):
         list_view = self.query_one("#attachment-picker-list", ListView)
         await list_view.clear()
         if self._all_options is None:
-            self._set_status(self._scan_failed or "scanning…")
+            self._set_status(self._scan_failed or "Scanning vault…")
             return
         if not self._all_options:
-            self._set_status("no attachments found")
+            self._set_status("No Markdown files found")
             return
         query = self.query_one("#attachment-picker-filter", Input).value.strip().lower()
         matches = tuple(o for o in self._all_options if query in o.name.lower())
@@ -658,7 +672,7 @@ class AttachmentPickerModal(ModalScreen[object]):
             item.picked_value = option.name
             await list_view.append(item)
         if not matches:
-            self._set_status("no matches")
+            self._set_status("No matching Markdown files")
         else:
             self._set_status(f"{len(matches)} of {len(self._all_options)}")
 
@@ -1499,29 +1513,51 @@ def _limit_text(usage, model: str, models: "settings.ModelCatalogue") -> str | N
     return f"reported input {usage.input_tokens} of configured limit {entry.context_limit}"
 
 
+#: `context_entry_status`'s markers, and the exact footnote each one owes
+#: (B-2.0-82) — "changed" and "unavailable" stay two distinct facts, not one
+#: generic blame folded onto whichever entry differs from a fresh read.
+_CHANGED_MARKER = "*"
+_UNAVAILABLE_MARKER = "†"
+_CHANGED_FOOTNOTE = f"{_CHANGED_MARKER} live resolved context differs from this turn"
+_UNAVAILABLE_FOOTNOTE = f"{_UNAVAILABLE_MARKER} the live source is currently unavailable"
+
+
 def _context_provenance_text(
     manifest: tuple[ContextManifestEntry, ...], service: ConversationService,
 ) -> str:
-    """This turn's recorded context sources, in order — category, name, and
-    a `*` marker (with a trailing footnote) on any entry whose live vault
-    fingerprint no longer matches what this turn actually used (Concept.md:
-    "it says that the live source differs... instead of presenting the new
-    words as what an old turn received").
+    """This turn's recorded context sources, in order — each entry's
+    category, name, frozen size, and fingerprint (never a body), plus a
+    marker distinguishing a live source that has since *changed* from one
+    that is currently *unavailable* (B-2.0-82). A changed entry's footnote
+    uses Concept.md's own exact wording, "live resolved context differs from
+    this turn" — true whether the vault text, the display-name
+    configuration, or source availability caused it — but an entry that
+    cannot be read at all now gets its own distinct footnote rather than
+    being folded into that same generic "differs" wording.
     """
     if not manifest:
         return "context: none"
-    parts = []
-    changed = False
+    lines = ["context:"]
+    saw_changed = False
+    saw_unavailable = False
     for entry in manifest:
-        label = f"{entry.category.value}:{entry.name}"
-        if service.context_entry_fingerprint_changed(entry):
-            label += "*"
-            changed = True
-        parts.append(label)
-    text = "context: " + ", ".join(parts)
-    if changed:
-        text += " (* the live source has changed since this turn)"
-    return text
+        label = (
+            f"  {entry.category.value}: {entry.name} "
+            f"({entry.character_count} chars, fingerprint {entry.fingerprint})"
+        )
+        status = service.context_entry_status(entry)
+        if status is ContextEntryStatus.CHANGED:
+            label += f" {_CHANGED_MARKER}"
+            saw_changed = True
+        elif status is ContextEntryStatus.UNAVAILABLE:
+            label += f" {_UNAVAILABLE_MARKER}"
+            saw_unavailable = True
+        lines.append(label)
+    if saw_changed:
+        lines.append(_CHANGED_FOOTNOTE)
+    if saw_unavailable:
+        lines.append(_UNAVAILABLE_FOOTNOTE)
+    return "\n".join(lines)
 
 
 def _transcript_widgets(

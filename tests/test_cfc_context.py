@@ -649,6 +649,67 @@ def test_discover_attachments_with_empty_vault_root_is_empty(tmp_path):
     assert context.discover_attachments(tmp_path) == ()
 
 
+def test_discover_attachments_raises_when_configured_root_is_missing(tmp_path):
+    """B-2.0-83: a *configured* `VAULT_ROOT` that does not exist on disk
+    must not read back as the same empty tuple an honestly empty vault
+    returns — the misconfiguration has to be a visible, bounded failure
+    naming `VAULT_ROOT`, distinct from `vault_root=None` (unconfigured,
+    still legitimately empty above).
+    """
+    missing = tmp_path / "does_not_exist"
+    with pytest.raises(context.SourceUnavailable) as exc_info:
+        context.discover_attachments(missing)
+    assert exc_info.value.category is ContextCategory.ATTACHMENT
+    assert exc_info.value.name == "VAULT_ROOT"
+    assert str(missing) in exc_info.value.reason
+
+
+def test_discover_attachments_raises_when_configured_root_is_a_file(tmp_path):
+    not_a_directory = tmp_path / "not_a_directory"
+    not_a_directory.write_text("x", encoding="utf-8")
+    with pytest.raises(context.SourceUnavailable) as exc_info:
+        context.discover_attachments(not_a_directory)
+    assert "not a directory" in exc_info.value.reason
+
+
+@_needs_unprivileged
+def test_discover_attachments_raises_when_configured_root_is_unreadable(tmp_path):
+    directory = tmp_path / "locked"
+    directory.mkdir()
+    write(directory, "one.md", "one")
+    directory.chmod(0o000)
+    try:
+        with pytest.raises(context.SourceUnavailable) as exc_info:
+            context.discover_attachments(directory)
+        assert exc_info.value.category is ContextCategory.ATTACHMENT
+        assert exc_info.value.name == "VAULT_ROOT"
+    finally:
+        directory.chmod(0o755)
+
+
+@_needs_unprivileged
+def test_discover_attachments_raises_when_an_unreadable_subtree_is_found(tmp_path):
+    """A missing/unreadable *subtree* is a bounded failure exactly like a
+    missing/unreadable root (Concept.md: "If VAULT_ROOT becomes unavailable
+    or the walk itself fails, the picker reports that bounded failure...
+    it does not show a partial list as if discovery completed normally") —
+    a real sibling file elsewhere must not make the failure disappear as a
+    partial, silently-truncated result.
+    """
+    write(tmp_path, "real.md", "real")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    write(locked, "hidden.md", "hidden")
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(context.SourceUnavailable) as exc_info:
+            context.discover_attachments(tmp_path)
+        assert exc_info.value.category is ContextCategory.ATTACHMENT
+        assert exc_info.value.name == "VAULT_ROOT"
+    finally:
+        locked.chmod(0o755)
+
+
 def test_read_attachment_returns_literal_body_and_fingerprint(tmp_path):
     write(tmp_path / "notes", "idea.md", "an idea\n")
     record = context.read_attachment(tmp_path, "notes/idea.md")

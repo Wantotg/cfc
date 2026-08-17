@@ -366,6 +366,10 @@ def _is_hidden_name(name: str) -> bool:
     return name.startswith(".")
 
 
+def _reraise(exc: OSError) -> None:
+    raise exc
+
+
 def _walk_real_files(root: Path):
     """Every regular filesystem entry beneath `root`, walking only real,
     visible directories: `os.walk`'s default `followlinks=False` never
@@ -377,12 +381,17 @@ def _walk_real_files(root: Path):
     `os.walk` descends into it (B-2.0-72's companion `W-2.0-73`: attachment
     discovery must not offer the whole vault, hidden tool directories
     included), so its contents are never even statted, not merely filtered
-    out afterwards. An unreadable subdirectory is silently skipped rather
-    than failing the whole walk — the same "never fail one candidate's
-    problem onto every other listing" discipline `_sibling_display_names`
-    already applies.
+    out afterwards.
+
+    A missing or unreadable root or subtree raises its `OSError` rather than
+    being swallowed (B-2.0-83: Concept.md's "If VAULT_ROOT becomes
+    unavailable or the walk itself fails, the picker reports that bounded
+    failure... it does not show a partial list as if discovery completed
+    normally"). `discover_attachments` is this generator's one caller and
+    turns that `OSError` into a bounded `SourceUnavailable` naming
+    `VAULT_ROOT`.
     """
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=lambda exc: None):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_reraise):
         dirnames[:] = [name for name in dirnames if not _is_hidden_name(name)]
         for name in filenames:
             yield Path(dirpath) / name
@@ -395,7 +404,15 @@ def discover_attachments(vault_root: Path | None) -> tuple[SourceOption, ...]:
     list of selectable Markdown files beneath `VAULT_ROOT`, displayed by
     their vault-relative paths"). Returned in sorted path order. `vault_root`
     unset (`None`) is an empty list, never an error — the same "nothing to
-    offer" shape `available_sources` returns for an unconfigured category.
+    offer" shape `available_sources` returns for an unconfigured category,
+    and the fact `attachments_unavailable_reason` names on its own,
+    unconfigured route.
+
+    Raises `SourceUnavailable(ContextCategory.ATTACHMENT, "VAULT_ROOT", ...)`
+    when `vault_root` *is* configured but the directory it names does not
+    exist, is not a directory, or cannot be listed (B-2.0-83) — a
+    misconfigured root must not read back as the same empty list a genuinely
+    empty vault produces.
 
     Reuses `SourceOption` rather than a parallel type: an attachment
     candidate is exactly as shaped as a category candidate once its
@@ -406,12 +423,21 @@ def discover_attachments(vault_root: Path | None) -> tuple[SourceOption, ...]:
     if vault_root is None:
         return ()
     root = vault_root.resolve()
+    if not root.exists():
+        raise SourceUnavailable(ContextCategory.ATTACHMENT, "VAULT_ROOT", f"{root} does not exist")
+    if not root.is_dir():
+        raise SourceUnavailable(ContextCategory.ATTACHMENT, "VAULT_ROOT", f"{root} is not a directory")
     options = []
-    for path in _walk_real_files(root):
-        if path.is_symlink() or not path.is_file() or not _is_md_name(path.name):
-            continue
-        relative = path.relative_to(root).as_posix()
-        options.append(SourceOption(name=relative, display_name=relative))
+    try:
+        for path in _walk_real_files(root):
+            if path.is_symlink() or not path.is_file() or not _is_md_name(path.name):
+                continue
+            relative = path.relative_to(root).as_posix()
+            options.append(SourceOption(name=relative, display_name=relative))
+    except OSError as exc:
+        raise SourceUnavailable(
+            ContextCategory.ATTACHMENT, "VAULT_ROOT", f"{root} could not be fully read ({exc.strerror})",
+        ) from exc
     return tuple(sorted(options, key=lambda o: o.name))
 
 

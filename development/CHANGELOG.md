@@ -146,6 +146,42 @@ claim boundary and confirms the competitor's file survives untouched with
 no leaked temporary or claim material.
 - Files: cfc/chat_export.py, tests/test_cfc_chat_export.py
 - Status: shipped
+- Commit: baad6f4
+
+## 2026-08-17 — Turn details' full evidence, honest discovery failure, and decided picker wording (`B-2.0-82`, `B-2.0-83`, `D-2.0-84`, Stage 5 loop 4)
+Three findings from the loop-four playtest report. `Turn details`'
+context-provenance block now renders each recorded entry's category, name,
+frozen size, and fingerprint — not identity alone — one entry per line, the
+same shape the export already used (B-2.0-82). Comparing a manifest entry
+against a fresh read of its live source is now a tri-state fact
+(`ConversationService.context_entry_status`: `UNCHANGED`/`CHANGED`/
+`UNAVAILABLE`), so an entry whose live source has different content gets
+Concept.md's own wording, "live resolved context differs from this turn",
+while one that can no longer be read at all gets its own distinct marker and
+footnote instead of being folded into the same "changed" blame. The older
+boolean `context_entry_fingerprint_changed` is unchanged and still used
+nowhere else; both now share one internal fresh-read resolver so the two
+comparisons can never quietly disagree.
+
+`cfc.context.discover_attachments` no longer reports a missing or unreadable
+*configured* `VAULT_ROOT` (or an unreadable subtree beneath it) as the same
+empty result an honestly empty vault produces (B-2.0-83): a nonexistent
+root, a root that is not a directory, or an `OSError` anywhere in the walk
+now raises `SourceUnavailable` naming `VAULT_ROOT`, which
+`AttachmentPickerModal` catches and shows as a bounded status distinct from
+`No Markdown files found`. `vault_root=None` (unconfigured) is unaffected —
+still the separate, legitimate empty list `attachments_unavailable_reason`
+already names on its own route.
+
+The attachment picker's three visible states now match the decided wording
+exactly (D-2.0-84): `Scanning vault…`, `No Markdown files found`, `No
+matching Markdown files` (previously `scanning…`, `no attachments found`,
+`no matches`).
+
+Targeted modules plus the full suite green throughout
+(`.venv/bin/python -m pytest -q`).
+- Files: cfc/context.py, cfc/conversation_service.py, cfc/tui.py, tests/test_cfc_context.py, tests/test_cfc_conversation_service.py, tests/test_cfc_tui.py
+- Status: shipped
 - Commit: pending
 
 ## 2026-08-12 — Readable-vault completion: Main, attachments, export (`W-07`, Stage 5 loop 3)

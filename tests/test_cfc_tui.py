@@ -13,6 +13,7 @@ database, touches the vault, or contacts a network.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import threading
 from pathlib import Path
 
@@ -3141,7 +3142,10 @@ async def test_turn_details_context_provenance_lists_categories_in_order(tmp_pat
             await open_turn_details(pilot, screen)
             lines = turn_details_lines(app)
             provenance = next(line for line in lines if line.startswith("context:"))
-            assert provenance == "context: system_instructions:cfc-system-instructions-v2, persona:muse.md"
+            assert "system_instructions: cfc-system-instructions-v2" in provenance
+            assert "persona: muse.md" in provenance
+            assert "chars, fingerprint" in provenance
+            assert provenance.index("system_instructions:") < provenance.index("persona:")
     finally:
         await app.shutdown()
 
@@ -3165,6 +3169,7 @@ async def test_turn_details_flags_a_context_source_that_changed_since_the_turn(t
                 line for line in turn_details_lines(app) if line.startswith("context:")
             )
             assert "*" not in unchanged_provenance
+            assert "†" not in unchanged_provenance
             await pilot.press("escape")
             await pilot.pause()
 
@@ -3178,8 +3183,51 @@ async def test_turn_details_flags_a_context_source_that_changed_since_the_turn(t
             changed_provenance = next(
                 line for line in turn_details_lines(app) if line.startswith("context:")
             )
-            assert "persona:muse.md*" in changed_provenance
-            assert "live source has changed" in changed_provenance
+            assert "persona: muse.md (" in changed_provenance
+            assert "*" in changed_provenance
+            assert "†" not in changed_provenance
+            assert "live resolved context differs from this turn" in changed_provenance
+    finally:
+        await app.shutdown()
+
+
+async def test_turn_details_flags_a_context_source_that_is_now_unavailable(tmp_path):
+    """B-2.0-82: an entry whose live source can no longer be read at all
+    gets its own distinct marker and footnote — never the same "changed"
+    wording a fingerprint mismatch gets, and never a blanked historical
+    size/fingerprint.
+    """
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "version one")
+    vault = real_vault(tmp_path, personas=personas_dir)
+    responder = FixedResponder(Completion(content="ok"))
+    app = make_app(tmp_path, responder=responder, vault=vault)
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "muse.md")
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+            await open_turn_details(pilot, screen)
+            await pilot.press("escape")
+            await pilot.pause()
+
+            (personas_dir / "muse.md").unlink()
+            await app.pop_screen()
+            await pilot.pause()
+            app.open_chat(screen.chat_id)
+            await pilot.pause()
+
+            await open_turn_details(pilot, app.screen)
+            provenance = next(
+                line for line in turn_details_lines(app) if line.startswith("context:")
+            )
+            assert "persona: muse.md (" in provenance  # frozen size/fingerprint still shown
+            assert "†" in provenance
+            assert "*" not in provenance
+            assert "the live source is currently unavailable" in provenance
+            assert "live resolved context differs from this turn" not in provenance
     finally:
         await app.shutdown()
 
@@ -3523,7 +3571,7 @@ async def test_attachment_picker_opens_immediately_and_shows_scanning_first(tmp_
             await asyncio.get_running_loop().run_in_executor(None, discovery.started.wait)
             await pilot.pause()
             status = picker.query_one("#attachment-picker-status", tui.Static)
-            assert "scanning" in str(status.content)
+            assert str(status.content) == "Scanning vault…"
             assert not list(picker.query("#attachment-picker-list ListItem"))
 
             discovery.released.set()
@@ -3571,7 +3619,7 @@ async def test_attachment_picker_filter_with_no_matches_shows_a_bounded_state(tm
 
             assert not list(picker.query("#attachment-picker-list ListItem"))
             status = picker.query_one("#attachment-picker-status", tui.Static)
-            assert "no matches" in str(status.content)
+            assert str(status.content) == "No matching Markdown files"
     finally:
         await app.shutdown()
 
@@ -3635,7 +3683,7 @@ async def test_attachment_picker_empty_vault_shows_a_bounded_empty_state(tmp_pat
 
             assert not list(picker.query("#attachment-picker-list ListItem"))
             status = picker.query_one("#attachment-picker-status", tui.Static)
-            assert "no attachments found" in str(status.content)
+            assert str(status.content) == "No Markdown files found"
     finally:
         await app.shutdown()
 
@@ -3657,6 +3705,32 @@ async def test_attachment_picker_bounded_failure_state_when_discovery_raises(tmp
             assert "failed" in str(status.content)
             assert "RuntimeError" not in str(status.content)  # bounded, never a raw traceback
             assert app.screen is picker  # the app survives; no crash
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_bounded_failure_when_vault_root_is_missing(tmp_path):
+    """B-2.0-83: a *configured* VAULT_ROOT that has since disappeared from
+    disk must surface as a bounded, visible failure naming VAULT_ROOT — not
+    the same "no attachments found" state an honestly empty vault shows.
+    """
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    write_source(vault_root, "notes.md", "an idea")
+    app = make_app(tmp_path, vault=real_vault(vault_root))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            shutil.rmtree(vault_root)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+
+            status = picker.query_one("#attachment-picker-status", tui.Static)
+            assert "VAULT_ROOT" in str(status.content)
+            assert "does not exist" in str(status.content)
+            assert status.content != "No Markdown files found"
+            assert app.screen is picker  # bounded, not a crash
     finally:
         await app.shutdown()
 
