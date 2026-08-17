@@ -388,14 +388,16 @@ def test_export_chat_never_overwrites_and_advances_a_numeric_suffix(tmp_path):
     snapshot = build_snapshot(chat.id, [])
     fixed_now = aware()
 
-    first = chat_export._reserve_destination(
+    first, first_fd = chat_export._reserve_destination(
         tmp_path, chat_export._export_filename("ordinary", chat.title, chat.id.value, fixed_now),
     )
+    os.close(first_fd)
     first.write_text("existing export, must not be touched", encoding="utf-8")
 
-    second = chat_export._reserve_destination(
+    second, second_fd = chat_export._reserve_destination(
         tmp_path, chat_export._export_filename("ordinary", chat.title, chat.id.value, fixed_now),
     )
+    os.close(second_fd)
     assert second != first
     assert second.stem.endswith("-2")
     second.write_text("second export", encoding="utf-8")
@@ -469,6 +471,76 @@ def test_export_chat_racing_creator_gets_a_later_suffix_not_overwritten(tmp_path
     assert competitor_path.read_text(encoding="utf-8") == competitor_content
     leftover = sorted(p.name for p in tmp_path.iterdir())
     assert leftover == sorted([competitor_path.name, path.name])  # nothing else leaked
+
+
+def _install_competitor_over(path, content: str) -> None:
+    """What a *real* competing writer does at the publication boundary: an
+    atomic `os.replace` of their own finished file onto the name — a new
+    inode at that pathname, not a truncating write into the placeholder cfc
+    already created there (which would still be cfc's own inode and prove
+    nothing).
+    """
+    incoming = path.parent / ".competitor-incoming"
+    incoming.write_text(content, encoding="utf-8")
+    os.replace(incoming, path)
+
+
+def test_export_chat_refuses_to_publish_over_a_competitor_that_took_the_claim(
+    tmp_path, monkeypatch,
+):
+    """B-2.0-78's real boundary: `O_EXCL` proves ownership at *claim* time,
+    but `os.replace` acts on a pathname, so a writer who replaces the claim
+    while cfc is still rendering used to have their finished file silently
+    overwritten by cfc's temp file. Ownership is now re-checked immediately
+    before publication; losing it is a typed refusal, and the competitor's
+    file survives byte-for-byte.
+    """
+    chat = make_chat()
+    snapshot = build_snapshot(chat.id, [])
+    competitor_content = "a competitor's real export, must survive untouched"
+    real_render = chat_export.render_markdown
+
+    def render_then_lose_the_claim(chat_, opening, snapshot_, **kwargs):
+        body = real_render(chat_, opening, snapshot_, **kwargs)
+        claimed = next(p for p in tmp_path.iterdir() if p.suffix == ".md")
+        _install_competitor_over(claimed, competitor_content)
+        return body
+
+    monkeypatch.setattr(chat_export, "render_markdown", render_then_lose_the_claim)
+
+    with pytest.raises(chat_export.ExportWriteFailed) as caught:
+        chat_export.export_chat(tmp_path, chat, None, snapshot)
+
+    assert "another writer replaced" in str(caught.value)
+    survivor = next(p for p in tmp_path.iterdir() if p.suffix == ".md")
+    assert survivor.read_text(encoding="utf-8") == competitor_content
+    assert [p.name for p in tmp_path.iterdir()] == [survivor.name]  # no leaked temp
+
+
+def test_export_chat_failure_cleanup_never_deletes_a_competitors_file(tmp_path, monkeypatch):
+    """The same ownership check guards the *cleanup* half: an export that
+    fails after losing its claim must remove its own temporary material and
+    nothing else. Previously cleanup unlinked the final pathname
+    unconditionally, so a render failure deleted the competitor's file
+    outright.
+    """
+    chat = make_chat()
+    snapshot = build_snapshot(chat.id, [])
+    competitor_content = "a competitor's real export, must survive a failed export"
+
+    def lose_the_claim_then_fail(chat_, opening, snapshot_, **kwargs):
+        claimed = next(p for p in tmp_path.iterdir() if p.suffix == ".md")
+        _install_competitor_over(claimed, competitor_content)
+        raise MemoryError("rendering blew up after the claim was taken")
+
+    monkeypatch.setattr(chat_export, "render_markdown", lose_the_claim_then_fail)
+
+    with pytest.raises(MemoryError):
+        chat_export.export_chat(tmp_path, chat, None, snapshot)
+
+    survivor = next(p for p in tmp_path.iterdir() if p.suffix == ".md")
+    assert survivor.read_text(encoding="utf-8") == competitor_content
+    assert [p.name for p in tmp_path.iterdir()] == [survivor.name]
 
 
 def test_export_chat_collision_exhausted_raises_named_error(tmp_path, monkeypatch):

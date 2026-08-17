@@ -118,23 +118,56 @@ _MAX_COLLISION_SUFFIX = 9999
 
 def _claim_destination(candidate):
     """Attempts to exclusively create `candidate` as an empty placeholder
-    (`os.O_CREAT | os.O_EXCL`). Returns `candidate` once this invocation
-    genuinely owns that exact path, or `None` if it was already taken — an
-    existing export, or a racing writer that claimed it first
-    (`FileExistsError`). Any other `OSError` propagates to the caller.
+    (`os.O_CREAT | os.O_EXCL`). Returns the **open file descriptor** for
+    that placeholder once this invocation genuinely owns it, or `None` if
+    the name was already taken — an existing export, or a racing writer that
+    claimed it first (`FileExistsError`). Any other `OSError` propagates to
+    the caller.
+
+    The descriptor is deliberately kept open rather than closed here
+    (B-2.0-78): a pathname is not an ownership token. Holding the descriptor
+    is what lets `_still_owns_claim` ask, at the publication boundary, whether
+    the file *now* at that pathname is still the same object this invocation
+    created — the one question `os.replace` on a bare pathname cannot ask.
+    The caller owns closing it.
     """
     try:
-        fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        return os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
         return None
-    os.close(fd)
-    return candidate
+
+
+def _still_owns_claim(claim_fd: int, path) -> bool:
+    """`True` only while `path` still names the exact filesystem object
+    `claim_fd` refers to, compared by device and inode.
+
+    `False` means another writer replaced (or removed) this invocation's
+    claim after it was made — publishing onto that pathname would destroy
+    their file, and cleaning it up would delete it. Both are refused instead
+    (Concept.md: "A complete temporary export may replace only the final-name
+    claim created for this invocation. The implementation must verify that
+    ownership at the publication boundary").
+
+    This narrows the window rather than closing it: POSIX has no portable
+    "rename onto exactly this inode", so a competitor arriving between this
+    check and the `os.replace` a few instructions later is still possible.
+    That residual window is microseconds of a single syscall pair instead of
+    the whole render-and-write span, and it is the strongest guarantee this
+    module can make without a Linux-only `renameat2` dependency.
+    """
+    try:
+        on_disk = os.stat(path)
+    except OSError:
+        return False
+    claimed = os.fstat(claim_fd)
+    return (on_disk.st_dev, on_disk.st_ino) == (claimed.st_dev, claimed.st_ino)
 
 
 def _reserve_destination(directory, filename: str):
-    """The final path this export will publish to, already exclusively
-    claimed: `filename` itself if unclaimed, else the same stem with an
-    advancing numeric suffix (B-2.0-78).
+    """The final path this export will publish to plus the **open descriptor
+    proving this invocation owns it** — `filename` itself if unclaimed, else
+    the same stem with an advancing numeric suffix (B-2.0-78). The caller
+    closes that descriptor.
 
     Choosing and claiming are the same atomic step — by the time this
     returns, the path already exists on disk as this invocation's own empty
@@ -150,14 +183,15 @@ def _reserve_destination(directory, filename: str):
     """
     candidate = directory / filename
     try:
-        claimed = _claim_destination(candidate)
-        if claimed is not None:
-            return claimed
+        claim_fd = _claim_destination(candidate)
+        if claim_fd is not None:
+            return candidate, claim_fd
         stem, suffix = candidate.stem, candidate.suffix
         for n in range(2, _MAX_COLLISION_SUFFIX + 1):
-            claimed = _claim_destination(directory / f"{stem}-{n}{suffix}")
-            if claimed is not None:
-                return claimed
+            numbered = directory / f"{stem}-{n}{suffix}"
+            claim_fd = _claim_destination(numbered)
+            if claim_fd is not None:
+                return numbered, claim_fd
     except OSError as exc:
         raise ExportWriteFailed(
             f"cfc could not claim an export filename in {directory} ({exc.strerror})"
@@ -309,43 +343,63 @@ def export_chat(
     instant.
 
     Atomic within `directory`: `_reserve_destination` exclusively claims the
-    final pathname before anything is rendered (B-2.0-78), the render is
-    written to a hidden temporary file, flushed and `fsync`ed, then
-    published onto that claim with one `os.replace` — a reader never
-    observes a partial file under the final name, and a failure at any step
-    after the claim removes both the temporary file and this invocation's
-    own empty claim, never leaving either presented as an export and never
-    touching a pre-existing file at any other name. Never touches SQLite, a
-    vault source, or an earlier export.
+    final pathname before anything is rendered and keeps the descriptor for
+    that claim open (B-2.0-78), the render is written to a hidden temporary
+    file, flushed and `fsync`ed, and only then — after `_still_owns_claim`
+    confirms the pathname still names this invocation's own claim — published
+    with one `os.replace`. A reader never observes a partial file under the
+    final name; another writer who replaced the claim in the meantime gets a
+    typed refusal instead of having their file overwritten, and is left
+    equally untouched by failure cleanup, which removes the temporary file
+    unconditionally but the final name only while it is still this
+    invocation's claim. Never touches SQLite, a vault source, or an earlier
+    export.
     """
     resolved_dir = validate_destination(directory)
     instant = now if now is not None else _local_now()
     filename = _export_filename(chat.kind.value, chat.title, chat.id.value, instant)
-    final_path = _reserve_destination(resolved_dir, filename)
+    final_path, claim_fd = _reserve_destination(resolved_dir, filename)
     temp_path = resolved_dir / f".{final_path.name}.tmp"
 
     try:
-        body = render_markdown(chat, opening, snapshot, exported_at=instant)
-
         try:
-            with open(temp_path, "w", encoding="utf-8") as handle:
-                handle.write(body)
-                handle.flush()
-                os.fsync(handle.fileno())
-        except OSError as exc:
-            raise ExportWriteFailed(
-                f"cfc could not write the export into {resolved_dir} ({exc.strerror})"
-            ) from exc
+            body = render_markdown(chat, opening, snapshot, exported_at=instant)
 
-        try:
-            os.replace(temp_path, final_path)
-        except OSError as exc:
-            raise ExportWriteFailed(
-                f"cfc could not finish publishing the export to {final_path} ({exc.strerror})"
-            ) from exc
-    except BaseException:
-        _quietly_unlink(temp_path)
-        _quietly_unlink(final_path)
-        raise
+            try:
+                with open(temp_path, "w", encoding="utf-8") as handle:
+                    handle.write(body)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError as exc:
+                raise ExportWriteFailed(
+                    f"cfc could not write the export into {resolved_dir} ({exc.strerror})"
+                ) from exc
+
+            if not _still_owns_claim(claim_fd, final_path):
+                raise ExportWriteFailed(
+                    f"another writer replaced cfc's reserved export name {final_path} "
+                    f"before this export could be published; their file was left "
+                    f"untouched and nothing was exported"
+                )
+
+            try:
+                os.replace(temp_path, final_path)
+            except OSError as exc:
+                raise ExportWriteFailed(
+                    f"cfc could not finish publishing the export to {final_path} "
+                    f"({exc.strerror})"
+                ) from exc
+        except BaseException:
+            _quietly_unlink(temp_path)
+            #: Only ever removes this invocation's *own* claim. After a
+            #: successful `os.replace` the claim inode is gone, so this is
+            #: also what stops a late failure from deleting a published
+            #: export — and after a competitor replaced the claim, what stops
+            #: cleanup from deleting their file (B-2.0-78).
+            if _still_owns_claim(claim_fd, final_path):
+                _quietly_unlink(final_path)
+            raise
+    finally:
+        os.close(claim_fd)
 
     return final_path

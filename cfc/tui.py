@@ -478,9 +478,9 @@ class TurnDetailsModal(ModalScreen[None]):
 
 class SourcePickerModal(ModalScreen[object]):
     """A Change/Add picker: `available_sources`' unambiguous candidates,
-    plus an explicit **None (clear selection)** entry when `allow_clear`
-    (Change only — Add always adds something). Dismisses with the chosen
-    exact filename, `_CLEAR_SELECTION`, or `None` for Cancel/Esc.
+    plus an explicit **None (clear selection)** entry *after* them when
+    `allow_clear` (Change only — Add always adds something). Dismisses with
+    the chosen exact filename, `_CLEAR_SELECTION`, or `None` for Cancel/Esc.
 
     `notice`, when given, is why this category has nothing to offer
     (B-2.0-62). A picker that opens on one bare **None (clear selection)**
@@ -503,10 +503,9 @@ class SourcePickerModal(ModalScreen[object]):
         with Vertical(id="source-picker-dialog"):
             yield Label(self._title, markup=False)
             #: `initial_index=None` (B-2.0-70): Textual's own default
-            #: (`initial_index=0`) would auto-highlight the first row —
-            #: "None (clear selection)" on a Change picker — the instant
-            #: this mounts, so pressing Enter without moving first would
-            #: silently clear a live choice. `None` leaves nothing
+            #: (`initial_index=0`) would auto-highlight the first row the
+            #: instant this mounts, so pressing Enter without moving first
+            #: would apply a choice nobody made. `None` leaves nothing
             #: highlighted; `ListView.action_select_cursor` is itself a
             #: no-op while nothing is highlighted, so Enter here does
             #: nothing until an arrow key makes a deliberate choice. Mouse
@@ -520,14 +519,24 @@ class SourcePickerModal(ModalScreen[object]):
             yield Button("Cancel", id="source-picker-cancel")
 
     async def on_mount(self) -> None:
+        """The real candidates come first and the clear row last (B-2.0-80).
+        B-2.0-70's `initial_index=None` made "one Down, then Enter" the
+        shortest keyboard route into this picker; with the clear row first,
+        that shortest route landed on **None (clear selection)** and wiped a
+        live choice — the same accident B-2.0-70 existed to remove, moved one
+        keypress later. Ordering the clear row last makes the cheapest
+        deliberate keypress choose a source; clearing stays an ordinary,
+        explicitly reachable row (Concept.md), it is just no longer the one
+        the cursor arrives at first.
+        """
         list_view = self.query_one("#source-picker-list", ListView)
-        if self._allow_clear:
-            item = ListItem(Static("None (clear selection)", markup=False))
-            item.picked_value = _CLEAR_SELECTION
-            await list_view.append(item)
         for option in self._options:
             item = ListItem(Static(option.display_name, markup=False))
             item.picked_value = option.name
+            await list_view.append(item)
+        if self._allow_clear:
+            item = ListItem(Static("None (clear selection)", markup=False))
+            item.picked_value = _CLEAR_SELECTION
             await list_view.append(item)
 
     def action_cancel(self) -> None:
@@ -749,6 +758,20 @@ class ContextModal(ModalScreen[None]):
         await list_view.append(item)
 
     async def refresh_rows(self) -> None:
+        """Rebuilds every row from canonical state and ends by putting
+        keyboard focus back on the row list (B-2.0-81).
+
+        Clicking **Change**/**Add**/**Remove** moves Textual's focus onto
+        that `Button`, and a dismissed picker restores whatever this screen
+        had focused when it was suspended — the button, not the list. Arrow
+        keys mean nothing to a `Button`, so after one mouse-driven action the
+        whole modal became mouse-only until a person guessed at `Tab`. This
+        is the same "hand focus back to the thing a person types into" rule
+        `ChatScreen._handle_context_result`/`notify_run_changed` already
+        apply to the composer, and it keeps HANDOVER.md's standing
+        "keyboard and mouse invoke the same actions" rule true after an
+        action, not only before one.
+        """
         list_view = self.query_one("#context-modal-list", ListView)
         previous_index = list_view.index
         await list_view.clear()
@@ -803,6 +826,7 @@ class ContextModal(ModalScreen[None]):
         if previous_index is not None and list_view.children and previous_index < len(list_view.children):
             list_view.index = previous_index
         self._update_actions()
+        list_view.focus()
 
     def _add_trait_row_text(self) -> str:
         """The Add-trait row names an unusable Traits category itself
@@ -926,14 +950,21 @@ class ContextModal(ModalScreen[None]):
             notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
 
         async def handle_result(result: object) -> None:
-            if result is None:
-                return
-            filename = None if result is _CLEAR_SELECTION else result
-            if category is ContextCategory.USER_PREFERENCES:
-                self._mutate_selection(lambda: self.app.service.set_user_preferences(
-                    self.chat_id, filename))
-            else:
-                self._mutate_selection(lambda: self.app.service.set_persona(self.chat_id, filename))
+            #: A cancelled picker (`result is None`) still refreshes, so that
+            #: `refresh_rows`' own focus return runs on every route out of
+            #: this picker rather than only the ones that changed something
+            #: (B-2.0-81): Cancel/`Esc` must not be the one route that leaves
+            #: this modal keyboard-dead. The rebuild itself re-reads canonical
+            #: state, so repeating it after a no-op costs nothing but shows
+            #: the same truth.
+            if result is not None:
+                filename = None if result is _CLEAR_SELECTION else result
+                if category is ContextCategory.USER_PREFERENCES:
+                    self._mutate_selection(lambda: self.app.service.set_user_preferences(
+                        self.chat_id, filename))
+                else:
+                    self._mutate_selection(
+                        lambda: self.app.service.set_persona(self.chat_id, filename))
             await self.refresh_rows()
 
         self.app.push_screen(
@@ -950,10 +981,9 @@ class ContextModal(ModalScreen[None]):
             notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
 
         async def handle_result(result: object) -> None:
-            if result is None or result is _CLEAR_SELECTION:
-                return
-            self._mutate_selection(lambda: self.app.service.add_trait(self.chat_id, result))
-            await self.refresh_rows()
+            if result is not None and result is not _CLEAR_SELECTION:
+                self._mutate_selection(lambda: self.app.service.add_trait(self.chat_id, result))
+            await self.refresh_rows()  # always: see `_begin_change`'s own note (B-2.0-81)
 
         self.app.push_screen(
             SourcePickerModal("Add trait", options, allow_clear=False, notice=notice), handle_result)
@@ -974,10 +1004,10 @@ class ContextModal(ModalScreen[None]):
             notice = f"{notice} — {_CATEGORY_CONFIG_ROUTE}."
 
         async def handle_result(result: object) -> None:
-            if result is None:
-                return
-            self._mutate_selection(lambda: self.app.service.add_attachment(self.chat_id, result))
-            await self.refresh_rows()
+            if result is not None:
+                self._mutate_selection(
+                    lambda: self.app.service.add_attachment(self.chat_id, result))
+            await self.refresh_rows()  # always: see `_begin_change`'s own note (B-2.0-81)
 
         self.app.push_screen(
             AttachmentPickerModal("Add attachment", already_selected, notice=notice),

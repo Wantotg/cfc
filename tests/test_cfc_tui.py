@@ -2187,12 +2187,17 @@ async def test_source_picker_opens_with_no_row_highlighted_and_enter_alone_selec
     tmp_path,
 ):
     """B-2.0-70: Textual's own default (`initial_index=0`) would highlight
-    the first row — `None (clear selection)` on a Change picker — the
-    instant the picker mounts, so pressing Enter without moving first would
-    silently clear a live choice. Proved on the Persona Change picker,
-    which is exactly the picker the bug report named; Add-trait and
-    Add-attachment share this same class/route (`AttachmentPickerModal`'s
-    own dedicated tests cover its own filter-focused variant).
+    the first row the instant the picker mounts, so pressing Enter without
+    moving first would apply a choice nobody made. Proved on the Persona
+    Change picker, which is exactly the picker the bug report named;
+    Add-trait and Add-attachment share this same class/route
+    (`AttachmentPickerModal`'s own dedicated tests cover its own
+    filter-focused variant).
+
+    B-2.0-80 is the other half, asserted here in the same run: the one
+    deliberate `Down` this fix requires must land on a real source, not on
+    the clear row, or B-2.0-70's fix simply relocates the accident it
+    removed.
     """
     personas_dir = tmp_path / "personas"
     write_source(personas_dir, "muse.md", "You are Muse.")
@@ -2215,10 +2220,84 @@ async def test_source_picker_opens_with_no_row_highlighted_and_enter_alone_selec
             assert isinstance(app.screen, tui.SourcePickerModal)  # still open — Enter did nothing
             assert app.service.get_chat(screen.chat_id).context_selection.persona == "muse.md"
 
-            await pilot.press("down")  # a deliberate highlight: row 0, "None (clear selection)"
+            await pilot.press("down")  # one deliberate highlight: the first real source
             await pilot.press("enter")
             await pilot.pause()
-            assert app.service.get_chat(screen.chat_id).context_selection.persona is None
+            assert app.service.get_chat(screen.chat_id).context_selection.persona == "muse.md"
+    finally:
+        await app.shutdown()
+
+
+async def test_the_clear_row_is_last_so_one_down_and_enter_cannot_wipe_a_selection(tmp_path):
+    """B-2.0-80, the playtest's "Persona's don't work": with the clear row
+    first, the shortest keyboard route B-2.0-70 created — one `Down`, then
+    Enter — silently cleared a live selection and looked exactly like a
+    picker that does nothing. The clear row now sits after every real
+    source, so the cheapest deliberate keypress chooses one.
+    """
+    personas_dir = tmp_path / "personas"
+    write_source(personas_dir, "muse.md", "You are Muse.")
+    write_source(personas_dir, "scribe.md", "You are Scribe.")
+    app = make_app(tmp_path, vault=real_vault(tmp_path, personas=personas_dir))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.set_persona(screen.chat_id, "scribe.md")
+
+            await open_context_modal(pilot)
+            await select_row(pilot, 2)  # Persona
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            rows = list(app.screen.query("#source-picker-list ListItem"))
+            assert [str(r.query_one(tui.Static).content) for r in rows] == [
+                "muse", "scribe", "None (clear selection)",
+            ]
+
+            await pilot.press("down", "enter")
+            await pilot.pause()
+            assert app.service.get_chat(screen.chat_id).context_selection.persona == "muse.md"
+    finally:
+        await app.shutdown()
+
+
+async def test_the_context_list_keeps_keyboard_focus_after_every_picker_route(tmp_path):
+    """B-2.0-81, the playtest's "returns to context screen where keyboard
+    input doesn't work, requires mouse input": clicking **Change** moves
+    focus onto that `Button`, and a dismissed picker restores exactly what
+    was focused when this screen was suspended — the button. Arrow keys mean
+    nothing to a `Button`, so the whole modal went mouse-only. Proved for
+    both routes out of a picker: an applied choice and a cancelled one.
+    """
+    prefs_dir = tmp_path / "prefs"
+    write_source(prefs_dir, "formal.md", "Be formal.")
+    app = make_app(tmp_path, vault=real_vault(tmp_path, prefs=prefs_dir))
+    try:
+        async with app.run_test() as pilot:
+            await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            modal = app.screen
+            list_view = modal.query_one("#context-modal-list", tui.ListView)
+
+            await select_row(pilot, 1)  # User Preferences
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            await pilot.press("down", "enter")  # choose "formal"
+            await pilot.pause()
+
+            assert modal.focused is list_view
+            before = list_view.index
+            await pilot.press("down")  # the keyboard still drives the list
+            await pilot.pause()
+            assert list_view.index == before + 1
+
+            await select_row(pilot, 1)
+            await pilot.click("#context-action-change")
+            await pilot.pause()
+            await pilot.press("escape")  # cancelled, not applied
+            await pilot.pause()
+            assert modal.focused is list_view
+            assert app.service.get_chat(
+                modal.chat_id).context_selection.user_preferences == "formal.md"
     finally:
         await app.shutdown()
 
@@ -2452,7 +2531,7 @@ async def test_changing_user_preferences_persists_and_survives_reopen(tmp_path):
             await pilot.pause()
             assert isinstance(app.screen, tui.SourcePickerModal)
             options = list(app.screen.query("#source-picker-list ListItem"))
-            await pilot.click(options[-1])  # the real "formal" option, after "None"
+            await pilot.click(options[0])  # the real "formal" option, before "None"
             await pilot.pause()
 
             rows = context_modal_row_texts(app)
@@ -2487,7 +2566,7 @@ async def test_change_can_clear_a_selection_with_the_none_option(tmp_path):
             await pilot.click("#context-action-change")
             await pilot.pause()
             options = list(app.screen.query("#source-picker-list ListItem"))
-            await pilot.click(options[0])  # "None (clear selection)"
+            await pilot.click(options[-1])  # "None (clear selection)", the last row
             await pilot.pause()
 
             rows = context_modal_row_texts(app)
@@ -2545,7 +2624,7 @@ async def test_persona_selection_freezes_a_usable_first_message_and_renders_it_a
             await pilot.click("#context-action-change")
             await pilot.pause()
             options = list(app.screen.query("#source-picker-list ListItem"))
-            await pilot.click(options[-1])  # the real "muse" persona
+            await pilot.click(options[0])  # the real "muse" persona, before "None"
             await pilot.pause()
 
             rows = context_modal_row_texts(app)
