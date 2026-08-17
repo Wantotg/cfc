@@ -662,6 +662,7 @@ def test_discover_attachments_raises_when_configured_root_is_missing(tmp_path):
     assert exc_info.value.category is ContextCategory.ATTACHMENT
     assert exc_info.value.name == "VAULT_ROOT"
     assert str(missing) in exc_info.value.reason
+    assert "does not exist" in exc_info.value.reason
 
 
 def test_discover_attachments_raises_when_configured_root_is_a_file(tmp_path):
