@@ -26,81 +26,29 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
-## B-2.0-79 · An interrupted turn exports as failed
+## B-2.0-97 · Four readable-vault dialogs can hide their Close or Cancel action
 
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.
 
-An interrupted turn is exported with `status: failed`, even though the export
-contract distinguishes failed, cancelled, and interrupted turns. The reason
-text still says that cfc restarted while the turn was active, so the detail is
-present but the status is flattened. Map `FailureKind.INTERRUPTED` to its own
-export status while preserving the existing failed and cancelled output.
+`SourcePreviewModal`, `ContextModal`, `SourcePickerModal`, and
+`AttachmentPickerModal` use the same height-capped, non-scrolling dialog shape.
+At a small terminal, a long source or a sufficiently large picker can place
+the Close or Cancel row outside the visible dialog with no scrolling owner.
+Give the outer dialog the bounded scrolling and keyboard ownership needed to
+keep both its content and exit action reachable.
 
-## B-2.0-78 · Export publication can replace a file created after name selection
+## B-2.0-96 · An unreadable vault parent is reported as a missing vault
 
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.
 
-Export destination selection checks that a generated name is free, but does not
-reserve it before writing. A second writer can create that path before
-publication, and `os.replace` then overwrites it. Claim the final name
-exclusively before publishing the temporary file, so a collision refuses rather
-than destroying another file.
+When the configured vault's parent directory is unreadable,
+`Path.exists()` returns `False` and discovery reports that `VAULT_ROOT` does not
+exist. The vault is present; the refusal names the wrong cause and tells Cas to
+create something that is already there. Probe the configured root with an
+operation that distinguishes `ENOENT` from permission failure, then keep the
+bounded refusal and its real correction route.
 
-## B-2.0-77 · Main can receive the shared Persona through the service boundary
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-The Context modal hides the shared Persona picker for Main, but
-`ConversationService.set_persona` accepts a Main chat and the resulting plan
-contains both the fixed Main persona and the shared Persona. Enforce the Main
-rule in the service and make context-plan assembly ignore a stored shared
-Persona for Main, so the UI is not the only authority boundary.
-
-## B-2.0-76 · Attachment selection saves an unvalidated, non-canonical path
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-The attachment service persists a relative path without first proving that it is
-a readable, in-boundary Markdown file or reducing equivalent paths to one
-canonical identity. A later turn refuses a missing file, but the invalid
-selection has already been saved. Validate and canonicalise before saving.
-
-## B-2.0-74 · Export filenames use UTC instead of the promised local time
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-Export filenames use UTC while the product contract promises a local timestamp.
-The export document already carries an offset-bearing time; use local time for
-the filename as well, keeping the full offset-bearing value inside the document.
-
-## B-2.0-72 · Adding an attachment freezes the interface while the vault is scanned
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-Pressing **Add attachment…** walks the whole WSL-mounted vault synchronously on
-the Textual event loop. In the real vault this took about 2.7 seconds and gave
-no progress indication. Move discovery off the event loop or otherwise keep the
-interface responsive while the list is built.
-
-## B-2.0-71 · Main sends `{{user}}` and `{{AI}}` literally
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-The example configuration promises substitution of `{{user}}` and `{{AI}}` in
-Main's live profile, but the 2.0 package preserves and sends those tokens
-literally. Decide whether personalisation belongs in 2.0; then either implement
-the documented behaviour or correct the public configuration documentation.
-
-## B-2.0-70 · A picker opens with a live choice under the cursor
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-Textual highlights the first picker row automatically. For Persona and User
-Preferences that row is **None (clear selection)**, so pressing Enter without
-moving clears a live choice. Add Trait and Add attachment similarly select the
-first available file without an explicit choice. Opening a picker should not
-silently perform a destructive or arbitrary selection.
-
+---
 ---
 
 ## B-11 · A wiki page deleted from the vault stays in the recall index

@@ -25,6 +25,32 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-19 — A status line a person can actually see (`B-2.0-104`, Stage 5 loop 4)
+The Chat title, context, and status bars no longer share rows with Textual's
+`Footer`, so the title and every bounded refusal or completion notice are
+painted where a person can read them. The correction route for a refused turn
+is now visible on the actual terminal surface as well as present in the widget
+tree.
+
+Proved with painted-output tests at the committed stylesheet and with the full
+suite at **1002 passed**.
+- Files: cfc/tui.tcss, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: bc4a5b6
+
+## 2026-08-19 — Turn details you can actually reach (`B-2.0-94`, `D-2.0-95`, Stage 5 loop 4)
+Turn details now owns its overflow with a keyboard-capable `VerticalScroll`,
+so a long attachment manifest and its Close action remain reachable on a small
+terminal. The attachment picker also proves its no-highlight rule after scan,
+filter, and filter-clear refreshes before a deliberate arrow press creates a
+selection.
+
+Proved with the focused TUI suite at **165 passed** and included in the full
+suite at **1002 passed**.
+- Files: cfc/tui.py, tests/test_cfc_tui.py
+- Status: shipped
+- Commit: 7e29569
+
 ## 2026-08-16 — Display names and a second Main-Persona boundary (`B-2.0-71`, `B-2.0-76`, `B-2.0-77`, `W-2.0-73`, Stage 5 loop 4)
 `{{user}}`/`{{AI}}` substitution now reaches the 2.0 vault-owned template
 sources — User Preferences, Persona, Traits, First Messages, and Main's
@@ -182,7 +208,7 @@ Targeted modules plus the full suite green throughout
 (`.venv/bin/python -m pytest -q`).
 - Files: cfc/context.py, cfc/conversation_service.py, cfc/tui.py, tests/test_cfc_context.py, tests/test_cfc_conversation_service.py, tests/test_cfc_tui.py
 - Status: shipped
-- Commit: pending
+- Commit: c69a505
 
 ## 2026-08-12 — Readable-vault completion: Main, attachments, export (`W-07`, Stage 5 loop 3)
 The three remaining Stage 5 capabilities land together. `ChatKind.MAIN` is

@@ -13,6 +13,25 @@ at the top.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-104 | Chat status and context notices were painted under the Footer | shipped in `bc4a5b6`; the title, context, and status bars now occupy distinct painted rows, and the refusal correction route is visible on the terminal surface | 2026-08-19 |
+| B-2.0-94 | Turn details clipped its evidence and Close action on a small terminal | shipped in `7e29569`; the outer dialog is a keyboard-capable scroll owner, preserving both the long manifest and its exit action | 2026-08-19 |
+| D-2.0-95 | the picker refresh seam had no no-highlight assertion | proof added in `7e29569`; scan, filter, and filter-clear refreshes now assert no selection until a deliberate arrow press | 2026-08-19 |
+| B-2.0-83 | unreadable or missing configured vault roots could look like an empty vault | shipped in `c69a505`; configured-root and subtree failures now refuse visibly, while the distinct unreadable-parent cause remains `B-2.0-96` | 2026-08-17 |
+| D-2.0-84 | attachment picker states used undecided wording | shipped in `c69a505`; the three visible states now use the decided labels | 2026-08-17 |
+| B-2.0-82 | Turn details omitted frozen attachment evidence | shipped in `c69a505`; category, identity, size, fingerprint, and live comparison markers are available | 2026-08-17 |
+| B-2.0-81 | Context modal lost keyboard focus after an action | shipped in `76ddcb7`; every refresh returns focus to the row list | 2026-08-17 |
+| B-2.0-80 | the picker clear row could be reached by the shortest accidental route | shipped in `76ddcb7`; real choices come first and the explicit clear row comes last | 2026-08-17 |
+| B-2.0-79 | interrupted turns exported as failed | shipped in `baad6f4`; interrupted exports retain their distinct status | 2026-08-16 |
+| B-2.0-78 | export publication could replace a file created after name selection | the broad race was narrowed in `76ddcb7`; the residual portable publication question remains `Q-2.0-98` | 2026-08-19 |
+| B-2.0-77 | Main could receive the shared Persona through the service boundary | shipped in `419dba9`; the service refuses it and context assembly ignores malformed stored shared Persona data for Main | 2026-08-16 |
+| B-2.0-76 | attachment selection saved an unvalidated, non-canonical path | shipped in `419dba9`; validation and canonical identity happen before persistence | 2026-08-16 |
+| D-2.0-75 | export metadata broke its own Markdown list | shipped in `baad6f4`; context entries are emitted as a proper nested list | 2026-08-16 |
+| B-2.0-74 | export filenames used UTC instead of promised local time | shipped in `baad6f4`; the filename and document share one local timezone-aware instant | 2026-08-16 |
+| W-2.0-73 | attachment discovery included hidden tool directories | shipped in `419dba9`/`8f7d933`; discovery prunes hidden directories before descending | 2026-08-16 |
+| B-2.0-72 | adding an attachment froze the interface while the vault was scanned | shipped in `8f7d933`; discovery runs off the Textual event loop with bounded picker state | 2026-08-16 |
+| B-2.0-71 | Main sent `{{user}}` and `{{AI}}` literally | shipped in `419dba9`; configured vault-owned sources substitute the validated display names | 2026-08-16 |
+| B-2.0-70 | a picker opened with a live choice under the cursor | shipped in `8f7d933`; pickers open without a selection until Cas moves deliberately | 2026-08-16 |
+| W-2.0-67 | per-turn evidence outweighed the conversation it annotated | shipped in `8f7d933`; completed-turn evidence moved behind the explicit Turn details route | 2026-08-16 |
 | N-2.0-81 | bounded snapshot/render refusal has no untrusted input to bound | nothing owed; the export snapshot comes from the canonical store, so there is no untrusted input at that boundary. The existing `TypeError` guard is a programming-error guard and should remain visible rather than becoming a friendly refusal | 2026-08-16 |
 | N-2.0-80 | concurrent Main creation is unreachable under one process and one connection | nothing owed; the database lock is held for the store lifetime, so the public architecture cannot expose two concurrent creators. The unique index and repeated `get_or_create_main` convergence are the relevant proof; if 2.1 adds multiple processes or pooled connections, this becomes a new finding | 2026-08-16 |
 | B-2.0-63 | a corrupt 2.0 database made `cfc doctor` die in a traceback | shipped in `f132dea`; read-only SQLite inspection now converts malformed, truncated, and incomplete targets into bounded diagnostic evidence, while preserving the target and its directory | 2026-08-10 |

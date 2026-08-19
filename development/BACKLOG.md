@@ -15,27 +15,70 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## D-2.0-105 · Driven widget tests do not prove painted terminal output
+
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.
+
+The driven TUI tests asserted widget content but did not assert the rows Textual
+actually painted, so a status bar could be present in memory while the Footer
+covered it for an entire loop. One painted-output helper now exists; audit the
+remaining important status and layout claims against the terminal surface.
+
+## D-2.0-103 · Context rows cannot clear Persona or User Preferences directly
+
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run playtest.
+
+The Context modal enables **Remove** only for selected Trait and Attachment
+rows. Clearing a selected Persona or User Preferences value therefore requires
+opening **Change** and navigating to its final **None (clear selection)** row.
+Decide whether the row-level **Remove** action should clear those two categories
+directly while keeping the deliberate no-accidental-clear picker rule.
+
+## D-2.0-101 · Turn details shows the full fingerprint in the compact modal
+
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run playtest.
+
+Turn details now correctly shows frozen size and fingerprint evidence, but the
+full 64-character value makes ordinary reading harder and directly contributes
+to modal overflow. A Designer decision is needed on the compact display; the
+full value can remain in the export for cross-checking.
+
+## D-2.0-99 · Attachment picker count needs a noun
+
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.
+
+The filtered attachment picker says only `12 of 506`, while its other states
+name Markdown files explicitly. Choose wording such as `12 of 506 files` so
+the count remains understandable without relying on surrounding context.
+
+## D-2.0-88 · Export confirmation shows an unnecessarily long absolute path
+
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.
+
+Manual export succeeds, but the confirmation exposes a 105-character absolute
+path instead of the filename a person needs to recognise. Keep the confirmation
+visible and shorten its useful identity to the exported filename.
+
+## D-2.0-87 · A leading slash is sent to the model as ordinary text
+
+**Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run playtest.
+
+A leading `/` reaches the model, which can respond as though cfc performed an
+action it never performed. Decide whether this surface should reject or
+reserve leading slash input before it reaches the provider.
+
 ## D-2.0-61 · Keyboard help reads as a specification, not sentences
 
-**Found:** 2026-08-10, during the v2.0 Stage 5 loop one playtest.
+**Found:** 2026-08-10, during the v2.0 Stage 5 loop one playtest; raised again
+in the v2.0 Stage 5 loop four second-run playtest.
 
-Keyboard help lists bindings as reference rows and drops a raw Windows Terminal
-JSON fragment into the middle of them. The interaction works, but the requested
-overview is not readable normal-language guidance. The loop-three playtest
-reported the same surface again and adds a requirement to point readers to the
-repository's explanation instead of inlining the JSON. Rewrite the copy as short
-sentences while retaining the tested key behaviour and terminal requirement.
-This is wording work for the Stage 5 loop-four pass, not a reason to reopen the
-shipped Stage 4 interaction.
+The interaction works, but the `Esc` line still reads as a precedence chain
+(`else`) in a list whose neighbouring lines use mixed voices. Rewrite the copy
+as short, consistent sentences while retaining the tested key behaviour and
+terminal requirement. The repeated sighting confirms this remains owed; it was
+not satisfied by the loop-four wording pass.
 
-## D-2.0-75 · Export metadata breaks its own Markdown list
-
-**Found:** 2026-08-16, during the v2.0 Stage 5 loop three diagnosis.
-
-The export's provenance section emits a bare `context:` line inside a bullet
-list. Markdown renderers therefore end one list, show that line as a paragraph,
-and begin another list. Prefix the line with the same list marker as the
-surrounding metadata.
+---
 
 ## D-2.0-43 · Provider evidence checks can discard a usable answer, and one malformed usage shape walks past them
 
