@@ -10,22 +10,30 @@ import datetime
 
 import pytest
 
+from cfc import provider_adapter
 from cfc import provider_wire as wire
 from cfc.conversation_types import (
+    ApprovalDecision,
     CancelledOutcome,
     ChatId,
     CompletedOutcome,
     ContextCategory,
     ContextPlan,
     ConversationSnapshot,
+    ExchangeEnding,
     FailedOutcome,
     FailureEvidence,
     FailureKind,
     Message,
     MessageId,
     OpeningMessage,
+    ProviderExchange,
     Role,
     SourceRecord,
+    ToolCall,
+    ToolCallId,
+    ToolOutcomeKind,
+    ToolResult,
     Turn,
     TurnId,
     TurnState,
@@ -102,10 +110,27 @@ def active(chat_id, position, user="q"):
     return turn, [user_message(chat_id, turn_id, user)]
 
 
-def build_snapshot(chat_id, turn_message_pairs) -> ConversationSnapshot:
+def build_snapshot(
+    chat_id, turn_message_pairs, exchanges=(), tool_calls=(), tool_results=(),
+) -> ConversationSnapshot:
     turns = tuple(t for t, _ in turn_message_pairs)
     messages = tuple(m for _, msgs in turn_message_pairs for m in msgs)
-    return ConversationSnapshot(chat_id=chat_id, turns=turns, messages=messages)
+    return ConversationSnapshot(
+        chat_id=chat_id, turns=turns, messages=messages,
+        exchanges=tuple(exchanges), tool_calls=tuple(tool_calls), tool_results=tuple(tool_results),
+    )
+
+
+def make_call(turn_id, exchange_sequence, position, provider_call_id="call_1",
+              name="list_dir", arguments="{}") -> ToolCall:
+    return ToolCall(id=ToolCallId.new(), turn_id=turn_id, exchange_sequence=exchange_sequence,
+                     position=position, provider_call_id=provider_call_id, name=name,
+                     arguments=arguments)
+
+
+def make_result(call: ToolCall, content="result text", kind=ToolOutcomeKind.SUCCESS) -> ToolResult:
+    return ToolResult(tool_call_id=call.id, kind=kind, reason="ok", content=content,
+                       decision=ApprovalDecision.APPROVE, decided_at=aware())
 
 
 # --- the inclusion/omission rule --------------------------------------------
@@ -529,6 +554,249 @@ def test_context_and_opening_are_not_mutated():
 
     assert context == full_context()
     assert opening == make_opening()
+
+
+# --- tool ledger: interleaving and adjacency refusal (Stage 6 loop 1) ------
+
+def test_completed_turn_with_one_tool_batch_interleaves_calls_and_results():
+    chat_id = ChatId.new()
+    turn, msgs = completed(chat_id, 0, user="list the tmp dir", assistant="done, two files")
+    call = make_call(turn.id, 0, 0, provider_call_id="call_1", name="list_dir",
+                      arguments='{"path": "/tmp"}')
+    result = make_result(call, content="a.txt\nb.txt")
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH,
+                                 assistant_content="let me look")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange],
+                               tool_calls=[call], tool_results=[result])
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+    assert plan.messages == _CONTEXT_PREFIX + (
+        wire.WireMessage(role="user", content="list the tmp dir"),
+        wire.WireMessage(role="assistant", content="let me look",
+                          tool_calls=(wire.WireToolCall(provider_call_id="call_1",
+                                                         name="list_dir",
+                                                         arguments='{"path": "/tmp"}'),)),
+        wire.WireMessage(role="tool", content="a.txt\nb.txt", tool_call_id="call_1"),
+        wire.WireMessage(role="assistant", content="done, two files"),
+    )
+
+
+def test_active_turn_with_a_resolved_tool_batch_shows_user_message_and_activity():
+    """An active turn (still awaiting its next provider round) has no
+    closing assistant message yet, but already-resolved tool activity from
+    earlier in its own continuation loop still replays."""
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0, user="check that file")
+    call = make_call(turn.id, 0, 0)
+    result = make_result(call)
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH)
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange],
+                               tool_calls=[call], tool_results=[result])
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+    assert plan.messages == _CONTEXT_PREFIX + (
+        wire.WireMessage(role="user", content="check that file"),
+        wire.WireMessage(role="assistant", content="",
+                          tool_calls=(wire.WireToolCall(provider_call_id="call_1",
+                                                         name="list_dir", arguments="{}"),)),
+        wire.WireMessage(role="tool", content="result text", tool_call_id="call_1"),
+    )
+
+
+def test_multiple_calls_in_one_batch_stay_in_provider_order():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    call_a = make_call(turn.id, 0, 0, provider_call_id="call_a", name="list_dir")
+    call_b = make_call(turn.id, 0, 1, provider_call_id="call_b", name="read_file")
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH)
+    snapshot = build_snapshot(
+        chat_id, [(turn, msgs)], exchanges=[exchange],
+        tool_calls=[call_a, call_b],
+        tool_results=[make_result(call_a, "a"), make_result(call_b, "b")],
+    )
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+    tool_messages = [m for m in plan.messages if m.role == "tool"]
+    assert [m.content for m in tool_messages] == ["a", "b"]
+    assistant_with_calls = next(m for m in plan.messages if m.tool_calls)
+    assert [c.provider_call_id for c in assistant_with_calls.tool_calls] == ["call_a", "call_b"]
+
+
+def test_two_sequential_tool_batches_within_one_turn_both_replay():
+    chat_id = ChatId.new()
+    turn, msgs = completed(chat_id, 0, assistant="finished")
+    call_1 = make_call(turn.id, 0, 0, provider_call_id="call_1")
+    call_2 = make_call(turn.id, 1, 0, provider_call_id="call_2")
+    exchanges = [
+        ProviderExchange(turn_id=turn.id, sequence=0, model="m", ending=ExchangeEnding.TOOL_CALL_BATCH),
+        ProviderExchange(turn_id=turn.id, sequence=1, model="m", ending=ExchangeEnding.TOOL_CALL_BATCH),
+    ]
+    snapshot = build_snapshot(
+        chat_id, [(turn, msgs)], exchanges=exchanges, tool_calls=[call_1, call_2],
+        tool_results=[make_result(call_1), make_result(call_2)],
+    )
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+    assert sum(1 for m in plan.messages if m.tool_calls) == 2
+    assert sum(1 for m in plan.messages if m.role == "tool") == 2
+
+
+def test_schemas_pass_through_unchanged():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    snapshot = build_snapshot(chat_id, [(turn, msgs)])
+    schema = wire.WireToolSchema(name="list_dir", description="d", parameters={})
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model",
+                                    schemas=(schema,))
+
+    assert plan.schemas == (schema,)
+
+
+def test_tool_call_referencing_unknown_turn_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    other_turn_id = TurnId.new()
+    call = make_call(other_turn_id, 0, 0)
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], tool_calls=[call])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_exchange_referencing_unknown_turn_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    exchange = ProviderExchange(turn_id=TurnId.new(), sequence=0, model="m",
+                                 ending=ExchangeEnding.COMPLETION, assistant_content="x")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_tool_call_with_no_result_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    call = make_call(turn.id, 0, 0)
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH)
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange], tool_calls=[call])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_result_with_no_matching_call_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    orphan_result = ToolResult(tool_call_id=ToolCallId.new(), kind=ToolOutcomeKind.SUCCESS,
+                                reason="ok", content="x")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], tool_results=[orphan_result])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_non_contiguous_exchange_sequence_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    exchange = ProviderExchange(turn_id=turn.id, sequence=1, model="m",
+                                 ending=ExchangeEnding.COMPLETION, assistant_content="x")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_non_contiguous_call_position_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    call = make_call(turn.id, 0, 1)  # position 1 with no position 0
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH)
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange],
+                               tool_calls=[call], tool_results=[make_result(call)])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_tool_call_batch_exchange_with_no_calls_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH)
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_non_batch_exchange_carrying_calls_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    call = make_call(turn.id, 0, 0)
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.COMPLETION, assistant_content="x")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange],
+                               tool_calls=[call], tool_results=[make_result(call)])
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_duplicate_result_for_the_same_call_refuses():
+    chat_id = ChatId.new()
+    turn, msgs = active(chat_id, 0)
+    call = make_call(turn.id, 0, 0)
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH)
+    snapshot = build_snapshot(
+        chat_id, [(turn, msgs)], exchanges=[exchange], tool_calls=[call],
+        tool_results=[make_result(call, "first"), make_result(call, "second")],
+    )
+
+    with pytest.raises(wire.MalformedSnapshot):
+        wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+
+def test_real_producer_tool_call_batch_round_trips_through_the_wire():
+    """The adapter's own parser, not a hand-built fixture, produces the
+    proposed calls this test turns into ledger rows and replays — the
+    producer/parser pair the Work Order's proof requires."""
+    provider_body = {"choices": [{"message": {
+        "role": "assistant", "content": "checking",
+        "tool_calls": [{"id": "call_real", "type": "function",
+                         "function": {"name": "grep", "arguments": '{"pattern": "TODO"}'}}],
+    }}]}
+    message = provider_adapter._extract_message(provider_body)
+    proposed = provider_adapter._extract_tool_call_batch(message["tool_calls"])
+
+    chat_id = ChatId.new()
+    turn, msgs = completed(chat_id, 0, assistant="found one match")
+    call = ToolCall(id=ToolCallId.new(), turn_id=turn.id, exchange_sequence=0, position=0,
+                     provider_call_id=proposed[0].provider_call_id, name=proposed[0].name,
+                     arguments=proposed[0].arguments)
+    result = make_result(call, content="TODO: fix this")
+    exchange = ProviderExchange(turn_id=turn.id, sequence=0, model="m",
+                                 ending=ExchangeEnding.TOOL_CALL_BATCH,
+                                 assistant_content="checking")
+    snapshot = build_snapshot(chat_id, [(turn, msgs)], exchanges=[exchange],
+                               tool_calls=[call], tool_results=[result])
+
+    plan = wire.build_request_plan(empty_context(), None, snapshot, "fixture-model")
+
+    assistant_with_calls = next(m for m in plan.messages if m.tool_calls)
+    assert assistant_with_calls.tool_calls[0].arguments == '{"pattern": "TODO"}'
+    assert assistant_with_calls.tool_calls[0].name == "grep"
 
 
 # --- module boundary: no network, no SQLite, no config ----------------------

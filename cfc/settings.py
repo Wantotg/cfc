@@ -5,9 +5,14 @@ database target.
 Everything here is local, structural validation — URL shape, non-empty
 strings, path shape, the protected-target refusal below. Nothing here opens
 a socket, opens a database, or creates a directory; "valid" means "usable if
-cfc tried", not "reachable right now". Optional settings (vault, embeddings,
-file tools) are `diagnostics.py`'s job, not this module's — this module only
-raises on the settings 2.0 cannot run without.
+cfc tried", not "reachable right now". Every optional setting (vault,
+display names, chat export, the model catalogue, file tools) is validated
+here too, into its own bounded-unavailable-reason value — `diagnostics.py`
+only translates that settings truth into a `Row`, never re-validates it.
+Embeddings remain `diagnostics.py`'s own check: nothing downstream of this
+module currently consumes an embedding endpoint the way `conversation_service`
+consumes `FileToolSettings`. This module only raises on the settings 2.0
+cannot run without.
 """
 from __future__ import annotations
 
@@ -305,15 +310,17 @@ def build_export_settings(snapshot) -> ExportSettings:
 
 @dataclass(frozen=True)
 class ModelCatalogueEntry:
-    """One `MODELS` record's fields the 2.0 picker consumes: an exact
-    non-blank provider id, whether it is chat-selectable, and an optional
-    positive context limit. Deliberately narrow — this loop does not read
-    `tools`, `routine`, `routine_default`, or `preset_params`; those stay
-    the flat `models.py` boundary's own concern.
+    """One `MODELS` record's fields the 2.0 picker and the Stage 6 tool
+    boundary consume: an exact non-blank provider id, whether it is
+    chat-selectable, an optional positive context limit, and whether the
+    model is declared tool-capable. Deliberately still narrow — this loop
+    does not read `routine`, `routine_default`, or `preset_params`; those
+    stay the flat `models.py` boundary's own concern.
     """
     id: str
     selectable: bool
     context_limit: int | None = None
+    tools: bool = False
 
 
 @dataclass(frozen=True)
@@ -389,9 +396,174 @@ def build_model_catalogue(snapshot) -> ModelCatalogue:
                 f"MODELS[{model_id!r}].limit must be a positive int or None, got {limit!r}"
             )
 
-        entries.append(ModelCatalogueEntry(id=model_id, selectable=selectable, context_limit=limit))
+        tools = record.get("tools", False)
+        if not isinstance(tools, bool):
+            return _malformed_catalogue(
+                f"MODELS[{model_id!r}].tools must be True/False, got {tools!r}"
+            )
+
+        entries.append(ModelCatalogueEntry(
+            id=model_id, selectable=selectable, context_limit=limit, tools=tools,
+        ))
 
     return ModelCatalogue(entries=tuple(entries))
+
+
+#: The five `TOOLS_*` fields `build_file_tool_settings` validates, in the
+#: order it validates them — named once here so a caller or test naming
+#: "every file-tool field" shares one source, the same convention
+#: `REQUIRED_PROVIDER_FIELD_NAMES`/`VAULT_CATEGORY_FIELD_NAMES` already set.
+TOOLS_FIELD_NAMES: tuple[str, ...] = (
+    "TOOLS_ENABLED", "TOOLS_ROOTS", "TOOLS_MAX_CALLS_PER_TURN",
+    "TOOLS_MAX_RESULT_CHARS", "TOOLS_MAX_TURN_RESULT_CHARS",
+)
+
+#: `config.example.py`'s own documented defaults for the three file-tool
+#: budgets — applied here when `config.py` sets none, so an existing
+#: `config.py` that predates this setting still gets a usable, bounded
+#: capability the moment `TOOLS_ENABLED`/`TOOLS_ROOTS` are turned on.
+DEFAULT_TOOLS_MAX_CALLS_PER_TURN = 25
+DEFAULT_TOOLS_MAX_RESULT_CHARS = 30_000
+DEFAULT_TOOLS_MAX_TURN_RESULT_CHARS = 120_000
+
+
+class FileToolProblem(Enum):
+    """Why `FileToolSettings` is not usable, distinguishing a well-formed
+    "just not turned on" state (`DISABLED`/`NO_ROOTS`, `diagnostics.py`'s
+    `UNAVAILABLE`) from a genuinely malformed one (`MALFORMED`,
+    `diagnostics.py`'s `ERROR`) — the same split `context.py`'s
+    `CategoryReadinessState` already draws for the vault categories.
+    """
+    DISABLED = "disabled"
+    NO_ROOTS = "no_roots"
+    MALFORMED = "malformed"
+
+
+@dataclass(frozen=True)
+class FileToolSettings:
+    """The optional read-file-tool capability's validated shape: whether it
+    is usable, the immutable roots a turn's authority resolves once from,
+    and the three bounded budgets. `usable` is true exactly when `problem`
+    is `None` — a false `TOOLS_ENABLED`, no usable `TOOLS_ROOTS`, or any
+    malformed field among `settings.TOOLS_FIELD_NAMES` withdraws only this
+    capability; it never raises and never blocks ordinary chat or startup.
+
+    Same shape-only discipline as `VaultCategorySettings`: `roots` are
+    expanded and required absolute, but never checked for existence here —
+    a root that turns out to be missing or foreign at call time is the
+    execution boundary's `unavailable` outcome, not a bootstrap error.
+    """
+    enabled: bool = False
+    roots: tuple[Path, ...] = field(default_factory=tuple)
+    max_calls_per_turn: int = DEFAULT_TOOLS_MAX_CALLS_PER_TURN
+    max_result_chars: int = DEFAULT_TOOLS_MAX_RESULT_CHARS
+    max_turn_result_chars: int = DEFAULT_TOOLS_MAX_TURN_RESULT_CHARS
+    problem: FileToolProblem | None = None
+    unavailable_reason: str | None = None
+
+    @property
+    def usable(self) -> bool:
+        return self.problem is None
+
+
+def _malformed_file_tools(detail: str) -> FileToolSettings:
+    return FileToolSettings(
+        problem=FileToolProblem.MALFORMED,
+        unavailable_reason=f"file tools are not usable: {detail}",
+    )
+
+
+def _positive_int_field(values, name: str, default: int) -> tuple[int | None, str | None]:
+    """`(value, None)` on success, `(None, detail)` on a malformed value.
+    Absent falls back to `default`; present must be a real, non-bool,
+    strictly positive int — explicit zero and negative values are malformed,
+    not "unlimited" or "off" (Work Order: "not non-positive or unbounded").
+    """
+    if name not in values:
+        return default, None
+    raw = values[name]
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None, f"{name} must be a positive integer, got {raw!r}"
+    return raw, None
+
+
+def build_file_tool_settings(snapshot) -> FileToolSettings:
+    """The optional read-file-tool capability: `TOOLS_ENABLED`,
+    `TOOLS_ROOTS`, and the three `TOOLS_MAX_*` budgets, validated together
+    into one immutable, fail-closed value. Never raises. `snapshot` is a
+    `config_loader.ConfigSnapshot`.
+
+    Every field in `TOOLS_FIELD_NAMES` is checked regardless of
+    `TOOLS_ENABLED`'s value, so a malformed budget left behind by a reader
+    who disabled the capability is still surfaced as `MALFORMED` rather than
+    silently ignored. Once every field is well-formed, a false
+    `TOOLS_ENABLED` withdraws the capability as `DISABLED`, and a true one
+    with no usable `TOOLS_ROOTS` withdraws it as `NO_ROOTS` — both leave
+    ordinary chat, Main, and startup unaffected.
+    """
+    values = snapshot.values
+
+    enabled_raw = values.get("TOOLS_ENABLED", False)
+    if not isinstance(enabled_raw, bool):
+        return _malformed_file_tools(
+            f"TOOLS_ENABLED must be True/False, got {type(enabled_raw).__name__}"
+        )
+
+    max_calls, error = _positive_int_field(
+        values, "TOOLS_MAX_CALLS_PER_TURN", DEFAULT_TOOLS_MAX_CALLS_PER_TURN)
+    if error is not None:
+        return _malformed_file_tools(error)
+    max_result, error = _positive_int_field(
+        values, "TOOLS_MAX_RESULT_CHARS", DEFAULT_TOOLS_MAX_RESULT_CHARS)
+    if error is not None:
+        return _malformed_file_tools(error)
+    max_turn_result, error = _positive_int_field(
+        values, "TOOLS_MAX_TURN_RESULT_CHARS", DEFAULT_TOOLS_MAX_TURN_RESULT_CHARS)
+    if error is not None:
+        return _malformed_file_tools(error)
+
+    roots_raw = values.get("TOOLS_ROOTS", ())
+    if not isinstance(roots_raw, (list, tuple)):
+        return _malformed_file_tools(
+            f"TOOLS_ROOTS must be a list or tuple, got {type(roots_raw).__name__}"
+        )
+
+    roots: list[Path] = []
+    for entry in roots_raw:
+        if not isinstance(entry, (str, Path)):
+            return _malformed_file_tools(
+                f"TOOLS_ROOTS entries must be strings or paths, got {type(entry).__name__}"
+            )
+        candidate = Path(entry).expanduser()
+        if not candidate.is_absolute():
+            return _malformed_file_tools(
+                f"TOOLS_ROOTS entry {str(entry)!r} must be an absolute path"
+            )
+        roots.append(candidate)
+
+    if not enabled_raw:
+        return FileToolSettings(
+            enabled=False,
+            max_calls_per_turn=max_calls, max_result_chars=max_result,
+            max_turn_result_chars=max_turn_result,
+            problem=FileToolProblem.DISABLED,
+            unavailable_reason="TOOLS_ENABLED is off",
+        )
+
+    if not roots:
+        return FileToolSettings(
+            enabled=True,
+            max_calls_per_turn=max_calls, max_result_chars=max_result,
+            max_turn_result_chars=max_turn_result,
+            problem=FileToolProblem.NO_ROOTS,
+            unavailable_reason="TOOLS_ROOTS is empty; file tools need at least one usable root",
+        )
+
+    return FileToolSettings(
+        enabled=True, roots=tuple(roots),
+        max_calls_per_turn=max_calls, max_result_chars=max_result,
+        max_turn_result_chars=max_turn_result,
+    )
 
 
 @dataclass(frozen=True)
@@ -403,6 +575,7 @@ class BootstrapSettings:
     models: ModelCatalogue
     chat_export: ExportSettings
     display_names: DisplayNameSettings
+    file_tools: FileToolSettings
 
 
 def _require_nonempty_str(values, name: str) -> str:
@@ -565,4 +738,5 @@ def build_settings(snapshot) -> BootstrapSettings:
         models=build_model_catalogue(snapshot),
         chat_export=build_export_settings(snapshot),
         display_names=build_display_name_settings(snapshot),
+        file_tools=build_file_tool_settings(snapshot),
     )

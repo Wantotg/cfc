@@ -41,6 +41,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import fcntl
+import json
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -49,6 +50,7 @@ from pathlib import Path
 
 from cfc import paths
 from cfc.conversation_types import (
+    ApprovalDecision,
     CancelledOutcome,
     Chat,
     ChatId,
@@ -58,15 +60,23 @@ from cfc.conversation_types import (
     ContextManifestEntry,
     ContextSelection,
     ConversationSnapshot,
+    ExchangeEnding,
     FailedOutcome,
     FailureEvidence,
     FailureKind,
     Message,
     MessageId,
     OpeningMessage,
+    ProposedToolCall,
+    ProviderExchange,
     ProviderProblem,
     Role,
     TimeoutPhase,
+    ToolCall,
+    ToolCallEvidence,
+    ToolCallId,
+    ToolOutcomeKind,
+    ToolResult,
     Turn,
     TurnId,
     TurnOutcome,
@@ -114,8 +124,8 @@ APPLICATION_ID = 0x63666332
 #: version-4 database takes the same `SCHEMA_TOO_OLD` refusal route — there
 #: is no migration from 4 to 5.
 #:
-#: 6 (this build): readable-vault hardening (Stage 5 loop 4). No table or
-#: column changes — the schema shape is identical to 5. What changed is the
+#: 6: readable-vault hardening (Stage 5 loop 4). No table or column
+#: changes — the schema shape is identical to 5. What changed is the
 #: *meaning* of a frozen `cfc_chat_openings` row: `cfc.context` now applies
 #: `{{user}}`/`{{AI}}` substitution to a First Message's decoded body before
 #: it is frozen (B-2.0-71), so a version-5 database may hold an opening whose
@@ -125,7 +135,23 @@ APPLICATION_ID = 0x63666332
 #: takes the same `SCHEMA_TOO_OLD` refusal route as every earlier
 #: incompatible version — export or note anything wanted from it, then let
 #: cfc create a fresh version-6 database.
-SCHEMA_VERSION = 6
+#:
+#: 7 (this build): the read-only tool lifecycle (Stage 6 loop 1). A turn's
+#: `cfc_messages` shape is unchanged by tool use — still exactly the opening
+#: user message while active, plus one closing assistant message once
+#: completed. Everything a tool-using turn's provider round trips did in
+#: between is new, additive ledger material: `cfc_provider_exchanges` (one
+#: row per request/response round trip, tool-free turns included),
+#: `cfc_tool_call_batches` (the optional literal assistant text alongside a
+#: tool-call-batch-ending exchange), `cfc_tool_calls` (one row per accepted
+#: call, the provider's exact spelling preserved verbatim), and
+#: `cfc_tool_results` (each call's exactly-one committed outcome and the
+#: exact bounded content replayed to the provider). `cfc_tool_call_evidence`
+#: is separate, deliberately body-free operational evidence for the same
+#: call — never a second copy of `cfc_tool_results.content`. A version-6
+#: database takes the same `SCHEMA_TOO_OLD` refusal route as every earlier
+#: incompatible version — there is no migration from 6 to 7.
+SCHEMA_VERSION = 7
 
 _RECOVERY_HINT = (
     "preserve anything wanted from it, then move or remove {path} so cfc "
@@ -280,12 +306,107 @@ _SCHEMA_STATEMENTS = (
         override TEXT CHECK (override IS NULL OR override IN ('dark', 'light'))
     )
     """,
+    # --- Stage 6 loop 1: the read-only tool lifecycle ledger --------------
+    # One row per provider request/response round trip within a turn's
+    # continuation loop, tool-free turns included (Concept.md: "A tool-free
+    # turn also records its one provider exchange"). `sequence` is 0-based
+    # and strictly increasing per turn — enforced by the pure `provider_wire`
+    # converter on read, the same discipline `cfc_messages.turn_position`
+    # already gets from `provider_wire`'s own canonical-order check.
+    """
+    CREATE TABLE cfc_provider_exchanges (
+        chat_id TEXT NOT NULL REFERENCES cfc_chats(id),
+        turn_id TEXT NOT NULL REFERENCES cfc_turns(id),
+        sequence INTEGER NOT NULL,
+        model TEXT NOT NULL,
+        ending TEXT NOT NULL CHECK (ending IN
+            ('completion', 'tool_call_batch', 'failure', 'cancelled')),
+        usage_input INTEGER,
+        usage_output INTEGER,
+        usage_total INTEGER,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (turn_id, sequence)
+    )
+    """,
+    # One row per tool-call-batch-ending exchange, holding only the optional
+    # literal assistant text alongside it — a `COMPLETION` exchange's own
+    # final text is `cfc_messages`' closing row, never duplicated here.
+    """
+    CREATE TABLE cfc_tool_call_batches (
+        turn_id TEXT NOT NULL,
+        exchange_sequence INTEGER NOT NULL,
+        assistant_content TEXT,
+        PRIMARY KEY (turn_id, exchange_sequence),
+        FOREIGN KEY (turn_id, exchange_sequence)
+            REFERENCES cfc_provider_exchanges (turn_id, sequence)
+    )
+    """,
+    """
+    CREATE TABLE cfc_tool_calls (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES cfc_chats(id),
+        turn_id TEXT NOT NULL,
+        exchange_sequence INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        provider_call_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        arguments TEXT NOT NULL,
+        FOREIGN KEY (turn_id, exchange_sequence)
+            REFERENCES cfc_tool_call_batches (turn_id, exchange_sequence),
+        UNIQUE (turn_id, exchange_sequence, position),
+        UNIQUE (turn_id, provider_call_id)
+    )
+    """,
+    # Exactly one result per accepted call (`tool_call_id` is the primary
+    # key, not merely unique-indexed) — `record_tool_result` enforces the
+    # "preserve a result whose commit already won" rule on top of this.
+    # `decision`/`decided_at` are set together or not at all: a call whose
+    # result was never reached through approval (unknown/unavailable tool,
+    # or one cut off by an exhausted budget) leaves both NULL.
+    """
+    CREATE TABLE cfc_tool_results (
+        tool_call_id TEXT PRIMARY KEY REFERENCES cfc_tool_calls(id),
+        kind TEXT NOT NULL CHECK (kind IN
+            ('success', 'refusal', 'unavailable', 'cancellation', 'failure')),
+        reason TEXT NOT NULL,
+        content TEXT NOT NULL,
+        decision TEXT CHECK (decision IN ('approve', 'refuse')),
+        decided_at TEXT,
+        truncated INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0, 1)),
+        created_at TEXT NOT NULL,
+        CHECK ((decision IS NULL) = (decided_at IS NULL))
+    )
+    """,
+    # Deliberately separate from cfc_tool_results and deliberately body-free
+    # — no raw file text or provider response body, ever (Concept.md:
+    # "Diagnostic duplication becomes a second leak"). `counts` is a small
+    # JSON object of named integer counts; its exact keys are each tool
+    # definition's own concern, never queried by name here.
+    """
+    CREATE TABLE cfc_tool_call_evidence (
+        tool_call_id TEXT PRIMARY KEY REFERENCES cfc_tool_calls(id),
+        definition_name TEXT NOT NULL,
+        root TEXT,
+        canonical_target TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        outcome_kind TEXT NOT NULL CHECK (outcome_kind IN
+            ('success', 'refusal', 'unavailable', 'cancellation', 'failure')),
+        reason TEXT NOT NULL,
+        counts TEXT NOT NULL DEFAULT '{}',
+        truncated INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0, 1)),
+        result_hash TEXT,
+        character_count INTEGER NOT NULL
+    )
+    """,
     "CREATE INDEX idx_cfc_turns_chat ON cfc_turns(chat_id)",
     "CREATE INDEX idx_cfc_messages_chat ON cfc_messages(chat_id)",
     "CREATE INDEX idx_cfc_messages_turn ON cfc_messages(turn_id)",
     "CREATE INDEX idx_cfc_chat_traits_chat ON cfc_chat_traits(chat_id)",
     "CREATE INDEX idx_cfc_chat_attachments_chat ON cfc_chat_attachments(chat_id)",
     "CREATE INDEX idx_cfc_turn_context_turn ON cfc_turn_context(turn_id)",
+    "CREATE INDEX idx_cfc_provider_exchanges_chat ON cfc_provider_exchanges(chat_id)",
+    "CREATE INDEX idx_cfc_tool_calls_chat ON cfc_tool_calls(chat_id)",
     "INSERT INTO cfc_appearance (id, override) VALUES (1, NULL)",
 )
 
@@ -386,6 +507,26 @@ class ConflictingFinalisation(ConversationStoreError):
         self.turn_id = turn_id
         super().__init__(
             f"turn {turn_id}: a different terminal outcome is already stored"
+        )
+
+
+class UnknownToolCall(ConversationStoreError):
+    def __init__(self, tool_call_id: ToolCallId):
+        self.tool_call_id = tool_call_id
+        super().__init__(f"no stored tool call with id {tool_call_id}")
+
+
+class ConflictingToolResult(ConversationStoreError):
+    """`tool_call_id` already carries a different result than the one just
+    submitted. The stored result is left exactly as it was — the same
+    "preserve a result whose commit already won" discipline
+    `ConflictingFinalisation` already applies to a turn's own outcome.
+    """
+
+    def __init__(self, tool_call_id: ToolCallId):
+        self.tool_call_id = tool_call_id
+        super().__init__(
+            f"tool call {tool_call_id}: a different result is already stored"
         )
 
 
@@ -634,6 +775,46 @@ def _open_existing(path: Path, fd: int) -> sqlite3.Connection:
     return conn
 
 
+# --- opening: recovery of an earlier owner's unresolved tool calls ---------
+
+def _recover_interrupted_tool_calls(conn: sqlite3.Connection) -> None:
+    """Every accepted tool call still without a result belonged to a
+    process that never finished resolving it — whether it died while
+    approval was pending or partway through execution; both collapse to the
+    same observable "unresolved" state, since there is no separate durable
+    record of a decision made but not yet executed (`ToolResult` is the one
+    combined record of decision-plus-outcome). Runs before `_recover_
+    interrupted_turns` so a still-active turn's unresolved calls get their
+    own interruption evidence before the turn itself is marked failed.
+
+    Idempotent: a later, uneventful reopen finds no unresolved calls left
+    and repairs nothing. A completed result already stored is never
+    touched — this only inserts a `cfc_tool_results` row where none exists.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = conn.execute(
+            "SELECT tc.id FROM cfc_tool_calls tc "
+            "LEFT JOIN cfc_tool_results tr ON tr.tool_call_id = tc.id "
+            "WHERE tr.tool_call_id IS NULL "
+            "ORDER BY tc.turn_id, tc.exchange_sequence, tc.position"
+        ).fetchall()
+        if rows:
+            now = _dt_to_text(utc_now())
+            reason = "cfc restarted while this call was unresolved"
+            conn.executemany(
+                "INSERT INTO cfc_tool_results "
+                "(tool_call_id, kind, reason, content, decision, decided_at, "
+                "truncated, created_at) "
+                "VALUES (?, 'cancellation', ?, '', NULL, NULL, 0, ?)",
+                [(row[0], reason, now) for row in rows],
+            )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
 # --- opening: recovery of an earlier owner's active turns ------------------
 
 def _recover_interrupted_turns(conn: sqlite3.Connection) -> None:
@@ -773,6 +954,45 @@ def _row_to_turn(conn: sqlite3.Connection, row) -> Turn:
         finished_at=_text_to_dt(finished_at) if finished_at is not None else None,
         outcome=outcome,
         context_manifest=_load_turn_context(conn, id_),
+    )
+
+
+# --- tool ledger: row <-> record translation (Stage 6 loop 1) -------------
+
+def _usage_columns(usage: Usage | None) -> tuple[int | None, int | None, int | None]:
+    if usage is None:
+        return None, None, None
+    return usage.input_tokens, usage.output_tokens, usage.total_tokens
+
+
+def _row_to_exchange(row) -> ProviderExchange:
+    (turn_id, sequence, model, ending,
+     usage_input, usage_output, usage_total, assistant_content) = row
+    usage = None
+    if usage_input is not None or usage_output is not None or usage_total is not None:
+        usage = Usage(input_tokens=usage_input, output_tokens=usage_output,
+                       total_tokens=usage_total)
+    return ProviderExchange(
+        turn_id=TurnId(turn_id), sequence=sequence, model=model,
+        ending=ExchangeEnding(ending), assistant_content=assistant_content, usage=usage,
+    )
+
+
+def _row_to_tool_call(row) -> ToolCall:
+    id_, turn_id, exchange_sequence, position, provider_call_id, name, arguments = row
+    return ToolCall(
+        id=ToolCallId(id_), turn_id=TurnId(turn_id), exchange_sequence=exchange_sequence,
+        position=position, provider_call_id=provider_call_id, name=name, arguments=arguments,
+    )
+
+
+def _row_to_tool_result(tool_call_id: ToolCallId, row) -> ToolResult:
+    kind, reason, content, decision, decided_at, truncated = row
+    return ToolResult(
+        tool_call_id=tool_call_id, kind=ToolOutcomeKind(kind), reason=reason, content=content,
+        decision=ApprovalDecision(decision) if decision is not None else None,
+        decided_at=_text_to_dt(decided_at) if decided_at is not None else None,
+        truncated=bool(truncated),
     )
 
 
@@ -1210,10 +1430,39 @@ class ConversationStore:
             "WHERE m.chat_id = ? ORDER BY t.position ASC, m.turn_position ASC",
             (chat_id.value,),
         ).fetchall()
+        exchange_rows = self._conn.execute(
+            "SELECT pe.turn_id, pe.sequence, pe.model, pe.ending, "
+            "pe.usage_input, pe.usage_output, pe.usage_total, b.assistant_content "
+            "FROM cfc_provider_exchanges pe JOIN cfc_turns t ON t.id = pe.turn_id "
+            "LEFT JOIN cfc_tool_call_batches b "
+            "ON b.turn_id = pe.turn_id AND b.exchange_sequence = pe.sequence "
+            "WHERE pe.chat_id = ? ORDER BY t.position ASC, pe.sequence ASC",
+            (chat_id.value,),
+        ).fetchall()
+        call_rows = self._conn.execute(
+            "SELECT tc.id, tc.turn_id, tc.exchange_sequence, tc.position, "
+            "tc.provider_call_id, tc.name, tc.arguments "
+            "FROM cfc_tool_calls tc JOIN cfc_turns t ON t.id = tc.turn_id "
+            "WHERE tc.chat_id = ? "
+            "ORDER BY t.position ASC, tc.exchange_sequence ASC, tc.position ASC",
+            (chat_id.value,),
+        ).fetchall()
+        result_rows = self._conn.execute(
+            "SELECT tr.tool_call_id, tr.kind, tr.reason, tr.content, tr.decision, "
+            "tr.decided_at, tr.truncated "
+            "FROM cfc_tool_results tr JOIN cfc_tool_calls tc ON tc.id = tr.tool_call_id "
+            "WHERE tc.chat_id = ?",
+            (chat_id.value,),
+        ).fetchall()
         return ConversationSnapshot(
             chat_id=chat_id,
             turns=tuple(_row_to_turn(self._conn, row) for row in turn_rows),
             messages=tuple(_row_to_message(row) for row in message_rows),
+            exchanges=tuple(_row_to_exchange(row) for row in exchange_rows),
+            tool_calls=tuple(_row_to_tool_call(row) for row in call_rows),
+            tool_results=tuple(
+                _row_to_tool_result(ToolCallId(row[0]), row[1:]) for row in result_rows
+            ),
         )
 
     def get_turn(self, turn_id: TurnId) -> Turn:
@@ -1365,6 +1614,224 @@ class ConversationStore:
             raise
         return dataclasses.replace(current, finished_at=finished_at, outcome=outcome)
 
+    # -- the tool ledger: persist-before-approval, one result per call
+    # -- (Stage 6 loop 1) --------------------------------------------------
+
+    def _next_exchange_sequence(self, conn: sqlite3.Connection, turn_id: TurnId) -> int:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(sequence), -1) + 1 FROM cfc_provider_exchanges "
+            "WHERE turn_id = ?",
+            (turn_id.value,),
+        ).fetchone()
+        return row[0]
+
+    def persist_tool_call_batch(
+        self, turn_id: TurnId, model: str, proposed_calls: tuple[ProposedToolCall, ...],
+        assistant_content: str | None = None, usage: Usage | None = None,
+    ) -> tuple[ProviderExchange, tuple[ToolCall, ...]]:
+        """Persists one provider round trip that proposed tool calls: one
+        `cfc_provider_exchanges` row, one `cfc_tool_call_batches` row, and
+        one `cfc_tool_calls` row per proposed call — atomically, and before
+        any `ApprovalPort` decision is asked for, so every proposed call is
+        durable and inspectable the moment this returns (Concept.md: "A
+        pending call is therefore inspectable and recoverable even if the
+        consumer or process disappears while the question is open").
+
+        `proposed_calls` must be non-empty; each call's cfc-assigned
+        `ToolCallId` and 0-based batch `position` are new here — the
+        provider's own `provider_call_id`/`name`/`arguments` are preserved
+        verbatim from `proposed_calls`, unvalidated a second time (the
+        caller already validated the batch through `conversation_types.
+        ToolCallBatch`).
+        """
+        if not proposed_calls:
+            raise ValueError("a tool-call batch must contain at least one call")
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT chat_id FROM cfc_turns WHERE id = ?", (turn_id.value,)
+            ).fetchone()
+            if row is None:
+                raise UnknownTurn(turn_id)
+            chat_id = row[0]
+            sequence = self._next_exchange_sequence(conn, turn_id)
+            now = utc_now()
+            usage_input, usage_output, usage_total = _usage_columns(usage)
+            conn.execute(
+                "INSERT INTO cfc_provider_exchanges "
+                "(chat_id, turn_id, sequence, model, ending, "
+                "usage_input, usage_output, usage_total, created_at) "
+                "VALUES (?, ?, ?, ?, 'tool_call_batch', ?, ?, ?, ?)",
+                (chat_id, turn_id.value, sequence, model,
+                 usage_input, usage_output, usage_total, _dt_to_text(now)),
+            )
+            conn.execute(
+                "INSERT INTO cfc_tool_call_batches (turn_id, exchange_sequence, assistant_content) "
+                "VALUES (?, ?, ?)",
+                (turn_id.value, sequence, assistant_content),
+            )
+            calls = []
+            for position, proposed in enumerate(proposed_calls):
+                call_id = ToolCallId.new()
+                conn.execute(
+                    "INSERT INTO cfc_tool_calls "
+                    "(id, chat_id, turn_id, exchange_sequence, position, "
+                    "provider_call_id, name, arguments) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (call_id.value, chat_id, turn_id.value, sequence, position,
+                     proposed.provider_call_id, proposed.name, proposed.arguments),
+                )
+                calls.append(ToolCall(
+                    id=call_id, turn_id=turn_id, exchange_sequence=sequence, position=position,
+                    provider_call_id=proposed.provider_call_id, name=proposed.name,
+                    arguments=proposed.arguments,
+                ))
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        exchange = ProviderExchange(
+            turn_id=turn_id, sequence=sequence, model=model,
+            ending=ExchangeEnding.TOOL_CALL_BATCH,
+            assistant_content=assistant_content, usage=usage,
+        )
+        return exchange, tuple(calls)
+
+    def record_exchange(
+        self, turn_id: TurnId, model: str, ending: ExchangeEnding, usage: Usage | None = None,
+    ) -> ProviderExchange:
+        """Persists one tool-free provider exchange record: a `COMPLETION`,
+        `FAILURE`, or `CANCELLED` ending with no proposed calls. A
+        `TOOL_CALL_BATCH` ending is never recorded through this method —
+        `persist_tool_call_batch` persists its exchange row and calls
+        together, atomically. Never touches `cfc_messages`: a `COMPLETION`
+        exchange's own final assistant text is `complete_turn`'s concern,
+        recorded once there, never duplicated here.
+        """
+        if ending is ExchangeEnding.TOOL_CALL_BATCH:
+            raise ValueError(
+                "record_exchange does not persist a tool-call-batch ending; "
+                "use persist_tool_call_batch"
+            )
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT chat_id FROM cfc_turns WHERE id = ?", (turn_id.value,)
+            ).fetchone()
+            if row is None:
+                raise UnknownTurn(turn_id)
+            chat_id = row[0]
+            sequence = self._next_exchange_sequence(conn, turn_id)
+            usage_input, usage_output, usage_total = _usage_columns(usage)
+            conn.execute(
+                "INSERT INTO cfc_provider_exchanges "
+                "(chat_id, turn_id, sequence, model, ending, "
+                "usage_input, usage_output, usage_total, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (chat_id, turn_id.value, sequence, model, ending.value,
+                 usage_input, usage_output, usage_total, _dt_to_text(utc_now())),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return ProviderExchange(turn_id=turn_id, sequence=sequence, model=model,
+                                 ending=ending, usage=usage)
+
+    def record_tool_result(
+        self, tool_call_id: ToolCallId, kind: ToolOutcomeKind, reason: str, content: str,
+        decision: ApprovalDecision | None = None, decided_at: datetime.datetime | None = None,
+        truncated: bool = False,
+    ) -> ToolResult:
+        """Persists `tool_call_id`'s one committed outcome. Idempotent under
+        an identical resubmission — the same race-safe shape `_finalize`
+        already uses for a turn's own outcome: a result whose commit
+        already won is preserved unchanged, and a genuinely different
+        resubmission raises `ConflictingToolResult` rather than overwriting
+        it (Work Order: "preserve a result whose commit already won").
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            call_row = conn.execute(
+                "SELECT 1 FROM cfc_tool_calls WHERE id = ?", (tool_call_id.value,)
+            ).fetchone()
+            if call_row is None:
+                raise UnknownToolCall(tool_call_id)
+            existing_row = conn.execute(
+                "SELECT kind, reason, content, decision, decided_at, truncated "
+                "FROM cfc_tool_results WHERE tool_call_id = ?",
+                (tool_call_id.value,),
+            ).fetchone()
+            if existing_row is not None:
+                conn.rollback()
+                existing = _row_to_tool_result(tool_call_id, existing_row)
+                incoming = ToolResult(
+                    tool_call_id=tool_call_id, kind=kind, reason=reason, content=content,
+                    decision=decision, decided_at=decided_at, truncated=truncated,
+                )
+                if existing == incoming:
+                    return existing
+                raise ConflictingToolResult(tool_call_id)
+            conn.execute(
+                "INSERT INTO cfc_tool_results "
+                "(tool_call_id, kind, reason, content, decision, decided_at, "
+                "truncated, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (tool_call_id.value, kind.value, reason, content,
+                 decision.value if decision is not None else None,
+                 _dt_to_text(decided_at) if decided_at is not None else None,
+                 1 if truncated else 0, _dt_to_text(utc_now())),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return ToolResult(tool_call_id=tool_call_id, kind=kind, reason=reason, content=content,
+                           decision=decision, decided_at=decided_at, truncated=truncated)
+
+    def record_tool_call_evidence(self, evidence: ToolCallEvidence) -> None:
+        """Persists `evidence` as `cfc_tool_call_evidence`'s one row for its
+        call — separate from `cfc_tool_results`, and never a second copy of
+        its `content`. Refuses a second call for the same `tool_call_id`
+        (`ConflictingToolResult` reused rather than a bespoke exception:
+        the invariant is identical — one committed record per call, ever).
+        """
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            call_row = conn.execute(
+                "SELECT 1 FROM cfc_tool_calls WHERE id = ?", (evidence.tool_call_id.value,)
+            ).fetchone()
+            if call_row is None:
+                raise UnknownToolCall(evidence.tool_call_id)
+            existing = conn.execute(
+                "SELECT 1 FROM cfc_tool_call_evidence WHERE tool_call_id = ?",
+                (evidence.tool_call_id.value,),
+            ).fetchone()
+            if existing is not None:
+                conn.rollback()
+                raise ConflictingToolResult(evidence.tool_call_id)
+            conn.execute(
+                "INSERT INTO cfc_tool_call_evidence "
+                "(tool_call_id, definition_name, root, canonical_target, "
+                "started_at, finished_at, outcome_kind, reason, counts, "
+                "truncated, result_hash, character_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (evidence.tool_call_id.value, evidence.definition_name, evidence.root,
+                 evidence.canonical_target, _dt_to_text(evidence.started_at),
+                 _dt_to_text(evidence.finished_at), evidence.outcome_kind.value,
+                 evidence.reason, json.dumps(dict(evidence.counts), sort_keys=True),
+                 1 if evidence.truncated else 0, evidence.result_hash,
+                 evidence.character_count),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
 
 def open_store(path: Path | str) -> ConversationStore:
     """Open the 2.0 conversation ledger at `path`, becoming its owner for
@@ -1377,8 +1844,10 @@ def open_store(path: Path | str) -> ConversationStore:
     cfc process already owns it, or `DatabaseIncompatible` if an existing
     target is corrupt, empty/arbitrary, belongs to another application, or
     is an unsupported schema version. An absent target becomes a fresh,
-    current database. Any turn left active by an earlier owner is recovered
-    to a typed interrupted failure before this call returns.
+    current database. Any accepted tool call an earlier owner left without
+    a result is repaired to a typed cancellation first, then any turn left
+    active by an earlier owner is recovered to a typed interrupted failure,
+    before this call returns.
     """
     path = Path(path)
     reason = paths.usable_target_reason(path)
@@ -1392,6 +1861,7 @@ def open_store(path: Path | str) -> ConversationStore:
         _revalidate_locked_target(path, fd)
         conn = _initialise_fresh(path) if created_fresh else _open_existing(path, fd)
         try:
+            _recover_interrupted_tool_calls(conn)
             _recover_interrupted_turns(conn)
         except BaseException:
             conn.close()

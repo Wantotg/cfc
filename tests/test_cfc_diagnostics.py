@@ -410,18 +410,38 @@ def test_embeddings_invalid_url(tmp_path):
     assert by_name(rows, "embeddings").state == diagnostics.State.ERROR
 
 
-# --- file tools: not configured / not built ----------------------------------
+# --- file tools: reports cfc.settings.build_file_tool_settings's own truth --
 
-def test_file_tools_not_configured_when_disabled(tmp_path):
+def test_file_tools_unavailable_when_disabled(tmp_path):
     path = write_config(tmp_path, VALID_BODY + "TOOLS_ENABLED = False\n")
     rows = diagnostics.diagnose(path)
     assert by_name(rows, "file tools").state == diagnostics.State.UNAVAILABLE
 
 
-def test_file_tools_not_built_when_enabled(tmp_path):
+def test_file_tools_unavailable_when_enabled_with_no_roots(tmp_path):
     path = write_config(tmp_path, VALID_BODY + "TOOLS_ENABLED = True\n")
     rows = diagnostics.diagnose(path)
-    assert by_name(rows, "file tools").state == diagnostics.State.NOT_BUILT
+    assert by_name(rows, "file tools").state == diagnostics.State.UNAVAILABLE
+
+
+def test_file_tools_error_when_malformed(tmp_path):
+    path = write_config(tmp_path, VALID_BODY + "TOOLS_ENABLED = 'yes'\n")
+    rows = diagnostics.diagnose(path)
+    row = by_name(rows, "file tools")
+    assert row.state == diagnostics.State.ERROR
+    assert row.next_step is not None
+
+
+def test_file_tools_ready_when_usable(tmp_path):
+    root = tmp_path / "roots"
+    path = write_config(
+        tmp_path,
+        VALID_BODY + f"TOOLS_ENABLED = True\nTOOLS_ROOTS = ({str(root)!r},)\n",
+    )
+    rows = diagnostics.diagnose(path)
+    row = by_name(rows, "file tools")
+    assert row.state == diagnostics.State.READY
+    assert "1" in row.detail
 
 
 # --- Stage 5 vault category rows: shared readiness with Context ------------

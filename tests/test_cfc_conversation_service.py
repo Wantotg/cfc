@@ -21,23 +21,39 @@ from pathlib import Path
 import pytest
 
 from cfc import chat_export
+from cfc import config_loader
 from cfc import context as context_mod
 from cfc import conversation_service as service_mod
 from cfc import conversation_store
 from cfc import provider_wire
+from cfc import settings as settings_mod
+from cfc import tool_registry
 from cfc.conversation_types import (
+    ApprovalDecision,
     Cancellation,
     CancelledOutcome,
     Completion,
+    CompletedOutcome,
     ContextCategory,
+    ExchangeEnding,
     Failure,
     FailureEvidence,
     FailureKind,
+    FailedOutcome,
+    ProposedToolCall,
     Role,
+    ToolCallBatch,
+    ToolOutcomeKind,
     TurnState,
     Usage,
 )
-from cfc.settings import DisplayNameSettings, VaultCategorySettings, VaultSettings
+from cfc.settings import (
+    DisplayNameSettings,
+    ModelCatalogue,
+    ModelCatalogueEntry,
+    VaultCategorySettings,
+    VaultSettings,
+)
 
 
 def run(coro):
@@ -178,6 +194,108 @@ def db_path(tmp_path: Path) -> Path:
 
 def open_service(tmp_path: Path) -> service_mod.ConversationService:
     return service_mod.open_service(db_path(tmp_path), empty_vault())
+
+
+# --- Stage 6 loop 1: the read-only tool lifecycle fixtures ------------------
+
+class ScriptedResponder:
+    """Returns a different result on each successive call — the
+    continuation-loop twin of `FixedResponder`, needed once a turn can span
+    more than one provider round trip."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls: list = []
+
+    async def respond(self, plan):
+        self.calls.append(plan)
+        return self._results.pop(0)
+
+
+class AutoApprovePort:
+    def __init__(self):
+        self.requests: list = []
+
+    async def decide(self, pending):
+        self.requests.append(pending)
+        return ApprovalDecision.APPROVE
+
+
+class AutoRefusePort:
+    def __init__(self):
+        self.requests: list = []
+
+    async def decide(self, pending):
+        self.requests.append(pending)
+        return ApprovalDecision.REFUSE
+
+
+class ScriptedApprovalPort:
+    def __init__(self, decisions):
+        self._decisions = list(decisions)
+        self.requests: list = []
+
+    async def decide(self, pending):
+        self.requests.append(pending)
+        return self._decisions.pop(0)
+
+
+class CancelOnNthApprovalPort:
+    """Raises `CancelledError` from the Nth `decide` call (1-based),
+    approving every call before it — the deterministic seam for
+    "cancellation delivered while awaiting approval"."""
+
+    def __init__(self, n: int):
+        self._n = n
+        self.count = 0
+
+    async def decide(self, pending):
+        self.count += 1
+        if self.count == self._n:
+            raise asyncio.CancelledError()
+        return ApprovalDecision.APPROVE
+
+
+def usable_file_tools(tmp_path: Path, **overrides) -> tuple[settings_mod.FileToolSettings, Path]:
+    """A real `FileToolSettings` built through the real producer
+    (`build_file_tool_settings`), plus the root directory it points at —
+    same discipline `test_cfc_tool_registry.py` already follows, since
+    `usable`/`problem` is an invariant that producer enforces, not the
+    dataclass constructor."""
+    root = tmp_path / "tool_root"
+    root.mkdir(exist_ok=True)
+    body = (
+        "API_BASE = 'https://provider.invalid/v1'\nAPI_KEY = 'k'\nMODEL = 'fixture-model'\n"
+        "TOOLS_ENABLED = True\n"
+        f"TOOLS_ROOTS = ({str(root)!r},)\n"
+    )
+    for key, value in overrides.items():
+        body += f"{key} = {value!r}\n"
+    config_path = tmp_path / "tool_config.py"
+    config_path.write_text(body, encoding="utf-8")
+    snapshot = config_loader.load_snapshot(config_path)
+    return settings_mod.build_file_tool_settings(snapshot), root
+
+
+def tool_capable_models(model_id: str = "fixture-model") -> ModelCatalogue:
+    return ModelCatalogue(entries=(ModelCatalogueEntry(id=model_id, selectable=True, tools=True),))
+
+
+def tool_service(
+    tmp_path: Path, approval_port, *, models=None, registry=None, **file_tool_overrides,
+) -> tuple[service_mod.ConversationService, Path]:
+    file_tools, root = usable_file_tools(tmp_path, **file_tool_overrides)
+    service = service_mod.ConversationService(
+        conversation_store.open_store(db_path(tmp_path)), empty_vault(),
+        file_tools=file_tools, models=models if models is not None else tool_capable_models(),
+        registry=registry, approval_port=approval_port,
+    )
+    return service, root
+
+
+def read_file_call(root: Path, name: str, provider_call_id: str = "call_1") -> ProposedToolCall:
+    return ProposedToolCall(provider_call_id=provider_call_id, name="read_file",
+                             arguments=f'{{"path": "{root / name}"}}')
 
 
 # --- chats: distinct identities, listable, reopenable -----------------
@@ -820,6 +938,431 @@ def test_a_store_failure_while_ending_a_cancelled_task_does_not_mask_the_cancell
                 await task
 
         run(scenario())  # must not raise sqlite3.Error or TurnEndingFailed instead
+    finally:
+        service.close()
+
+
+# --- Stage 6 loop 1: the read-only tool lifecycle ---------------------------
+
+def test_schemas_offered_when_usable_and_model_tool_capable(tmp_path):
+    service, root = tool_service(tmp_path, AutoApprovePort())
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        responder = ScriptedResponder([Completion(content="hi")])
+        run(service.send_turn(chat.id, "q", responder))
+        assert len(responder.calls[0].schemas) == 3
+    finally:
+        service.close()
+
+
+def test_no_schemas_offered_when_model_is_not_tool_capable(tmp_path):
+    plain_models = ModelCatalogue(entries=(ModelCatalogueEntry(id="fixture-model", selectable=True),))
+    service, root = tool_service(tmp_path, AutoApprovePort(), models=plain_models)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        responder = ScriptedResponder([Completion(content="hi")])
+        run(service.send_turn(chat.id, "q", responder))
+        assert responder.calls[0].schemas == ()
+    finally:
+        service.close()
+
+
+def test_no_schemas_offered_when_file_tools_unusable(tmp_path):
+    service = open_service(tmp_path)  # default: no file_tools passed at all
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        responder = ScriptedResponder([Completion(content="hi")])
+        run(service.send_turn(chat.id, "q", responder))
+        assert responder.calls[0].schemas == ()
+    finally:
+        service.close()
+
+
+def test_an_approved_call_executes_and_the_turn_completes(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("hello\n")
+        batch = ToolCallBatch(calls=(read_file_call(root, "a.txt"),), assistant_content="checking")
+        responder = ScriptedResponder([batch, Completion(content="it says hello")])
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, CompletedOutcome)
+        snapshot = service.snapshot(chat.id)
+        assert len(snapshot.tool_calls) == 1
+        assert snapshot.tool_results[0].kind is ToolOutcomeKind.SUCCESS
+        assert len(port.requests) == 1
+        assert port.requests[0].name == "read_file"
+        assert port.requests[0].arguments == {"path": str(root / "a.txt")}
+    finally:
+        service.close()
+
+
+def test_a_refused_call_does_not_suppress_a_later_call_in_the_same_batch(tmp_path):
+    port = ScriptedApprovalPort([ApprovalDecision.REFUSE, ApprovalDecision.APPROVE])
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("x\n")
+        (root / "b.txt").write_text("y\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"), read_file_call(root, "b.txt", "call_2"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        results = {r.tool_call_id: r for r in service.snapshot(chat.id).tool_results}
+        kinds = sorted(r.kind.value for r in results.values())
+        assert kinds == ["refusal", "success"]
+    finally:
+        service.close()
+
+
+def test_unknown_tool_name_is_unavailable_without_asking_approval(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        batch = ToolCallBatch(calls=(
+            ProposedToolCall(provider_call_id="call_1", name="write_file", arguments="{}"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        result = service.snapshot(chat.id).tool_results[0]
+        assert result.kind is ToolOutcomeKind.UNAVAILABLE
+        assert port.requests == []  # never reached approval
+    finally:
+        service.close()
+
+
+def test_invalid_arguments_is_a_failure_without_asking_approval(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        batch = ToolCallBatch(calls=(
+            ProposedToolCall(provider_call_id="call_1", name="read_file", arguments="not json"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        result = service.snapshot(chat.id).tool_results[0]
+        assert result.kind is ToolOutcomeKind.FAILURE
+        assert port.requests == []
+    finally:
+        service.close()
+
+
+def test_sequential_multiple_calls_execute_in_provider_order(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        (root / "b.txt").write_text("B\n")
+        (root / "c.txt").write_text("C\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"),
+            read_file_call(root, "b.txt", "call_2"),
+            read_file_call(root, "c.txt", "call_3"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        assert [r.name for r in port.requests] == ["read_file", "read_file", "read_file"]
+        calls_by_id = {c.provider_call_id: c for c in service.snapshot(chat.id).tool_calls}
+        assert [calls_by_id[cid].position for cid in ("call_1", "call_2", "call_3")] == [0, 1, 2]
+    finally:
+        service.close()
+
+
+def test_call_budget_exhaustion_refuses_remaining_and_withdraws_schemas(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port, TOOLS_MAX_CALLS_PER_TURN=1)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        (root / "b.txt").write_text("B\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"), read_file_call(root, "b.txt", "call_2"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        results = {r.tool_call_id: r for r in service.snapshot(chat.id).tool_results}
+        kinds = [r.kind for r in results.values()]
+        assert kinds.count(ToolOutcomeKind.SUCCESS) == 1
+        assert kinds.count(ToolOutcomeKind.REFUSAL) == 1
+        assert responder.calls[1].schemas == ()  # withdrawn for the continuation
+    finally:
+        service.close()
+
+
+def test_output_budget_exhaustion_refuses_remaining_calls(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port, TOOLS_MAX_TURN_RESULT_CHARS=1)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("hello world\n")
+        (root / "b.txt").write_text("second file\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"), read_file_call(root, "b.txt", "call_2"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        results = list(service.snapshot(chat.id).tool_results)
+        assert any(r.kind is ToolOutcomeKind.REFUSAL for r in results)
+        assert responder.calls[1].schemas == ()
+    finally:
+        service.close()
+
+
+def test_unsolicited_tool_call_after_schemas_withdrawn_fails_the_turn(tmp_path):
+    """Once tools are withdrawn (budget spent), a further tool-call
+    response is malformed rather than starting an endless tool loop."""
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port, TOOLS_MAX_CALLS_PER_TURN=1)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        (root / "b.txt").write_text("B\n")
+        first_batch = ToolCallBatch(calls=(read_file_call(root, "a.txt", "call_1"),))
+        second_batch = ToolCallBatch(calls=(read_file_call(root, "b.txt", "call_2"),))
+        responder = ScriptedResponder([first_batch, second_batch])
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, FailedOutcome)
+        assert turn.outcome.evidence.kind is FailureKind.RESPONDER
+    finally:
+        service.close()
+
+
+def test_unsolicited_tool_call_when_never_offered_fails_the_turn(tmp_path):
+    service = open_service(tmp_path)  # no file tools configured at all
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        batch = ToolCallBatch(calls=(
+            ProposedToolCall(provider_call_id="call_1", name="read_file", arguments="{}"),
+        ))
+        responder = ScriptedResponder([batch])
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, FailedOutcome)
+    finally:
+        service.close()
+
+
+def test_cancellation_during_approval_preserves_the_earlier_committed_result(tmp_path):
+    port = CancelOnNthApprovalPort(2)
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        (root / "b.txt").write_text("B\n")
+        (root / "c.txt").write_text("C\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"),
+            read_file_call(root, "b.txt", "call_2"),
+            read_file_call(root, "c.txt", "call_3"),
+        ))
+        responder = ScriptedResponder([batch])
+
+        with pytest.raises(asyncio.CancelledError):
+            run(service.send_turn(chat.id, "q", responder))
+
+        snapshot = service.snapshot(chat.id)
+        assert isinstance(snapshot.turns[0].outcome, CancelledOutcome)
+        results = {r.tool_call_id: r for r in snapshot.tool_results}
+        calls_by_provider_id = {c.provider_call_id: c for c in snapshot.tool_calls}
+        assert results[calls_by_provider_id["call_1"].id].kind is ToolOutcomeKind.SUCCESS
+        assert results[calls_by_provider_id["call_2"].id].kind is ToolOutcomeKind.CANCELLATION
+        assert results[calls_by_provider_id["call_3"].id].kind is ToolOutcomeKind.CANCELLATION
+    finally:
+        service.close()
+
+
+def test_cancellation_at_continuation_preserves_the_earlier_batch(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        batch = ToolCallBatch(calls=(read_file_call(root, "a.txt"),))
+        slow = SlowResponder()
+
+        class BatchThenSlow:
+            def __init__(self):
+                self.calls = []
+                self._first = True
+
+            async def respond(self, plan):
+                self.calls.append(plan)
+                if self._first:
+                    self._first = False
+                    return batch
+                return await slow.respond(plan)
+
+        responder = BatchThenSlow()
+
+        async def scenario():
+            task = asyncio.ensure_future(service.send_turn(chat.id, "q", responder))
+            await slow.started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        run(scenario())
+
+        snapshot = service.snapshot(chat.id)
+        assert isinstance(snapshot.turns[0].outcome, CancelledOutcome)
+        assert snapshot.tool_results[0].kind is ToolOutcomeKind.SUCCESS
+    finally:
+        service.close()
+
+
+def test_provider_failure_mid_loop_fails_the_turn_and_preserves_earlier_tool_evidence(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        batch = ToolCallBatch(calls=(read_file_call(root, "a.txt"),), usage=Usage(input_tokens=3))
+        failure = Failure(FailureEvidence(FailureKind.RESPONDER, "boom"))
+        responder = ScriptedResponder([batch, failure])
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, FailedOutcome)
+        snapshot = service.snapshot(chat.id)
+        assert snapshot.tool_results[0].kind is ToolOutcomeKind.SUCCESS
+        assert any(e.usage == Usage(input_tokens=3) for e in snapshot.exchanges)
+    finally:
+        service.close()
+
+
+def test_a_store_failure_mid_batch_repairs_remaining_calls_then_fails_the_turn(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        (root / "b.txt").write_text("B\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"), read_file_call(root, "b.txt", "call_2"),
+        ))
+        responder = ScriptedResponder([batch])
+        service._store._conn = _FailOnceConn(
+            service._store._conn, "INSERT INTO cfc_tool_results",
+        )
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, FailedOutcome)
+        assert turn.outcome.evidence.kind is FailureKind.INTERNAL
+        results = list(service.snapshot(chat.id).tool_results)
+        assert len(results) == 2
+        assert all(r.kind is ToolOutcomeKind.FAILURE for r in results)
+    finally:
+        service.close()
+
+
+def test_reopen_repairs_unresolved_calls_then_a_new_turn_can_start(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    (root / "a.txt").write_text("A\n")
+    chat = service.create_chat("c", "fixture-model")
+    turn, _ = service._store.start_turn(chat.id, "fixture-model", "q")
+    service._store.persist_tool_call_batch(turn.id, "fixture-model", (read_file_call(root, "a.txt"),))
+    service.close()
+
+    reopened_file_tools, _ = usable_file_tools(tmp_path)
+    reopened = service_mod.ConversationService(
+        conversation_store.open_store(db_path(tmp_path)), empty_vault(),
+        file_tools=reopened_file_tools, models=tool_capable_models(), approval_port=AutoApprovePort(),
+    )
+    try:
+        recovered_turn = reopened.get_turn(turn.id)
+        assert isinstance(recovered_turn.outcome, FailedOutcome)
+        assert recovered_turn.outcome.evidence.kind is FailureKind.INTERRUPTED
+
+        next_turn = run(reopened.send_turn(chat.id, "again", ScriptedResponder([Completion(content="ok")])))
+        assert isinstance(next_turn.outcome, CompletedOutcome)
+    finally:
+        reopened.close()
+
+
+def test_a_tool_free_turn_still_records_one_provider_exchange(tmp_path):
+    service, root = tool_service(tmp_path, AutoApprovePort())
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        run(service.send_turn(chat.id, "q", ScriptedResponder([Completion(content="hi")])))
+        snapshot = service.snapshot(chat.id)
+        assert len(snapshot.exchanges) == 1
+        assert snapshot.exchanges[0].ending is ExchangeEnding.COMPLETION
+    finally:
+        service.close()
+
+
+def test_exchange_usage_is_summed_field_by_field_across_the_turn(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        batch = ToolCallBatch(
+            calls=(read_file_call(root, "a.txt"),),
+            usage=Usage(input_tokens=10, output_tokens=None),
+        )
+        completion = Completion(content="done", usage=Usage(input_tokens=None, output_tokens=5))
+        responder = ScriptedResponder([batch, completion])
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, CompletedOutcome)
+        assert turn.outcome.usage == Usage(input_tokens=10, output_tokens=5)
+    finally:
+        service.close()
+
+
+def test_pending_tool_call_carries_no_store_or_authority_argument():
+    """The same discipline the `Responder` protocol already proves for
+    `RequestPlan` — nothing that could let an `ApprovalPort` reach the
+    store or a mutable executor object."""
+    signature = inspect.signature(tool_registry.ApprovalPort.decide)
+    params = list(signature.parameters)
+    assert params == ["self", "pending"]
+
+
+def test_pending_tool_call_fields_carry_no_store_or_mutable_executor(tmp_path):
+    """Structural proof alongside the signature one above: every field on
+    a real, service-built `PendingToolCall` is a plain identity, string, a
+    validated-arguments mapping, or the `ToolCapability` enum — never a
+    `ConversationStore`, `FileAuthority`, widget, or callback."""
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("A\n")
+        batch = ToolCallBatch(calls=(read_file_call(root, "a.txt"),))
+        responder = ScriptedResponder([batch, Completion(content="done")])
+        run(service.send_turn(chat.id, "q", responder))
+
+        pending = port.requests[0]
+        for field_name, value in vars(pending).items():
+            assert not hasattr(value, "_conn"), f"{field_name} looks like a store"
+            assert not hasattr(value, "roots"), f"{field_name} looks like a FileAuthority"
     finally:
         service.close()
 

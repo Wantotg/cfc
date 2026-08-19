@@ -23,11 +23,13 @@ from cfc.conversation_types import (
     CancelledOutcome,
     Completion,
     Failure,
+    ProposedToolCall,
     ProviderProblem,
     Role,
+    ToolCallBatch,
     Usage,
 )
-from cfc.provider_wire import RequestPlan, WireMessage
+from cfc.provider_wire import RequestPlan, WireMessage, WireToolCall, WireToolSchema
 from cfc.settings import ProviderSettings, VaultCategorySettings, VaultSettings
 
 API_KEY = "sk-test-do-not-leak-me"
@@ -98,6 +100,80 @@ def test_sends_exactly_one_post_to_chat_completions_with_bearer_auth_and_plan_js
         "messages": [{"role": "user", "content": "hello"}],
         "stream": False,
     }
+
+
+def test_schemas_are_serialised_as_openai_tools_when_present():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(200, {"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    transport = httpx.MockTransport(handler)
+    schema = WireToolSchema(name="list_dir", description="List a directory",
+                             parameters={"type": "object", "properties": {}})
+    plan = RequestPlan(model="fixture-model",
+                        messages=(WireMessage(role="user", content="hi"),),
+                        schemas=(schema,))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(plan)
+
+    run(scenario())
+    body = json.loads(seen[0].content)
+    assert body["tools"] == [{
+        "type": "function",
+        "function": {"name": "list_dir", "description": "List a directory",
+                     "parameters": {"type": "object", "properties": {}}},
+    }]
+
+
+def test_no_tools_key_when_no_schemas_offered():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(200, {"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    transport = httpx.MockTransport(handler)
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_plan())
+
+    run(scenario())
+    assert "tools" not in json.loads(seen[0].content)
+
+
+def test_assistant_tool_call_and_tool_result_wire_messages_serialise_correctly():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(200, {"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    transport = httpx.MockTransport(handler)
+    plan = RequestPlan(model="fixture-model", messages=(
+        WireMessage(role="user", content="list it"),
+        WireMessage(role="assistant", content="",
+                    tool_calls=(WireToolCall(provider_call_id="call_1", name="list_dir",
+                                              arguments="{}"),)),
+        WireMessage(role="tool", content="a.txt\nb.txt", tool_call_id="call_1"),
+    ))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(plan)
+
+    run(scenario())
+    messages = json.loads(seen[0].content)["messages"]
+    assert messages[1] == {
+        "role": "assistant", "content": "",
+        "tool_calls": [{"id": "call_1", "type": "function",
+                         "function": {"name": "list_dir", "arguments": "{}"}}],
+    }
+    assert messages[2] == {"role": "tool", "content": "a.txt\nb.txt", "tool_call_id": "call_1"}
 
 
 def test_makes_exactly_one_attempt_no_retry(tmp_path):
@@ -371,6 +447,116 @@ def test_valid_json_with_no_usable_assistant_content_is_malformed_not_a_completi
                                headers={"content-type": "application/json"})
 
     transport = httpx.MockTransport(handler)
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_plan())
+
+    result = run(scenario())
+    assert isinstance(result, Failure)
+    assert result.evidence.problem is ProviderProblem.MALFORMED_RESPONSE
+
+
+# --- tool-call batches: valid parsing and malformed envelopes ---------------
+
+def test_valid_tool_call_batch_is_parsed_into_proposed_calls():
+    body = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "call_1", "type": "function",
+         "function": {"name": "list_dir", "arguments": '{"path": "/tmp"}'}},
+        {"id": "call_2", "type": "function",
+         "function": {"name": "read_file", "arguments": '{"path": "/tmp/a"}'}},
+    ]}}]}
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_plan())
+
+    result = run(scenario())
+    assert isinstance(result, ToolCallBatch)
+    assert result.calls == (
+        ProposedToolCall(provider_call_id="call_1", name="list_dir", arguments='{"path": "/tmp"}'),
+        ProposedToolCall(provider_call_id="call_2", name="read_file", arguments='{"path": "/tmp/a"}'),
+    )
+    assert result.assistant_content is None
+    assert result.usage is None
+
+
+def test_tool_call_batch_carries_optional_assistant_content_and_usage():
+    body = {
+        "choices": [{"message": {
+            "role": "assistant", "content": "let me check that",
+            "tool_calls": [{"id": "call_1", "type": "function",
+                             "function": {"name": "list_dir", "arguments": "{}"}}],
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+    }
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_plan())
+
+    result = run(scenario())
+    assert isinstance(result, ToolCallBatch)
+    assert result.assistant_content == "let me check that"
+    assert result.usage == Usage(input_tokens=5, output_tokens=3, total_tokens=8)
+
+
+def test_equivalent_calls_with_different_ids_are_two_real_calls():
+    body = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "call_1", "function": {"name": "list_dir", "arguments": "{}"}},
+        {"id": "call_2", "function": {"name": "list_dir", "arguments": "{}"}},
+    ]}}]}
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_plan())
+
+    result = run(scenario())
+    assert isinstance(result, ToolCallBatch)
+    assert len(result.calls) == 2
+
+
+def test_raw_provider_argument_spelling_is_preserved_verbatim():
+    """Exact JSON text, not a re-serialised/normalised parse — replay needs
+    the provider's own spelling, including whitespace."""
+    raw_arguments = '{ "path" :  "/tmp" }'
+    body = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "call_1", "function": {"name": "read_file", "arguments": raw_arguments}},
+    ]}}]}
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
+
+    async def scenario():
+        async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:
+            return await adapter.respond(active_plan())
+
+    result = run(scenario())
+    assert isinstance(result, ToolCallBatch)
+    assert result.calls[0].arguments == raw_arguments
+
+
+@pytest.mark.parametrize("tool_calls_raw", [
+    "not-a-list",
+    [{"id": "", "function": {"name": "x", "arguments": "{}"}}],
+    [{"function": {"name": "x", "arguments": "{}"}}],
+    [{"id": "1", "function": {"arguments": "{}"}}],
+    [{"id": "1", "function": {"name": "", "arguments": "{}"}}],
+    [{"id": "1", "function": {"name": "x"}}],
+    [{"id": "1", "function": {"name": "x", "arguments": 5}}],
+    [{"id": "1", "function": "not-a-dict"}],
+    ["not-a-dict-entry"],
+    [{"id": "1", "function": {"name": "x", "arguments": "{}"}},
+     {"id": "1", "function": {"name": "y", "arguments": "{}"}}],
+], ids=[
+    "not-a-list", "blank-id", "missing-id", "missing-function-name",
+    "blank-function-name", "missing-arguments", "non-string-arguments",
+    "non-dict-function", "non-dict-entry", "repeated-id",
+])
+def test_malformed_tool_call_envelope_is_a_malformed_response_failure(tool_calls_raw):
+    body = {"choices": [{"message": {"role": "assistant", "tool_calls": tool_calls_raw}}]}
+    transport = httpx.MockTransport(lambda request: json_response(200, body))
 
     async def scenario():
         async with provider_adapter.OpenAICompatibleAdapter(settings(), transport=transport) as adapter:

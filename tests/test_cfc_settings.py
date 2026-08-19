@@ -615,6 +615,28 @@ def test_models_entry_reads_listed_and_limit(tmp_path):
     assert catalogue.selectable_entries() == ()
 
 
+def test_models_entry_defaults_tools_false_when_unset(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "MODELS = [dict(id='m/one')]\n")
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.entry_for("m/one").tools is False
+
+
+def test_models_entry_reads_tools(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='m/one', tools=True)]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.entry_for("m/one").tools is True
+
+
+def test_models_non_bool_tools_is_malformed(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "MODELS = [dict(id='a', tools='yes')]\n",
+    )
+    catalogue = settings.build_model_catalogue(snapshot)
+    assert catalogue.unavailable_reason is not None
+
+
 def test_models_preserves_declared_order(tmp_path):
     snapshot = snapshot_from(
         tmp_path, VALID_BODY + "MODELS = [dict(id='b'), dict(id='a')]\n",
@@ -682,6 +704,165 @@ def test_malformed_models_never_raises_and_leaves_default_model_untouched(tmp_pa
     built = settings.build_settings(snapshot)
     assert built.provider.model == "fixture-model"
     assert built.models.unavailable_reason is not None
+
+
+# --- file tools: fail-closed capability (Stage 6 loop 1) -------------------
+
+def test_file_tools_unset_is_disabled_not_malformed(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is False
+    assert file_tools.problem is settings.FileToolProblem.DISABLED
+    assert file_tools.enabled is False
+    assert file_tools.max_calls_per_turn == settings.DEFAULT_TOOLS_MAX_CALLS_PER_TURN
+    assert file_tools.max_result_chars == settings.DEFAULT_TOOLS_MAX_RESULT_CHARS
+    assert file_tools.max_turn_result_chars == settings.DEFAULT_TOOLS_MAX_TURN_RESULT_CHARS
+
+
+def test_file_tools_false_enabled_is_disabled(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "TOOLS_ENABLED = False\n")
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is False
+    assert file_tools.problem is settings.FileToolProblem.DISABLED
+
+
+def test_file_tools_non_bool_enabled_is_malformed(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "TOOLS_ENABLED = 'yes'\n")
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is False
+    assert file_tools.problem is settings.FileToolProblem.MALFORMED
+
+
+def test_file_tools_enabled_with_no_roots_is_no_roots(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + "TOOLS_ENABLED = True\n")
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is False
+    assert file_tools.problem is settings.FileToolProblem.NO_ROOTS
+
+
+def test_file_tools_enabled_with_empty_roots_is_no_roots(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "TOOLS_ENABLED = True\nTOOLS_ROOTS = ()\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.problem is settings.FileToolProblem.NO_ROOTS
+
+
+def test_file_tools_wrong_type_roots_is_malformed(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "TOOLS_ENABLED = True\nTOOLS_ROOTS = 'not-a-list'\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.problem is settings.FileToolProblem.MALFORMED
+    assert "TOOLS_ROOTS" in file_tools.unavailable_reason
+
+
+def test_file_tools_non_path_root_entry_is_malformed(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "TOOLS_ENABLED = True\nTOOLS_ROOTS = (5,)\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.problem is settings.FileToolProblem.MALFORMED
+
+
+def test_file_tools_relative_root_entry_is_malformed(tmp_path):
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "TOOLS_ENABLED = True\nTOOLS_ROOTS = ('relative/path',)\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.problem is settings.FileToolProblem.MALFORMED
+    assert "absolute" in file_tools.unavailable_reason
+
+
+def test_file_tools_valid_configuration_is_usable(tmp_path):
+    root = tmp_path / "roots"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"TOOLS_ENABLED = True\nTOOLS_ROOTS = ({str(root)!r},)\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is True
+    assert file_tools.problem is None
+    assert file_tools.unavailable_reason is None
+    assert file_tools.roots == (root.expanduser(),)
+
+
+def test_file_tools_accepts_path_objects_in_roots(tmp_path):
+    root = tmp_path / "roots"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + "from pathlib import Path\n"
+        f"TOOLS_ENABLED = True\nTOOLS_ROOTS = (Path({str(root)!r}),)\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is True
+    assert file_tools.roots == (root,)
+
+
+def test_file_tools_accepts_a_list_of_roots(tmp_path):
+    root = tmp_path / "roots"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"TOOLS_ENABLED = True\nTOOLS_ROOTS = [{str(root)!r}]\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is True
+    assert file_tools.roots == (root.expanduser(),)
+
+
+@pytest.mark.parametrize("field_name", [
+    "TOOLS_MAX_CALLS_PER_TURN", "TOOLS_MAX_RESULT_CHARS", "TOOLS_MAX_TURN_RESULT_CHARS",
+])
+@pytest.mark.parametrize("bad_value", [0, -1, 1.5, True])
+def test_file_tools_non_positive_budget_is_malformed(tmp_path, field_name, bad_value):
+    snapshot = snapshot_from(tmp_path, VALID_BODY + f"{field_name} = {bad_value!r}\n")
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.problem is settings.FileToolProblem.MALFORMED
+    assert field_name in file_tools.unavailable_reason
+
+
+def test_file_tools_malformed_budget_is_reported_even_when_disabled(tmp_path):
+    """A malformed TOOLS_MAX_* field is surfaced regardless of TOOLS_ENABLED
+    — a reader who disabled tools should still see their typo."""
+    snapshot = snapshot_from(
+        tmp_path, VALID_BODY + "TOOLS_ENABLED = False\nTOOLS_MAX_CALLS_PER_TURN = 0\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.problem is settings.FileToolProblem.MALFORMED
+
+
+def test_file_tools_custom_budgets_are_read(tmp_path):
+    root = tmp_path / "roots"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"TOOLS_ENABLED = True\nTOOLS_ROOTS = ({str(root)!r},)\n"
+        "TOOLS_MAX_CALLS_PER_TURN = 3\nTOOLS_MAX_RESULT_CHARS = 100\n"
+        "TOOLS_MAX_TURN_RESULT_CHARS = 400\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.max_calls_per_turn == 3
+    assert file_tools.max_result_chars == 100
+    assert file_tools.max_turn_result_chars == 400
+
+
+def test_file_tools_never_checks_existence_on_disk(tmp_path):
+    """Same discipline as VaultCategorySettings: a root that does not exist
+    is still usable at the settings layer — existence is the execution
+    boundary's concern."""
+    missing_root = tmp_path / "does-not-exist"
+    snapshot = snapshot_from(
+        tmp_path,
+        VALID_BODY + f"TOOLS_ENABLED = True\nTOOLS_ROOTS = ({str(missing_root)!r},)\n",
+    )
+    file_tools = settings.build_file_tool_settings(snapshot)
+    assert file_tools.usable is True
+
+
+def test_build_settings_includes_file_tools(tmp_path):
+    snapshot = snapshot_from(tmp_path, VALID_BODY)
+    built = settings.build_settings(snapshot)
+    assert built.file_tools.usable is False
+    assert built.file_tools.problem is settings.FileToolProblem.DISABLED
 
 
 # --- effective-appearance precedence vocabulary (Stage 5 loop 2) -----------

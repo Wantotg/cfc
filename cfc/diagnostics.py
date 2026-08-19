@@ -68,7 +68,6 @@ class State(Enum):
     READY = "ready"
     UNAVAILABLE = "unavailable"
     ERROR = "error"
-    NOT_BUILT = "not built"
     NOT_CHECKED = "not checked"
 
 
@@ -259,12 +258,20 @@ def _embeddings_row(snapshot) -> Row:
 
 
 def _file_tools_row(snapshot) -> Row:
-    enabled = bool(snapshot.values.get("TOOLS_ENABLED", False))
-    if not enabled:
-        return Row("file tools", State.UNAVAILABLE, "TOOLS_ENABLED is off")
-    return Row("file tools", State.NOT_BUILT,
-               "TOOLS_ENABLED is on, but file tools are not implemented in "
-               "the 2.0 boundary yet")
+    """Reports exactly the same truth `cfc.settings.build_file_tool_settings`
+    already computed — no second validator. A malformed `TOOLS_*` field is
+    `ERROR`; a well-formed but disabled or root-less configuration is
+    `UNAVAILABLE`; a usable capability is `READY` naming its root count.
+    """
+    file_tools = settings.build_file_tool_settings(snapshot)
+    if file_tools.usable:
+        count = len(file_tools.roots)
+        plural = "" if count == 1 else "s"
+        return Row("file tools", State.READY, f"{count} configured root{plural}")
+    if file_tools.problem is settings.FileToolProblem.MALFORMED:
+        return Row("file tools", State.ERROR, file_tools.unavailable_reason,
+                    next_step="Correct the TOOLS_* fields in config.py — see the detail above.")
+    return Row("file tools", State.UNAVAILABLE, file_tools.unavailable_reason)
 
 
 # --- Stage 5 vault categories: shared readiness rules with Context --------

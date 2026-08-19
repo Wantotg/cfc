@@ -25,6 +25,60 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-19 — A read-only tool lifecycle: registry, containment, and the provider continuation loop (Stage 6 loop 1)
+`list_dir`, `read_file`, and literal `grep` now run as a real, replayable
+tool lifecycle through the existing conversation kernel: a request offers
+one `ToolRegistry`'s schemas when `FileToolSettings` is usable and the
+selected model is declared `tools=True`; a proposed batch is persisted
+before any `ApprovalPort` decision; each accepted call is approved,
+executed, and given exactly one typed result; and `ConversationService.
+send_turn` continues the provider round trip until the turn's existing
+terminal completion, failure, or cancellation. A tool-free turn takes the
+identical path with zero batches, and now also records its own provider
+exchange, making usage and failure evidence common turn behaviour rather
+than a tool-only side effect.
+
+Execution never resolves a path and reopens it by name: `cfc.tool_authority`
+walks a requested path from an opened root descriptor one component at a
+time, `O_NOFOLLOW` at every hop, re-verifying type on the already-open
+descriptor rather than trusting an earlier `stat`. Testing this by hand
+caught a real miscategorisation before it shipped — `O_DIRECTORY|
+O_NOFOLLOW` against a symlink-to-directory raises `ENOTDIR` on this kernel,
+not `ELOOP`, which would have filed a genuine symlink-route attempt as an
+ordinary "wrong type" failure instead of a refusal; the walk now opens with
+`O_NOFOLLOW` alone and checks directory-ness afterward on the verified
+descriptor. The cfc repository is refused even when a broader configured
+root contains it, lexical `..` traversal is refused outright rather than
+resolved, and a friendly symlink that would resolve back inside the root is
+refused too — there is deliberately no second, weaker route.
+
+Cancellation is truthful at call granularity, not just turn granularity:
+delivered while a call awaits approval, or noticed cooperatively during a
+call's own bounded, chunked execution (`Task.cancelling()`, checked without
+an `await` the synchronous executor never reaches), it marks that call and
+every later call in its batch cancelled while leaving an already-committed
+result untouched. A store failure mid-batch gets the same treatment with a
+typed failure instead, repaired as far as the store remains reachable,
+before the turn still receives its terminal failure. Once the turn's call
+or output budget is spent, remaining calls are refused and the next
+continuation withdraws schemas; a further tool-call reply after that (or
+when tools were never offered at all) fails the turn as malformed rather
+than starting an endless loop.
+
+Proved with the full suite at **1214 passed**, plus a dedicated read-only
+`scratchpad/stage6_harness.py` for real-provider and interactive-approval
+manual proof (not required for the automated suite).
+- Files: cfc/settings.py, cfc/diagnostics.py, cfc/conversation_types.py,
+  cfc/provider_adapter.py, cfc/provider_wire.py, cfc/conversation_store.py,
+  cfc/conversation_service.py, cfc/tool_authority.py, cfc/tool_executor.py,
+  cfc/tool_registry.py, config.example.py, tests/test_cfc_settings.py,
+  tests/test_cfc_diagnostics.py, tests/test_cfc_provider_adapter.py,
+  tests/test_cfc_provider_wire.py, tests/test_cfc_conversation_store.py,
+  tests/test_cfc_conversation_service.py, tests/test_cfc_tool_authority.py,
+  tests/test_cfc_tool_executor.py, tests/test_cfc_tool_registry.py
+- Status: shipped
+- Commit: pending
+
 ## 2026-08-19 — A status line a person can actually see (`B-2.0-104`, Stage 5 loop 4)
 The Chat title, context, and status bars no longer share rows with Textual's
 `Footer`, so the title and every bounded refusal or completion notice are

@@ -14,14 +14,22 @@ makes exactly one attempt per `respond` call: no retry, no model fallback,
 no provider discovery, and no request editing beyond what the plan already
 decided.
 
-Every way a call can end becomes one of `Completion`, `Failure`, or an
-`asyncio.CancelledError` left to propagate — never a raw `httpx` exception,
-a provider dictionary, a header, a full request, or a full response body
-reaching the caller or (later) stored evidence. `FailureEvidence.problem`
-narrows what went wrong (`CONNECTION`, `TIMEOUT` with `timeout_phase`,
-`HTTP_STATUS` with `status_code`, or `MALFORMED_RESPONSE`); `reason` is
-always a short, cfc-authored phrase, never the provider's or `httpx`'s own
-message text.
+Every way a call can end becomes one of `Completion`, `Failure`,
+`ToolCallBatch` (Stage 6 loop 1), or an `asyncio.CancelledError` left to
+propagate — never a raw `httpx` exception, a provider dictionary, a header,
+a full request, or a full response body reaching the caller or (later)
+stored evidence. `FailureEvidence.problem` narrows what went wrong
+(`CONNECTION`, `TIMEOUT` with `timeout_phase`, `HTTP_STATUS` with
+`status_code`, or `MALFORMED_RESPONSE`); `reason` is always a short,
+cfc-authored phrase, never the provider's or `httpx`'s own message text.
+
+A `tool_calls` envelope is parsed into cfc's own `ProposedToolCall`
+vocabulary rather than treated as malformed: a missing/blank id, a missing
+function name, a missing arguments string, or a repeated id anywhere in the
+batch is what makes it malformed (`MALFORMED_RESPONSE`), not the mere
+presence of tool calls. Which names are actually known or currently
+available is not this module's question — that is the registry's, at
+execution time; this boundary only proves the envelope's own shape.
 """
 from __future__ import annotations
 
@@ -34,12 +42,14 @@ from cfc.conversation_types import (
     Failure,
     FailureEvidence,
     FailureKind,
+    ProposedToolCall,
     ProviderProblem,
     ResponderResult,
     TimeoutPhase,
+    ToolCallBatch,
     Usage,
 )
-from cfc.provider_wire import RequestPlan
+from cfc.provider_wire import RequestPlan, WireMessage
 from cfc.settings import ProviderSettings
 
 #: Distinct timeout budgets per `httpx` phase. `READ` is longer than the
@@ -152,10 +162,11 @@ def _extract_usage(body: dict) -> Usage | None:
     return Usage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens)
 
 
-def _extract_content(body: dict) -> str | None:
-    """The literal assistant text, or `None` if the shape is not one this
-    loop can use — missing/empty content, a tool call, or anything else
-    that is not a plain string message.
+def _extract_message(body: dict) -> dict | None:
+    """The response's first choice's `message` object, or `None` if the
+    shape does not even reach that far — used by both the plain-completion
+    and the tool-call-batch parsing paths so they agree on what "no usable
+    message at all" means.
     """
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -166,12 +177,88 @@ def _extract_content(body: dict) -> str | None:
     message = first.get("message")
     if not isinstance(message, dict):
         return None
-    if message.get("tool_calls"):
-        return None
+    return message
+
+
+def _extract_content(message: dict) -> str | None:
+    """The literal assistant text on an already-extracted `message` object,
+    or `None` for missing, empty, or non-string content — used both for a
+    plain completion's required text and a tool-call batch's optional
+    accompanying text.
+    """
     content = message.get("content")
     if not isinstance(content, str) or content == "":
         return None
     return content
+
+
+class _InvalidToolCallBatch(Exception):
+    """Raised internally when a provider's `tool_calls` envelope is
+    malformed — caught at the `respond` boundary and turned into typed
+    malformed evidence, never left to propagate as an internal failure.
+    """
+
+
+def _extract_tool_call_batch(raw: object) -> tuple[ProposedToolCall, ...]:
+    """Parses a provider's `tool_calls` array into cfc's own
+    `ProposedToolCall` vocabulary, preserving each call's raw argument
+    string verbatim for replay. A missing/blank id, a missing or non-dict
+    `function`, a missing/blank function name, a missing arguments string,
+    or a repeated id anywhere in the batch raises `_InvalidToolCallBatch` —
+    the Work Order's "a missing/blank ID or a repeated ID makes the provider
+    reply malformed and fails the turn before any call is accepted". Two
+    calls with equivalent names/arguments but different ids are two real
+    calls, not a duplicate.
+    """
+    if not isinstance(raw, list):
+        raise _InvalidToolCallBatch("tool_calls must be a list")
+
+    calls: list[ProposedToolCall] = []
+    seen_ids: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise _InvalidToolCallBatch("a tool call must be a JSON object")
+        call_id = entry.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            raise _InvalidToolCallBatch("a tool call has no usable id")
+        if call_id in seen_ids:
+            raise _InvalidToolCallBatch(f"tool call id {call_id!r} is repeated in the batch")
+        seen_ids.add(call_id)
+
+        function = entry.get("function")
+        if not isinstance(function, dict):
+            raise _InvalidToolCallBatch(f"tool call {call_id!r} has no usable function")
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            raise _InvalidToolCallBatch(f"tool call {call_id!r} has no usable function name")
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            raise _InvalidToolCallBatch(f"tool call {call_id!r} has no usable arguments string")
+
+        calls.append(ProposedToolCall(provider_call_id=call_id, name=name, arguments=arguments))
+
+    return tuple(calls)
+
+
+def _wire_message_dict(message: WireMessage) -> dict:
+    """One `WireMessage` as the provider-shaped JSON dict `respond` sends —
+    the boundary where cfc's own tool-call/result vocabulary becomes the
+    OpenAI-compatible `tool_calls`/`tool_call_id` fields, added only when
+    the message actually carries them.
+    """
+    entry: dict = {"role": message.role, "content": message.content}
+    if message.tool_calls is not None:
+        entry["tool_calls"] = [
+            {
+                "id": call.provider_call_id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": call.arguments},
+            }
+            for call in message.tool_calls
+        ]
+    if message.tool_call_id is not None:
+        entry["tool_call_id"] = message.tool_call_id
+    return entry
 
 
 class OpenAICompatibleAdapter:
@@ -211,10 +298,21 @@ class OpenAICompatibleAdapter:
         """
         body = {
             "model": plan.model,
-            "messages": [{"role": message.role, "content": message.content}
-                         for message in plan.messages],
+            "messages": [_wire_message_dict(message) for message in plan.messages],
             "stream": plan.stream,
         }
+        if plan.schemas:
+            body["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": schema.name,
+                        "description": schema.description,
+                        "parameters": dict(schema.parameters),
+                    },
+                }
+                for schema in plan.schemas
+            ]
         headers = {"Authorization": f"Bearer {self._settings.api_key}"}
 
         try:
@@ -255,7 +353,27 @@ class OpenAICompatibleAdapter:
         if isinstance(data.get("error"), dict):
             return Failure(_malformed_evidence(_ERROR_ENVELOPE_REASON))
 
-        content = _extract_content(data)
+        message = _extract_message(data)
+        if message is None:
+            return Failure(_malformed_evidence(
+                "the provider's response carried no usable assistant message"
+            ))
+
+        tool_calls_raw = message.get("tool_calls")
+        if tool_calls_raw:
+            try:
+                calls = _extract_tool_call_batch(tool_calls_raw)
+            except _InvalidToolCallBatch as exc:
+                return Failure(_malformed_evidence(str(exc)))
+            try:
+                usage = _extract_usage(data)
+            except _InvalidUsageCount:
+                return Failure(_malformed_evidence(_INVALID_USAGE_REASON))
+            return ToolCallBatch(
+                calls=calls, assistant_content=_extract_content(message), usage=usage,
+            )
+
+        content = _extract_content(message)
         if content is None:
             return Failure(_malformed_evidence(
                 "the provider's response carried no usable assistant text"

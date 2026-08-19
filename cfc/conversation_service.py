@@ -35,11 +35,13 @@ from cfc import context as context_mod
 from cfc.conversation_store import (
     ActiveTurnExists,
     ConflictingFinalisation,
+    ConflictingToolResult,
     ConversationStore,
     ConversationStoreError,
     open_store,
 )
 from cfc.conversation_types import (
+    ApprovalDecision,
     Cancellation,
     Chat,
     ChatId,
@@ -49,18 +51,34 @@ from cfc.conversation_types import (
     ContextManifestEntry,
     ContextPlan,
     ConversationSnapshot,
+    ExchangeEnding,
     Failure,
     FailureEvidence,
     FailureKind,
     OpeningMessage,
+    ProviderProblem,
     SourceRecord,
+    ToolCall,
+    ToolCallBatch,
+    ToolCallEvidence,
+    ToolOutcomeKind,
     Turn,
     TurnId,
+    Usage,
     utc_now,
 )
 from cfc.context import FirstMessageLookup, SourceOption
 from cfc.provider_wire import Responder, ResponderResult, build_request_plan
-from cfc.settings import DisplayNameSettings, VaultCategorySettings, VaultSettings
+from cfc.settings import (
+    DisplayNameSettings,
+    FileToolProblem,
+    FileToolSettings,
+    ModelCatalogue,
+    VaultCategorySettings,
+    VaultSettings,
+)
+from cfc.tool_authority import FileAuthority
+from cfc.tool_registry import ApprovalPort, PendingToolCall, ToolRegistry, default_registry
 
 
 class ContextEntryStatus(Enum):
@@ -142,6 +160,92 @@ class ContextRows:
 #: exception happened to include.
 _INTERNAL_FAILURE_REASON = "an internal error interrupted this turn before it could finish"
 
+#: A well-formed, genuinely unusable `FileToolSettings` — the default when a
+#: caller (an older test, a harness that predates this loop) constructs
+#: `ConversationService` without passing one. Built with `problem` set
+#: explicitly rather than the bare `FileToolSettings()` default, which would
+#: read as *usable* (`problem=None`) despite `enabled=False` and no
+#: roots — `FileToolSettings`'s own fields do not enforce that invariant by
+#: themselves; only `cfc.settings.build_file_tool_settings` does.
+_TOOLS_NOT_CONFIGURED = FileToolSettings(
+    problem=FileToolProblem.DISABLED,
+    unavailable_reason="file tools are not configured for this service",
+)
+
+#: Work Order Step 5's retained per-turn budgets, used only when no
+#: `FileToolSettings` was supplied at all — production callers always pass
+#: `cfc.settings.build_file_tool_settings`'s own resolved values instead.
+_DEFAULT_MAX_CALLS_PER_TURN = 25
+_DEFAULT_MAX_TURN_RESULT_CHARS = 120_000
+
+#: The one reason a further tool-call response is malformed once tools are
+#: not currently offered — whether they were never offered this turn or
+#: were withdrawn after the turn's budget was spent. Named once so both
+#: routes read identically in stored evidence.
+_UNSOLICITED_TOOL_CALL_REASON = (
+    "the provider proposed tool calls when none were offered for this request"
+)
+
+
+def _sum_usage(usages: list[Usage | None]) -> Usage | None:
+    """The field-by-field sum of every exchange's independently optional
+    usage counts (Work Order: "preserving explicit zero and absence"). A
+    field is `None` only if every exchange left it unreported; one exchange
+    reporting a real count (including `0`) makes that field's sum a real
+    count, never discarded because a sibling exchange said nothing about
+    it. `None` overall only when no exchange reported any usage at all.
+    """
+    totals: dict[str, int | None] = {"input_tokens": None, "output_tokens": None,
+                                       "total_tokens": None}
+    for usage in usages:
+        if usage is None:
+            continue
+        for field_name in totals:
+            value = getattr(usage, field_name)
+            if value is None:
+                continue
+            totals[field_name] = value if totals[field_name] is None else totals[field_name] + value
+    if all(value is None for value in totals.values()):
+        return None
+    return Usage(**totals)
+
+
+def _current_task_cancel_requested() -> bool:
+    """Whether this coroutine's own task has a pending cancellation —
+    checked without an `await`, since `ToolDefinition.execute` is a
+    synchronous, cooperatively-bounded call (Concept.md: "checks
+    cancellation between bounded units of work") that asyncio cannot
+    interrupt at an await point it never reaches. `Task.cancelling()`
+    (3.11+) reports a requested-but-not-yet-delivered cancellation; the
+    real `asyncio.CancelledError` still arrives at this coroutine's next
+    real `await`, which is what actually unwinds `send_turn`.
+    """
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+#: `ResponderResult` type -> the tool-free `ExchangeEnding` it records —
+#: `ToolCallBatch` is deliberately absent: `send_turn` never reaches this
+#: mapping for one, since a batch is persisted through `persist_tool_call_
+#: batch` instead of `record_exchange`.
+_EXCHANGE_ENDING = {
+    Completion: ExchangeEnding.COMPLETION,
+    Failure: ExchangeEnding.FAILURE,
+    Cancellation: ExchangeEnding.CANCELLED,
+}
+
+
+class _AutoRefusePort:
+    """The `ApprovalPort` used when a caller configured file tools without
+    also configuring a real port — refuses every call rather than silently
+    approving or raising. Structurally reachable only if a caller wires
+    `file_tools`/`registry` without `approval_port`; production callers
+    always supply all three together.
+    """
+
+    async def decide(self, pending: PendingToolCall) -> ApprovalDecision:
+        return ApprovalDecision.REFUSE
+
 
 class MainPersonaNotSelectable(ConversationStoreError):
     """`ConversationService.set_persona` refused: `chat_id` is Main, whose
@@ -202,6 +306,10 @@ class ConversationService:
     def __init__(
         self, store: ConversationStore, vault: VaultSettings, export_dir=None,
         display_names: DisplayNameSettings | None = None,
+        file_tools: FileToolSettings | None = None,
+        models: ModelCatalogue | None = None,
+        registry: ToolRegistry | None = None,
+        approval_port: ApprovalPort | None = None,
     ):
         self._store = store
         self._vault = vault
@@ -218,6 +326,19 @@ class ConversationService:
         #: a real, resolved value. Never applied to attachments, which
         #: `cfc.context` reads literally regardless of what is passed here.
         self._display_names = display_names
+        #: Stage 6 loop 1: the read-only tool lifecycle's four collaborators
+        #: — resolved once, immutable for this service's lifetime, and never
+        #: re-resolved by `send_turn` itself (the same discipline `vault`
+        #: already follows). `file_tools`/`models` default to genuinely
+        #: unusable/empty values rather than a permissive guess, so an older
+        #: caller that constructs this class without them gets ordinary
+        #: tool-free chat, never silent tool access.
+        self._file_tools = file_tools if file_tools is not None else _TOOLS_NOT_CONFIGURED
+        self._models = models if models is not None else ModelCatalogue()
+        self._registry = registry if registry is not None else default_registry()
+        self._approval_port: ApprovalPort = (
+            approval_port if approval_port is not None else _AutoRefusePort()
+        )
 
     def close(self) -> None:
         self._store.close()
@@ -577,8 +698,15 @@ class ConversationService:
     async def send_turn(self, chat_id: ChatId, user_content: str,
                          responder: Responder) -> Turn:
         """Resolve this chat's fresh context plan and current model, start a
-        turn, hand the responder exactly the resulting request plan, and
-        finalise the one result it returns.
+        turn, and drive the provider continuation loop to the turn's one
+        terminal outcome (Stage 6 loop 1): each request plan offers the
+        registry's schemas (when file tools are usable and the selected
+        model is declared tool-capable); a tool-call-batch reply is
+        persisted before any `ApprovalPort` decision, its calls are
+        processed sequentially through the registry, and the loop asks the
+        provider to continue until a plain completion, failure, or
+        cancellation ends the turn. A tool-free turn takes the identical
+        path with zero batches.
 
         The context plan is resolved, and the request plan built, from
         `chat` as read once at the top of this call — before `start_turn`.
@@ -588,7 +716,9 @@ class ConversationService:
 
         The responder receives only the finished `RequestPlan` — nothing
         that could let it reach `cfc_turns`/`cfc_messages`, the vault, or a
-        source body outside what is already on that plan.
+        source body outside what is already on that plan. `ApprovalPort`
+        similarly receives only a `PendingToolCall` — no store, roots, or
+        mutable executor object.
 
         **Once this method has started a turn, that turn ends before this
         method does.** Every way out of the body below is covered:
@@ -600,24 +730,30 @@ class ConversationService:
           responder returned Failure" — never `str(exc)` or `repr(result)`,
           which could carry a provider body, a request detail, or a
           credential (B-2.0-33);
-        - cancellation of the task awaiting the responder ends the turn as
-          `CancelledOutcome` and then re-raises — if a terminal outcome
-          already won that race (the store committed a result and then the
-          awaiting task was cancelled), that stored outcome is preserved,
-          never overwritten;
+        - cancellation of the task ends the turn as `CancelledOutcome` and
+          then re-raises. Preserving what already committed is call-level,
+          not just turn-level: cancellation delivered while a call awaits
+          `ApprovalPort`, or noticed cooperatively during a call's own
+          bounded execution, writes a cancellation result for that call and
+          every later call in its batch, then finalises the turn — any call
+          whose real outcome already committed stands untouched;
         - an interruption that is neither of those — `KeyboardInterrupt`,
           `SystemExit` — ends the turn as a typed interrupted failure and
           then keeps travelling, because swallowing those would make cfc
           un-interruptible; and
-        - a store failure while ending a turn — `sqlite3.Error`, not
-          `ConversationStoreError`, so the ordinary guards above cannot see
-          it on their own (B-2.0-32) — never leaks a raw SQLite exception
-          and never masks a `KeyboardInterrupt`/`SystemExit`/cancellation it
-          happens alongside: ending an internal failure raises
-          `TurnEndingFailed` instead of returning a `Turn` this module
-          cannot honestly produce; ending an interruption or cancellation
-          swallows it, since the original interruption or cancellation is
-          the one thing this call must still deliver.
+        - a store failure — `sqlite3.Error`, not `ConversationStoreError`,
+          so the ordinary guards above cannot see it on their own
+          (B-2.0-32) — mid-batch repairs the current and every later
+          unanswered call in that batch with one typed failure result, as
+          far as the store remains reachable, before re-raising so the turn
+          still receives its terminal failure the same way. While ending
+          the turn itself: never leaks a raw SQLite exception and never
+          masks a `KeyboardInterrupt`/`SystemExit`/cancellation it happens
+          alongside — ending an internal failure raises `TurnEndingFailed`
+          instead of returning a `Turn` this module cannot honestly
+          produce; ending an interruption or cancellation swallows it,
+          since the original interruption or cancellation is the one thing
+          this call must still deliver.
 
         `ActiveTurnExists` from `self._store.start_turn` is deliberately not
         caught here (D-2.0-36): it means this call never started a turn at
@@ -625,8 +761,9 @@ class ConversationService:
         straight to the caller as the typed refusal a presentation layer
         renders, before any responder is ever reached.
 
-        Only a process that dies outright leaves an active turn behind, and
-        `open_store`'s reopen recovery is that case's route.
+        Only a process that dies outright leaves an active turn or an
+        unresolved call behind, and `open_store`'s reopen recovery is that
+        case's route.
         """
         chat = self._store.get_chat(chat_id)
         context_plan = context_mod.build_context_plan(
@@ -637,11 +774,55 @@ class ConversationService:
 
         turn, _user_message = self._store.start_turn(chat_id, model, user_content, manifest)
 
+        model_entry = self._models.entry_for(model)
+        model_is_tool_capable = model_entry is not None and model_entry.tools
+        schemas = self._registry.offered_schemas(self._file_tools, model_is_tool_capable)
+        authority = FileAuthority.from_settings(self._file_tools)
+        max_calls = (self._file_tools.max_calls_per_turn if self._file_tools.usable
+                     else _DEFAULT_MAX_CALLS_PER_TURN)
+        max_turn_chars = (self._file_tools.max_turn_result_chars if self._file_tools.usable
+                          else _DEFAULT_MAX_TURN_RESULT_CHARS)
+
+        exchange_usages: list[Usage | None] = []
+        calls_used = 0
+        turn_chars_used = 0
+
         try:
-            snapshot = self._store.snapshot(chat_id)
-            plan = build_request_plan(context_plan, chat.opening, snapshot, model)
-            result: ResponderResult = await responder.respond(plan)
-            return self._apply_result(turn.id, result)
+            while True:
+                snapshot = self._store.snapshot(chat_id)
+                plan = build_request_plan(context_plan, chat.opening, snapshot, model,
+                                           schemas=schemas)
+                result: ResponderResult = await responder.respond(plan)
+
+                if isinstance(result, ToolCallBatch) and not schemas:
+                    # Concept.md: "A further unsolicited tool-call response
+                    # then fails as malformed instead of starting an
+                    # endless tool loop" — applies identically whether
+                    # schemas were never offered this turn or were
+                    # withdrawn after the budget was spent.
+                    result = Failure(FailureEvidence(
+                        FailureKind.RESPONDER, _UNSOLICITED_TOOL_CALL_REASON,
+                        problem=ProviderProblem.MALFORMED_RESPONSE,
+                    ))
+
+                if isinstance(result, ToolCallBatch):
+                    exchange_usages.append(result.usage)
+                    _exchange, calls = self._store.persist_tool_call_batch(
+                        turn.id, model, result.calls, result.assistant_content, result.usage,
+                    )
+                    calls_used, turn_chars_used = await self._process_tool_call_batch(
+                        turn.id, calls, authority, calls_used, turn_chars_used,
+                        max_calls, max_turn_chars,
+                    )
+                    if calls_used >= max_calls or turn_chars_used >= max_turn_chars:
+                        schemas = ()
+                    continue
+
+                usage = result.usage if isinstance(result, Completion) else None
+                exchange_usages.append(usage)
+                self._store.record_exchange(turn.id, model, _EXCHANGE_ENDING[type(result)],
+                                             usage=usage)
+                return self._apply_result(turn.id, result, _sum_usage(exchange_usages))
         except asyncio.CancelledError:
             self._end_unfinished_as_cancelled(turn.id)
             raise
@@ -655,6 +836,138 @@ class ConversationService:
             except ConversationStoreError:
                 pass  # the store itself is unreachable; reopen recovery remains
             raise
+
+    async def _process_tool_call_batch(
+        self, turn_id: TurnId, calls: tuple[ToolCall, ...], authority: FileAuthority,
+        calls_used: int, turn_chars_used: int, max_calls: int, max_turn_chars: int,
+    ) -> tuple[int, int]:
+        """Processes one persisted batch's calls sequentially, in provider
+        order. A refused, invalid, unavailable, or failed call never
+        suppresses a later call in the same batch. Returns the turn's
+        updated call/output budget counters.
+
+        Cancellation noticed before a call is reached, or delivered while
+        awaiting its `ApprovalPort` decision, marks that call and every
+        later call in this batch as cancelled, then re-raises so
+        `send_turn`'s own handler finalises the turn — any earlier call in
+        this batch whose real outcome already committed stands untouched.
+        A store failure while resolving a call is repaired the same way,
+        with a typed failure instead of a cancellation, then re-raised.
+        """
+        for index, call in enumerate(calls):
+            if _current_task_cancel_requested():
+                self._repair_remaining_calls(
+                    calls[index:], ToolOutcomeKind.CANCELLATION,
+                    "cancelled before this call was reached",
+                )
+                return calls_used, turn_chars_used
+            try:
+                calls_used, turn_chars_used = await self._process_one_call(
+                    turn_id, call, authority, calls_used, turn_chars_used,
+                    max_calls, max_turn_chars,
+                )
+            except asyncio.CancelledError:
+                self._repair_remaining_calls(
+                    calls[index:], ToolOutcomeKind.CANCELLATION,
+                    "cancelled while awaiting approval",
+                )
+                raise
+            except sqlite3.Error:
+                self._repair_remaining_calls(
+                    calls[index:], ToolOutcomeKind.FAILURE,
+                    "cfc's store failed before this call could be resolved",
+                )
+                raise
+        return calls_used, turn_chars_used
+
+    async def _process_one_call(
+        self, turn_id: TurnId, call: ToolCall, authority: FileAuthority,
+        calls_used: int, turn_chars_used: int, max_calls: int, max_turn_chars: int,
+    ) -> tuple[int, int]:
+        """One call's full lifecycle: registry lookup, availability,
+        argument validation, budget, approval, execution, and its exactly-
+        one committed result plus operational evidence. Any `sqlite3.Error`
+        or `asyncio.CancelledError` here is deliberately left to propagate
+        to `_process_tool_call_batch`'s own repair-and-reraise handling.
+        """
+        definition = self._registry.get(call.name)
+        if definition is None:
+            self._store.record_tool_result(
+                call.id, ToolOutcomeKind.UNAVAILABLE, f"unknown tool {call.name!r}", "")
+            return calls_used, turn_chars_used
+
+        unavailable_reason = definition.availability(self._file_tools)
+        if unavailable_reason is not None:
+            self._store.record_tool_result(
+                call.id, ToolOutcomeKind.UNAVAILABLE, unavailable_reason, "")
+            return calls_used, turn_chars_used
+
+        parsed_args, argument_error = definition.validate_arguments(call.arguments)
+        if argument_error is not None:
+            self._store.record_tool_result(call.id, ToolOutcomeKind.FAILURE, argument_error, "")
+            return calls_used, turn_chars_used
+
+        if calls_used >= max_calls:
+            self._store.record_tool_result(
+                call.id, ToolOutcomeKind.REFUSAL,
+                f"the turn's {max_calls}-call budget is spent", "")
+            return calls_used, turn_chars_used
+        if turn_chars_used >= max_turn_chars:
+            self._store.record_tool_result(
+                call.id, ToolOutcomeKind.REFUSAL,
+                f"the turn's {max_turn_chars:,}-character output budget is spent", "")
+            return calls_used, turn_chars_used
+
+        pending = PendingToolCall(
+            turn_id=turn_id, tool_call_id=call.id, provider_call_id=call.provider_call_id,
+            name=call.name, arguments=parsed_args,
+            description=definition.describe_pending(parsed_args), capability=definition.capability,
+        )
+        decision = await self._approval_port.decide(pending)
+        decided_at = utc_now()
+
+        if decision is not ApprovalDecision.APPROVE:
+            self._store.record_tool_result(
+                call.id, ToolOutcomeKind.REFUSAL, "declined", "",
+                decision=ApprovalDecision.REFUSE, decided_at=decided_at,
+            )
+            return calls_used, turn_chars_used
+
+        started_at = utc_now()
+        outcome = definition.execute(
+            parsed_args, authority, self._file_tools, _current_task_cancel_requested,
+        )
+        finished_at = utc_now()
+
+        self._store.record_tool_result(
+            call.id, outcome.kind, outcome.reason, outcome.content,
+            decision=ApprovalDecision.APPROVE, decided_at=decided_at, truncated=outcome.truncated,
+        )
+        self._store.record_tool_call_evidence(ToolCallEvidence(
+            tool_call_id=call.id, definition_name=call.name,
+            started_at=started_at, finished_at=finished_at, outcome_kind=outcome.kind,
+            reason=outcome.reason, character_count=len(outcome.content),
+            root=outcome.root, canonical_target=outcome.canonical_target,
+            counts=outcome.counts, truncated=outcome.truncated,
+        ))
+        return calls_used + 1, turn_chars_used + len(outcome.content)
+
+    def _repair_remaining_calls(
+        self, calls: tuple[ToolCall, ...], kind: ToolOutcomeKind, reason: str,
+    ) -> None:
+        """Best-effort typed repair for calls this turn never got to
+        resolve — tolerates a still-broken store (B-2.0-32's "reopen
+        recovery remains" discipline) and a call whose real outcome already
+        committed (`ConflictingToolResult`, left untouched: that commit
+        already won).
+        """
+        for call in calls:
+            try:
+                self._store.record_tool_result(call.id, kind, reason, "")
+            except ConflictingToolResult:
+                pass
+            except (ConversationStoreError, sqlite3.Error):
+                pass  # the store itself is unreachable; reopen recovery remains
 
     def _end_unfinished(self, turn_id: TurnId, kind: FailureKind, reason: str) -> Turn:
         """End a turn that is still active. If it already ended — the store
@@ -692,9 +1005,18 @@ class ConversationService:
         except (ConversationStoreError, sqlite3.Error):
             pass  # the store itself is unreachable; reopen recovery remains
 
-    def _apply_result(self, turn_id: TurnId, result: ResponderResult) -> Turn:
+    def _apply_result(
+        self, turn_id: TurnId, result: ResponderResult, summed_usage: Usage | None,
+    ) -> Turn:
+        """Finalises the turn for a tool-free `ResponderResult` (never a
+        `ToolCallBatch`, which `send_turn`'s own loop always continues past
+        rather than finalising). `summed_usage` is the whole turn's
+        field-by-field usage sum across every exchange (`_sum_usage`) — used
+        only for `Completion`; a single-exchange tool-free turn's sum is
+        exactly that exchange's own usage.
+        """
         if isinstance(result, Completion):
-            return self._store.complete_turn(turn_id, result.content, result.usage)
+            return self._store.complete_turn(turn_id, result.content, summed_usage)
         if isinstance(result, Failure):
             return self._store.fail_turn(turn_id, result.evidence)
         if isinstance(result, Cancellation):
@@ -705,13 +1027,26 @@ class ConversationService:
 def open_service(
     path, vault: VaultSettings, export_dir=None,
     display_names: DisplayNameSettings | None = None,
+    file_tools: FileToolSettings | None = None,
+    models: ModelCatalogue | None = None,
+    registry: ToolRegistry | None = None,
+    approval_port: ApprovalPort | None = None,
 ) -> ConversationService:
-    """Open the store at `path` and wrap it, with `vault`, `export_dir`, and
-    `display_names`, in a `ConversationService`. `path` must already be
-    resolved, exactly like `conversation_store.open_store`; `vault` is
-    `cfc.settings.build_vault_settings`'s own already-resolved output,
-    `export_dir` is `cfc.settings.ExportSettings.path`, and `display_names`
-    is `cfc.settings.build_display_name_settings`'s own already-resolved
-    output — this module never resolves a config snapshot itself.
+    """Open the store at `path` and wrap it, with `vault`, `export_dir`,
+    `display_names`, and the Stage 6 loop 1 tool-lifecycle collaborators,
+    in a `ConversationService`. `path` must already be resolved, exactly
+    like `conversation_store.open_store`; `vault` is `cfc.settings.
+    build_vault_settings`'s own already-resolved output, `export_dir` is
+    `cfc.settings.ExportSettings.path`, `display_names` is `cfc.settings.
+    build_display_name_settings`'s own already-resolved output, `file_tools`
+    is `cfc.settings.build_file_tool_settings`'s own already-resolved
+    output, and `models` is `cfc.settings.build_model_catalogue`'s own
+    already-resolved output — this module never resolves a config snapshot
+    itself. `registry` defaults to `cfc.tool_registry.default_registry()`;
+    `approval_port` has no safe default that approves anything, so an
+    omitted one refuses every call rather than guessing.
     """
-    return ConversationService(open_store(path), vault, export_dir, display_names)
+    return ConversationService(
+        open_store(path), vault, export_dir, display_names,
+        file_tools=file_tools, models=models, registry=registry, approval_port=approval_port,
+    )

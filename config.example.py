@@ -23,12 +23,11 @@
 #
 # It reads this file once, validates the settings above and the ones marked
 # optional below, and reports each as ready, unavailable (optional and
-# unset), error (set, but not usable as written), not checked (a row that
-# depends on a failed one above it), or not built (a 2.0 surface that
-# doesn't exist yet, regardless of configuration) — without opening a
-# database, creating a directory, or contacting a provider. A clean report
-# means the bootstrap is ready, not that a provider or embedder is actually
-# reachable — doctor validates format locally, never live.
+# unset), error (set, but not usable as written), or not checked (a row that
+# depends on a failed one above it) — without opening a database, creating a
+# directory, or contacting a provider. A clean report means the bootstrap is
+# ready, not that a provider or embedder is actually reachable — doctor
+# validates format locally, never live.
 #
 # The 2.0 bootstrap needs Python 3.14 or newer — `python -m cfc doctor`'s
 # runtime row refuses and names both versions on anything older. The v1.9.1

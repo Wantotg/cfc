@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Union
@@ -420,6 +421,179 @@ class FailureEvidence:
             )
 
 
+# --- tool calls: the durable ledger between a turn's two messages ---------
+# (Stage 6 loop 1)
+#
+# A turn's `cfc_messages` shape — the opening user message, and, once the
+# turn completes, one closing assistant message — is unchanged by tool use.
+# Everything a tool-using turn does *between* those two messages, each
+# provider round trip and its calls' results, is new, separate ledger
+# material a `ConversationSnapshot` carries alongside `messages`, and
+# `provider_wire` interleaves back onto the wire in provider-exchange order
+# (Concept.md: "rather than forcing tool protocol into the current
+# two-message turn_position shape"). This keeps every existing turn/message
+# invariant untouched: an active turn's `cfc_messages` shape stays exactly
+# the opening user message, no matter how many tool round trips it is
+# mid-way through.
+
+class ExchangeEnding(Enum):
+    """What one provider round trip within a turn produced. Mirrors
+    `ResponderResult`'s shape at exchange granularity rather than turn
+    granularity: a `FAILURE`/`CANCELLED` exchange still leaves its own
+    evidence (model, usage) even though the *turn* fails or cancels because
+    of it (Concept.md: "Earlier exchange usage remains evidence even when a
+    later provider request fails or the turn is cancelled").
+    """
+    COMPLETION = "completion"
+    TOOL_CALL_BATCH = "tool_call_batch"
+    FAILURE = "failure"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class ProviderExchange:
+    """One request/response round trip in a turn's continuation loop,
+    ordered by `sequence` (0-based, strictly increasing per turn — the order
+    `provider_wire` replays and budgets are spent in). `assistant_content` is
+    the literal text the provider returned alongside this ending, when it
+    returned any: always present for `COMPLETION`, optionally present for
+    `TOOL_CALL_BATCH`, absent for `FAILURE`/`CANCELLED`. `usage` is this
+    exchange's own independently optional reported counts — never coerced to
+    zero, never summed here (the turn-level sum is a service behaviour, not
+    a ledger shape).
+    """
+    turn_id: TurnId
+    sequence: int
+    model: str
+    ending: ExchangeEnding
+    assistant_content: str | None = None
+    usage: Usage | None = None
+
+    def __post_init__(self) -> None:
+        if self.sequence < 0:
+            raise ValueError("sequence must not be negative")
+
+
+@dataclass(frozen=True)
+class ToolCallId:
+    """An opaque, stable tool-call ledger identity — cfc's own, distinct
+    from `ToolCall.provider_call_id`, which is the provider's exact spelling
+    and is never generated.
+    """
+    value: str
+
+    @staticmethod
+    def new() -> "ToolCallId":
+        return ToolCallId(_new_id())
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One accepted call's durable ledger row: cfc's own `id`, which
+    exchange and position within its batch it belongs to, and the provider's
+    exact spelling (`provider_call_id`, `name`, `arguments`) preserved
+    verbatim for replay. `position` is the 0-based order within its batch —
+    the order approval, execution, and budgets process calls in.
+    """
+    id: ToolCallId
+    turn_id: TurnId
+    exchange_sequence: int
+    position: int
+    provider_call_id: str
+    name: str
+    arguments: str
+
+    def __post_init__(self) -> None:
+        if self.exchange_sequence < 0:
+            raise ValueError("exchange_sequence must not be negative")
+        if self.position < 0:
+            raise ValueError("position must not be negative")
+        if not self.provider_call_id:
+            raise ValueError("provider_call_id must not be empty")
+        if not self.name:
+            raise ValueError("name must not be empty")
+
+
+class ApprovalDecision(Enum):
+    APPROVE = "approve"
+    REFUSE = "refuse"
+
+
+class ToolOutcomeKind(Enum):
+    """Every accepted call's exactly-one typed outcome (Concept.md's "Typed
+    call outcomes"). Deliberately distinct: a `REFUSAL` (declined, or
+    authority denied the concrete target, or a turn budget refused
+    execution), an `UNAVAILABLE` capability or root (including an unknown
+    tool name), a `CANCELLATION` that arrived before this call's outcome
+    won, and a `FAILURE` that is neither of those — never collapsed to a
+    single success/failure boolean.
+    """
+    SUCCESS = "success"
+    REFUSAL = "refusal"
+    UNAVAILABLE = "unavailable"
+    CANCELLATION = "cancellation"
+    FAILURE = "failure"
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """One tool call's exactly-one committed outcome: the typed `kind`, a
+    bounded cfc-authored `reason`, and `content` — the exact bounded text
+    sent back to the provider as this call's `tool` message, stored once as
+    canonical replay material (never re-parsed as a provider response, never
+    duplicated into operational evidence). `decision`/`decided_at` record
+    the approval boundary's own decision when this call reached one; both
+    stay `None` for a call that never reached approval (an unknown or
+    unavailable tool, or one cut off once a turn budget was already spent).
+    """
+    tool_call_id: ToolCallId
+    kind: ToolOutcomeKind
+    reason: str
+    content: str
+    decision: ApprovalDecision | None = None
+    decided_at: datetime.datetime | None = None
+    truncated: bool = False
+
+    def __post_init__(self) -> None:
+        if self.decided_at is not None:
+            _require_aware("decided_at", self.decided_at)
+
+
+@dataclass(frozen=True)
+class ToolCallEvidence:
+    """Operational evidence for one accepted call, deliberately body-free:
+    identity, authority/root and canonical target, timestamps, the same
+    typed outcome and a bounded reason, counts, truncation, a result hash,
+    and a character count. Never the tool's raw file text or provider
+    response body — that lives once, in `ToolResult.content`, and is never
+    duplicated here (Concept.md: "Diagnostic duplication becomes a second
+    leak"). `counts` is a small named-integer map (e.g. entries examined,
+    matches found) whose exact keys are each tool definition's own concern,
+    not this module's.
+    """
+    tool_call_id: ToolCallId
+    definition_name: str
+    started_at: datetime.datetime
+    finished_at: datetime.datetime
+    outcome_kind: ToolOutcomeKind
+    reason: str
+    character_count: int
+    root: str | None = None
+    canonical_target: str | None = None
+    counts: Mapping[str, int] = field(default_factory=dict)
+    truncated: bool = False
+    result_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_aware("started_at", self.started_at)
+        _require_aware("finished_at", self.finished_at)
+        if not self.definition_name:
+            raise ValueError("definition_name must not be empty")
+
+
 # --- terminal turn outcomes (as persisted / read back) -----------------
 
 @dataclass(frozen=True)
@@ -502,11 +676,19 @@ class ConversationSnapshot:
 
     `turns` carries each turn's identity, position, and terminal state (or
     none, for the one active turn) so a converter can decide which stored
-    messages belong on the wire without re-querying SQLite.
+    messages belong on the wire without re-querying SQLite. `exchanges`,
+    `tool_calls`, and `tool_results` (Stage 6 loop 1) are the ledger material
+    between a tool-using turn's two `messages` rows — flat and grouped by
+    `turn_id`/`exchange_sequence` on read, the same convention `messages`
+    already uses (see this module's own "durable ledger between a turn's two
+    messages" section).
     """
     chat_id: ChatId
     turns: tuple[Turn, ...] = field(default_factory=tuple)
     messages: tuple[Message, ...] = field(default_factory=tuple)
+    exchanges: tuple[ProviderExchange, ...] = field(default_factory=tuple)
+    tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
+    tool_results: tuple[ToolResult, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -532,9 +714,51 @@ class Cancellation:
     pass
 
 
+@dataclass(frozen=True)
+class ProposedToolCall:
+    """One call exactly as a provider proposed it, before persistence
+    assigns cfc's own `ToolCallId` — the responder boundary's own output
+    shape, not yet a ledger row. `arguments` is the raw, unparsed argument
+    string; parsing and validating it against a registry definition happens
+    at the execution boundary, never here or in `provider_adapter`.
+    """
+    provider_call_id: str
+    name: str
+    arguments: str
+
+    def __post_init__(self) -> None:
+        if not self.provider_call_id:
+            raise ValueError("provider_call_id must not be empty")
+        if not self.name:
+            raise ValueError("name must not be empty")
+
+
+@dataclass(frozen=True)
+class ToolCallBatch:
+    """A responder's typed reply when the provider proposed one or more
+    tool calls instead of (or alongside) finishing: the ordered proposals in
+    provider order, optional literal assistant content alongside them, and
+    optional usage. Provider call ids must be unique within the batch — the
+    complete-batch validation the Work Order requires, enforced here so a
+    malformed batch cannot be constructed at all, the same discipline
+    `FailureEvidence`'s cross-field `__post_init__` already applies.
+    """
+    calls: tuple[ProposedToolCall, ...]
+    assistant_content: str | None = None
+    usage: Usage | None = None
+
+    def __post_init__(self) -> None:
+        if not self.calls:
+            raise ValueError("a tool-call batch must contain at least one call")
+        ids = [call.provider_call_id for call in self.calls]
+        if len(ids) != len(set(ids)):
+            raise ValueError("a tool-call batch's provider call ids must be unique")
+
+
 #: What an injected responder returns: exactly one of a completion, a
-#: failure, or a cancellation. The `Responder` protocol itself now lives in
-#: `cfc.provider_wire` (Stage 5 loop 1): it types on `RequestPlan`, which
-#: this module deliberately does not know about (see this module's own
-#: docstring: "not OpenAI message dictionaries").
-ResponderResult = Union[Completion, Failure, Cancellation]
+#: failure, a cancellation, or (Stage 6 loop 1) a proposed tool-call batch.
+#: The `Responder` protocol itself now lives in `cfc.provider_wire` (Stage 5
+#: loop 1): it types on `RequestPlan`, which this module deliberately does
+#: not know about (see this module's own docstring: "not OpenAI message
+#: dictionaries").
+ResponderResult = Union[Completion, Failure, Cancellation, ToolCallBatch]

@@ -16,20 +16,29 @@ from pathlib import Path
 import pytest
 
 from cfc import conversation_store as store_mod
+from cfc import provider_wire
 from cfc.conversation_types import (
+    ApprovalDecision,
     CancelledOutcome,
     ChatId,
     ChatKind,
     CompletedOutcome,
     ContextCategory,
     ContextManifestEntry,
+    ContextPlan,
+    ExchangeEnding,
     FailedOutcome,
     FailureEvidence,
     FailureKind,
     OpeningMessage,
+    ProposedToolCall,
     ProviderProblem,
     Role,
+    SourceRecord,
     TimeoutPhase,
+    ToolCallEvidence,
+    ToolCallId,
+    ToolOutcomeKind,
     TurnId,
     Usage,
     utc_now,
@@ -996,6 +1005,429 @@ def test_finalising_an_unknown_turn_refuses(tmp_path):
         store.close()
 
 
+# --- the tool ledger: persist-before-approval (Stage 6 loop 1) -------------
+
+def _one_call(provider_call_id="call_1", name="list_dir", arguments="{}"):
+    return ProposedToolCall(provider_call_id=provider_call_id, name=name, arguments=arguments)
+
+
+def test_persist_tool_call_batch_creates_exchange_and_calls(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+
+        exchange, calls = store.persist_tool_call_batch(
+            turn.id, "m", (_one_call("call_1"), _one_call("call_2", name="read_file")),
+            assistant_content="let me check", usage=Usage(input_tokens=5),
+        )
+
+        assert exchange.sequence == 0
+        assert exchange.ending is ExchangeEnding.TOOL_CALL_BATCH
+        assert exchange.assistant_content == "let me check"
+        assert exchange.usage == Usage(input_tokens=5)
+        assert [c.position for c in calls] == [0, 1]
+        assert [c.provider_call_id for c in calls] == ["call_1", "call_2"]
+        assert all(c.turn_id == turn.id and c.exchange_sequence == 0 for c in calls)
+    finally:
+        store.close()
+
+
+def test_persist_tool_call_batch_requires_at_least_one_call(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        with pytest.raises(ValueError):
+            store.persist_tool_call_batch(turn.id, "m", ())
+    finally:
+        store.close()
+
+
+def test_persist_tool_call_batch_unknown_turn_refuses(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        with pytest.raises(store_mod.UnknownTurn):
+            store.persist_tool_call_batch(TurnId.new(), "m", (_one_call(),))
+    finally:
+        store.close()
+
+
+def test_persist_tool_call_batch_sequence_increments_across_batches(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        first, first_calls = store.persist_tool_call_batch(turn.id, "m", (_one_call("call_1"),))
+        store.record_tool_result(first_calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "result")
+        second, _ = store.persist_tool_call_batch(turn.id, "m", (_one_call("call_2"),))
+        assert first.sequence == 0
+        assert second.sequence == 1
+    finally:
+        store.close()
+
+
+def test_record_exchange_persists_a_tool_free_completion(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        exchange = store.record_exchange(
+            turn.id, "m", ExchangeEnding.COMPLETION, usage=Usage(output_tokens=4),
+        )
+        assert exchange.sequence == 0
+        assert exchange.ending is ExchangeEnding.COMPLETION
+        assert exchange.assistant_content is None
+        assert exchange.usage == Usage(output_tokens=4)
+    finally:
+        store.close()
+
+
+def test_record_exchange_refuses_a_tool_call_batch_ending(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        with pytest.raises(ValueError):
+            store.record_exchange(turn.id, "m", ExchangeEnding.TOOL_CALL_BATCH)
+    finally:
+        store.close()
+
+
+def test_record_exchange_unknown_turn_refuses(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        with pytest.raises(store_mod.UnknownTurn):
+            store.record_exchange(TurnId.new(), "m", ExchangeEnding.COMPLETION)
+    finally:
+        store.close()
+
+
+# --- the tool ledger: one result per call, idempotent, race-safe -----------
+
+def test_record_tool_result_persists_the_committed_outcome(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+        decided_at = utc_now()
+
+        result = store.record_tool_result(
+            calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "a.txt\nb.txt",
+            decision=ApprovalDecision.APPROVE, decided_at=decided_at,
+        )
+
+        assert result.kind is ToolOutcomeKind.SUCCESS
+        assert result.content == "a.txt\nb.txt"
+        assert result.decision is ApprovalDecision.APPROVE
+        assert result.decided_at == decided_at
+    finally:
+        store.close()
+
+
+def test_record_tool_result_repeated_identical_is_idempotent(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+
+        first = store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "x")
+        second = store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "x")
+
+        assert first == second
+        count = store._conn.execute(
+            "SELECT COUNT(*) FROM cfc_tool_results WHERE tool_call_id = ?", (calls[0].id.value,)
+        ).fetchone()[0]
+        assert count == 1
+    finally:
+        store.close()
+
+
+def test_record_tool_result_conflicting_resubmission_refuses_and_preserves_the_original(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+        original = store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "first")
+
+        with pytest.raises(store_mod.ConflictingToolResult):
+            store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "second")
+        with pytest.raises(store_mod.ConflictingToolResult):
+            store.record_tool_result(calls[0].id, ToolOutcomeKind.FAILURE, "boom", "first")
+
+        still = store._conn.execute(
+            "SELECT content FROM cfc_tool_results WHERE tool_call_id = ?", (calls[0].id.value,)
+        ).fetchone()
+        assert still[0] == "first"
+        assert original.content == "first"
+    finally:
+        store.close()
+
+
+def test_record_tool_result_unknown_call_refuses(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        with pytest.raises(store_mod.UnknownToolCall):
+            store.record_tool_result(ToolCallId.new(), ToolOutcomeKind.SUCCESS, "ok", "x")
+    finally:
+        store.close()
+
+
+# --- the tool ledger: operational evidence, separate and body-free ---------
+
+def test_record_tool_call_evidence_round_trips(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+        started = utc_now()
+        finished = utc_now()
+        evidence = ToolCallEvidence(
+            tool_call_id=calls[0].id, definition_name="list_dir",
+            started_at=started, finished_at=finished, outcome_kind=ToolOutcomeKind.SUCCESS,
+            reason="ok", character_count=42, root="/tmp/roots", canonical_target="a",
+            counts={"entries_examined": 3, "entries_returned": 3}, truncated=False,
+            result_hash="deadbeef",
+        )
+
+        store.record_tool_call_evidence(evidence)
+
+        row = store._conn.execute(
+            "SELECT definition_name, root, canonical_target, outcome_kind, reason, "
+            "counts, truncated, result_hash, character_count "
+            "FROM cfc_tool_call_evidence WHERE tool_call_id = ?", (calls[0].id.value,),
+        ).fetchone()
+        assert row == ("list_dir", "/tmp/roots", "a", "success", "ok",
+                        '{"entries_examined": 3, "entries_returned": 3}', 0, "deadbeef", 42)
+    finally:
+        store.close()
+
+
+def test_record_tool_call_evidence_never_duplicates_the_result_body(tmp_path):
+    """The evidence row's columns are body-free by construction — there is
+    no column this could even write file text into."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+        columns = {
+            row[1] for row in store._conn.execute("PRAGMA table_info(cfc_tool_call_evidence)")
+        }
+        assert "content" not in columns
+        assert "arguments" not in columns
+    finally:
+        store.close()
+
+
+def test_record_tool_call_evidence_second_call_for_the_same_tool_call_refuses(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+        now = utc_now()
+        evidence = ToolCallEvidence(
+            tool_call_id=calls[0].id, definition_name="list_dir",
+            started_at=now, finished_at=now, outcome_kind=ToolOutcomeKind.SUCCESS,
+            reason="ok", character_count=1,
+        )
+        store.record_tool_call_evidence(evidence)
+        with pytest.raises(store_mod.ConflictingToolResult):
+            store.record_tool_call_evidence(evidence)
+    finally:
+        store.close()
+
+
+# --- the tool ledger: snapshot inclusion and provider-wire round trip ------
+
+def test_snapshot_includes_the_full_tool_ledger(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "list the tmp dir")
+        _exchange, calls = store.persist_tool_call_batch(
+            turn.id, "m", (_one_call("call_1"),), assistant_content="let me look",
+        )
+        store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "a.txt\nb.txt")
+        store.complete_turn(turn.id, "done, two files")
+
+        snapshot = store.snapshot(chat.id)
+
+        assert len(snapshot.exchanges) == 1
+        assert snapshot.exchanges[0].ending is ExchangeEnding.TOOL_CALL_BATCH
+        assert snapshot.exchanges[0].assistant_content == "let me look"
+        assert len(snapshot.tool_calls) == 1
+        assert snapshot.tool_calls[0].provider_call_id == "call_1"
+        assert len(snapshot.tool_results) == 1
+        assert snapshot.tool_results[0].content == "a.txt\nb.txt"
+    finally:
+        store.close()
+
+
+def test_store_produced_snapshot_round_trips_through_provider_wire(tmp_path):
+    """The real producer/parser pair: a snapshot built by the store's own
+    writes, not a hand-made fixture, fed straight into `provider_wire.
+    build_request_plan` and asserted to interleave correctly."""
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "list the tmp dir")
+        _exchange, calls = store.persist_tool_call_batch(
+            turn.id, "m", (_one_call("call_1"),), assistant_content="let me look",
+        )
+        store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "a.txt\nb.txt")
+        store.complete_turn(turn.id, "done, two files")
+
+        snapshot = store.snapshot(chat.id)
+        context = ContextPlan(system_instructions=SourceRecord(
+            category=ContextCategory.SYSTEM_INSTRUCTIONS, name="sys", display_name="sys",
+            body="sys", character_count=3, fingerprint="fp",
+        ))
+
+        plan = provider_wire.build_request_plan(context, None, snapshot, "fixture-model")
+
+        assert plan.messages == (
+            provider_wire.WireMessage(role="system", content="sys"),
+            provider_wire.WireMessage(role="user", content="list the tmp dir"),
+            provider_wire.WireMessage(
+                role="assistant", content="let me look",
+                tool_calls=(provider_wire.WireToolCall(
+                    provider_call_id="call_1", name="list_dir", arguments="{}"),),
+            ),
+            provider_wire.WireMessage(role="tool", content="a.txt\nb.txt", tool_call_id="call_1"),
+            provider_wire.WireMessage(role="assistant", content="done, two files"),
+        )
+    finally:
+        store.close()
+
+
+# --- the tool ledger: reopen repair of every unresolved call ---------------
+
+def test_reopen_repairs_every_unresolved_tool_call_leaving_resolved_ones_untouched(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    chat = store.create_chat("c", "fixture-model")
+    turn, _ = store.start_turn(chat.id, "m", "q")
+    _exchange, calls = store.persist_tool_call_batch(
+        turn.id, "m", (_one_call("call_1"), _one_call("call_2", name="read_file")),
+    )
+    resolved = store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "already done")
+    store.close()  # simulates the process disappearing with call_2 unresolved
+
+    reopened = store_mod.open_store(path)
+    try:
+        snapshot = reopened.snapshot(chat.id)
+        by_call = {r.tool_call_id: r for r in snapshot.tool_results}
+        assert by_call[calls[0].id] == resolved
+        assert by_call[calls[1].id].kind is ToolOutcomeKind.CANCELLATION
+        assert by_call[calls[1].id].decision is None
+        assert by_call[calls[1].id].decided_at is None
+
+        recovered_turn = reopened.get_turn(turn.id)
+        assert isinstance(recovered_turn.outcome, FailedOutcome)
+        assert recovered_turn.outcome.evidence.kind is FailureKind.INTERRUPTED
+    finally:
+        reopened.close()
+
+
+def test_tool_call_repair_does_not_repeat_on_a_later_uneventful_reopen(tmp_path):
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    chat = store.create_chat("c", "fixture-model")
+    turn, _ = store.start_turn(chat.id, "m", "q")
+    _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+    store.close()
+
+    once = store_mod.open_store(path)
+    once_result = once.snapshot(chat.id).tool_results[0]
+    once.close()
+
+    twice = store_mod.open_store(path)
+    twice_result = twice.snapshot(chat.id).tool_results[0]
+    twice.close()
+
+    assert once_result == twice_result
+
+
+def test_reopen_with_no_tool_calls_at_all_repairs_nothing(tmp_path):
+    """The common case — a tool-free turn — must not be disturbed by the
+    new repair pass."""
+    path = db_path(tmp_path)
+    store = store_mod.open_store(path)
+    chat = store.create_chat("c", "fixture-model")
+    turn, _ = store.start_turn(chat.id, "m", "q")
+    store.complete_turn(turn.id, "answer")
+    store.close()
+
+    reopened = store_mod.open_store(path)
+    try:
+        snapshot = reopened.snapshot(chat.id)
+        assert snapshot.tool_calls == ()
+        assert snapshot.tool_results == ()
+    finally:
+        reopened.close()
+
+
+# --- the tool ledger: constraints enforced at the SQLite layer -------------
+
+def test_tool_calls_provider_call_id_is_unique_per_turn(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        store.persist_tool_call_batch(turn.id, "m", (_one_call("call_1"),))
+        with pytest.raises(sqlite3.IntegrityError):
+            store._conn.execute(
+                "INSERT INTO cfc_tool_calls "
+                "(id, chat_id, turn_id, exchange_sequence, position, "
+                "provider_call_id, name, arguments) "
+                "VALUES ('dup', ?, ?, 0, 1, 'call_1', 'grep', '{}')",
+                (chat.id.value, turn.id.value),
+            )
+    finally:
+        store.close()
+
+
+def test_tool_results_one_row_per_call_is_enforced_by_primary_key(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        _exchange, calls = store.persist_tool_call_batch(turn.id, "m", (_one_call(),))
+        store.record_tool_result(calls[0].id, ToolOutcomeKind.SUCCESS, "ok", "x")
+        with pytest.raises(sqlite3.IntegrityError):
+            store._conn.execute(
+                "INSERT INTO cfc_tool_results "
+                "(tool_call_id, kind, reason, content, created_at) "
+                "VALUES (?, 'failure', 'x', 'y', 'z')",
+                (calls[0].id.value,),
+            )
+    finally:
+        store.close()
+
+
+def test_tool_calls_foreign_key_to_batch_is_enforced(tmp_path):
+    store = store_mod.open_store(db_path(tmp_path))
+    try:
+        chat = store.create_chat("c", "fixture-model")
+        turn, _ = store.start_turn(chat.id, "m", "q")
+        with pytest.raises(sqlite3.IntegrityError):
+            store._conn.execute(
+                "INSERT INTO cfc_tool_calls "
+                "(id, chat_id, turn_id, exchange_sequence, position, "
+                "provider_call_id, name, arguments) "
+                "VALUES ('orphan', ?, ?, 99, 0, 'call_x', 'grep', '{}')",
+                (chat.id.value, turn.id.value),
+            )
+    finally:
+        store.close()
+
+
 # --- persistence-exception rollback: never a partial answer -----------------
 
 def test_final_write_failure_leaves_the_turn_recoverable(tmp_path):
@@ -1632,13 +2064,34 @@ def test_a_schema_version_five_database_refuses_as_too_old(tmp_path):
         assert not (path.parent / (path.name + suffix)).exists()
 
 
+# --- Stage 6 loop 1: schema bump refuses the Stage-5 (version 6) schema ----
+
+def test_a_schema_version_six_database_refuses_as_too_old(tmp_path):
+    """This loop bumps `SCHEMA_VERSION` from 6 to 7, adding the additive
+    tool-ledger tables. A real version-6 database still lacks them
+    entirely, so it must take the existing visible refusal route rather
+    than being silently reinterpreted or `ALTER`ed to add them in place.
+    """
+    path = db_path(tmp_path)
+    _write_foreign_sqlite(path, application_id=store_mod.APPLICATION_ID, user_version=6)
+    before = path.read_bytes()
+
+    with pytest.raises(store_mod.DatabaseIncompatible) as exc_info:
+        store_mod.open_store(path)
+
+    assert exc_info.value.problem is store_mod.DatabaseProblem.SCHEMA_TOO_OLD
+    assert path.read_bytes() == before
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not (path.parent / (path.name + suffix)).exists()
+
+
 def test_a_fresh_database_is_created_at_the_new_schema_version(tmp_path):
     path = db_path(tmp_path)
     store = store_mod.open_store(path)
     try:
         raw = sqlite3.connect(str(path))
         try:
-            assert raw.execute("PRAGMA user_version").fetchone()[0] == 6
+            assert raw.execute("PRAGMA user_version").fetchone()[0] == 7
         finally:
             raw.close()
     finally:
