@@ -463,9 +463,20 @@ class TurnDetailsModal(ModalScreen[None]):
         self._models = models
 
     def compose(self) -> ComposeResult:
+        """The dialog is a `VerticalScroll`, not the plain `Vertical` every
+        other modal here uses (B-2.0-94). One manifest entry per line, each
+        carrying a 64-character fingerprint, wraps to about three rows in a
+        70-column dialog: three attachments already exceed `max-height: 80%`
+        on an 80x24 terminal, and a `Vertical` clips (Textual's default
+        `overflow: hidden`) rather than scrolling, putting the later entries
+        and the Close button outside the box with no route to them.
+        Scrolling the dialog itself, rather than an inner container, is what
+        keeps Close reachable too: `SourcePreviewModal`'s inner-scroll shape
+        leaves its own button outside the dialog at that size.
+        """
         turn = self._turn
         usage = turn.outcome.usage if isinstance(turn.outcome, CompletedOutcome) else None
-        with Vertical(id="turn-details-dialog"):
+        with VerticalScroll(id="turn-details-dialog"):
             yield Label(f"Turn details — {turn.model}", markup=False)
             yield Static(f"model: {turn.model}", markup=False)
             yield Static(_usage_text(usage), markup=False)

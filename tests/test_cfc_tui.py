@@ -3232,6 +3232,58 @@ async def test_turn_details_flags_a_context_source_that_is_now_unavailable(tmp_p
         await app.shutdown()
 
 
+async def test_turn_details_keeps_a_long_manifest_and_its_close_action_reachable(tmp_path):
+    """B-2.0-94: `B-2.0-82` gave every manifest entry its own line, and a
+    64-character fingerprint wraps that line to about three rows in a
+    70-column dialog. Three attachments on an 80x24 terminal already
+    overflow the dialog's `max-height: 80%`, and the dialog was a plain
+    `Vertical` — Textual's default `overflow: hidden` — so the later
+    entries and the focused Close button rendered outside it with no way
+    to scroll to them.
+
+    Drives the real terminal size a person can actually have: the evidence
+    must exceed the box (otherwise this proves nothing), and both ends of
+    it plus the Close action must still be reachable by keyboard.
+    """
+    vault = real_vault(tmp_path)
+    for index in range(3):
+        write_source(tmp_path, f"note-{index}.md", "body " * 20)
+    app = make_app(tmp_path, vault=vault)
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = await open_new_chat(app, pilot)
+            for index in range(3):
+                app.service.add_attachment(screen.chat_id, f"note-{index}.md")
+            await type_text(pilot, "hi")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            modal = await open_turn_details(pilot, screen)
+            dialog = modal.query_one("#turn-details-dialog")
+            close_button = modal.query_one("#turn-details-close", tui.Button)
+            assert dialog.max_scroll_y > 0, "this manifest must overflow the dialog to prove anything"
+
+            #: The top of the evidence is what the dialog opens on.
+            assert dialog.scroll_y == 0
+            provenance = list(modal.query("#turn-details-dialog Static"))[-1]
+            assert dialog.region.contains(provenance.region.x, provenance.region.y)
+
+            #: ...and the far end of it, including Close, is reachable
+            #: without a mouse.
+            await pilot.press("end")
+            await pilot.pause()
+            assert dialog.scroll_y == dialog.max_scroll_y
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app.focused is close_button
+            assert dialog.region.contains_region(close_button.region)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, tui.ChatScreen)
+    finally:
+        await app.shutdown()
+
+
 # === Main: the Hub's own action (Stage 5 loop 3) ============================
 
 def write_main_bundle(directory: Path, *, first_message: str = "Hello from Main.") -> None:
@@ -3651,6 +3703,49 @@ async def test_attachment_picker_clearing_the_filter_reuses_the_cached_scan(tmp_
             names = [item.picked_value for item in picker.query("#attachment-picker-list ListItem")]
             assert names == ["notes.md"]
             assert calls == []  # filtering never re-triggers discovery
+    finally:
+        await app.shutdown()
+
+
+async def test_attachment_picker_never_highlights_a_row_it_did_not_have_to(tmp_path):
+    """`B-2.0-70`'s rule at the refresh seam, which had no assertion of its
+    own (D-2.0-95): the list is rebuilt on every filter keystroke, so a
+    highlight arriving from a *rebuild* rather than from a person would be
+    exactly the accident `initial_index=None` exists to prevent. Proved
+    after discovery completes, after filtering, and after clearing the
+    filter — then one deliberate `Down` proves the intended first match is
+    what a highlight actually costs.
+    """
+    write_source(tmp_path, "alpha.md", "one")
+    write_source(tmp_path, "beta.md", "two")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test() as pilot:
+            screen = await open_new_chat(app, pilot)
+            await open_context_modal(pilot)
+            picker = await open_attachment_picker(pilot)
+            await wait_for_attachment_scan(pilot, picker)
+            list_view = picker.query_one("#attachment-picker-list", tui.ListView)
+            assert list_view.index is None
+
+            field = picker.query_one("#attachment-picker-filter", tui.Input)
+            field.focus()
+            await type_text(pilot, "beta")
+            await pilot.pause()
+            assert list_view.index is None
+
+            for _ in range(len("beta")):
+                await pilot.press("backspace")
+            await pilot.pause()
+            assert list_view.index is None
+
+            await pilot.press("down")
+            await pilot.pause()
+            assert list_view.index == 0
+            await pilot.press("enter")
+            await pilot.pause()
+            selected = [a.relative_path for a in app.service.context_rows(screen.chat_id).attachments]
+            assert selected == ["alpha.md"]
     finally:
         await app.shutdown()
 
