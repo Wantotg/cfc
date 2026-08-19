@@ -469,6 +469,24 @@ async def open_turn_details(pilot, screen, index: int = 0) -> "tui.TurnDetailsMo
     return modal
 
 
+def painted_rows(app) -> list[str]:
+    """What the terminal actually shows, row by row.
+
+    Every other assertion in this file reads a widget's own `content` — the
+    string it holds. That is not the same question as whether a person can
+    see it, and the gap between the two is exactly how `B-2.0-104` shipped:
+    `#chat-status` held its notice correctly and the `Footer` was painted
+    over the top of it, at every terminal size, for the whole of Stage 4 and
+    5. Textual 8.2.8 exposes no public row-text export (`Screen.render_lines`
+    returns the screen's own background, not the composited children), so
+    this reaches the compositor directly.
+    """
+    return [
+        "".join(segment.text for segment in strip)
+        for strip in app.screen._compositor.render_strips()
+    ]
+
+
 def turn_details_lines(app) -> list[str]:
     modal = app.screen
     assert isinstance(modal, tui.TurnDetailsModal)
@@ -3280,6 +3298,68 @@ async def test_turn_details_keeps_a_long_manifest_and_its_close_action_reachable
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, tui.ChatScreen)
+    finally:
+        await app.shutdown()
+
+
+async def test_the_chat_screens_bars_do_not_paint_over_each_other(tmp_path):
+    """B-2.0-104: `#chat-title-bar` and `#chat-context-bar` both docked top,
+    and `#chat-status`, `Composer`, and `Footer` all docked bottom. Textual
+    anchors every same-edge docked widget to that same edge rather than
+    stacking them, so the context bar was painted over the title and the
+    footer over the status line — at every terminal size. Asserted against
+    painted rows, because widget content proves neither.
+    """
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = await open_new_chat(app, pilot, title="TITLEMARKER")
+            screen._notice = "NOTICEMARKER"
+            screen._render_status()
+            await pilot.pause()
+
+            rows = painted_rows(app)
+            assert "TITLEMARKER" in rows[0]
+            assert any("NOTICEMARKER" in row for row in rows)
+            #: the footer keeps its own row rather than being displaced in turn
+            assert "^q Quit" in rows[-1]
+    finally:
+        await app.shutdown()
+
+
+async def test_a_refused_turn_shows_its_correction_route_on_screen(tmp_path):
+    """The other half of `B-2.0-104`, and the reason it mattered: an
+    attachment that moves after it was selected refuses the turn correctly —
+    draft kept, no turn stored, nothing sent — and the sentence telling a
+    person how to recover was the part nobody could see.
+    """
+    write_source(tmp_path, "index main.md", "the index body")
+    app = make_app(tmp_path, vault=real_vault(tmp_path))
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = await open_new_chat(app, pilot)
+            app.service.add_attachment(screen.chat_id, "index main.md")
+            await type_text(pilot, "turn one")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(app.service.snapshot(screen.chat_id).turns) == 1
+
+            (tmp_path / "folder").mkdir()
+            (tmp_path / "index main.md").rename(tmp_path / "folder" / "index main.md")
+
+            screen.query_one(tui.Composer).focus()
+            await type_text(pilot, "turn two")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            #: the existing refusal contract, unchanged
+            assert len(app.service.snapshot(screen.chat_id).turns) == 1
+            assert screen.query_one(tui.Composer).text == "turn two"
+
+            #: ...and now legible, correction route included
+            painted = "\n".join(painted_rows(app))
+            assert "index main.md" in painted
+            assert "Open Context to change or fix the selection" in painted
     finally:
         await app.shutdown()
 

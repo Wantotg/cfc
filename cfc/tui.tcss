@@ -38,7 +38,6 @@
 }
 
 #chat-title-bar {
-    dock: top;
     height: 1;
     padding: 0 1;
     background: $panel;
@@ -66,14 +65,12 @@
 }
 
 #chat-status {
-    dock: bottom;
-    height: 1;
+    height: auto;
     padding: 0 1;
     background: $panel;
 }
 
 Composer {
-    dock: bottom;
     height: 5;
     border: round $primary;
 }
@@ -88,7 +85,6 @@ Composer {
 }
 
 #chat-context-bar {
-    dock: top;
     height: 1;
     padding: 0 1;
     background: $panel;
