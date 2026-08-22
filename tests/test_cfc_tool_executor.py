@@ -104,13 +104,16 @@ def test_list_dir_omission_is_distinguishable_from_a_truly_empty_directory(tmp_p
     assert "excluded" in result.content  # not silently "0 entries" with no explanation
 
 
-def test_list_dir_the_cfc_repository_is_omitted_when_a_broader_root_contains_it(tmp_path, monkeypatch):
+def test_list_dir_omits_denied_names_and_counts_the_omission(tmp_path):
+    """B-2.0-123: an ordinary source directory lists normally; the secret
+    inside it does not, and the count says something was left out so an
+    omission is never mistaken for an empty directory."""
     root = make_root(tmp_path)
-    fake_repo = root / "cfc"
-    fake_repo.mkdir()
-    (root / "other").mkdir()
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)  # the one owner
+    (root / "agent.py").write_text("ordinary source\n")
+    (root / "config.py").write_text("API_KEY = 'k'\n")
     result = executor.list_dir(str(root), authority(root), settings())
+    assert "agent.py" in result.content
+    assert "config.py" not in result.content
     assert result.counts["entries_returned"] == 1
     assert result.counts["entries_excluded"] == 1
 
@@ -275,17 +278,20 @@ def test_grep_recurses_a_directory_without_following_symlinks(tmp_path):
     assert "should not be found" not in result.content
 
 
-def test_grep_prunes_the_cfc_source_tree(tmp_path, monkeypatch):
+def test_grep_searches_a_source_tree_but_never_its_secret(tmp_path):
+    """B-2.0-123: searching a project directory is the point; `config.py`
+    is pruned by name before it is ever opened, so its `API_KEY` cannot
+    reach a match line."""
     root = make_root(tmp_path)
-    fake_repo = root / "cfc"
-    (fake_repo).mkdir()
-    (fake_repo / "secret.py").write_text("TODO leak\n")
-    (root / "ok.txt").write_text("TODO visible\n")
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)  # the one owner
+    source = root / "project"
+    source.mkdir()
+    (source / "agent.py").write_text("API_KEY is read here\n")
+    (source / "config.py").write_text("API_KEY = 'sk-real-secret'\n")
 
-    result = executor.grep("TODO", str(root), authority(root), settings())
-    assert "secret.py" not in result.content
-    assert "ok.txt" in result.content
+    result = executor.grep("API_KEY", str(root), authority(root), settings())
+    assert "agent.py" in result.content
+    assert "config.py" not in result.content
+    assert "sk-real-secret" not in result.content
 
 
 def test_grep_prunes_hidden_denied_and_non_text_files(tmp_path):
@@ -387,42 +393,26 @@ def test_grep_respects_the_configured_character_limit(tmp_path):
     assert len(result.content) < 250
 
 
-# --- B-2.0-107: enumeration through a symlinked root -----------------------
+# --- enumeration through a symlinked root ---------------------------------
 
-def test_list_dir_through_a_symlinked_root_still_omits_the_cfc_source(tmp_path, monkeypatch):
-    """`list_dir`'s exclusion check builds each child's absolute path from
-    the root. Built from the *configured* spelling, a symlinked root never
-    matched `REPOSITORY_ROOT` and listed the repository as an ordinary
-    directory.
-    """
-    parent = tmp_path / "workspace"
-    fake_repo = parent / "cfc"
-    fake_repo.mkdir(parents=True)
-    (parent / "notes.txt").write_text("ordinary\n")
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
+def test_enumeration_through_a_symlinked_root_lists_and_searches_normally(tmp_path):
+    """A symlinked root is an ordinary arrangement, and both enumerating
+    tools work through one — while the deny list still holds inside it."""
+    real = tmp_path / "workspace"
+    real.mkdir()
+    (real / "notes.txt").write_text("TODO visible\n")
+    (real / "config.py").write_text("TODO secret\n")
 
     alias = tmp_path / "alias"
-    alias.symlink_to(parent, target_is_directory=True)
+    alias.symlink_to(real, target_is_directory=True)
+    auth = authority(alias)
 
-    outcome = executor.list_dir(str(alias), authority(alias), settings())
-    assert outcome.kind is ToolOutcomeKind.SUCCESS
-    assert "notes.txt" in outcome.content
-    assert "cfc" not in outcome.content
-    assert outcome.counts["entries_excluded"] == 1
+    listed = executor.list_dir(str(alias), auth, settings())
+    assert listed.kind is ToolOutcomeKind.SUCCESS
+    assert "notes.txt" in listed.content
+    assert "config.py" not in listed.content
 
-
-def test_grep_through_a_symlinked_root_still_prunes_the_cfc_source(tmp_path, monkeypatch):
-    parent = tmp_path / "workspace"
-    fake_repo = parent / "cfc"
-    fake_repo.mkdir(parents=True)
-    (fake_repo / "secret.py").write_text("TODO leak\n")
-    (parent / "ok.txt").write_text("TODO visible\n")
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
-
-    alias = tmp_path / "alias"
-    alias.symlink_to(parent, target_is_directory=True)
-
-    outcome = executor.grep("TODO", str(alias), authority(alias), settings())
-    assert outcome.kind is ToolOutcomeKind.SUCCESS
-    assert "ok.txt" in outcome.content
-    assert "secret.py" not in outcome.content
+    searched = executor.grep("TODO", str(alias), auth, settings())
+    assert searched.kind is ToolOutcomeKind.SUCCESS
+    assert "notes.txt" in searched.content
+    assert "config.py" not in searched.content

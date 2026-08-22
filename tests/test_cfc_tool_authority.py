@@ -216,34 +216,42 @@ def test_a_sibling_prefix_that_merely_starts_with_the_root_string_is_refused(tmp
     assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
 
 
-# --- cfc source-tree exclusion --------------------------------------------
+# --- B-2.0-123: cfc's own source is readable; its secret is not -----------
 
-def test_the_cfc_repository_root_itself_is_refused_even_inside_a_broader_root(tmp_path, monkeypatch):
-    root = make_root(tmp_path)
-    fake_repo = root / "cfc-repo"
-    fake_repo.mkdir()
-    (fake_repo / "settings.py").write_text("x")
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
-    auth = authority(root)
-
-    result = authority_mod.open_contained(fake_repo / "settings.py", auth)
-    assert isinstance(result, authority_mod.Refused)
-    assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
-    assert "source tree" in result.reason
-
-
-def test_the_real_repository_root_is_never_readable_when_a_root_contains_it(tmp_path):
-    """Using the module's real REPOSITORY_ROOT (no monkeypatch): a
-    configured root that happens to be REPOSITORY_ROOT's own parent must
-    still refuse a direct read of the repository."""
-    parent = REPOSITORY_ROOT.parent
-    auth = authority(parent)
-    a_repo_file = REPOSITORY_ROOT / "cfc" / "__init__.py"
-    if not a_repo_file.exists():
+def test_cfc_source_is_readable_through_a_configured_root(tmp_path):
+    """v1.9.1 read the repository — `ATTACH_ROOTS` names it on purpose —
+    and no settled 2.0 contract removes that. The loop-1 Concept's blanket
+    read exclusion voided most of a real configured scope; the deny list
+    below is what actually protects the secret.
+    """
+    a_source_file = REPOSITORY_ROOT / "cfc" / "__init__.py"
+    if not a_source_file.exists():
         pytest.skip("repository layout does not match this test's assumption")
-    result = authority_mod.open_contained(a_repo_file, auth)
-    assert isinstance(result, authority_mod.Refused)
-    assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
+
+    result = authority_mod.open_contained(a_source_file, authority(REPOSITORY_ROOT))
+    assert isinstance(result, authority_mod.OpenTarget)
+    result.close()
+
+
+def test_the_real_config_py_is_still_refused_inside_its_own_repository(tmp_path):
+    """The one file that must never be read, checked against the real
+    repository root rather than a fixture: it holds `API_KEY`."""
+    auth = authority(REPOSITORY_ROOT)
+    for spelling in ("config.py", "config.py.bak", "config.py.save"):
+        result = authority_mod.open_contained(REPOSITORY_ROOT / spelling, auth)
+        assert isinstance(result, authority_mod.Refused), spelling
+        assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
+
+
+def test_bytecode_and_git_are_still_refused_inside_the_repository():
+    """`__pycache__/config.cpython-*.pyc` embeds the same key verbatim, and
+    `.git` holds the history. Both are denied as directory components, so a
+    readable repository does not make them reachable."""
+    auth = authority(REPOSITORY_ROOT)
+    for target in ("__pycache__/config.cpython-312.pyc", ".git/config"):
+        result = authority_mod.open_contained(REPOSITORY_ROOT / target, auth)
+        assert isinstance(result, authority_mod.Refused), target
+        assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
 
 
 # --- built-in deny rules ---------------------------------------------------
@@ -342,75 +350,46 @@ def test_a_race_that_swaps_the_target_between_stat_and_open_cannot_escape(tmp_pa
     assert "symlink" in result.reason
 
 
-# --- B-2.0-107: a symlinked root cannot become a way into cfc's source ----
+# --- a symlinked root is an ordinary arrangement, and still contained -----
 
-def test_a_root_that_is_a_symlink_to_the_repository_cannot_read_it(tmp_path, monkeypatch):
-    """The reproduced Stage 6 loop 1 bypass: the configured root is a
-    symlink, so the requested path never *lexically* contains
-    `REPOSITORY_ROOT` and the exclusion used to pass — while the root's own
-    open (deliberately not O_NOFOLLOW) followed the link straight in.
+def test_a_symlinked_root_reads_normally_and_still_refuses_a_child_symlink(tmp_path):
+    """The root is opened without O_NOFOLLOW on purpose — a symlinked root
+    is an ordinary filesystem arrangement. Every component walked *from*
+    it is still no-follow, so containment does not depend on how the root
+    itself was spelled.
     """
-    fake_repo = tmp_path / "real-cfc"
-    fake_repo.mkdir()
-    (fake_repo / "README.md").write_text("cfc's own source\n")
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "notes.txt").write_text("ordinary\n")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not yours\n")
+    (real / "escape").symlink_to(outside)
 
     alias = tmp_path / "alias"
-    alias.symlink_to(fake_repo, target_is_directory=True)
+    alias.symlink_to(real, target_is_directory=True)
     auth = authority(alias)
-
-    result = authority_mod.open_contained(alias / "README.md", auth)
-    assert isinstance(result, authority_mod.Refused)
-    assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
-    assert "source tree" in result.reason
-
-
-def test_a_root_symlinked_above_the_repository_cannot_read_into_it(tmp_path, monkeypatch):
-    """The wider spelling of the same bypass: the root aliases a *parent*
-    of the repository, so only the canonical target reveals the route in.
-    A sibling under that same aliased root still reads normally — the
-    exclusion is the repository, not the alias.
-    """
-    parent = tmp_path / "workspace"
-    fake_repo = parent / "cfc"
-    fake_repo.mkdir(parents=True)
-    (fake_repo / "config.example.py").write_text("secrets shape\n")
-    (parent / "notes.txt").write_text("ordinary\n")
-    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
-
-    alias = tmp_path / "alias"
-    alias.symlink_to(parent, target_is_directory=True)
-    auth = authority(alias)
-
-    refused = authority_mod.open_contained(alias / "cfc" / "config.example.py", auth)
-    assert isinstance(refused, authority_mod.Refused)
-    assert refused.outcome is authority_mod.AuthorityOutcome.REFUSAL
-    assert "source tree" in refused.reason
 
     allowed = authority_mod.open_contained(alias / "notes.txt", auth)
     assert isinstance(allowed, authority_mod.OpenTarget)
     assert os.read(allowed.fd, 100) == b"ordinary\n"
     allowed.close()
 
+    refused = authority_mod.open_contained(alias / "escape", auth)
+    assert isinstance(refused, authority_mod.Refused)
+    assert refused.outcome is authority_mod.AuthorityOutcome.REFUSAL
+    assert "symlink" in refused.reason
 
-def test_canonical_roots_are_derived_once_for_a_directly_built_authority(tmp_path):
-    """A `FileAuthority` built by hand — a test, the private harness — gets
-    its canonical spelling too, rather than depending on the caller to
-    remember.
-    """
+
+def test_the_deny_list_holds_through_a_symlinked_root(tmp_path):
     real = tmp_path / "real"
     real.mkdir()
+    (real / "config.py").write_text("API_KEY = 'k'\n")
     alias = tmp_path / "alias"
     alias.symlink_to(real, target_is_directory=True)
 
-    auth = authority(alias)
-    assert auth.roots == (alias,)
-    assert auth.canonical_roots == (real,)
-
-
-def test_mismatched_canonical_roots_are_refused_at_construction(tmp_path):
-    with pytest.raises(ValueError):
-        authority_mod.FileAuthority(roots=(tmp_path,), canonical_roots=(tmp_path, tmp_path))
+    result = authority_mod.open_contained(alias / "config.py", authority(alias))
+    assert isinstance(result, authority_mod.Refused)
+    assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
 
 
 # --- B-2.0-108: every configured root must be usable to be offered -------

@@ -22,10 +22,15 @@ rules are the same secret-shaped names/patterns that jail already proved
 matter (config.py, private keys, `.env` and its shapes); they are add-only
 and applied after containment, exactly like that jail's own rule.
 
-The cfc repository itself is never readable through these tools, even when
-a broader configured root happens to contain it — checked against
-`cfc.settings.REPOSITORY_ROOT`, the same value `settings.build_database_path`
-already refuses to place a database inside.
+There is deliberately **no blanket exclusion of cfc's own source tree from
+reading** (B-2.0-123). v1.9.1 read it — `ATTACH_ROOTS` names the repository
+on purpose — and the deny list above is what actually protects the secret:
+`config.py`, its backup spellings, and the `__pycache__` bytecode that
+embeds the same key. The one settled source-tree rule in the 2.0 record
+(`ROADMAP_PRIVATE.md`, Stage 6 loop three) is about refusing a *write*
+target, and loop 3 owns it. A read exclusion was a loop-1 Concept sentence
+no contract asked for, and it silently voided most of a configured read
+scope.
 """
 from __future__ import annotations
 
@@ -37,7 +42,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from cfc.settings import REPOSITORY_ROOT, FileToolSettings
+from cfc.settings import FileToolSettings
 
 #: Exact filenames, matched case-insensitively against a single path
 #: component — never the whole path, so a denied name is refused no matter
@@ -101,25 +106,6 @@ def is_denied_name(name: str) -> bool:
     return _denied_component(name) is not None
 
 
-def canonical(path: Path) -> Path:
-    """`path` with every symlink in it followed, without requiring it to
-    exist — `os.path.realpath`, not `Path.resolve(strict=True)`. This is
-    the spelling the cfc-source exclusion is checked against: a configured
-    root that is itself a symlink otherwise never *lexically* contains
-    `REPOSITORY_ROOT`, however squarely it points at it (B-2.0-107).
-    """
-    return Path(os.path.realpath(path))
-
-
-def is_repository_path(candidate: Path) -> bool:
-    """Whether `candidate` is cfc's own source tree or something inside
-    it. The one owner of that question — `tool_executor` imports this
-    rather than keeping a second copy, so a fix here reaches directory
-    listing and recursive search too.
-    """
-    return candidate == REPOSITORY_ROOT or REPOSITORY_ROOT in candidate.parents
-
-
 class AuthorityOutcome(Enum):
     """Which of the three non-success containment states applies —
     Concept.md's "A disappearing root is unavailable. An outside,
@@ -143,36 +129,14 @@ class Refused:
 
 @dataclass(frozen=True)
 class FileAuthority:
-    """One turn's immutable read authority. Resolving roots again for each
-    call would let a root that changed mid-turn silently grant different
-    authority to different calls within the same turn (Work Order:
-    "Resolve the roots once for a turn's immutable authority; the later
-    execution boundary rechecks them").
-
-    Two spellings of the same roots, in the same order, both needed:
-
-    - `roots` is the configured spelling. A requested path is matched
-      against *this*, because it is the spelling a person put in
-      `TOOLS_ROOTS` and the only one a model could be told about.
-    - `canonical_roots` is the same root with every symlink followed. The
-      cfc-source exclusion is checked against *this*, because a symlinked
-      root is an ordinary filesystem arrangement that must not become a
-      way around the exclusion (B-2.0-107).
-
-    Derived here, once, so a directly constructed `FileAuthority` — a
-    test, the private harness — cannot forget it.
+    """One turn's immutable read authority: the configured roots, unchanged
+    for the turn's whole lifetime. Resolving roots again for each call would
+    let a root that changed mid-turn silently grant different authority to
+    different calls within the same turn (Work Order: "Resolve the roots
+    once for a turn's immutable authority; the later execution boundary
+    rechecks them").
     """
     roots: tuple[Path, ...]
-    canonical_roots: tuple[Path, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.canonical_roots:
-            #: The one derived field on a frozen value; `object.__setattr__`
-            #: is the only way to fill one in `__post_init__`.
-            object.__setattr__(
-                self, "canonical_roots", tuple(canonical(root) for root in self.roots))
-        elif len(self.canonical_roots) != len(self.roots):
-            raise ValueError("canonical_roots must have one entry per configured root")
 
     @staticmethod
     def from_settings(settings: FileToolSettings) -> "FileAuthority":
@@ -191,9 +155,9 @@ class FileAuthority:
         """
         if not self.roots:
             return "no read roots are configured"
-        for root, resolved in zip(self.roots, self.canonical_roots):
+        for root in self.roots:
             try:
-                mode = os.stat(resolved).st_mode
+                mode = os.stat(root).st_mode
             except OSError as exc:
                 return f"the configured read root {root} is not usable ({exc.strerror})"
             if not stat.S_ISDIR(mode):
@@ -211,17 +175,12 @@ class OpenTarget:
     pathname: every read a caller performs uses this exact descriptor.
     """
 
-    __slots__ = ("fd", "relative", "root", "canonical_root", "_closed")
+    __slots__ = ("fd", "relative", "root", "_closed")
 
-    def __init__(self, fd: int, relative: str, root: Path, canonical_root: Path | None = None):
+    def __init__(self, fd: int, relative: str, root: Path):
         self.fd = fd
         self.relative = relative
         self.root = root
-        #: The symlink-free spelling of `root` — what a caller enumerating
-        #: this target's own children checks the cfc-source exclusion
-        #: against (B-2.0-107). Defaults to `root` for the ordinary case
-        #: where the two are the same.
-        self.canonical_root = canonical_root if canonical_root is not None else root
         self._closed = False
 
     def close(self) -> None:
@@ -250,15 +209,10 @@ def require_absolute(path_str: object) -> Path | Refused:
     return Path(path_str)
 
 
-def _select_root(path: Path, roots: tuple[Path, ...]) -> int | None:
-    """The index of the first configured root `path` lexically sits under
-    — an index rather than the root itself, because the caller needs that
-    root's canonical spelling from the same position in
-    `FileAuthority.canonical_roots`.
-    """
-    for index, root in enumerate(roots):
+def _select_root(path: Path, roots: tuple[Path, ...]) -> Path | None:
+    for root in roots:
         if path == root or root in path.parents:
-            return index
+            return root
     return None
 
 
@@ -302,12 +256,10 @@ def open_contained(requested: Path, authority: FileAuthority) -> "OpenTarget | R
     walk itself, the one place this can be known without a second,
     unguarded lookup.
     """
-    index = _select_root(requested, authority.roots)
-    if index is None:
+    root = _select_root(requested, authority.roots)
+    if root is None:
         return Refused(AuthorityOutcome.REFUSAL,
                         f"{requested} is outside the configured read roots")
-    root = authority.roots[index]
-    canonical_root = authority.canonical_roots[index]
 
     parts = _relative_parts(requested, root)
     if parts is None:
@@ -318,18 +270,6 @@ def open_contained(requested: Path, authority: FileAuthority) -> "OpenTarget | R
         why = _denied_component(part)
         if why is not None:
             return Refused(AuthorityOutcome.REFUSAL, why)
-
-    #: Checked against *both* spellings: the configured one catches a root
-    #: that plainly contains the repository, and the canonical one catches
-    #: a root that only reaches it through a symlink (B-2.0-107). Every
-    #: component below the root is walked with O_NOFOLLOW, so the root is
-    #: the only place a symlink can enter the route.
-    absolute_target = root.joinpath(*parts)
-    canonical_target = canonical_root.joinpath(*parts)
-    if is_repository_path(absolute_target) or is_repository_path(canonical_target):
-        return Refused(AuthorityOutcome.REFUSAL,
-                        f"{absolute_target} is inside cfc's own source tree, which these "
-                        f"tools never read")
 
     try:
         # The root itself is operator-trusted configuration, not a
@@ -383,4 +323,4 @@ def open_contained(requested: Path, authority: FileAuthority) -> "OpenTarget | R
         raise
 
     relative = "/".join(parts) if parts else "."
-    return OpenTarget(fd=fd, relative=relative, root=root, canonical_root=canonical_root)
+    return OpenTarget(fd=fd, relative=relative, root=root)
