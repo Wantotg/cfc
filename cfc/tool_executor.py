@@ -26,13 +26,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cfc.conversation_types import ToolOutcomeKind
-from cfc.settings import REPOSITORY_ROOT, FileToolSettings
+from cfc.settings import FileToolSettings
 from cfc.tool_authority import (
     AuthorityOutcome,
     FileAuthority,
     OpenTarget,
     Refused,
     is_denied_name,
+    is_repository_path,
     open_contained,
     require_absolute,
 )
@@ -85,14 +86,15 @@ def is_hidden_name(name: str) -> bool:
     return name.startswith(".")
 
 
-def _is_repository_path(candidate: Path) -> bool:
-    return candidate == REPOSITORY_ROOT or REPOSITORY_ROOT in candidate.parents
-
-
-def _child_absolute(target: OpenTarget, name: str) -> Path:
+def _canonical_child(target: OpenTarget, name: str) -> Path:
+    """One child's symlink-free absolute path, for the cfc-source
+    exclusion. Built from `canonical_root`, not `root`: a configured root
+    that reaches the repository through a symlink must not list or search
+    its way in (B-2.0-107).
+    """
     if target.relative == ".":
-        return target.root / name
-    return target.root / target.relative / name
+        return target.canonical_root / name
+    return target.canonical_root / target.relative / name
 
 
 def _truncate(text: str, max_chars: int) -> tuple[str, bool]:
@@ -160,7 +162,7 @@ def list_dir(
                     if is_hidden_name(name) or is_denied_name(name):
                         excluded += 1
                         continue
-                    if _is_repository_path(_child_absolute(target, name)):
+                    if is_repository_path(_canonical_child(target, name)):
                         excluded += 1
                         continue
                     if len(rows) >= _LIST_DIR_MAX_VISIBLE_ENTRIES:
@@ -479,7 +481,8 @@ def _grep_one_file(
 
 
 def _iter_tree(
-    dir_fd: int, dir_relative: str, root: Path, is_cancelled: IsCancelled, state: _GrepState,
+    dir_fd: int, dir_relative: str, canonical_root: Path, is_cancelled: IsCancelled,
+    state: _GrepState,
 ) -> Iterator[tuple[str, int]]:
     """Yields `(relative_path, opened_fd)` for every eligible regular file
     under `dir_fd`, recursing without following symlinks. The cfc source
@@ -505,8 +508,9 @@ def _iter_tree(
             state.files_excluded += 1
             continue
         child_relative = name if dir_relative == "." else f"{dir_relative}/{name}"
-        child_absolute = root / child_relative
-        if child_absolute == REPOSITORY_ROOT or REPOSITORY_ROOT in child_absolute.parents:
+        #: Canonical, not configured — a symlinked root must not search its
+        #: way into cfc's own source tree either (B-2.0-107).
+        if is_repository_path(canonical_root / child_relative):
             state.files_excluded += 1
             continue
         try:
@@ -526,7 +530,7 @@ def _iter_tree(
             state.complete = False
             continue
         if stat.S_ISDIR(mode):
-            yield from _iter_tree(child_fd, child_relative, root, is_cancelled, state)
+            yield from _iter_tree(child_fd, child_relative, canonical_root, is_cancelled, state)
             os.close(child_fd)
         elif stat.S_ISREG(mode):
             if os.path.splitext(name)[1].lower() not in _TEXT_SUFFIXES:
@@ -579,9 +583,10 @@ def grep(
         if stat.S_ISREG(mode):
             _grep_one_file(pattern, target, state, is_cancelled)
         elif stat.S_ISDIR(mode):
-            for relative, fd in _iter_tree(target.fd, target.relative, target.root,
+            for relative, fd in _iter_tree(target.fd, target.relative, target.canonical_root,
                                             is_cancelled, state):
-                file_target = OpenTarget(fd=fd, relative=relative, root=target.root)
+                file_target = OpenTarget(fd=fd, relative=relative, root=target.root,
+                                          canonical_root=target.canonical_root)
                 try:
                     if state.bounded():
                         file_target.close()

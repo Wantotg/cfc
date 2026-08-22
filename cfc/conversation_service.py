@@ -78,7 +78,9 @@ from cfc.settings import (
     VaultSettings,
 )
 from cfc.tool_authority import FileAuthority
-from cfc.tool_registry import ApprovalPort, PendingToolCall, ToolRegistry, default_registry
+from cfc.tool_registry import (
+    ApprovalPort, PendingToolCall, ToolRegistry, default_registry, provider_result_content,
+)
 
 
 class ContextEntryStatus(Enum):
@@ -778,6 +780,14 @@ class ConversationService:
         model_is_tool_capable = model_entry is not None and model_entry.tools
         schemas = self._registry.offered_schemas(self._file_tools, model_is_tool_capable)
         authority = FileAuthority.from_settings(self._file_tools)
+        if schemas and authority.unusable_root_reason() is not None:
+            #: The capability switch says yes and the model is declared
+            #: tool-capable, but a configured root is missing or is not a
+            #: directory. Offering the schemas anyway would advertise
+            #: authority cfc does not have and turn an unreadable source
+            #: into an apparently empty one (B-2.0-108). Ordinary chat
+            #: continues untouched — only the schemas are withdrawn.
+            schemas = ()
         max_calls = (self._file_tools.max_calls_per_turn if self._file_tools.usable
                      else _DEFAULT_MAX_CALLS_PER_TURN)
         max_turn_chars = (self._file_tools.max_turn_result_chars if self._file_tools.usable
@@ -878,6 +888,20 @@ class ConversationService:
                     "cfc's store failed before this call could be resolved",
                 )
                 raise
+            except BaseException:
+                #: Anything else at all — a registry or executor bug, an
+                #: `ApprovalPort` that raised, `KeyboardInterrupt`. Without
+                #: this, those calls stayed accepted-with-no-result, which
+                #: breaks "every accepted tool call ends once" and then
+                #: makes *every later turn in the chat* refuse as a
+                #: malformed snapshot until the process is restarted
+                #: (B-2.0-109). The original exception still travels: this
+                #: only repairs the ledger on the way past.
+                self._repair_remaining_calls(
+                    calls[index:], ToolOutcomeKind.FAILURE,
+                    "cfc failed before this call could be resolved",
+                )
+                raise
         return calls_used, turn_chars_used
 
     async def _process_one_call(
@@ -889,34 +913,50 @@ class ConversationService:
         one committed result plus operational evidence. Any `sqlite3.Error`
         or `asyncio.CancelledError` here is deliberately left to propagate
         to `_process_tool_call_batch`'s own repair-and-reraise handling.
+
+        **Every call this method resolves spends one of the turn's calls**,
+        whatever its outcome — unknown name, unavailable capability,
+        invalid arguments, a person's refusal, or a real execution. The
+        Concept's own vocabulary is that all of those are *accepted* calls
+        ("a valid envelope naming an unknown or currently unavailable tool
+        is accepted and receives one `unavailable` result"), and only
+        counting the ones that reached an executor let a provider propose
+        refused calls forever without ever spending the budget or having
+        its schemas withdrawn — an endless, billed tool loop the budget
+        exists to stop (B-2.0-110). The budget *test* still reads the count
+        from before this call, so the first call of a one-call turn runs.
         """
+        spent = calls_used + 1
+
+        def refuse(kind: ToolOutcomeKind, reason: str, **kwargs: object) -> tuple[int, int]:
+            """One non-success result, its cfc-authored provider content,
+            and the budget both cost. Every non-success route goes through
+            here so none of them can drift back to sending the provider an
+            empty `tool` message (B-2.0-106).
+            """
+            content = provider_result_content(kind, reason, self._file_tools.max_result_chars)
+            self._store.record_tool_result(call.id, kind, reason, content, **kwargs)
+            return spent, turn_chars_used + len(content)
+
         definition = self._registry.get(call.name)
         if definition is None:
-            self._store.record_tool_result(
-                call.id, ToolOutcomeKind.UNAVAILABLE, f"unknown tool {call.name!r}", "")
-            return calls_used, turn_chars_used
+            return refuse(ToolOutcomeKind.UNAVAILABLE, f"unknown tool {call.name!r}")
 
         unavailable_reason = definition.availability(self._file_tools)
         if unavailable_reason is not None:
-            self._store.record_tool_result(
-                call.id, ToolOutcomeKind.UNAVAILABLE, unavailable_reason, "")
-            return calls_used, turn_chars_used
+            return refuse(ToolOutcomeKind.UNAVAILABLE, unavailable_reason)
 
         parsed_args, argument_error = definition.validate_arguments(call.arguments)
         if argument_error is not None:
-            self._store.record_tool_result(call.id, ToolOutcomeKind.FAILURE, argument_error, "")
-            return calls_used, turn_chars_used
+            return refuse(ToolOutcomeKind.FAILURE, argument_error)
 
         if calls_used >= max_calls:
-            self._store.record_tool_result(
-                call.id, ToolOutcomeKind.REFUSAL,
-                f"the turn's {max_calls}-call budget is spent", "")
-            return calls_used, turn_chars_used
+            return refuse(ToolOutcomeKind.REFUSAL, f"the turn's {max_calls}-call budget is spent")
         if turn_chars_used >= max_turn_chars:
-            self._store.record_tool_result(
-                call.id, ToolOutcomeKind.REFUSAL,
-                f"the turn's {max_turn_chars:,}-character output budget is spent", "")
-            return calls_used, turn_chars_used
+            return refuse(
+                ToolOutcomeKind.REFUSAL,
+                f"the turn's {max_turn_chars:,}-character output budget is spent",
+            )
 
         pending = PendingToolCall(
             turn_id=turn_id, tool_call_id=call.id, provider_call_id=call.provider_call_id,
@@ -927,11 +967,10 @@ class ConversationService:
         decided_at = utc_now()
 
         if decision is not ApprovalDecision.APPROVE:
-            self._store.record_tool_result(
-                call.id, ToolOutcomeKind.REFUSAL, "declined", "",
+            return refuse(
+                ToolOutcomeKind.REFUSAL, "the person at the keyboard declined it",
                 decision=ApprovalDecision.REFUSE, decided_at=decided_at,
             )
-            return calls_used, turn_chars_used
 
         started_at = utc_now()
         outcome = definition.execute(
@@ -939,18 +978,21 @@ class ConversationService:
         )
         finished_at = utc_now()
 
+        content = (outcome.content if outcome.kind is ToolOutcomeKind.SUCCESS
+                   else provider_result_content(outcome.kind, outcome.reason,
+                                                 self._file_tools.max_result_chars))
         self._store.record_tool_result(
-            call.id, outcome.kind, outcome.reason, outcome.content,
+            call.id, outcome.kind, outcome.reason, content,
             decision=ApprovalDecision.APPROVE, decided_at=decided_at, truncated=outcome.truncated,
         )
         self._store.record_tool_call_evidence(ToolCallEvidence(
             tool_call_id=call.id, definition_name=call.name,
             started_at=started_at, finished_at=finished_at, outcome_kind=outcome.kind,
-            reason=outcome.reason, character_count=len(outcome.content),
+            reason=outcome.reason, character_count=len(content),
             root=outcome.root, canonical_target=outcome.canonical_target,
             counts=outcome.counts, truncated=outcome.truncated,
         ))
-        return calls_used + 1, turn_chars_used + len(outcome.content)
+        return spent, turn_chars_used + len(content)
 
     def _repair_remaining_calls(
         self, calls: tuple[ToolCall, ...], kind: ToolOutcomeKind, reason: str,
@@ -961,9 +1003,10 @@ class ConversationService:
         committed (`ConflictingToolResult`, left untouched: that commit
         already won).
         """
+        content = provider_result_content(kind, reason, self._file_tools.max_result_chars)
         for call in calls:
             try:
-                self._store.record_tool_result(call.id, kind, reason, "")
+                self._store.record_tool_result(call.id, kind, reason, content)
             except ConflictingToolResult:
                 pass
             except (ConversationStoreError, sqlite3.Error):

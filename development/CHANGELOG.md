@@ -77,7 +77,7 @@ manual proof (not required for the automated suite).
   tests/test_cfc_conversation_service.py, tests/test_cfc_tool_authority.py,
   tests/test_cfc_tool_executor.py, tests/test_cfc_tool_registry.py
 - Status: shipped
-- Commit: pending
+- Commit: 1ecdaf6
 
 ## 2026-08-19 — A status line a person can actually see (`B-2.0-104`, Stage 5 loop 4)
 The Chat title, context, and status bars no longer share rows with Textual's

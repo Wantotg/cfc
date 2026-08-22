@@ -340,3 +340,116 @@ def test_a_race_that_swaps_the_target_between_stat_and_open_cannot_escape(tmp_pa
     assert isinstance(result, authority_mod.Refused)
     assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
     assert "symlink" in result.reason
+
+
+# --- B-2.0-107: a symlinked root cannot become a way into cfc's source ----
+
+def test_a_root_that_is_a_symlink_to_the_repository_cannot_read_it(tmp_path, monkeypatch):
+    """The reproduced Stage 6 loop 1 bypass: the configured root is a
+    symlink, so the requested path never *lexically* contains
+    `REPOSITORY_ROOT` and the exclusion used to pass — while the root's own
+    open (deliberately not O_NOFOLLOW) followed the link straight in.
+    """
+    fake_repo = tmp_path / "real-cfc"
+    fake_repo.mkdir()
+    (fake_repo / "README.md").write_text("cfc's own source\n")
+    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
+
+    alias = tmp_path / "alias"
+    alias.symlink_to(fake_repo, target_is_directory=True)
+    auth = authority(alias)
+
+    result = authority_mod.open_contained(alias / "README.md", auth)
+    assert isinstance(result, authority_mod.Refused)
+    assert result.outcome is authority_mod.AuthorityOutcome.REFUSAL
+    assert "source tree" in result.reason
+
+
+def test_a_root_symlinked_above_the_repository_cannot_read_into_it(tmp_path, monkeypatch):
+    """The wider spelling of the same bypass: the root aliases a *parent*
+    of the repository, so only the canonical target reveals the route in.
+    A sibling under that same aliased root still reads normally — the
+    exclusion is the repository, not the alias.
+    """
+    parent = tmp_path / "workspace"
+    fake_repo = parent / "cfc"
+    fake_repo.mkdir(parents=True)
+    (fake_repo / "config.example.py").write_text("secrets shape\n")
+    (parent / "notes.txt").write_text("ordinary\n")
+    monkeypatch.setattr(authority_mod, "REPOSITORY_ROOT", fake_repo)
+
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    auth = authority(alias)
+
+    refused = authority_mod.open_contained(alias / "cfc" / "config.example.py", auth)
+    assert isinstance(refused, authority_mod.Refused)
+    assert refused.outcome is authority_mod.AuthorityOutcome.REFUSAL
+    assert "source tree" in refused.reason
+
+    allowed = authority_mod.open_contained(alias / "notes.txt", auth)
+    assert isinstance(allowed, authority_mod.OpenTarget)
+    assert os.read(allowed.fd, 100) == b"ordinary\n"
+    allowed.close()
+
+
+def test_canonical_roots_are_derived_once_for_a_directly_built_authority(tmp_path):
+    """A `FileAuthority` built by hand — a test, the private harness — gets
+    its canonical spelling too, rather than depending on the caller to
+    remember.
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+
+    auth = authority(alias)
+    assert auth.roots == (alias,)
+    assert auth.canonical_roots == (real,)
+
+
+def test_mismatched_canonical_roots_are_refused_at_construction(tmp_path):
+    with pytest.raises(ValueError):
+        authority_mod.FileAuthority(roots=(tmp_path,), canonical_roots=(tmp_path, tmp_path))
+
+
+# --- B-2.0-108: every configured root must be usable to be offered -------
+
+def test_unusable_root_reason_is_none_when_every_root_is_a_directory(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    assert authority(a, b).unusable_root_reason() is None
+
+
+def test_one_missing_root_makes_the_whole_authority_unusable(tmp_path):
+    present = tmp_path / "present"
+    present.mkdir()
+    reason = authority(present, tmp_path / "gone").unusable_root_reason()
+    assert reason is not None
+    assert "gone" in reason
+
+
+def test_a_root_that_is_a_file_makes_the_authority_unusable(tmp_path):
+    a_file = tmp_path / "notes.txt"
+    a_file.write_text("not a directory\n")
+    reason = authority(a_file).unusable_root_reason()
+    assert reason is not None
+    assert "not a directory" in reason
+
+
+def test_no_configured_roots_is_its_own_unusable_reason():
+    reason = authority().unusable_root_reason()
+    assert reason is not None
+    assert "no read roots" in reason
+
+
+def test_a_root_symlinked_to_a_real_directory_stays_usable(tmp_path):
+    """Resolving roots must not break the ordinary reason someone uses a
+    symlink: the link points at a real directory and the capability works.
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    assert authority(alias).unusable_root_reason() is None

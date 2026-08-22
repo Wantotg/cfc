@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,7 @@ from cfc.conversation_types import (
     FailureEvidence,
     FailureKind,
     FailedOutcome,
+    ProviderProblem,
     ProposedToolCall,
     Role,
     ToolCallBatch,
@@ -2188,3 +2190,201 @@ def test_service_module_does_not_resolve_its_own_database_path():
     source = inspect.getsource(service_mod)
     assert "DATABASE_PATH" not in source
     assert "DEFAULT_DATABASE_PATH" not in source
+
+
+# --- B-2.0-106/109/110: budgets, provider content, and live repair ---------
+
+class _AlwaysUnknownToolResponder:
+    """A provider that answers every request with a fresh call to a tool
+    that does not exist — the shape that used to loop forever, because an
+    unknown name never spent the turn's call budget and so never caused
+    its schemas to be withdrawn.
+    """
+
+    def __init__(self, limit: int = 200):
+        self.calls: list = []
+        self._limit = limit
+
+    async def respond(self, plan):
+        self.calls.append(plan)
+        if len(self.calls) > self._limit:
+            raise AssertionError("the continuation loop never terminated")
+        return ToolCallBatch(calls=(
+            ProposedToolCall(provider_call_id=f"call_{len(self.calls)}",
+                              name="write_file", arguments="{}"),
+        ))
+
+
+def test_repeated_unknown_calls_spend_the_call_budget_and_end_the_turn(tmp_path):
+    """B-2.0-110. Every accepted call spends one of the turn's calls, so a
+    provider proposing refused or unknown calls forever runs out, has its
+    schemas withdrawn, and its next unsolicited batch fails the turn — it
+    does not bill an endless loop.
+    """
+    service, root = tool_service(tmp_path, AutoApprovePort(), TOOLS_MAX_CALLS_PER_TURN=3)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        responder = _AlwaysUnknownToolResponder()
+
+        turn = run(service.send_turn(chat.id, "q", responder))
+
+        assert isinstance(turn.outcome, FailedOutcome)
+        assert turn.outcome.evidence.problem is ProviderProblem.MALFORMED_RESPONSE
+        # Three budgeted calls spend the budget, then the fourth request
+        # carries no schemas and its unsolicited batch fails the turn:
+        # bounded, not endless.
+        assert len(responder.calls) == 4
+        assert responder.calls[-1].schemas == ()
+        kinds = [r.kind for r in service.snapshot(chat.id).tool_results]
+        assert kinds.count(ToolOutcomeKind.UNAVAILABLE) == 3
+    finally:
+        service.close()
+
+
+def test_repeated_declined_calls_also_spend_the_call_budget(tmp_path):
+    """The same rule from the other direction: a person refusing every
+    call still exhausts the turn rather than leaving the provider free to
+    keep asking."""
+    port = AutoRefusePort()
+    service, root = tool_service(tmp_path, port, TOOLS_MAX_CALLS_PER_TURN=2)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("x\n")
+        batches = [ToolCallBatch(calls=(read_file_call(root, "a.txt", f"call_{n}"),))
+                   for n in range(1, 5)]
+        responder = ScriptedResponder([*batches, Completion(content="fine")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        # Two declined calls spend the budget; the third is refused as
+        # budget-spent and the fourth continuation carries no schemas.
+        assert responder.calls[2].schemas == ()
+        assert len(port.requests) == 2
+    finally:
+        service.close()
+
+
+def test_every_non_success_result_carries_cfc_authored_provider_content(tmp_path):
+    """B-2.0-106. A blank `tool` message is indistinguishable from a
+    successful search that found nothing, so the provider could not tell a
+    decline from a denial from a failure. Each typed outcome now names
+    itself in the content the next request actually sends.
+    """
+    port = ScriptedApprovalPort([ApprovalDecision.REFUSE])
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("x\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"),
+            ProposedToolCall(provider_call_id="call_2", name="write_file", arguments="{}"),
+            ProposedToolCall(provider_call_id="call_3", name="read_file",
+                              arguments="not json"),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="ok")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        snapshot = service.snapshot(chat.id)
+        by_kind = {r.kind: r.content for r in snapshot.tool_results}
+        assert "refused" in by_kind[ToolOutcomeKind.REFUSAL]
+        assert "declined" in by_kind[ToolOutcomeKind.REFUSAL]
+        assert "could not run" in by_kind[ToolOutcomeKind.UNAVAILABLE]
+        assert "write_file" in by_kind[ToolOutcomeKind.UNAVAILABLE]
+        assert "failed" in by_kind[ToolOutcomeKind.FAILURE]
+        assert all(content for content in by_kind.values())
+
+        # and it reaches the provider, not just SQLite
+        tool_messages = [m for m in responder.calls[1].messages if m.role == "tool"]
+        assert len(tool_messages) == 3
+        assert all(m.content for m in tool_messages)
+    finally:
+        service.close()
+
+
+def test_a_containment_refusal_explains_itself_to_the_provider(tmp_path):
+    port = AutoApprovePort()
+    service, root = tool_service(tmp_path, port)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        outside = tmp_path / "outside.txt"
+        outside.write_text("not yours\n")
+        batch = ToolCallBatch(calls=(
+            ProposedToolCall(provider_call_id="call_1", name="read_file",
+                              arguments=f'{{"path": "{outside}"}}'),
+        ))
+        responder = ScriptedResponder([batch, Completion(content="ok")])
+
+        run(service.send_turn(chat.id, "q", responder))
+
+        result = service.snapshot(chat.id).tool_results[0]
+        assert result.kind is ToolOutcomeKind.REFUSAL
+        assert "outside the configured read roots" in result.content
+    finally:
+        service.close()
+
+
+def test_an_executor_exception_repairs_its_batch_and_the_chat_stays_usable(tmp_path):
+    """B-2.0-109. An unexpected registry/executor failure used to leave
+    accepted calls with no result at all, which broke "every accepted tool
+    call ends once" and then made *every later turn in that chat* refuse as
+    a malformed snapshot until the process restarted.
+    """
+    def explode(args, authority, settings, is_cancelled):
+        raise RuntimeError("executor bug")
+
+    exploding = tool_registry.ToolRegistry(definitions=tuple(
+        definition if definition.name != "read_file"
+        else replace(definition, execute=explode)
+        for definition in tool_registry.default_registry().definitions()
+    ))
+    service, root = tool_service(tmp_path, AutoApprovePort(), registry=exploding)
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        (root / "a.txt").write_text("x\n")
+        (root / "b.txt").write_text("y\n")
+        batch = ToolCallBatch(calls=(
+            read_file_call(root, "a.txt", "call_1"), read_file_call(root, "b.txt", "call_2"),
+        ))
+        turn = run(service.send_turn(chat.id, "q", ScriptedResponder([batch])))
+
+        assert isinstance(turn.outcome, FailedOutcome)
+        snapshot = service.snapshot(chat.id)
+        assert len(snapshot.tool_calls) == 2
+        assert len(snapshot.tool_results) == 2  # every accepted call ended once
+        assert all(r.kind is ToolOutcomeKind.FAILURE for r in snapshot.tool_results)
+
+        # and the next turn on the same open store reaches its responder
+        follow_up = ScriptedResponder([Completion(content="still here")])
+        next_turn = run(service.send_turn(chat.id, "and now?", follow_up))
+        assert isinstance(next_turn.outcome, CompletedOutcome)
+        assert len(follow_up.calls) == 1
+    finally:
+        service.close()
+
+
+def test_schemas_are_withdrawn_when_a_configured_root_is_missing(tmp_path):
+    """B-2.0-108. The capability switch is on and the model is declared
+    tool-capable, but the configured root is gone. Advertising the schemas
+    anyway makes an unreadable source look like an empty one.
+    """
+    service, root = tool_service(tmp_path, AutoApprovePort())
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        root.rmdir()
+        responder = ScriptedResponder([Completion(content="hi")])
+        run(service.send_turn(chat.id, "q", responder))
+        assert responder.calls[0].schemas == ()
+    finally:
+        service.close()
+
+
+def test_ordinary_chat_still_works_when_a_configured_root_is_missing(tmp_path):
+    service, root = tool_service(tmp_path, AutoApprovePort())
+    try:
+        chat = service.create_chat("c", "fixture-model")
+        root.rmdir()
+        turn = run(service.send_turn(chat.id, "q", ScriptedResponder([Completion(content="hi")])))
+        assert isinstance(turn.outcome, CompletedOutcome)
+    finally:
+        service.close()

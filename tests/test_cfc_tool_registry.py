@@ -18,6 +18,7 @@ import pytest
 
 from cfc import config_loader, settings as settings_mod
 from cfc import tool_registry as registry_mod
+from cfc.conversation_types import ToolOutcomeKind
 
 
 def usable_settings(tmp_path: Path) -> settings_mod.FileToolSettings:
@@ -229,3 +230,40 @@ def test_grep_execute_finds_matches(tmp_path):
         {"pattern": "TODO", "path": str(root)}, authority, file_tools, lambda: False,
     )
     assert outcome.counts["matches"] == 1
+
+
+# --- B-2.0-106: cfc-authored provider content for non-success outcomes ----
+
+@pytest.mark.parametrize("kind,expected", [
+    (ToolOutcomeKind.REFUSAL, "cfc refused this call"),
+    (ToolOutcomeKind.UNAVAILABLE, "cfc could not run this call"),
+    (ToolOutcomeKind.FAILURE, "this call failed"),
+    (ToolOutcomeKind.CANCELLATION, "this call was cancelled"),
+])
+def test_each_non_success_outcome_names_itself_to_the_provider(kind, expected):
+    content = registry_mod.provider_result_content(kind, "the stated reason", 30_000)
+    assert content.startswith(expected)
+    assert "the stated reason" in content
+
+
+def test_the_four_non_success_leads_are_distinguishable_from_each_other():
+    """The whole point: a model must be able to tell a decline from a
+    denial from a failure from a cancellation."""
+    leads = {
+        registry_mod.provider_result_content(kind, "r", 30_000).split(":")[0]
+        for kind in (ToolOutcomeKind.REFUSAL, ToolOutcomeKind.UNAVAILABLE,
+                      ToolOutcomeKind.FAILURE, ToolOutcomeKind.CANCELLATION)
+    }
+    assert len(leads) == 4
+
+
+def test_provider_result_content_is_bounded_by_the_configured_limit():
+    content = registry_mod.provider_result_content(ToolOutcomeKind.FAILURE, "x" * 5_000, 40)
+    assert len(content) == 40
+
+
+def test_success_has_no_cfc_authored_stand_in():
+    """A successful call's content is the executor's own bounded body — and
+    a success that found nothing says so in its own words."""
+    with pytest.raises(ValueError):
+        registry_mod.provider_result_content(ToolOutcomeKind.SUCCESS, "listed directory", 30_000)

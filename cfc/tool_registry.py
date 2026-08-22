@@ -30,11 +30,41 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from cfc.conversation_types import ApprovalDecision, ToolCallId, TurnId
+from cfc.conversation_types import ApprovalDecision, ToolCallId, ToolOutcomeKind, TurnId
 from cfc.provider_wire import WireToolSchema
 from cfc.settings import FileToolSettings
 from cfc.tool_authority import FileAuthority
 from cfc.tool_executor import ExecutionOutcome, IsCancelled, grep, list_dir, read_file
+
+
+#: How each non-success outcome opens its provider-facing sentence. The
+#: model has to be able to tell a decline from a denial from an ordinary
+#: failure from a genuinely empty result, and it can only do that from the
+#: `tool` message it receives — an empty one is indistinguishable from a
+#: successful search that found nothing (B-2.0-106).
+_NON_SUCCESS_LEAD: "dict[ToolOutcomeKind, str]" = {
+    ToolOutcomeKind.REFUSAL: "cfc refused this call",
+    ToolOutcomeKind.UNAVAILABLE: "cfc could not run this call",
+    ToolOutcomeKind.FAILURE: "this call failed",
+    ToolOutcomeKind.CANCELLATION: "this call was cancelled",
+}
+
+
+def provider_result_content(kind: ToolOutcomeKind, reason: str, max_chars: int) -> str:
+    """The bounded, cfc-authored `tool` message a non-success outcome sends
+    back to the provider, derived once from the typed outcome and its
+    already-bounded cfc reason (Concept.md: "The provider result is derived
+    once from this typed outcome"). Never file text, never raw exception
+    text, never empty.
+
+    `SUCCESS` has no entry here on purpose: a successful call's content is
+    the executor's own bounded body, and a success that produced nothing
+    says so in its own words ("no matches for ...").
+    """
+    lead = _NON_SUCCESS_LEAD.get(kind)
+    if lead is None:
+        raise ValueError(f"{kind!r} has no cfc-authored provider content")
+    return f"{lead}: {reason}. There is no result content for this call."[:max_chars]
 
 
 class ToolCapability(Enum):
