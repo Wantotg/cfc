@@ -15,6 +15,54 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## D-2.0-119 · Context-modal buttons and rows disagree about the available action
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+The Context modal mixes rows that act with buttons that act on the highlighted
+row. An empty Persona offers **Change** while **Add** is disabled, and an
+existing Trait cannot use the visible Add button. Choose one coherent
+interaction model before the next Context-modal work.
+
+## D-2.0-117 · The Chat status line and Context modal use different source names
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+The same context sources appear as `prefs:` and `opening:` in the status line
+but as `User Preferences` and `First Message` in the Context modal. Centralise
+or reconcile the vocabulary so a person does not have to learn two names for
+one source.
+
+## D-2.0-116 · Tool operational evidence is incomplete and has no result-hash producer
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+The evidence table is body-free and structurally sound, but rows are written
+only after an approved executor returns. Refused, unavailable, invalid,
+cancelled, interrupted, and repaired calls leave no evidence, and the real
+service never supplies `result_hash`. Extend evidence through the interactive
+approval and lifecycle paths without storing sensitive result bodies.
+
+## D-2.0-115 · An in-flight provider exchange leaves no interruption evidence
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+If cancellation or process interruption occurs while the responder is still
+waiting, the turn is stored but no provider-exchange row records what happened.
+Give the in-flight exchange a durable interrupted representation and prove it
+through cancellation and reopen recovery.
+
+## D-2.0-114 · File-tool execution runs on the event-loop thread
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+The synchronous executor blocks the event loop, so a Textual cancellation
+cannot arrive during a long read or grep. Move execution off the event loop and
+provide a cancellation token the worker can observe before loop two's approval
+surface depends on responsive cancellation.
+
+---
+
 ## D-2.0-105 · Driven widget tests do not prove painted terminal output
 
 **Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.

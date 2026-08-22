@@ -25,6 +25,27 @@ One line: what changed and why it mattered.
 
 ---
 
+## 2026-08-22 — Close the Stage 6 loop-one triage gaps (`B-2.0-123`, Stage 6 loop 1)
+The read-only tool boundary no longer treats cfc's own source tree as a read
+target to exclude. That restriction belongs to the future `write_file`
+authority; the read boundary keeps its built-in secret-name and bytecode
+denials, so configured project roots work again without exposing configuration
+or private keys. The final loop proof reached **1237 passed**.
+- Files: cfc/tool_authority.py, cfc/tool_executor.py, tests/test_cfc_tool_authority.py, tests/test_cfc_tool_executor.py
+- Status: shipped
+- Commit: 8f81c47
+
+## 2026-08-22 — Repair four read-only lifecycle boundaries (`B-2.0-106`, `B-2.0-108` … `B-2.0-110`, Stage 6 loop 1)
+Unknown and otherwise non-successful calls now spend the turn call budget and
+send bounded cfc-owned explanations to the provider; unexpected execution
+failures repair unanswered calls while the store is live; and missing roots
+withdraw the capability before a model can mistake them for empty sources.
+The withdrawn source-tree read restriction is retained as `B-2.0-107`'s
+write-only Stage 6 loop-three concern.
+- Files: cfc/conversation_service.py, cfc/tool_authority.py, cfc/tool_executor.py, cfc/tool_registry.py, tests/test_cfc_conversation_service.py, tests/test_cfc_tool_authority.py, tests/test_cfc_tool_executor.py, tests/test_cfc_tool_registry.py
+- Status: shipped
+- Commit: a41807e
+
 ## 2026-08-19 — A read-only tool lifecycle: registry, containment, and the provider continuation loop (Stage 6 loop 1)
 `list_dir`, `read_file`, and literal `grep` now run as a real, replayable
 tool lifecycle through the existing conversation kernel: a request offers

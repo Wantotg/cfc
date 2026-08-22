@@ -26,6 +26,46 @@ reasoning is in `HANDOVER.md`, *Which file owns what*.
 
 ---
 
+## B-2.0-118 · An unselected context row opens an empty preview
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+Selecting a Persona or other category row with no current value opens a modal
+whose entire body says `none selected`. The row already communicates that
+state, so the preview adds no information. Choose the intended picker or
+empty-state action while reconciling the related Context-modal interaction
+design.
+
+## B-2.0-113 · Direct-file grep ignores cancellation
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+The direct-file `grep` path accepts an already-cancelled callback and still
+reads and scans the file. Add cancellation checks between bounded reads and
+line units, then prove the real service path can deliver the signal while the
+executor is running.
+
+## B-2.0-112 · A repeated provider call ID is classified as an internal failure
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+A call ID repeated in a later provider batch reaches SQLite's uniqueness
+constraint and becomes an internal cfc failure instead of malformed provider
+evidence. Whitespace-only IDs and function names are also accepted. Validate
+the complete turn before persistence and reject stripped-empty envelope fields.
+
+## B-2.0-111 · Tool character ceilings are not hard bounds
+
+**Found:** 2026-08-22, during the v2.0 Stage 6 loop one diagnosis.
+
+The truncation notice is appended after the per-result ceiling, and the
+aggregate budget is checked before rather than reserved for the result. A
+bounded result can therefore exceed the promised per-result or turn-wide
+character limit. Reserve space for the notice and pass each call the smaller
+of its own allowance and the remaining turn budget.
+
+---
+
 ## B-2.0-97 · Four readable-vault dialogs can hide their Close or Cancel action
 
 **Found:** 2026-08-19, during the v2.0 Stage 5 loop four second-run diagnosis.

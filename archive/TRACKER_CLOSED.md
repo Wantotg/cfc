@@ -13,6 +13,13 @@ at the top.
 
 | id | what | why it closed | when |
 |---|---|---|---|
+| B-2.0-123 | cfc's own source tree was incorrectly excluded from read tools | shipped in `8f81c47`; read authority restores the configured project scope while retaining built-in secret, bytecode, and `.git` denials; source-tree exclusion remains a write-target rule for loop three | 2026-08-22 |
+| N-2.0-122 | the loop-one TUI playtest focus named a tool surface that does not exist yet | nothing owed; the TUI correctly offers no tools until loop two, and the optional harness is now named for real-provider proof | 2026-08-22 |
+| B-2.0-107 | the read-only source-tree exclusion was treated as a settled loop-one requirement | withdrawn; the exclusion is only settled for future `write_file` targets in loop three, so no read fix is owed | 2026-08-22 |
+| B-2.0-110 | the tool call budget counted only approved executions | shipped in `a41807e`; every resolved accepted call now spends the turn budget, preventing endless refused or invalid provider batches | 2026-08-22 |
+| B-2.0-109 | an unexpected tool exception left accepted calls without results | shipped in `a41807e`; live batch repair records typed failures for unanswered calls before the original exception propagates | 2026-08-22 |
+| B-2.0-108 | missing configured roots were offered as if they were usable | shipped in `a41807e`; unusable roots withdraw the file-tool schemas before the provider request | 2026-08-22 |
+| B-2.0-106 | non-success tool outcomes reached the provider as empty messages | shipped in `a41807e`; the registry supplies bounded cfc-owned provider content for typed non-success outcomes | 2026-08-22 |
 | B-2.0-104 | Chat status and context notices were painted under the Footer | shipped in `bc4a5b6`; the title, context, and status bars now occupy distinct painted rows, and the refusal correction route is visible on the terminal surface | 2026-08-19 |
 | B-2.0-94 | Turn details clipped its evidence and Close action on a small terminal | shipped in `7e29569`; the outer dialog is a keyboard-capable scroll owner, preserving both the long manifest and its exit action | 2026-08-19 |
 | D-2.0-95 | the picker refresh seam had no no-highlight assertion | proof added in `7e29569`; scan, filter, and filter-clear refreshes now assert no selection until a deliberate arrow press | 2026-08-19 |
